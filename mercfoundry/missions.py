@@ -94,6 +94,42 @@ def add_to_list(list_text, section, name):
     return "\n".join(lines)
 
 
+def add_mail(emails_ini, mail_id, sender, subject_key, body_key):
+    """DATAPOD/emails.ini with a [Mail] block (Id, Sender, Subject, Body are
+    string keys).  mission_GenericInit posts '<mission>_initial' when the
+    contract starts."""
+    nl = "\r\n" if "\r\n" in emails_ini else "\n"
+    if re.search(r"^Id\s+%s\s*$" % re.escape(mail_id), emails_ini, re.M | re.I):
+        raise ValueError(f"emails.ini already has a mail {mail_id!r}")
+    block = ["[Mail]", f"Id\t\t{mail_id}", f"Sender\t\t{sender}", f"Subject\t\t{subject_key}",
+             f"Body\t\t{body_key}", "FolderPath", "Attachment1", "Attachment2", "Attachment3"]
+    text = emails_ini.rstrip("\r\n") + nl + nl + nl.join(block) + nl
+    return text
+
+
+def text_plan(asset_id, doc, section):
+    """(string edits, mission.ini overrides, mail) for a mission file's
+    "title", "description", "mail" and "strings"."""
+    key = section.replace("_", "")                     # SW_Allies9 -> SWAllies9, as retail keys
+    strings = dict(doc.get("strings") or {})
+    ini = {}
+    if "title" in doc:
+        strings[f"MissionInfo.MissionTitle.{key}"] = doc["title"]
+        ini["MissionTitleDbKey"] = f"MissionInfo.MissionTitle.{key}"
+    if "description" in doc:
+        strings[f"MissionInfo.Description.{key}"] = doc["description"]
+        ini["ShortDescriptionDbKey"] = f"MissionInfo.Description.{key}"
+    mail = None
+    if doc.get("mail"):
+        m = doc["mail"]
+        mail_id = f"{asset_id}_initial"
+        subject, body = f"mail.{mail_id}.subject", f"mail.{mail_id}.body"
+        strings[subject] = m.get("subject", doc.get("title", asset_id))
+        strings[body] = m.get("body", "")
+        mail = (mail_id, m.get("sender", "mail.senders.techgal"), subject, body)
+    return strings, ini, mail
+
+
 def _sections(text):
     """[(name, start line index, end line index)] of an ini's sections."""
     lines = text.split("\n")

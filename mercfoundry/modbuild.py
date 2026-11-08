@@ -119,6 +119,22 @@ class _Data:
     def new(self, name, key, kind, data):
         self.add.setdefault(name, []).append((key, kind, data))
 
+    def replace_added(self, key, kind, data):
+        """Change the body of a record added earlier in this build."""
+        for recs in self.add.values():
+            for i, (k, kd, _) in enumerate(recs):
+                if k == key and kd == kind:
+                    recs[i] = (k, kd, data)
+                    return True
+        return False
+
+    def find_added(self, key, kind):
+        for recs in self.add.values():
+            for k, kd, body in recs:
+                if k == key and kd == kind:
+                    return body
+        return None
+
     def added(self):
         """(key, kind, archive name) of every record added so far."""
         return [(k, kind, a) for a, recs in self.add.items() for k, kind, _ in recs]
@@ -149,6 +165,14 @@ def _apply_text(data, folder, result):
         if not isinstance(doc, dict):
             raise ValueError(f"{f.name}: expected an object of key -> text")
         edits.update({str(k): str(v) for k, v in doc.items()})
+    changed, added = _set_strings(data, edits)
+    result.changes.append(f"text: {changed} strings changed, {added} entries added")
+
+
+def _set_strings(data, edits):
+    """Set text strings (key -> text) in english.dsk; new keys go into the
+    registry record holding the key with the longest shared prefix.
+    Returns (changed, added)."""
     regs = [(name, rec, registry.Registry(data.current(name, rec)))
             for name, rec in data.records(REGISTRY, ("english.dsk",))]
     if not regs:
@@ -180,7 +204,7 @@ def _apply_text(data, folder, result):
             c, a = reg.apply(plans[i])
             changed, added = changed + c, added + a
             data.set(name, rec, reg.to_bytes())
-    result.changes.append(f"text: {changed} strings changed, {added} entries added")
+    return changed, added
 
 
 def _apply_scripts(data, folder, result):
@@ -322,8 +346,35 @@ def _apply_missions(data, folder, result):
         path = "DATAxbox/mission.ini"
         ini = data.files[path].decode("latin-1") if path in data.files else \
             (data.dir / "mission.ini").read_bytes().decode("latin-1")
-        ini, section = missions.add_to_mission_ini(ini, asset_id, doc.get("ini"))
+        _, probe_section = missions.add_to_mission_ini(ini, asset_id)       # the section name only
+        strings, ini_text, mail = missions.text_plan(asset_id, doc, probe_section)
+        ini, section = missions.add_to_mission_ini(ini, asset_id, {**ini_text, **(doc.get("ini") or {})})
         data.files[path] = ini.encode("latin-1")
+        if mail:
+            mpath = "DATAxbox/DATAPOD/emails.ini"
+            mails = data.files[mpath].decode("latin-1") if mpath in data.files else \
+                (data.dir / "DATAPOD" / "emails.ini").read_bytes().decode("latin-1")
+            data.files[mpath] = missions.add_mail(mails, *mail).encode("latin-1")
+        # Titles and descriptions go in the always-loaded missioninfo text;
+        # the mission's own strings (mail, objectives) in a text record named
+        # after the mission, which its layer loads, as retail missions do.
+        shared = {k: v for k, v in strings.items() if k.lower().startswith("missioninfo.")}
+        own = {k: v for k, v in strings.items() if k not in shared}
+        if shared:
+            _set_strings(data, shared)
+        if own:
+            if any(r.key == name_hash(asset_id) for _, r in data.records(REGISTRY, ("english.dsk",))):
+                raise ValueError(f"missions/{f.name}: english.dsk already has text named {asset_id}")
+            reg = registry.Registry(registry.new_record())
+            reg.apply(own)
+            data.new("english.dsk", name_hash(asset_id), REGISTRY, reg.to_bytes())
+            layer_list = data.find_added(name_hash(asset_id), name_hash("list"))
+            if layer_list is None:
+                result.warnings.append(f"missions/{f.name}: its strings are in text {asset_id}, which only loads "
+                                       f"with layer {asset_id} (add encounters/{asset_id}.json)")
+            else:
+                text_list = missions.add_to_list(layer_list.decode("latin-1"), "registry", asset_id)
+                data.replace_added(name_hash(asset_id), name_hash("list"), text_list.encode("latin-1"))
         known = {r.key for _, r in data.records(SCRIPT)} | {k for k, kind, _ in data.added() if kind == SCRIPT}
         if name_hash(asset_id) not in known:
             result.warnings.append(f"missions/{f.name}: no script {asset_id} (add scripts/{asset_id}.lua)")
@@ -331,7 +382,8 @@ def _apply_missions(data, folder, result):
             result.warnings.append(f"missions/{f.name}: no layer {asset_id} (mission_GenericInit loads it; "
                                    f"add encounters/{asset_id}.json)")
         arc = missions.arc(text, faction, map_)
-        result.changes.append(f"mission {asset_id}: [{section}] in mission.ini, script listed in {map_}, "
+        extras = (f"{len(strings)} strings, " if strings else "") + ("opening mail, " if mail else "")
+        result.changes.append(f"mission {asset_id}: [{section}] in mission.ini, {extras}script listed in {map_}, "
                               f"{faction} {map_} arc now {arc} "
                               f"(start it with DebugSkipToMission('{faction}', {number}))")
 

@@ -76,26 +76,56 @@ How a contract runs, all in the game's scripts:
 
 A mod mission is three files named after its asset ID, `<map>_<faction><number>`:
 
-- `missions/sw_allies9.json`: `{"after": 8, "ini": {"ContractFee": 50000}}`. The build:
+- `missions/sw_allies9.json`:
+
+  ```json
+  {
+   "after": 8,
+   "title": "Foundry Field Test",
+   "description": "Clear an NK squad near the Allied HQ.",
+   "mail": {"sender": "mail.senders.techgal", "subject": "Contract: 'Foundry Field Test'",
+            "body": "An NK squad has dug in just north of our HQ..."},
+   "strings": {"sw.allies9.obj.killsquad.start": "Eliminate the NK squad north of the HQ"},
+   "ini": {"ContractFee": 50000}
+  }
+  ```
+
+  The build:
   - adds 9 to the allies `sw` arc, after mission 8 (at the end without `after`);
   - lists `sw_allies9` under `[script]` in the `sw` list;
-  - adds `[SW_Allies9]` and its `MissionName` to `mission.ini` (written into the mod as `DATAxbox/mission.ini`), copied from the faction's first mission on the map, with `ini` applied.
-- `scripts/sw_allies9.lua`: the mission script. A minimal one:
+  - adds `[SW_Allies9]` and its `MissionName` to `mission.ini` (written into the mod as `DATAxbox/mission.ini`), copied from the faction's first mission on the map, with `ini` applied;
+  - puts `title` and `description` in the always-loaded `missioninfo` text, under the keys retail uses (`MissionInfo.MissionTitle.SWAllies9`), and points the section at them;
+  - adds the opening mail, `sw_allies9_initial`, to `DATAPOD/emails.ini`. `mission_GenericInit` posts it when the contract starts.
+
+  The mail's subject and body and the `strings` (objective texts, messages) go in a new text record named after the mission. The mission's layer loads it under `[registry]`, as retail missions do with theirs. Strings filed anywhere else aren't loaded during the mission, and `Utility_GetStringById` returns nothing.
+- `scripts/sw_allies9.lua`: the mission script. One with an objective:
 
   ```lua
+  tSquad = { 'FoundryM9Nk01', 'FoundryM9Nk02', 'FoundryM9Nk03' }
+  iDown = 0
   function ScriptInit()
   Utility_LoadUtilityScript('mission')
   Utility_LoadUtilityScript('mission_objective')
+  Utility_LoadUtilityScript('mission_objectiveverb')
   Utility_LoadUtilityScript('util_misc')
   mission_GenericInit()
-  Event_ActorHitPointsLessThan('TargetDown', 'b', 'FoundryM9Nk01', 1)
   end
-  function custom_InitialNotifications()   -- skips the standard opening mail
-  Ui_MessageBoxPrint('[yellow]Defeat the soldier north of the HQ', 0)
+  function post_InitialNotifications()   -- after the contract mail
+  sObj = Utility_GetStringById('sw.allies9.obj.killsquad.start')
+  mission_ObjectiveDestroy{ callbackFunc = SoldierDown, objectiveName = 'killsquad',
+                            objectiveDesc = sObj, actorName = tSquad }
+  util_ObjMsgPrint{ sMsg = sObj, sType = 'PRI_OBJ_ADD', vIdx = 1,
+                    tCounter = { vCurr = 0, vLim = 3 }, sObjective = 'killsquad' }
   end
-  function TargetDown() mission_MissionComplete() end
+  function SoldierDown(sActor, bComplete, sObjName)
+  iDown = iDown + 1
+  util_ObjMsgPrint{ sMsg = sObj, sType = iDown >= 3 and 'PRI_OBJ_CMPL' or 'PRI_OBJ_UPD_POS', vIdx = 1,
+                    tCounter = { vCurr = iDown, vLim = 3 }, sObjective = 'killsquad' }
+  if iDown >= 3 then mission_RemoveObjective('killsquad') mission_MissionComplete() end
+  end
   ```
 
+  `mission_ObjectiveDestroy` marks its targets in the world and on the minimap. `util_ObjMsgPrint` shows the objective line and counter. The `mission_objectiveverb` script also offers `mission_ObjectiveAction`, `mission_ObjectiveSubdue`, `mission_ObjectiveExtract` and `mission_ObjectiveDisable`.
 - `encounters/sw_allies9.json`: the mission's layer. Copied objects bring their own layer's model, texture and animation loads, so soldiers from any mission work (`"copy_loads": false` turns that off).
 
 The build warns about any new script that no list names: the game silently ignores those.
@@ -108,6 +138,6 @@ Utility_WriteStringToScribbleMemory('SkipTo_Map','sw') Utility_WriteStringToScri
 
 This is what `global`'s `DebugSkipToMission` does, plus the map switch. Use a throwaway session.
 
-Tested in game (2026-11-08): `sw_allies9`, three NK soldiers copied from a mission-6 template placed north of the allies HQ, started from the skip line above with its message and soldiers.
+Tested in game (2026-11-08): `sw_allies9` (three NK soldiers copied from a mission-6 template, placed north of the allies HQ), started from the skip line above. The contract mail arrived, the objective showed its text with markers on the soldiers and a 0/3 counter, and the counter rose to 3/3 before the mission completed.
 
 Not yet decoded: path animation events (`EVNT`), how traffic zones pick encounters (`Traffic_SetZoneEncounter`), and the first `INFO` word of point sets (always 1).

@@ -46,7 +46,8 @@
 - New layers with encounters ([ENCOUNTERS.md](ENCOUNTERS.md)): squads decoded (no squad-type table: objects join squads by property); mods describe a layer in `encounters/<layer>.json` and the build adds its world, encounter and list records. Tested in game: three NK soldiers in a new layer, loaded from the opening mission's script, appeared and attacked.
 - Path junctions (`JNCT`) decoded, plus pause, bridge and facing chunks (all 857 path records still rebuild exactly). Mod layers can include paths with pauses and links. Tested in game: a soldier patrolled a new looping path.
 - New contract missions: how missions launch traced through the scripts (arc table, `LoadMission`, map script lists, `mission.ini`); mods add a mission with `missions/<id>.json` plus its script and layer. Copied objects bring their layer's asset loads. Tested in game: a new allies mission started from Foundry Console, with its message and soldiers.
-- 184 tests pass.
+- Mission text and objectives: mission files carry a title, description, opening mail and strings. Mission strings go in a text record named after the mission, loaded by its layer. Objectives use the game's own helpers. Tested in game: mail, objective text, markers, counter and completion.
+- 187 tests pass.
 
 ## Fixed from retail data
 - Text values aren't NUL-terminated. The decoder had assumed they were and found no strings.
@@ -92,7 +93,7 @@
 
 ## Next steps
 1. Collision flags: what each `sinf` bit means; collision for edited existing pieces; whether retail pines stop bullets.
-2. Missions: boundaries and regions in mod layers, objectives and mission text (titles, mail), traffic zones, path animation events (`EVNT`).
+2. Missions: boundaries and regions in mod layers, radio voice-overs, traffic zones, path animation events (`EVNT`), offering new missions at the faction HQ (in the arc, but not yet tried through the HQ menu).
 3. Importing skeleton (joint) edits; what animation-table priorities and flags do.
 4. Function map: name more engine functions (actors, vehicles, AI commands, missions); name the vehicle and material readers found so far.
 5. Overlay: draw inside the game's frames (no mode switch).

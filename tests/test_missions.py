@@ -77,6 +77,35 @@ class MissionTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             missions.add_to_mission_ini(text, "sw_allies9")
 
+    def test_text_plan(self):
+        doc = {"title": "Field Test", "description": "Clear a squad.",
+               "mail": {"subject": "Contract", "body": "Go."}, "strings": {"sw.allies9.obj.x": "Kill them"}}
+        strings, ini, mail = missions.text_plan("sw_allies9", doc, "SW_Allies9")
+        self.assertEqual(ini, {"MissionTitleDbKey": "MissionInfo.MissionTitle.SWAllies9",
+                               "ShortDescriptionDbKey": "MissionInfo.Description.SWAllies9"})
+        self.assertEqual(strings["MissionInfo.MissionTitle.SWAllies9"], "Field Test")
+        self.assertEqual(strings["mail.sw_allies9_initial.body"], "Go.")
+        self.assertEqual(strings["sw.allies9.obj.x"], "Kill them")
+        self.assertEqual(mail, ("sw_allies9_initial", "mail.senders.techgal",
+                                "mail.sw_allies9_initial.subject", "mail.sw_allies9_initial.body"))
+        self.assertEqual(missions.text_plan("sw_allies9", {}, "SW_Allies9"), ({}, {}, None))
+
+    def test_add_mail(self):
+        ini = "[Mail]\r\nId\t\tsw_allies3_initial\r\nSender\t\tx\r\n"
+        out = missions.add_mail(ini, "sw_allies9_initial", "mail.senders.techgal", "s", "b")
+        self.assertTrue(out.endswith("[Mail]\r\nId\t\tsw_allies9_initial\r\nSender\t\tmail.senders.techgal\r\n"
+                                     "Subject\t\ts\r\nBody\t\tb\r\nFolderPath\r\nAttachment1\r\nAttachment2\r\n"
+                                     "Attachment3\r\n"))
+        with self.assertRaises(ValueError):
+            missions.add_mail(out, "SW_ALLIES9_INITIAL", "a", "b", "c")
+
+    def test_new_text_record(self):
+        from mercfoundry import registry
+        reg = registry.Registry(registry.new_record())
+        reg.apply({"sw.allies9.obj.x": "Kill them", "mail.sw_allies9_initial.body": "Go."})
+        self.assertEqual(registry.Registry(reg.to_bytes()).strings(),
+                         {"sw.allies9.obj.x": "Kill them", "mail.sw_allies9_initial.body": "Go."})
+
     def test_add_to_list(self):
         lst = "\n[model]\n\nload a\n\n[script]\n\nload global\nload util_misc\n\n[texture]\n\nload t\n"
         out = missions.add_to_list(lst, "script", "sw_allies9")

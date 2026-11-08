@@ -103,6 +103,11 @@ def _numbered(walk):
         yield (key if n == 1 else f"{key}#{n}"), node
 
 
+def new_record() -> bytes:
+    """An empty text record (fill it with Registry.apply)."""
+    return ucfb.wrap(b"reg_", ucfb.pack_children([(b"INFO", b"name\0english\0num_components\0" + b"0\0")]))
+
+
 class Registry:
     def __init__(self, record: bytes):
         body, self.pad = ucfb.unwrap(record, b"reg_", with_pad=True)
