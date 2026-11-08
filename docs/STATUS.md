@@ -35,9 +35,8 @@
 ## Next steps
 1. Model decoder: vertex layout in `VBUF`, materials, skeleton; export to a standard format (glTF or OBJ).
 2. Texture decoder; check whether swbf-unmunge's Xbox texture code (MIT) applies.
-3. Install the build tools and build the port.
-4. In-game tests: a recompressed script, an edited object property and an added string (edited strings confirmed).
-5. Decode the remaining world-layer chunks (`TNAM`, `INFO`) and `path`/`region`/`encounter` records.
+3. In-game tests: a recompressed script, an edited object property and an added string (edited strings confirmed).
+4. Decode the remaining world-layer chunks (`TNAM`, `INFO`) and `path`/`region`/`encounter` records.
 
 ## Notes
 - Several port tools mention replacing "source-informed" versions. Use only versions re-derived from retail (see PROVENANCE.md).
