@@ -1,0 +1,139 @@
+"""New world layers with encounters, from a short description.
+
+How the game uses them (established from retail data and scripts):
+
+  * A layer is a set of records sharing one name: world (objects), encounter,
+    path, lineregion, region and a list.  Utility_ReadLevelFile('<layer>')
+    (in mission and gameflow scripts) reads the layer's list, which names the
+    records to load ("[world]" "load <layer>") and the assets they need.
+  * An encounter (enc_) has point sets (PSET: a name like "A" and points)
+    and squads (SQD_: a name, INFO = u16 point-set names, u16 0, u32 squad
+    size, then FPNT = the point-set names).  Objects join a squad through
+    their own "encounter" and "squad" properties.
+  * Scripts command squads by name, e.g.
+    Squad_Command('Encounter', 'Squad1', 'TacticalMove', 'A', 'hiPri').
+
+A description (a mod's encounters/<layer>.json):
+
+  {"map": "SWN",
+   "encounters": [{"name": "FoundryAmbush",
+                   "points": {"A": [[x, y, z], ...]},
+                   "squads": [{"name": "Squad1", "points": ["A"],
+                               "members": [{"from": "RoadblockRunner",
+                                            "name": "FoundryNk01",
+                                            "position": [x, y, z], "yaw": 90}]}]}],
+   "objects": [{"from": ..., "name": ..., "position": ..., "yaw": ...}]}
+
+"from" names any world object (a template_* or a placed one) whose model and
+properties are copied; "set" changes properties.  Copy objects whose assets
+are already loaded where the layer is used, or add their models to "loads".
+"""
+
+import math
+import struct
+
+from . import aidata, world
+from .hashing import name_hash
+
+WORLD = name_hash("world")
+ENCOUNTER = name_hash("encounter")
+LIST = name_hash("list")
+
+
+def _rotation(yaw_degrees):
+    a = math.radians(yaw_degrees)
+    c, s = math.cos(a), math.sin(a)
+    return [[c, 0.0, -s], [0.0, 1.0, 0.0], [s, 0.0, c]]
+
+
+def _member(source, spec, extra=()):
+    """An inst chunk (world JSON) copied from a source inst chunk."""
+    inst = {k: (list(map(list, v)) if k == "properties" else v) for k, v in source.items()}
+    inst["properties"] = [list(p) for p in source["properties"]]
+    inst["template"] = spec["name"]
+    sets = dict(extra)
+    sets.update(spec.get("set", {}))
+    for key, value in sets.items():
+        for pair in inst["properties"]:
+            if pair[0].lower() == key.lower():
+                pair[1] = str(value)
+                break
+        else:
+            inst["properties"].append([key, str(value)])
+    inst["position"] = [float(v) for v in spec["position"]]
+    inst["rotation"] = _rotation(float(spec.get("yaw", 0)))
+    chunks = inst.get("chunks", ["INFO", "XFRM", "PROP"])
+    if "XFRM" not in chunks:
+        chunks = ["INFO", "XFRM"] + [c for c in chunks if c != "INFO"]
+    inst["chunks"] = chunks
+    return inst
+
+
+def member_names(doc):
+    out = [m["name"] for e in doc.get("encounters", []) for s in e.get("squads", []) for m in s.get("members", [])]
+    return out + [o["name"] for o in doc.get("objects", [])]
+
+
+def sources(doc):
+    out = [m["from"] for e in doc.get("encounters", []) for s in e.get("squads", []) for m in s.get("members", [])]
+    return sorted(set(out + [o["from"] for o in doc.get("objects", [])]), key=str.lower)
+
+
+def build(layer, doc, find_source):
+    """{kind: record bytes} for a new layer.  find_source(name) returns the
+    world-JSON inst chunk of an existing object."""
+    names = member_names(doc)
+    dup = sorted({n for n in names if names.count(n) > 1})
+    if dup:
+        raise ValueError(f"object names used twice: {', '.join(dup)}")
+    insts = []
+    enc_nodes = []
+    for enc in doc.get("encounters", []):
+        points = enc.get("points", {})
+        psets = []
+        for pname, pts in points.items():
+            psets.append({"tag": "PSET", "children": [
+                {"tag": "NAME", "text": pname},
+                {"tag": "INFO", "hex": "010000000000", "auto": True},
+                {"tag": "PNTS", "points": [[float(v) for v in p] for p in pts]}]})
+        squads = []
+        for sq in enc.get("squads", []):
+            sets = list(sq.get("points", []))
+            missing = [s for s in sets if s not in points]
+            if missing:
+                raise ValueError(f"encounter {enc['name']}, squad {sq['name']}: no point set {', '.join(missing)}")
+            members = sq.get("members", [])
+            size = int(sq.get("size", len(members)))
+            node = {"tag": "SQD_", "children": [
+                {"tag": "NAME", "text": sq["name"]},
+                {"tag": "INFO", "hex": struct.pack("<HHI", len(sets), 0, size).hex()}]}
+            if sets:
+                node["children"].append({"tag": "FPNT", "sets": sets})
+            squads.append(node)
+            for m in members:
+                insts.append(_member(find_source(m["from"]), m,
+                                     {"encounter": enc["name"], "squad": sq["name"], "path": "none"}))
+        enc_nodes.append({"tag": "enc_", "children": [
+            {"tag": "NAME", "text": enc["name"]},
+            {"tag": "INFO", "hex": "0000000000000000", "auto": True},
+            {"tag": "PSTS", "children": psets},
+            {"tag": "SQDS", "children": squads}]})
+    for o in doc.get("objects", []):
+        insts.append(_member(find_source(o["from"]), o))
+    wdoc = {"format": world.FORMAT, "name": layer, "strings": [], "chunks": [
+        {"tag": "NAME"},
+        {"tag": "TNAM", "hex": (doc.get("map", "SWN").upper().encode("ascii") + b"\0").hex()},
+        {"tag": "INFO", "rest": "0000000000000000"},
+        {"tag": "TABL"}] + insts}
+    out = {WORLD: world.from_json(wdoc)}
+    sections = {"world": [layer]}
+    if enc_nodes:
+        edoc = {"format": aidata.FORMAT, "kind": "encounter",
+                "tree": [{"tag": "ucfb", "children": enc_nodes}]}
+        out[ENCOUNTER] = aidata.from_json(edoc)
+        sections["encounter"] = [layer]
+    for kind, names_ in (doc.get("loads") or {}).items():
+        sections.setdefault(kind, []).extend(names_)
+    text = "".join(f"\n[{kind}]\n\n" + "".join(f"load {n}\n" for n in sections[kind]) for kind in sorted(sections))
+    out[LIST] = text.encode("latin-1")
+    return out

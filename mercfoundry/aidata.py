@@ -15,7 +15,8 @@ its exact bytes or it stays hex. Established from retail data:
             (u16 properties), XFRM, SIZE (float[3]), PROP (pairs)
   encounter enc_: NAME, INFO (u16, u16, u16 point sets, u16 squads),
             PSTS > PSET (NAME, INFO (.., u16 points at byte 4), PNTS),
-            SQDS > SQD_ (NAME = squad type, INFO, FPNT/PPNT = point-set names)
+            SQDS > SQD_ (NAME = squad name, INFO = u16 point-set names,
+            u16, u32 squad size; FPNT/PPNT = point-set names)
   list      plain text asset load lists ("[animation]", "load ...")
 
 Count fields that matched their contents in the original are recomputed on

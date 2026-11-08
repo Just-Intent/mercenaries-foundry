@@ -43,7 +43,8 @@
 - Terrain surface types: per-texture surface, dust, debris and effect from the level config; `terrain` exports them and mods change them (the build writes the loose config file). Tested in game; Foundry Console shows the surface underfoot.
 - Vehicle handling ([VEHICLES.md](VEHICLES.md)): every `physics…` property is read by the game (grouped by the code that reads it); `vehicles` lists the 92 vehicle models and exports one's handling as a mod rule. Tested in game: triple engine torque made the Humvee much faster.
 - Object hit materials: `obstaclematerialtype` decoded (13 names, how hits pick their effect from it); the `sinf` "material" word is collision flags. Mods set materials with object rules; tested in game (concrete set to metal sparks when shot).
-- 174 tests pass.
+- New layers with encounters ([ENCOUNTERS.md](ENCOUNTERS.md)): squads decoded (no squad-type table: objects join squads by property); mods describe a layer in `encounters/<layer>.json` and the build adds its world, encounter and list records. Tested in game: three NK soldiers in a new layer, loaded from the opening mission's script, appeared and attacked.
+- 178 tests pass.
 
 ## Fixed from retail data
 - Text values aren't NUL-terminated. The decoder had assumed they were and found no strings.
@@ -89,7 +90,7 @@
 
 ## Next steps
 1. Collision flags: what each `sinf` bit means; collision for edited existing pieces; whether retail pines stop bullets.
-2. Missions: path junctions (`JNCT`) and squad types (where `SQD_` names like `nk_hum_ppl_tunnel01` are defined), toward new encounters.
+2. Missions: path junctions (`JNCT`), new paths and boundaries in mod layers, traffic zones, and new missions in mission.ini.
 3. Importing skeleton (joint) edits; what animation-table priorities and flags do.
 4. Function map: name more engine functions (actors, vehicles, AI commands, missions); name the vehicle and material readers found so far.
 5. Overlay: draw inside the game's frames (no mode switch).

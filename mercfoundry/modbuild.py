@@ -16,6 +16,9 @@ Project layout (every part optional):
                           vertical axis, and "copy": true with "as": a new
                           name, to place a duplicate (other actions then
                           apply to the copy).
+    encounters/<layer>.json  a new world layer: objects copied from existing
+                          ones, encounters, point sets and squads (see
+                          docs/ENCOUNTERS.md); load it from a script
     textures/<name>.png   replaces the texture <name>, or adds it if it's new
     models/<name>.obj|.glb|.gltf  an edited export from the `model` command
     animations/*.glb|.gltf   clips replace the game animations with the same
@@ -121,7 +124,8 @@ class _Data:
 def new_project(folder, name=None):
     folder = Path(folder)
     name = name or folder.resolve().name
-    for sub in ("text", "scripts", "objects", "textures", "models", "layout", "animations", "animtables", "terrain"):
+    for sub in ("text", "scripts", "objects", "encounters", "textures", "models", "layout", "animations",
+                "animtables", "terrain"):
         (folder / sub).mkdir(parents=True, exist_ok=True)
     meta = folder / "mod.json"
     if not meta.exists():
@@ -244,6 +248,41 @@ def _apply_rule(inst, rule):
 # obstaclematerialtype values the game knows (0x12B5F0); anything else is 0 ("none")
 MATERIALS = ("wood", "solidmetal", "sheetmetal", "vehicle", "dirt", "concrete", "rock", "plant",
              "snow", "glass", "rubber", "chain", "none")
+
+
+def _apply_encounters(data, folder, result):
+    """encounters/<layer>.json: a new world layer (objects, encounter, list)."""
+    from . import encounters, find
+    files = sorted((folder / "encounters").glob("*.json")) if (folder / "encounters").is_dir() else []
+    if not files:
+        return
+    archives = [data.archive(n) for n in ARCHIVES if (data.dir / n).exists()]
+    existing = {r.key for _, r in data.records(WORLD)}
+    layers = {}
+
+    def find_source(name):
+        hits = find.search(archives, name=name)
+        hits = [h for h in hits if (h.get("name") or "").lower() == name.lower()]
+        if not hits:
+            raise ValueError(f"no world object named {name!r} to copy")
+        layer = hits[0]["layer"]
+        if layer not in layers:
+            a, r = next((a, r) for a, r in data.records(WORLD) if r.key == name_hash(layer))
+            layers[layer] = world.to_json(data.current(a, r))
+        return next(c for c in layers[layer]["chunks"]
+                    if c.get("tag") == "inst" and c.get("template", "").lower() == name.lower())
+
+    for f in files:
+        layer = f.stem
+        if name_hash(layer) in existing:
+            raise ValueError(f"encounters/{f.name}: the game already has a layer named {layer!r}")
+        doc = json.loads(f.read_text(encoding="utf-8"))
+        records = encounters.build(layer, doc, find_source)
+        for kind, body in records.items():
+            data.new("assets.dsk", name_hash(layer), kind, body)
+        n = len(encounters.member_names(doc))
+        result.changes.append(f"layer {layer}: {n} objects, {len(doc.get('encounters', []))} encounters "
+                              f"(load it from a script with Utility_ReadLevelFile('{layer}'))")
 
 
 def _material_warnings(rules):
@@ -596,6 +635,7 @@ def build(project, data_dir, out_dir) -> Result:
     _apply_text(data, project, result)
     _apply_scripts(data, project, result)
     _apply_objects(data, project, result)
+    _apply_encounters(data, project, result)
     _apply_textures(data, project, result)
     _apply_models(data, project, result)
     _apply_layout(data, project, result)
