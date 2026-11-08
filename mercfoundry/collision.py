@@ -91,8 +91,65 @@ def box_triangles(box):
     return tris
 
 
-def pack_box(material, centre, half):
-    return struct.pack("<I15f", material, *half, 1, 0, 0, 0, 1, 0, 0, 0, 1, *centre)
+IDENTITY = (1, 0, 0, 0, 1, 0, 0, 0, 1)
+
+
+def pack_box(material, centre, half, rows=IDENTITY):
+    return struct.pack("<I15f", material, *half, *rows, *centre)
+
+
+def shape_count(cshp_body: bytes) -> int:
+    return sum(1 for tag, _ in ucfb.iter_chunks(cshp_body) if tag == b"shap")
+
+
+def plain_box_shape(cshp_body: bytes):
+    """First box shape without a CMOP tree: (index among shapes, joint,
+    material), or None. Boxes can be added to it without touching a tree."""
+    index = 0
+    for tag, body in ucfb.iter_chunks(cshp_body):
+        if tag != b"shap":
+            continue
+        parts = dict(ucfb.iter_chunks(body))
+        material, joint, kw, _ = struct.unpack("<4I", parts[b"sinf"][:16])
+        if b"CBOX" in parts and b"CMOP" not in parts and (kw & 0xFFFF) in (0, 2):
+            return index, joint, material
+        index += 1
+    return None
+
+
+def append_boxes(cshp_body: bytes, shape_index: int, boxes) -> bytes:
+    """Add boxes to an existing plain box shape, keeping the shape count.
+
+    boxes: [(centre, half, rows)] in that shape's joint space; they take the
+    shape's material."""
+    items, pad_last = ucfb.split(cshp_body)
+    if not items or items[0][0] != b"cinf":
+        raise ValueError("collision block has no cinf header")
+    cinf = bytearray(items[0][1])
+    total, = struct.unpack_from("<H", cinf, 6)
+    if total + len(boxes) > 0xFFFF:
+        raise ValueError("too many collision boxes")
+    struct.pack_into("<H", cinf, 6, total + len(boxes))
+    items[0] = (b"cinf", bytes(cinf))
+    seen = -1
+    for k, (tag, body) in enumerate(items):
+        if tag != b"shap":
+            continue
+        seen += 1
+        if seen != shape_index:
+            continue
+        parts, part_pad = ucfb.split(body)
+        d = dict(parts)
+        material, joint, kw, flag = struct.unpack("<4I", d[b"sinf"][:16])
+        if b"CBOX" not in d or b"CMOP" in d:
+            raise ValueError("can only add boxes to a box shape without a tree")
+        count = kw >> 16
+        sinf = struct.pack("<4I", material, joint, (kw & 0xFFFF) | (count + len(boxes)) << 16, flag) + d[b"sinf"][16:]
+        cbox = d[b"CBOX"] + b"".join(pack_box(material, c, h, r) for c, h, r in boxes)
+        parts = [(t, sinf if t == b"sinf" else cbox if t == b"CBOX" else b) for t, b in parts]
+        items[k] = (b"shap", ucfb.pack_children(parts, part_pad))
+        return ucfb.pack_children(items, pad_last)
+    raise ValueError(f"no shape {shape_index}")
 
 
 # Generated box shapes use kind 2: the kind drivable vehicles use for boxes

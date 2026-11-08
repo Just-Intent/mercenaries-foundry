@@ -448,10 +448,14 @@ def import_obj(model_record: bytes, segments_record: bytes, obj_text: str,
     for body in reversed(added_bodies):
         new_items.insert(last_segm + 1, (b"segm", body))
 
-    # --- collision: one box around each new piece, in its joint's space
+    # --- collision: one box around each new piece.
+    # Vehicles break if they get a third collision shape (tested in-game), and
+    # the game never gives any vehicle more than two. So boxes go into an
+    # existing plain box shape when there is one; a new shape is added only
+    # when the model has fewer than two; otherwise collision is skipped.
     if collision and any(plan[0] is None for plan in plans):
         from . import collision as coll
-        by_joint = {}
+        wanted = []  # (piece joint, centre, half) in that joint's space
         for k, plan in enumerate(plans):
             if plan[0] is not None or not new_locals[k]:
                 continue
@@ -462,17 +466,51 @@ def import_obj(model_record: bytes, segments_record: bytes, obj_text: str,
             hi3 = [max(q[a] for q in pts) for a in range(3)]
             centre3 = tuple((lo3[a] + hi3[a]) / 2 for a in range(3))
             half3 = tuple(max((hi3[a] - lo3[a]) / 2, 0.01) for a in range(3))
-            by_joint.setdefault(plan[2], []).append((centre3, half3))
-        materials = [sh.material for sh in model.collision]
-        material = max(set(materials), key=materials.count) if materials else 7
-        where = next((k for k, (t, _) in enumerate(new_items) if t == b"cshp"), None)
-        for joint, boxes in by_joint.items():
+            wanted.append((plan[2], centre3, half3))
+
+        def into(target):
+            """Boxes re-expressed in the target joint's space (rows = axes)."""
+            trot, tpos = xforms.get(target, ((0.0, 0.0, 0.0, 1.0), (0.0, 0.0, 0.0)))
+            inv = _conj(trot)
+            out = []
+            for joint, centre3, half3 in wanted:
+                rot, pos = xforms.get(joint, ((0.0, 0.0, 0.0, 1.0), (0.0, 0.0, 0.0)))
+                world = tuple(a + b for a, b in zip(mdl._qrot(rot, centre3), pos))
+                c = mdl._qrot(inv, tuple(world[i] - tpos[i] for i in range(3)))
+                rows = []
+                for axis in ((1, 0, 0), (0, 1, 0), (0, 0, 1)):
+                    rows += list(mdl._qrot(inv, mdl._qrot(rot, axis)))
+                out.append((c, half3, tuple(rows)))
+            return out
+
+        if wanted:
+            where = next((k for k, (t, _) in enumerate(new_items) if t == b"cshp"), None)
+            materials = [sh.material for sh in model.collision]
+            # Vehicles: hull mesh uses 6 and secondary shapes 9.
+            material = 9 if 6 in materials else (max(set(materials), key=materials.count) if materials else 7)
+            first_joint = wanted[0][0]
             if where is None:
-                new_items.append((b"cshp", coll.new_block(material, joint, boxes)))
-                where = len(new_items) - 1
+                boxes = into(first_joint)
+                block = coll.new_block(material, first_joint, [(c, h) for c, h, _ in boxes])
+                new_items.append((b"cshp", block))
+                report.collision_boxes += len(boxes)
             else:
-                new_items[where] = (b"cshp", coll.add_box_shape(new_items[where][1], material, joint, boxes))
-            report.collision_boxes += len(boxes)
+                body = new_items[where][1]
+                target = coll.plain_box_shape(body)
+                if target:
+                    index, tjoint, _ = target
+                    boxes = into(tjoint)
+                    new_items[where] = (b"cshp", coll.append_boxes(body, index, boxes))
+                    report.collision_boxes += len(boxes)
+                elif coll.shape_count(body) < 2:
+                    boxes = into(first_joint)
+                    body = coll.add_box_shape(body, material, first_joint, [(c, h) for c, h, _ in boxes])
+                    new_items[where] = (b"cshp", body)
+                    report.collision_boxes += len(boxes)
+                else:
+                    report.warnings.append(
+                        "new pieces got no collision: this model already has two collision shapes and "
+                        "none of them can take more boxes (a third shape breaks vehicle physics)")
 
     new_tree = ucfb.pack_children([(b"ucfb", ucfb.pack_children(new_items, seg_pad_last))], tree_pad)
     packed = script.compress(new_tree)

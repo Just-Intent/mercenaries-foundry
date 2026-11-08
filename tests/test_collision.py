@@ -87,3 +87,57 @@ class ImportCollisionTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+def mesh_shape(material, joint_name, kind=5):
+    sinf = struct.pack("<4I", material, name_hash(joint_name), kind, 1)
+    cmsh = struct.pack("<IHHH", 0, 3, 1, 0) + struct.pack("<9f", 0, 0, 0, 1, 0, 0, 0, 1, 0) + struct.pack("<3H", 0, 1, 2)
+    return ucfb.pack_chunk(b"shap", ucfb.pack_children([(b"sinf", sinf), (b"CMSH", cmsh)]))
+
+
+def segments_with_collision(segms, cshp_chunk):
+    from mercfoundry import script
+    tree = ucfb.pack_chunk(b"ucfb", b"".join(segms) + cshp_chunk)
+    packed = script.compress(tree)
+    return ucfb.wrap(b"CSEG", struct.pack("<II", len(tree), len(packed)) + packed)
+
+
+class ShapeLimitTests(unittest.TestCase):
+    """New boxes must never give a model a third collision shape."""
+
+    def setUp(self):
+        self.joints = [joint("root", (0, 0, 0, 1), (0, 0, 0), ""), joint("arm", (0, 0, 0, 1), (5, 0, 0), "root")]
+        self.mr = model_record("thing", self.joints)
+
+    def run_import(self, cshp_chunk):
+        sr = segments_with_collision([segm(QUAD, [0, 1, 2, 3], "root")], cshp_chunk)
+        m = model.decode(self.mr, sr)
+        obj, _ = model.to_obj(m, 0)
+        lines = obj.splitlines()
+        nv = sum(1 for l in lines if l.startswith("v "))
+        lines += ["o new_arm", "usemtl tex", "v 5 0 0", "v 6 0 0", "v 5 2 -1", f"f {nv + 1} {nv + 3} {nv + 2}"]
+        nm, ns, rep = mi.import_obj(self.mr, sr, "\n".join(lines) + "\n")
+        return model.decode(nm, ns), rep
+
+    def test_appends_into_existing_box_shape(self):
+        block = cshp([mesh_shape(6, "root", kind=4), box_shape(9, "root", [((0, 0, 0), (1, 1, 1))], kind=2)], 1)
+        m2, rep = self.run_import(block)
+        self.assertEqual(len(m2.collision), 2)            # shape count unchanged
+        box_shape_ = m2.collision[1]
+        self.assertEqual(len(box_shape_.boxes), 2)
+        added = box_shape_.boxes[1]
+        self.assertEqual(added.material, 9)
+        # Built in the arm's space (x 0..1), stored in the root's space (x 5..6).
+        self.assertAlmostEqual(added.centre[0], 5.5, places=3)
+        self.assertEqual(rep.collision_boxes, 1)
+
+    def test_adds_second_shape_when_only_one(self):
+        m2, rep = self.run_import(cshp([mesh_shape(6, "root", kind=4)], 0))
+        self.assertEqual(len(m2.collision), 2)
+        self.assertEqual((m2.collision[1].kind, m2.collision[1].material), (2, 9))
+
+    def test_skips_with_warning_when_two_shapes_and_no_box_shape(self):
+        m2, rep = self.run_import(cshp([mesh_shape(6, "root", kind=4), mesh_shape(9, "root")], 0))
+        self.assertEqual(len(m2.collision), 2)
+        self.assertEqual(rep.collision_boxes, 0)
+        self.assertTrue(any("no collision" in w for w in rep.warnings))
