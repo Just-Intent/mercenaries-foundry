@@ -9,6 +9,7 @@ Mercenaries Foundry needs a few additions to the port's runtime. They live here 
 | `0003-Plugin-script-commands.patch` | Plugin script commands: `add_lua_command`, trampolines at reserved guest addresses, and registration on every script's Lua state. |
 | `0004-Plugin-tool-windows.patch` | `set_tool_window`: while a plugin's tool window is open the game leaves exclusive fullscreen and ignores game input, as for the F9 panel. |
 | `0005-Plugin-overlays.patch` | `set_overlay`: a plugin image drawn into the game's frames each present, after the F9 overlay (the port's host-overlay composite), so it shows in exclusive fullscreen. |
+| `0006-Plugin-text-input.patch` | `set_text_input` / `read_text_input`: a plugin takes the keyboard for an in-game console. The game ignores its input without a display change, and the window procedure hands typing to the plugin. |
 
 See [docs/PLUGINS.md](../docs/PLUGINS.md) for the API.
 

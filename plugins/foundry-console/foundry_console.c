@@ -816,10 +816,14 @@ static double since_inspect;
 
 /* In-game panel (F8): the inspector text drawn into the game's own frames
  * through the host's set_overlay, so it shows in exclusive fullscreen too. */
-#define HUD_W 380
-#define HUD_MAX_H 320
+#define HUD_W 420
+#define HUD_MAX_H 380
 #define HUD_LINE 15
 static int f8_down, hud_on;
+/* Typing Lua in the panel (` starts, Enter runs, Esc stops): keys come from
+ * the host's set_text_input / read_text_input, which keep them from the game. */
+static int tilde_down, typing;
+static char typed[256], last_typed[256];
 static HDC hud_dc;
 static HBITMAP hud_bitmap;
 static HFONT hud_font;
@@ -829,6 +833,60 @@ static void hud_hide(void)
 {
     if (MERC_PLUGIN_HOST_HAS(host, set_overlay))
         host->set_overlay(host->context, NULL, 0, 0, 0, 0);
+}
+
+/* The panel's text: the inspector, then (once Lua has been used here) the
+ * last lines of Lua output and the input line. */
+static void hud_text(char *out, size_t size)
+{
+    EnterCriticalSection(&lock);
+    int n = snprintf(out, size, "%s", info_text);
+    if (typing || lua_output[0]) {
+        /* last 6 lines of the output */
+        const char *p = lua_output + strlen(lua_output);
+        int lines = 0;
+        while (p > lua_output && lines < 7) { p--; if (*p == '\n') lines++; }
+        if (*p == '\n') p++;
+        n += snprintf(out + n, size - n, "\r\n----\r\n%s", p);
+    }
+    LeaveCriticalSection(&lock);
+    if (typing && n < (int)size)
+        snprintf(out + n, size - n, "%s> %s_", n && out[n - 1] != '\n' ? "\r\n" : "", typed);
+}
+
+static void hud_draw(const char *text);
+
+/* Keys typed since the last update: edit the line, run it, or stop typing.
+ * Returns 1 if anything changed. */
+static int hud_typing_keys(void)
+{
+    if (!typing || !MERC_PLUGIN_HOST_HAS(host, read_text_input)) return 0;
+    uint32_t keys[64];
+    int count = host->read_text_input(host->context, keys, 64), changed = 0;
+    for (int i = 0; i < count; i++) {
+        uint32_t k = keys[i];
+        size_t len = strlen(typed);
+        changed = 1;
+        if (k == (MERC_KEY_FLAG | VK_ESCAPE)) {
+            typing = 0;
+            host->set_text_input(host->context, 0);
+            return 1;
+        } else if (k == (MERC_KEY_FLAG | VK_RETURN)) {
+            if (len) {
+                memcpy(last_typed, typed, sizeof(typed));
+                run_lua(0, typed);
+                typed[0] = 0;
+            }
+        } else if (k == (MERC_KEY_FLAG | VK_BACK)) {
+            if (len) typed[len - 1] = 0;
+        } else if (k == (MERC_KEY_FLAG | VK_UP)) {
+            memcpy(typed, last_typed, sizeof(typed));
+        } else if (!(k & MERC_KEY_FLAG) && k < 128) {
+            if (k == '`' && !len) continue;          /* the key that opened typing */
+            if (len + 1 < sizeof(typed)) { typed[len] = (char)k; typed[len + 1] = 0; }
+        }
+    }
+    return changed;
 }
 
 static void hud_draw(const char *text)
@@ -853,7 +911,9 @@ static void hud_draw(const char *text)
     }
     memset(hud_pixels, 0, HUD_W * HUD_MAX_H * 4);
     int y = 6;
-    TextOutA(hud_dc, 8, y, "Foundry Console  (F8 hides, F7 opens the window)", 48);
+    const char *title = typing ? "Foundry Console  (Enter runs, Esc stops typing)"
+                               : "Foundry Console  (` types Lua, F8 hides, F7 window)";
+    TextOutA(hud_dc, 8, y, title, (int)strlen(title));
     y += HUD_LINE + 4;
     const char *p = text;
     while (*p && y + HUD_LINE <= HUD_MAX_H - 4) {
@@ -897,9 +957,22 @@ static int MERC_PLUGIN_CALL on_update(void *ud, const MercPluginUpdate *u)
     if (f8 && !f8_down && pid == GetCurrentProcessId()) {
         hud_on = !hud_on;
         since_inspect = 1.0;                 /* draw (or clear) right away */
-        if (!hud_on) hud_hide();
+        if (!hud_on) {
+            if (typing) { typing = 0; host->set_text_input(host->context, 0); }
+            hud_hide();
+        }
     }
     f8_down = f8;
+    int tilde = (GetAsyncKeyState(VK_OEM_3) & 0x8000) != 0;
+    if (tilde && !tilde_down && hud_on && !typing && pid == GetCurrentProcessId() &&
+        MERC_PLUGIN_HOST_HAS(host, set_text_input) && host->set_text_input(host->context, 1)) {
+        typing = 1;
+        typed[0] = 0;
+        since_inspect = 1.0;
+    }
+    tilde_down = tilde;
+    if (hud_typing_keys())
+        since_inspect = 1.0;                 /* show the keystroke now */
     LONG want = InterlockedCompareExchange(&want_tool, 0, 0);
     if (want != tool_state && MERC_PLUGIN_HOST_HAS(host, set_tool_window)) {
         host->set_tool_window(host->context, want);
@@ -911,10 +984,8 @@ static int MERC_PLUGIN_CALL on_update(void *ud, const MercPluginUpdate *u)
         since_inspect = 0;
         inspect();
         if (hud_on) {
-            char text[1024];
-            EnterCriticalSection(&lock);
-            memcpy(text, info_text, sizeof(text));
-            LeaveCriticalSection(&lock);
+            char text[2048];
+            hud_text(text, sizeof(text));
             hud_draw(text);
         }
     }

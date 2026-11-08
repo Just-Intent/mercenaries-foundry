@@ -1,0 +1,190 @@
+From 8e151288fd2509b00fd2da21490776521965c51f Mon Sep 17 00:00:00 2001
+From: Just-Intent <346791974+Just-Intent@users.noreply.github.com>
+Date: Sun, 8 Nov 2026 15:19:00 -0600
+Subject: [PATCH] Plugin text input
+
+set_text_input lets a plugin take the keyboard for an in-game console:
+the game ignores its input, as for the F9 panel, without changing the
+display, and the window procedure hands WM_CHAR and editing keys to the
+plugin instead, read with read_text_input. One plugin at a time; a
+plugin that stops gives it back.
+---
+ ports/mercenaries/sdk/mercenaries_plugin.h | 10 +++++
+ ports/mercenaries/src/main.c               | 12 ++++-
+ ports/mercenaries/src/plugin_host.cpp      | 51 +++++++++++++++++++++-
+ ports/mercenaries/src/plugin_host.h        |  5 +++
+ 4 files changed, 75 insertions(+), 3 deletions(-)
+
+diff --git a/ports/mercenaries/sdk/mercenaries_plugin.h b/ports/mercenaries/sdk/mercenaries_plugin.h
+index 508f4b6..86223f3 100644
+--- a/ports/mercenaries/sdk/mercenaries_plugin.h
++++ b/ports/mercenaries/sdk/mercenaries_plugin.h
+@@ -92,7 +92,17 @@ typedef struct MercPluginHost {
+      * 960 x 540. Any thread may call it. Returns 1, or 0 if refused. */
+     int (MERC_PLUGIN_CALL *set_overlay)(void *, const void *pixels, uint32_t width, uint32_t height,
+                                         uint32_t x, uint32_t y);
++    /* Keyboard text for an in-game console. While on (1) the game ignores its
++     * input, as for the F9 panel, but the display isn't changed, and the game
++     * window's keys go to this plugin instead: read them with read_text_input.
++     * One plugin at a time (0 if another has it). Call from on_update. */
++    int (MERC_PLUGIN_CALL *set_text_input)(void *, int);
++    /* Up to max keys typed since the last call, oldest first: a Unicode
++     * character, or MERC_KEY_FLAG | virtual-key code for Enter, Escape,
++     * Backspace, Tab, Delete, Home, End and the arrows. Returns the count. */
++    int (MERC_PLUGIN_CALL *read_text_input)(void *, uint32_t *keys, uint32_t max);
+ } MercPluginHost;
++#define MERC_KEY_FLAG 0x80000000u
+ /* True when the host provides a field (older hosts have a smaller struct). */
+ #define MERC_PLUGIN_HOST_HAS(host, field) \
+     ((host)->struct_size >= offsetof(MercPluginHost, field) + sizeof((host)->field) && (host)->field)
+diff --git a/ports/mercenaries/src/main.c b/ports/mercenaries/src/main.c
+index d7baa33..7938f81 100644
+--- a/ports/mercenaries/src/main.c
++++ b/ports/mercenaries/src/main.c
+@@ -916,11 +916,19 @@ static void host_dev_display(int open){
+ /* Plugin tool windows (Mercenaries Foundry): treated like the F9 panel. Called
+  * on the guest thread, so the display change is posted to the window's thread. */
+ void xbox_InputSetOverlayCapture(BOOL captured);
++static int g_plugin_text_open;
++/* A plugin's in-game console has the keyboard: the game ignores its input,
++ * but the display stays as it is (the console is drawn in the frame). */
++static void host_plugin_text(int open){
++    g_plugin_text_open=open;
++    if(open)xbox_InputSetOverlayCapture(TRUE);
++    else if(!g_dev_tools_open&&!g_plugin_tools_open)xbox_InputSetOverlayCapture(FALSE);
++}
+ static void host_plugin_tools(int open){
+     g_plugin_tools_open=open;
+     g_host_tools_open=g_dev_tools_open||g_plugin_tools_open;
+     if(open)xbox_InputSetOverlayCapture(TRUE);
+-    else if(!g_dev_tools_open)xbox_InputSetOverlayCapture(FALSE);
++    else if(!g_dev_tools_open&&!g_plugin_text_open)xbox_InputSetOverlayCapture(FALSE);
+     if(g_host_window&&recomp_options_display_mode()==RECOMP_DISPLAY_FULLSCREEN)
+         PostMessageA(g_host_window,WM_RECOMP_DISPLAY,0,0);
+ }
+@@ -931,6 +939,7 @@ static void dev_bookmark(void) { preview_snapshot("USER-MARKER-DEV-MENU"); }
+ static LRESULT CALLBACK host_window_proc(HWND hwnd, UINT message,
+                                         WPARAM wparam, LPARAM lparam)
+ {
++    if((message==WM_CHAR||message==WM_KEYDOWN)&&merc_plugins_text_key(message,(unsigned)wparam))return 0;
+     if(recomp_controls_message(hwnd,message,wparam,lparam))return message==WM_SETCURSOR ? TRUE : 0;
+     switch (message) {
+     case WM_ACTIVATEAPP:
+@@ -1078,6 +1087,7 @@ static BOOL host_graphics_init(HINSTANCE instance, int show_command)
+     recomp_dev_menu_init(g_host_window, dev_bookmark);
+     recomp_dev_menu_set_display_callback(host_dev_display);
+     merc_plugins_set_tool_display(host_plugin_tools);
++    merc_plugins_set_text_capture(host_plugin_text);
+     recomp_dev_overlay_init();
+     g_host_ready=1;
+     recomp_controls_init(g_host_window);
+diff --git a/ports/mercenaries/src/plugin_host.cpp b/ports/mercenaries/src/plugin_host.cpp
+index 35ffa8d..0e3edb6 100644
+--- a/ports/mercenaries/src/plugin_host.cpp
++++ b/ports/mercenaries/src/plugin_host.cpp
+@@ -4,6 +4,7 @@
+ #include "plugin_host.h"
+ #include "plugin_manifest.h"
+ #include <memory>
++#include <deque>
+ #include <map>
+ #include <mutex>
+ #include <vector>
+@@ -221,7 +222,34 @@ int MERC_PLUGIN_CALL set_overlay(void *ctx,const void *pixels,uint32_t width,uin
+     o.width=width;o.height=height;o.x=x;o.y=y;
+     return 1;
+ }
++/* Keyboard text for a plugin's in-game console: the window procedure hands
++ * keys over while a plugin holds text input (main.c). */
++void (*text_capture)(int)=nullptr;
++Loaded *text_owner=nullptr;
++std::deque<uint32_t> text_keys;
++void release_text(Loaded *p) {
++    std::lock_guard<std::mutex> guard(overlay_lock);
++    if(text_owner!=p)return;
++    text_owner=nullptr;text_keys.clear();
++    if(text_capture)text_capture(0);
++}
++int MERC_PLUGIN_CALL set_text_input(void *ctx,int on) {
++    if(GetCurrentThreadId()!=owner||!calling||ctx!=calling)return 0;
++    if(!on){release_text(calling);return 1;}
++    std::lock_guard<std::mutex> guard(overlay_lock);
++    if(text_owner&&text_owner!=calling)return 0;
++    if(!text_owner){text_owner=calling;text_keys.clear();if(text_capture)text_capture(1);}
++    return 1;
++}
++int MERC_PLUGIN_CALL read_text_input(void *ctx,uint32_t *keys,uint32_t max) {
++    std::lock_guard<std::mutex> guard(overlay_lock);
++    if(!keys||ctx!=text_owner)return 0;
++    uint32_t n=0;
++    while(n<max&&!text_keys.empty()){keys[n++]=text_keys.front();text_keys.pop_front();}
++    return int(n);
++}
+ void shutdown_all() {
++    for(auto &entry:loaded)release_text(entry.get());
+     {std::lock_guard<std::mutex> guard(overlay_lock);overlays.clear();}
+     for(auto &entry:loaded)set_tool(*entry,false);
+     for(auto it=loaded.rbegin();it!=loaded.rend();++it) {
+@@ -273,7 +301,8 @@ extern "C" int merc_plugins_initialize(void *base,size_t bytes) {
+             fs::create_directories(fs::path(wide(p->settings)));
+             p->host={sizeof(MercPluginHost),MERCENARIES_PLUGIN_API_VERSION,p.get(),
+                 p->manifest.id.c_str(),p->directory.c_str(),p->settings.c_str(),plugin_log,read_guest,write_guest,
+-                call_guest,guest_scratch,in_gameplay,hook_guest,add_lua_command,set_tool_window,set_overlay};
++                call_guest,guest_scratch,in_gameplay,hook_guest,add_lua_command,set_tool_window,set_overlay,
++                set_text_input,read_text_input};
+             p->callbacks.struct_size=sizeof(MercPlugin);p->callbacks.api_version=MERCENARIES_PLUGIN_API_VERSION;
+             auto library=m.root/wide(m.library);
+             // Own directory for dependencies; no working-directory or PATH search.
+@@ -319,7 +348,7 @@ extern "C" int merc_plugins_update(void) {
+         try {ok=p.callbacks.on_update(p.callbacks.userdata,&update);}catch(...) {ok=0;}
+         updating=false;calling=nullptr;
+         if(!ok) {
+-            p.active=false;stopped.insert(p.manifest.id);set_tool(p,false);
++            p.active=false;stopped.insert(p.manifest.id);set_tool(p,false);release_text(&p);
+             if(!failure.empty())failure+="\n";
+             failure+=p.manifest.name+": update failed; this plugin and its dependents will receive no further updates. Restart the game after correcting the mod.";
+             record(failure);
+@@ -333,6 +362,24 @@ extern "C" int merc_plugins_hook_ready(void) {
+ extern "C" void merc_plugins_hook_before(unsigned index,MercHookContext *call) {run_hooks(index,call,false);}
+ extern "C" void merc_plugins_hook_after(unsigned index,MercHookContext *call) {run_hooks(index,call,true);}
+ extern "C" void merc_plugins_set_tool_display(void (*callback)(int)) {tool_display=callback;}
++extern "C" void merc_plugins_set_text_capture(void (*callback)(int)) {text_capture=callback;}
++extern "C" int merc_plugins_text_key(unsigned message,unsigned key) {
++    std::lock_guard<std::mutex> guard(overlay_lock);
++    if(!text_owner)return 0;
++    uint32_t value=0;
++    if(message==WM_CHAR) {
++        if(key>=32&&key!=127)value=key;          /* printable; control characters come as keys */
++    } else if(message==WM_KEYDOWN) {
++        switch(key) {
++        case VK_RETURN:case VK_ESCAPE:case VK_BACK:case VK_TAB:case VK_DELETE:
++        case VK_HOME:case VK_END:case VK_LEFT:case VK_RIGHT:case VK_UP:case VK_DOWN:
++            value=MERC_KEY_FLAG|key;break;
++        default:break;
++        }
++    } else return 0;
++    if(value&&text_keys.size()<256)text_keys.push_back(value);
++    return 1;                                    /* the game doesn't see typing */
++}
+ extern "C" void merc_plugins_each_overlay(void (*fn)(const void*,unsigned,unsigned,unsigned,unsigned)) {
+     std::lock_guard<std::mutex> guard(overlay_lock);
+     for(auto &entry:overlays) {
+diff --git a/ports/mercenaries/src/plugin_host.h b/ports/mercenaries/src/plugin_host.h
+index 9373eb1..bf73e0a 100644
+--- a/ports/mercenaries/src/plugin_host.h
++++ b/ports/mercenaries/src/plugin_host.h
+@@ -36,6 +36,11 @@ void merc_plugins_hook_after(unsigned index, MercHookContext *call);
+ /* Plugin tool windows: the host (main.c) gets told when the first opens and
+  * the last closes, and treats that like the F9 panel. */
+ void merc_plugins_set_tool_display(void (*callback)(int open));
++/* Plugin text input: the host is told when a plugin takes (1) or gives back (0)
++ * the keyboard; the window procedure offers WM_CHAR / WM_KEYDOWN, and returns
++ * at once when merc_plugins_text_key says a plugin took it. */
++void merc_plugins_set_text_capture(void (*callback)(int on));
++int merc_plugins_text_key(unsigned message, unsigned key);
+ /* Plugin overlays: call fn for each plugin image (render thread, at present). */
+ void merc_plugins_each_overlay(void (*fn)(const void *pixels, unsigned width, unsigned height,
+                                           unsigned x, unsigned y));
+-- 
+2.55.0.windows.5
+

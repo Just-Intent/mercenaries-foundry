@@ -15,6 +15,8 @@ Six functions appended to `MercPluginHost` (older plugins are unaffected; check 
 | `add_lua_command(ctx, name, fn, userdata)` | Add a global script command (see Script commands). |
 | `set_tool_window(ctx, open)` | Say a plugin window is open (1) or closed (0). While any is open the game treats it like the F9 developer panel: it leaves exclusive fullscreen so the window can show, and ignores game input. Call from `on_update`. |
 | `set_overlay(ctx, pixels, width, height, x, y)` | Show an image over the game's own frames: premultiplied BGRA, at most 960 x 540, placed at `x, y` on a 960 x 540 screen scaled to the game's picture. The host keeps a copy and composites it every frame after the F9 overlay, until it is replaced or hidden (`pixels` NULL). It is drawn into the frame, so it shows in exclusive fullscreen with no mode switch. Any thread may call it. Port patch 0005. |
+| `set_text_input(ctx, on)` | Take (1) or give back (0) the keyboard for an in-game console. While a plugin has it, the game ignores its input as for the F9 panel, without changing the display, and the game window's typing goes to the plugin. One plugin at a time (0 if another has it); a plugin that stops is released. Call from `on_update`. Port patch 0006. |
+| `read_text_input(ctx, keys, max)` | The keys typed since the last call, oldest first: a Unicode character, or `MERC_KEY_FLAG \| VK_...` for Enter, Escape, Backspace, Tab, Delete, Home, End and the arrows. Returns the count. |
 
 Rules:
 - Calls only work inside `on_update`. That runs on the game's own thread at its input checkpoint, the same place the port's developer tools call the game.

@@ -51,6 +51,7 @@
 - Mod missions at the HQ: the HQ's contract order is tied to fixed arc positions, so each mod mission instead gets a contact beside its faction's bouncer, marked like the bouncers, who offers and starts it. A one-line hook in `global` runs a generated `foundry_contracts` script. Tested in game.
 - Side contracts keep campaign progress (the faction's arc position and completed-mission counters are saved and put back) and are remembered once completed (the contact goes, unless the mission is repeatable). Tested in game.
 - Plugin overlays (port patch `0005`): `set_overlay` draws a plugin's image into the game's frames each present, after the F9 overlay, so it shows in exclusive fullscreen. Foundry Console's F8 panel shows the inspector in game. Tested in game.
+- In-game console (port patch `0006`): `set_text_input` / `read_text_input` let a plugin take the keyboard without leaving fullscreen. Foundry Console's F8 panel takes Lua lines (`` ` `` to type, Enter runs, Esc stops). Tested in game.
 - 190 tests pass.
 
 ## Fixed from retail data
@@ -100,7 +101,7 @@
 2. Missions: regions (boxes) in mod layers, radio voice-overs, traffic zones, path animation events (`EVNT`).
 3. Importing skeleton (joint) edits; what animation-table priorities and flags do.
 4. Function map: name more engine functions (actors, vehicles, AI commands, missions); name the vehicle and material readers found so far.
-5. Overlay: keyboard input for an in-game console (Lua and spawning without the window).
+5. Overlay: spawning and object editing from the in-game panel (now only in the window).
 
 ## Notes
 - Several port tools mention replacing "source-informed" versions. Use only versions re-derived from retail (see PROVENANCE.md).
