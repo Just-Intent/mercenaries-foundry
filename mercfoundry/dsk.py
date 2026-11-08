@@ -11,6 +11,7 @@ empty, a 2048-byte pad, or grid-index data (starts with 0x00FF8040). We don't
 decode the tail yet, so it is always preserved exactly on repack.
 See docs/formats/dsk.md.
 """
+import hashlib
 import json
 import os
 import re
@@ -112,11 +113,13 @@ def _safe(text: str) -> str:
     return re.sub(r"[^A-Za-z0-9._-]+", "_", text)[:80] or "unnamed"
 
 
-def extract(archive_path, out_dir, names: NameBook = None, decode: bool = False) -> dict:
+def extract(archive_path, out_dir, names: NameBook = None, decode: bool = False,
+            textures: bool = False) -> dict:
     """Write every record to its own file plus a manifest for exact repacking.
 
     With decode=True, scripts, world layers and text also get a readable copy
-    in decoded/. Edit those, then run rebuild() before pack().
+    in decoded/ (and textures as PNG with textures=True). Edit those, then run
+    rebuild() before pack().
     """
     from . import codecs
     arc = Archive(archive_path)
@@ -147,7 +150,9 @@ def extract(archive_path, out_dir, names: NameBook = None, decode: bool = False)
             }
             if decode:
                 try:
-                    readable = codecs.decode(rec.kind, payload)
+                    want = textures is True or (isinstance(textures, str) and name
+                                                and textures.lower() in name.lower())
+                    readable = codecs.decode(rec.kind, payload, bool(want))
                 except (ValueError, KeyError, UnicodeError, struct.error) as err:
                     entry["decode_error"] = str(err)
                     readable = None
@@ -157,6 +162,7 @@ def extract(archive_path, out_dir, names: NameBook = None, decode: bool = False)
                     (out / "decoded").mkdir(exist_ok=True)
                     (out / dname).write_bytes(data)
                     entry["decoded"] = dname
+                    entry["decoded_sha1"] = hashlib.sha1(data).hexdigest()
             entries.append(entry)
         tail_file = None
         if arc.tail_size:
@@ -217,25 +223,53 @@ def pack(src_dir, out_path) -> int:
 
 
 def rebuild(src_dir) -> list:
-    """Re-encode records whose decoded/ file was edited. Returns their files."""
+    """Re-encode records whose decoded/ file was edited. Returns their files.
+
+    The first time a record is replaced, its original is kept in originals/.
+    If a decoded file is later put back exactly as extracted, the original
+    record is restored rather than re-encoded.
+    """
     from . import codecs
     src = Path(src_dir)
-    manifest = json.loads((src / MANIFEST).read_text(encoding="utf-8"))
-    changed = []
+    manifest_path = src / MANIFEST
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    changed, dirty = [], False
     for e in manifest["records"]:
         if not e.get("decoded"):
             continue
         rec_path, dec_path = src / e["file"], src / e["decoded"]
         if not dec_path.exists():
             continue
-        base = rec_path.read_bytes()
+        data = dec_path.read_bytes()
+        digest = hashlib.sha1(data).hexdigest()
+        original = src / "originals" / Path(e["file"]).name
+        if digest == e.get("decoded_sha1"):
+            if original.exists():
+                os.replace(original, rec_path)
+                e.pop("rebuilt_sha1", None)
+                changed.append(e["file"])
+                dirty = True
+            continue
+        if digest == e.get("rebuilt_sha1"):
+            continue
+        base = original.read_bytes() if original.exists() else rec_path.read_bytes()
         try:
-            new = codecs.encode(int(e["kind"], 16), dec_path.read_bytes(), base)
+            new = codecs.encode(int(e["kind"], 16), data, base,
+                                check_unchanged="decoded_sha1" not in e)
         except (ValueError, KeyError, UnicodeError, struct.error) as err:
             raise ValueError(f"{e['decoded']}: {err}") from err
-        if new != base:
-            rec_path.write_bytes(new)
-            changed.append(e["file"])
+        if new == base and not original.exists():
+            continue
+        if not original.exists():
+            original.parent.mkdir(exist_ok=True)
+            original.write_bytes(base)
+        rec_path.write_bytes(new)
+        if "decoded_sha1" in e:
+            e["rebuilt_sha1"] = digest
+            dirty = True
+        changed.append(e["file"])
+    if dirty:
+        manifest_path.write_text(json.dumps(manifest, indent=1) + "\n", encoding="utf-8")
     return changed
 
 

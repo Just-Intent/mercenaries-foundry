@@ -51,7 +51,7 @@ python -m mercfoundry extract DATAxbox/assets.dsk work/assets --decode
 python -m mercfoundry pack work/assets out/assets.dsk
 ```
 
-`--decode` writes a readable copy of each Lua script (decompressed), world layer (object instances with named properties) and text table (strings by dotted key). `pack` re-encodes any decoded file you changed back into its record first; untouched files leave the archive byte-identical. Run `rebuild` to do that step on its own, or `pack --no-rebuild` to skip it. In a text file, change a value to edit a string or add a new key to add one; keys you delete are left unchanged in the archive.
+`--decode` writes a readable copy of each Lua script (decompressed), world layer (object instances with named properties) and text table (strings by dotted key). Add `--textures` to also write textures as PNG (all of them takes a few minutes for `streamed.dsk`; `--textures humvee` writes only textures whose names contain "humvee"). Edited PNGs are re-encoded in the original format with new mip levels; sizes must be powers of two. `pack` re-encodes any decoded file you changed back into its record first; untouched files leave the archive byte-identical. Run `rebuild` to do that step on its own, or `pack --no-rebuild` to skip it. Putting a decoded file back exactly as it was restores the original record. In a text file, change a value to edit a string or add a new key to add one; keys you delete are left unchanged in the archive.
 
 ### Exporting models
 

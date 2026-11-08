@@ -49,7 +49,11 @@ def cmd_list(args):
 
 
 def cmd_extract(args):
-    m = dsk.extract(args.archive, args.out, _names(args), decode=args.decode)
+    if args.textures and not args.decode:
+        sys.exit("--textures needs --decode")
+    if args.textures is True:
+        print("decoding all textures; this can take a few minutes for streamed.dsk")
+    m = dsk.extract(args.archive, args.out, _names(args), decode=args.decode, textures=args.textures)
     named = sum(1 for e in m["records"] if e["name"])
     print(f"extracted {len(m['records'])} records ({named} named) to {args.out}")
     if args.decode:
@@ -237,6 +241,8 @@ def main(argv=None):
     s = add("extract", cmd_extract, "extract every record plus a manifest")
     s.add_argument("archive"); s.add_argument("out"); names_opt(s)
     s.add_argument("--decode", action="store_true", help="also write readable scripts, world layers and text")
+    s.add_argument("--textures", nargs="?", const=True, metavar="NAME_PART",
+                   help="with --decode, also write textures as PNG (optionally only names containing NAME_PART)")
     s = add("rebuild", cmd_rebuild, "re-encode records from edited decoded files")
     s.add_argument("folder")
     s = add("pack", cmd_pack, "rebuild an archive from an extracted folder")

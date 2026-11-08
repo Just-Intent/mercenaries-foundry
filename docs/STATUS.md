@@ -13,7 +13,8 @@
   - Model geometry (`segments`) uses the script compression; all 2,954 records decompress.
 - Model decoder: all 2,297 models decode (1.35 million triangles): skeleton, joint placement, levels of detail, pristine/damaged panels, normals, texture coordinates, vertex colours, texture names. `model` exports OBJ plus a preview image. 2,285 models match their stored bounds exactly; the other 12 differ only around helicopter rotors.
 - Texture decoder: all 4,715 textures (DXT1, DXT2/3, swizzled A8R8G8B8, 4 cube maps). `texture` exports PNG; `model` now exports textures with the OBJ and draws them in its preview, which confirms the texture coordinates.
-- 50 tests pass.
+- Texture re-import: PNG reader, DXT1/DXT3 and swizzled A8R8G8B8 encoders with mip generation, hooked into `extract --decode --textures` and `pack`. Re-encoding the game's own textures is lossless for 97% of a sample. `rebuild` now tracks decoded-file hashes and restores originals when an edit is undone.
+- 67 tests pass.
 
 ## Fixed from retail data
 - Text values aren't NUL-terminated. The decoder had assumed they were and found no strings.
@@ -38,10 +39,11 @@
 - Python 3.12.10 alongside 3.13. The port's `.venv` has its pinned CMake 3.31.6, Ninja 1.13.0 and Capstone 5.0.6.
 
 ## Next steps
-1. Re-encoding: write edited textures (PNG → DXT) and models back into the game.
-2. Models: glTF export with the skeleton and skin weights.
-3. A `mod` command that builds a mod folder from a list of edits, so tests like these are one step.
-4. Decode the remaining world-layer chunks (`TNAM`, `INFO`) and `path`/`region`/`encounter` records.
+1. In-game test of a repainted texture (Humvee tinted red, in `mods/Foundry Test`).
+2. Model import: write edited models back into the game.
+3. Models: glTF export with the skeleton and skin weights.
+4. A `mod` command that builds a mod folder from a list of edits, so tests like these are one step.
+5. Decode the remaining world-layer chunks (`TNAM`, `INFO`) and `path`/`region`/`encounter` records.
 
 ## Notes
 - Several port tools mention replacing "source-informed" versions. Use only versions re-derived from retail (see PROVENANCE.md).

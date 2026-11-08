@@ -1,11 +1,13 @@
 """Readable forms of record types, keyed by the record's type hash.
 
-decode(kind, record) -> (suffix, bytes) or None
+decode(kind, record, textures=False) -> (suffix, bytes) or None
 encode(kind, decoded, base) -> record bytes, built on the original record
+
+Textures are opt-in because decoding thousands of them takes minutes.
 """
 import json
 
-from . import registry, script, world
+from . import png, registry, script, texture, world
 from .hashing import name_hash
 
 
@@ -35,17 +37,27 @@ CODECS = {
 }
 
 
-def decode(kind: int, record: bytes):
-    codec = CODECS.get(kind)
+def _texture_encode(decoded, base):
+    width, height, rgba = png.decode(decoded)
+    return texture.encode(texture.replace_image(texture.decode(base), width, height, rgba))
+
+
+TEXTURES = {
+    texture.TEXTURE: (".png", lambda rec: texture.decode(rec).to_png(), _texture_encode),
+}
+
+
+def decode(kind: int, record: bytes, textures: bool = False):
+    codec = CODECS.get(kind) or (TEXTURES.get(kind) if textures else None)
     if not codec:
         return None
     suffix, dec, _ = codec
     return suffix, dec(record)
 
 
-def encode(kind: int, decoded: bytes, base: bytes) -> bytes:
+def encode(kind: int, decoded: bytes, base: bytes, check_unchanged: bool = True) -> bytes:
     """Return the record for an edited decoded file; the base if unchanged."""
-    suffix, dec, enc = CODECS[kind]
-    if dec(base) == decoded:
+    suffix, dec, enc = CODECS.get(kind) or TEXTURES[kind]
+    if check_unchanged and dec(base) == decoded:
         return base
     return enc(decoded, base)
