@@ -138,7 +138,7 @@
    "address": "0x00113BA0",
    "name": "Lua_ArgHitPointActor",
    "signature": "Actor * __cdecl Lua_ArgHitPointActor(lua_State *L, int n)",
-   "evidence": "retail code: Lua_ToActorRef, then World_ActorFromHandle, then keeps the result only if its type bits match g_HitPointActorType (0x30C0B4/0x30C0B8)"
+   "evidence": "retail code: Lua_ArgHandle, then World_ActorFromHandle, then keeps the result only if its type bits match g_HitPointActorType (0x30C0B4/0x30C0B8)"
   },
   {
    "address": "0x0011D530",

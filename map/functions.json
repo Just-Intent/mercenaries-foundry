@@ -5232,7 +5232,7 @@
     "Lua_ArgHitPointActor"
    ],
    "evidence": [
-    "retail code: Lua_ToActorRef, then World_ActorFromHandle, then keeps the result only if its type bits match g_HitPointActorType (0x30C0B4/0x30C0B8)"
+    "retail code: Lua_ArgHandle, then World_ActorFromHandle, then keeps the result only if its type bits match g_HitPointActorType (0x30C0B4/0x30C0B8)"
    ],
    "signature": "Actor * __cdecl Lua_ArgHitPointActor(lua_State *L, int n)"
   },
