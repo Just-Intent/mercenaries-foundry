@@ -106,6 +106,35 @@ class MissionTests(unittest.TestCase):
         self.assertEqual(registry.Registry(reg.to_bytes()).strings(),
                          {"sw.allies9.obj.x": "Kill them", "mail.sw_allies9_initial.body": "Go."})
 
+    def test_patch_global(self):
+        src = ("function LoadNoMissionState()\nlocal a = 1\nSpawnBouncers(TRUE)\nEnableBouncers(TRUE)\nend\n"
+               "function Other()\nSpawnBouncers(TRUE)\nend\n")
+        out = missions.patch_global(src)
+        self.assertIn("SpawnBouncers(TRUE)\nUtility_LoadUtilityScript('foundry_contracts') foundry_SetupContracts()\n"
+                      "EnableBouncers(TRUE)", out)
+        self.assertEqual(out.count("foundry_SetupContracts"), 1)          # only in LoadNoMissionState
+        self.assertEqual(missions.patch_global(out), out)                 # once
+        with self.assertRaises(ValueError):
+            missions.patch_global("function Other() end\n")
+
+    def test_contracts_script(self):
+        contact, strings = missions.contract("sw_allies9", {"title": "Field Test", "contact": {"name": "Major X"}},
+                                             "MissionInfo.MissionTitle.SWAllies9", "MissionInfo.Description.SWAllies9")
+        self.assertEqual(contact["template"], "template_allies_bouncer")
+        self.assertEqual(contact["location"], "loc_hq-allies-bouncer")
+        self.assertEqual((contact["target_type"], contact["blip"]), ("TARGET_TYPE_HQ_ALLIES", "hqallies"))
+        self.assertEqual(strings["actions.foundry.sw_allies9"], "Discuss contract: Field Test")
+        self.assertEqual(strings["standardMission.foundry.sw_allies9.tgtCaption"], "Major X")
+        lua = missions.contracts_script([contact])
+        self.assertIn("function foundry_SetupContracts()", lua)
+        self.assertIn("function foundry_Use_sw_allies9()", lua)
+        self.assertIn("'foundry_Start_sw_allies9', 'foundry_SetupContracts')", lua)
+        self.assertIn("DebugSkipToMission('allies', 9)", lua)
+        self.assertIn("util_SetupSingleTargetActorObjective(", lua)
+        self.assertIn("-Location_GetYaw(c.location) + c.yaw", lua)
+        _, strings = missions.contract("nw_sk7", {}, "a", "b")
+        self.assertEqual(strings["standardMission.foundry.nw_sk7.tgtCaption"], "South Korean contact")
+
     def test_add_to_list(self):
         lst = "\n[model]\n\nload a\n\n[script]\n\nload global\nload util_misc\n\n[texture]\n\nload t\n"
         out = missions.add_to_list(lst, "script", "sw_allies9")

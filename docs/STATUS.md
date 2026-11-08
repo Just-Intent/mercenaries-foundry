@@ -48,7 +48,8 @@
 - New contract missions: how missions launch traced through the scripts (arc table, `LoadMission`, map script lists, `mission.ini`); mods add a mission with `missions/<id>.json` plus its script and layer. Copied objects bring their layer's asset loads. Tested in game: a new allies mission started from Foundry Console, with its message and soldiers.
 - Mission text and objectives: mission files carry a title, description, opening mail and strings. Mission strings go in a text record named after the mission, loaded by its layer. Objectives use the game's own helpers. Tested in game: mail, objective text, markers, counter and completion.
 - Boundaries in mod layers: trigger zones and typed areas (killbox, radiation, ...), written like the 518 retail ones. Tested in game: a trigger zone fired its script event.
-- 188 tests pass.
+- Mod missions at the HQ: the HQ's contract order is tied to fixed arc positions, so each mod mission instead gets a contact beside its faction's bouncer, marked like the bouncers, who offers and starts it. A one-line hook in `global` runs a generated `foundry_contracts` script. Tested in game.
+- 190 tests pass.
 
 ## Fixed from retail data
 - Text values aren't NUL-terminated. The decoder had assumed they were and found no strings.
@@ -94,7 +95,7 @@
 
 ## Next steps
 1. Collision flags: what each `sinf` bit means; collision for edited existing pieces; whether retail pines stop bullets.
-2. Missions: regions (boxes) in mod layers, radio voice-overs, traffic zones, path animation events (`EVNT`), offering new missions at the faction HQ (in the arc, but not yet tried through the HQ menu).
+2. Missions: regions (boxes) in mod layers, radio voice-overs, traffic zones, path animation events (`EVNT`), remembering completed side contracts (contacts offer them again).
 3. Importing skeleton (joint) edits; what animation-table priorities and flags do.
 4. Function map: name more engine functions (actors, vehicles, AI commands, missions); name the vehicle and material readers found so far.
 5. Overlay: draw inside the game's frames (no mode switch).

@@ -326,6 +326,7 @@ def _apply_missions(data, folder, result):
     """missions/<map>_<faction><n>.json: a new contract in a faction's arc."""
     from . import missions
     files = sorted((folder / "missions").glob("*.json")) if (folder / "missions").is_dir() else []
+    contracts = []
     for f in files:
         asset_id = f.stem.lower()
         map_, faction, number = missions.parse_id(asset_id)
@@ -383,9 +384,43 @@ def _apply_missions(data, folder, result):
                                    f"add encounters/{asset_id}.json)")
         arc = missions.arc(text, faction, map_)
         extras = (f"{len(strings)} strings, " if strings else "") + ("opening mail, " if mail else "")
+        if doc.get("contact", True) is not False:
+            contact, contact_strings = missions.contract(
+                asset_id, doc, missions.section_value(ini, section, "MissionTitleDbKey"),
+                missions.section_value(ini, section, "ShortDescriptionDbKey"))
+            contracts.append(contact)
+            _set_strings(data, contact_strings)
+            extras += f"a contact at the {faction} HQ, "
         result.changes.append(f"mission {asset_id}: [{section}] in mission.ini, {extras}script listed in {map_}, "
                               f"{faction} {map_} arc now {arc} "
                               f"(start it with DebugSkipToMission('{faction}', {number}))")
+    if contracts:
+        _apply_contracts(data, contracts, result)
+
+
+def _apply_contracts(data, contracts, result):
+    """Contacts at faction HQs that offer mod missions (missions never come up
+    in the HQ's own contract order, which is tied to fixed arc positions)."""
+    from . import missions
+    body = missions.contracts_script(contracts)
+    key = name_hash(missions.CONTRACTS_SCRIPT)
+    if any(r.key == key for _, r in data.records(SCRIPT)):
+        raise ValueError(f"the game already has a script named {missions.CONTRACTS_SCRIPT}")
+    data.new("assets.dsk", key, SCRIPT, script.encode(script.new(missions.CONTRACTS_SCRIPT, body)))
+    for map_ in sorted({c["map"] for c in contracts} | {"sw", "nw"}):
+        for a, r in data.records(name_hash("list")):
+            if r.key == name_hash(map_):
+                text_list = missions.add_to_list(data.current(a, r).decode("latin-1"), "script",
+                                                 missions.CONTRACTS_SCRIPT)
+                data.set(a, r, text_list.encode("latin-1"))
+    hit = [(a, r) for a, r in data.records(SCRIPT) if r.key == name_hash("global")]
+    if not hit:
+        raise ValueError("the game data has no global script to hook the contacts into")
+    for a, r in hit:
+        old = script.decode(data.current(a, r))
+        data.set(a, r, script.encode(script.with_source(old, missions.patch_global(old.source))))
+    result.changes.append(f"contacts: {', '.join(c['id'] for c in contracts)} offered at faction HQs "
+                          f"(global's LoadNoMissionState runs {missions.CONTRACTS_SCRIPT})")
 
 
 def _check_new_scripts(data, result):
