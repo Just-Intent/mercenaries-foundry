@@ -6,8 +6,9 @@ its exact bytes or it stays hex. Established from retail data:
 
   path      path: NAME, INFO (u16 points, u16 ?, u16 properties), PROP
             (name\\0 + 4-byte value, repeated), PNTS (float[3] each), ORNT
-            (quaternion per point), JNCT (links to other paths; hex), and
-            sometimes EVNT, ROTN, PSTM, RBRG (hex)
+            (quaternion per point), JNCT (links: other path, its point,
+            our point), sometimes PSTM / RBRG ((point, value) pairs), ROTN
+            (point number as text + quaternion) and EVNT (hex)
   lineregion lrg_: NAME, INFO (u16 0, u16 properties, u16 points), PROP
             (name\\0value\\0 pairs), PNTS: a named boundary polygon, e.g.
             "allies1_killbox" (type=killbox)
@@ -59,6 +60,47 @@ def _pack_path_props(pairs):
     return out
 
 
+def _links(b):
+    """JNCT: u16 count, then per link the other path's name (NUL-terminated),
+    u16 point on the other path, u16 point on this path.  Most links join
+    this path's last point to the other's first (2,626 of 3,158 retail
+    links), usually its nearest point."""
+    n, = struct.unpack_from("<H", b, 0)
+    out, pos = [], 2
+    for _ in range(n):
+        end = b.index(b"\0", pos)
+        name = b[pos:end].decode("ascii")
+        other, here = struct.unpack_from("<HH", b, end + 1)
+        out.append({"path": name, "their_point": other, "our_point": here})
+        pos = end + 5
+    if pos != len(b):
+        raise ValueError("JNCT has trailing bytes")
+    return out
+
+
+def _pack_links(links):
+    out = struct.pack("<H", len(links))
+    for k in links:
+        out += k["path"].encode("ascii") + b"\0" + struct.pack("<HH", k["their_point"], k["our_point"])
+    return out
+
+
+def _facings(b):
+    """ROTN: per entry the point number as text (NUL-terminated) and a
+    quaternion."""
+    out, pos = [], 0
+    while pos < len(b):
+        end = b.index(b"\0", pos)
+        point = int(b[pos:end].decode("ascii"))
+        out.append([point] + list(struct.unpack_from("<4f", b, end + 1)))
+        pos = end + 17
+    return out
+
+
+def _pack_facings(items):
+    return b"".join(str(f[0]).encode("ascii") + b"\0" + struct.pack("<4f", *f[1:]) for f in items)
+
+
 def _strings(b):
     if not b.endswith(b"\0"):
         raise ValueError("not NUL-terminated")
@@ -95,6 +137,15 @@ def _decode_leaf(tag, body, parent):
                 attempt = {"tag": t, "pairs": [s[i:i + 2] for i in range(0, len(s), 2)]}
         elif tag in (b"FPNT", b"PPNT"):
             attempt = {"tag": t, "sets": _strings(body)}
+        elif tag == b"JNCT":
+            attempt = {"tag": t, "links": _links(body)}
+        elif tag in (b"PSTM", b"RBRG") and len(body) % 8 == 0:
+            # (point, value): pause seconds at a point (PSTM); RBRG one per path
+            attempt = {"tag": t, "at_points": [[struct.unpack_from("<I", body, i)[0],
+                                                struct.unpack_from("<f", body, i + 4)[0]]
+                                               for i in range(0, len(body), 8)]}
+        elif tag == b"ROTN":
+            attempt = {"tag": t, "facings": _facings(body)}
     except (ValueError, UnicodeDecodeError, struct.error):
         attempt = None
     if attempt is not None and _encode_leaf(attempt) == body:
@@ -121,6 +172,12 @@ def _encode_leaf(item):
         return _pack_strings([v for pair in item["pairs"] for v in pair])
     if "sets" in item:
         return _pack_strings(item["sets"])
+    if "links" in item:
+        return _pack_links(item["links"])
+    if "at_points" in item:
+        return b"".join(struct.pack("<If", int(p), float(v)) for p, v in item["at_points"])
+    if "facings" in item:
+        return _pack_facings(item["facings"])
     raise ValueError(f"can't encode {item.get('tag')}")
 
 

@@ -22,7 +22,15 @@ A description (a mod's encounters/<layer>.json):
                                "members": [{"from": "RoadblockRunner",
                                             "name": "FoundryNk01",
                                             "position": [x, y, z], "yaw": 90}]}]}],
-   "objects": [{"from": ..., "name": ..., "position": ..., "yaw": ...}]}
+   "objects": [{"from": ..., "name": ..., "position": ..., "yaw": ...}],
+   "paths": {"foundry_patrol": {"points": [[x, y, z], ...],
+                                "pauses": {"0": 3.0},
+                                "links": [{"path": "other", "their_point": 0}]}}}
+
+Paths (path > NAME, INFO, PROP, [PSTM], PNTS, ORNT, JNCT) are what
+Ai_Command(actor, 'Patrol', '<path>', '1.0', 'loPri') and an object's own
+"path" property follow.  JNCT links join this path's point (default: its
+last) to another path's point (default: its first), as most retail links do.
 
 "from" names any world object (a template_* or a placed one) whose model and
 properties are copied; "set" changes properties.  Copy objects whose assets
@@ -67,6 +75,33 @@ def _member(source, spec, extra=()):
         chunks = ["INFO", "XFRM"] + [c for c in chunks if c != "INFO"]
     inst["chunks"] = chunks
     return inst
+
+
+PATH = name_hash("path")
+
+
+def _path_node(name, spec):
+    """A path (retail chunk order: NAME INFO PROP [PSTM] PNTS ORNT JNCT)."""
+    points = [[float(v) for v in p] for p in spec["points"]]
+    if len(points) < 2:
+        raise ValueError(f"path {name}: needs at least two points")
+    pauses = sorted([int(p), float(s)] for p, s in (spec.get("pauses") or {}).items())
+    for p, _ in pauses:
+        if not 0 <= p < len(points):
+            raise ValueError(f"path {name}: pause at point {p}, which doesn't exist")
+    values = [[k, v] for k, v in (spec.get("properties") or {}).items()]
+    values += [["num_respect_bridge_flags", 0], ["num_pause_times", len(pauses)], ["num_nodes_with_events", 0]]
+    links = [{"path": k["path"], "their_point": int(k.get("their_point", 0)),
+              "our_point": int(k.get("our_point", len(points) - 1))} for k in spec.get("links", [])]
+    kids = [{"tag": "NAME", "text": name},
+            {"tag": "INFO", "hex": "000000000000", "auto": True},
+            {"tag": "PROP", "values": values}]
+    if pauses:
+        kids.append({"tag": "PSTM", "at_points": pauses})
+    kids += [{"tag": "PNTS", "points": points},
+             {"tag": "ORNT", "rotations": [[1.0, 0.0, 0.0, 0.0]] * len(points)},
+             {"tag": "JNCT", "links": links}]
+    return {"tag": "path", "children": kids}
 
 
 def member_names(doc):
@@ -132,6 +167,11 @@ def build(layer, doc, find_source):
                 "tree": [{"tag": "ucfb", "children": enc_nodes}]}
         out[ENCOUNTER] = aidata.from_json(edoc)
         sections["encounter"] = [layer]
+    if doc.get("paths"):
+        pdoc = {"format": aidata.FORMAT, "kind": "path",
+                "tree": [{"tag": "ucfb", "children": [_path_node(n, s) for n, s in doc["paths"].items()]}]}
+        out[PATH] = aidata.from_json(pdoc)
+        sections["path"] = [layer]
     for kind, names_ in (doc.get("loads") or {}).items():
         sections.setdefault(kind, []).extend(names_)
     text = "".join(f"\n[{kind}]\n\n" + "".join(f"load {n}\n" for n in sections[kind]) for kind in sorted(sections))

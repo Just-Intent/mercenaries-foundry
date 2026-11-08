@@ -57,6 +57,34 @@ class EncounterTests(unittest.TestCase):
         text = self.build()[encounters.LIST].decode()
         self.assertEqual(text, "\n[encounter]\n\nload my_layer\n\n[world]\n\nload my_layer\n")
 
+    def test_paths(self):
+        doc = {"paths": {"loop": {"points": [[0, 0, 0], [10, 0, 0], [10, 0, 10]], "pauses": {"1": 2.5},
+                                  "links": [{"path": "loop"}]}}}
+        recs = self.build(doc)
+        self.assertIn("[path]\n\nload my_layer\n", recs[encounters.LIST].decode())
+        pdoc = aidata.to_json(recs[encounters.PATH], "path")
+        self.assertEqual(aidata.from_json(pdoc), recs[encounters.PATH])
+        kids = {c["tag"]: c for c in pdoc["tree"][0]["children"][0]["children"]}
+        self.assertEqual([c["tag"] for c in pdoc["tree"][0]["children"][0]["children"]],
+                         ["NAME", "INFO", "PROP", "PSTM", "PNTS", "ORNT", "JNCT"])
+        self.assertEqual(kids["PSTM"]["at_points"], [[1, 2.5]])
+        self.assertEqual(dict(kids["PROP"]["values"])["num_pause_times"], 1)
+        self.assertEqual(kids["JNCT"]["links"], [{"path": "loop", "their_point": 0, "our_point": 2}])
+        self.assertEqual(struct.unpack("<3H", bytes.fromhex(kids["INFO"]["hex"])), (3, 0, 3))
+        with self.assertRaises(ValueError):
+            self.build({"paths": {"bad": {"points": [[0, 0, 0], [1, 0, 0]], "pauses": {"5": 1}}}})
+
+    def test_junction_codec(self):
+        body = struct.pack("<H", 2) + b"t_a\0" + struct.pack("<HH", 0, 11) + b"t_b\0" + struct.pack("<HH", 2, 1)
+        node = aidata._decode_leaf(b"JNCT", body, b"path")
+        self.assertEqual(node["links"], [{"path": "t_a", "their_point": 0, "our_point": 11},
+                                         {"path": "t_b", "their_point": 2, "our_point": 1}])
+        self.assertEqual(aidata._encode_leaf(node), body)
+        rotn = b"1\0" + struct.pack("<4f", 0, 1, 0, 0) + b"10\0" + struct.pack("<4f", 0, 0, 0, 1)
+        node = aidata._decode_leaf(b"ROTN", rotn, b"path")
+        self.assertEqual(node["facings"], [[1, 0.0, 1.0, 0.0, 0.0], [10, 0.0, 0.0, 0.0, 1.0]])
+        self.assertEqual(aidata._encode_leaf(node), rotn)
+
     def test_errors(self):
         bad = {"encounters": [{"name": "E", "points": {}, "squads": [{"name": "S", "points": ["Z"], "members": []}]}]}
         with self.assertRaises(ValueError):

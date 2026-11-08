@@ -44,7 +44,8 @@
 - Vehicle handling ([VEHICLES.md](VEHICLES.md)): every `physics…` property is read by the game (grouped by the code that reads it); `vehicles` lists the 92 vehicle models and exports one's handling as a mod rule. Tested in game: triple engine torque made the Humvee much faster.
 - Object hit materials: `obstaclematerialtype` decoded (13 names, how hits pick their effect from it); the `sinf` "material" word is collision flags. Mods set materials with object rules; tested in game (concrete set to metal sparks when shot).
 - New layers with encounters ([ENCOUNTERS.md](ENCOUNTERS.md)): squads decoded (no squad-type table: objects join squads by property); mods describe a layer in `encounters/<layer>.json` and the build adds its world, encounter and list records. Tested in game: three NK soldiers in a new layer, loaded from the opening mission's script, appeared and attacked.
-- 178 tests pass.
+- Path junctions (`JNCT`) decoded, plus pause, bridge and facing chunks (all 857 path records still rebuild exactly). Mod layers can include paths with pauses and links. Tested in game: a soldier patrolled a new looping path.
+- 180 tests pass.
 
 ## Fixed from retail data
 - Text values aren't NUL-terminated. The decoder had assumed they were and found no strings.
@@ -90,7 +91,7 @@
 
 ## Next steps
 1. Collision flags: what each `sinf` bit means; collision for edited existing pieces; whether retail pines stop bullets.
-2. Missions: path junctions (`JNCT`), new paths and boundaries in mod layers, traffic zones, and new missions in mission.ini.
+2. Missions: boundaries and regions in mod layers, traffic zones, path animation events (`EVNT`), and new missions in mission.ini.
 3. Importing skeleton (joint) edits; what animation-table priorities and flags do.
 4. Function map: name more engine functions (actors, vehicles, AI commands, missions); name the vehicle and material readers found so far.
 5. Overlay: draw inside the game's frames (no mode switch).

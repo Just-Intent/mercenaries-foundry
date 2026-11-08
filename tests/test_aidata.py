@@ -71,7 +71,7 @@ class AiDataTests(unittest.TestCase):
         p = node(doc, "path", "road1")
         self.assertEqual(child(p, "PROP")["values"], [["width", 2.5], ["num_pause_times", 0]])
         self.assertEqual(child(p, "PNTS")["points"][1], [10, 0, 0])
-        self.assertIn("hex", child(p, "JNCT"))
+        self.assertEqual(child(p, "JNCT")["links"], [])         # no links (u16 count 0)
         doc = aidata.to_json(boundary_record(), "lineregion")
         self.assertEqual(child(node(doc, "lrg_", "killbox"), "PROP")["pairs"], [["type", "killbox"], ["TestInside", "false"]])
         self.assertEqual(child(node(doc, "lrg_", "empty"), "PROP")["pairs"], [])

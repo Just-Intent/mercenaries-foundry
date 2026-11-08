@@ -33,7 +33,25 @@ How missions put soldiers and vehicles into the world, and how a mod adds its ow
 - **Positions:** world x, y, z in metres (Foundry Console's Position line). Yaw is in degrees. Lower z is north.
 - **Map:** `map` is the layer's terrain tag (`SWN` for the opening map).
 
-Load it and command it from a script (a mod's `scripts/<name>.lua`). For example, in a copy of `allies0`:
+A layer can also have paths, for patrols and routes:
+
+```json
+"paths": {
+ "foundry_patrol": {
+  "points": [[1530, -1, 1855], [1545, -1, 1855], [1545, -1, 1870], [1530, -1, 1870]],
+  "pauses": {"0": 3.0},
+  "links": [{"path": "foundry_patrol", "their_point": 0, "our_point": 3}]
+ }
+}
+```
+
+- **Pauses:** seconds to wait at a point.
+- **Links:** join one of this path's points (`our_point`, default its last) to a point on another path (`their_point`, default its first). Retail paths chain this way, and linking the last point back to the first makes a loop.
+- **Following a path:** send an actor along it with `Ai_Command('<actor>', 'Patrol', 'foundry_patrol', '1.0', 'hiPri')`. Objects can also carry a `path` property.
+
+Tested in game (2026-11-08): an allied soldier copied into a new layer patrolled such a loop when ordered.
+
+Load the layer and command it from a script (a mod's `scripts/<name>.lua`). For example, in a copy of `allies0`:
 
 ```lua
 function Allies0Init()
@@ -46,4 +64,4 @@ end
 
 Tested in game (2026-11-08): the layer above (three NK soldiers copied from the roadblock runner) loaded from the opening mission's script, and the soldiers appeared and attacked.
 
-Not yet decoded: path junctions (`JNCT`), how traffic zones pick encounters (`Traffic_SetZoneEncounter`), and the first `INFO` word of point sets (always 1).
+Not yet decoded: path animation events (`EVNT`), how traffic zones pick encounters (`Traffic_SetZoneEncounter`), and the first `INFO` word of point sets (always 1).
