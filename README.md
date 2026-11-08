@@ -31,6 +31,16 @@ python -m mercfoundry hash   script world
 
 `extract` writes one file per record plus `manifest.json`. `pack` rebuilds the archive exactly. To mod it, replace record files, or add manifest entries with a `name` and `type`, then repack. Put the result in a Mercenaries Recompiled `mods/<YourMod>/` folder.
 
+### First run on your game files
+
+```bash
+python -m mercfoundry verify DATAxbox
+python -m mercfoundry names default.xbe DATAxbox/*.dsk --match DATAxbox/assets.dsk -o names.txt
+python -m mercfoundry info DATAxbox/assets.dsk
+```
+
+`verify` checks that every archive, script, world layer and text table rebuilds exactly, and lists anything that doesn't. `names` scans the executable and archives (including decompressed scripts) for strings whose hash matches a real asset or type ID, and writes them to a file you can pass to other commands with `--names`. Types shown with a `?` are guessed from their hash.
+
 ### Editing scripts, objects and text
 
 ```bash

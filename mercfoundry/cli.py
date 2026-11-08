@@ -4,7 +4,7 @@ import collections
 import sys
 from pathlib import Path
 
-from . import dsk, ucfb
+from . import dsk, names as namelib, ucfb, verify
 from .hashing import NameBook, name_hash, type_book
 
 
@@ -24,8 +24,12 @@ def cmd_info(args):
     sizes = collections.Counter()
     for r in arc.records:
         sizes[r.kind] += r.size
+    guesses = namelib.guess_types(k for k in counts if not types.get(k))
     for kind, n in counts.most_common():
-        print(f"  {dsk.label(types, kind):>10}  {n:6d} records  {sizes[kind]:12,d} bytes")
+        shown = types.get(kind) or (f"{guesses[kind]}?" if kind in guesses else f"{kind:08X}")
+        print(f"  {shown:>10}  {n:6d} records  {sizes[kind]:12,d} bytes")
+    if guesses:
+        print("  (? = name guessed from its hash; check the records before trusting it)")
 
 
 def cmd_list(args):
@@ -36,10 +40,12 @@ def cmd_list(args):
     want = None
     if args.type:
         want = int(args.type, 16) if all(c in "0123456789abcdefABCDEF" for c in args.type) and len(args.type) == 8 else name_hash(args.type)
+    guesses = namelib.guess_types({r.kind for r in arc.records})
     for r in arc.records:
         if want is not None and r.kind != want:
             continue
-        print(f"{r.index:5d}  {r.key:08X}  {dsk.label(types, r.kind):>10}  {r.size:10d}  {names.get(r.key) or ''}")
+        kind = types.get(r.kind) or (f"{guesses[r.kind]}?" if r.kind in guesses else f"{r.kind:08X}")
+        print(f"{r.index:5d}  {r.key:08X}  {kind:>10}  {r.size:10d}  {names.get(r.key) or ''}")
 
 
 def cmd_extract(args):
@@ -96,6 +102,39 @@ def cmd_tree(args):
     sys.exit(f"record not found: {target}")
 
 
+def cmd_verify(args):
+    archives = verify.find_archives(args.target)
+    if not archives:
+        sys.exit(f"no .dsk archives found in {args.target}")
+    bad = 0
+    for path in archives:
+        rep = verify.verify_archive(path)
+        checked = ", ".join(f"{n} {label}" for label, n in sorted(rep.checked.items())) or "no decodable records"
+        status = "OK" if rep.ok else "FAIL"
+        print(f"{status}  {rep.archive}: {rep.records} records, layout {'ok' if rep.layout_ok else 'DIFFERS'}; checked {checked}")
+        for index, label, error in rep.failures:
+            print(f"      record {index} ({label}): {error}")
+        bad += not rep.ok
+    print(f"{len(archives) - bad} of {len(archives)} archives verified")
+    sys.exit(1 if bad else 0)
+
+
+def cmd_names(args):
+    wanted = None
+    if args.match:
+        wanted = set()
+        for path in args.match:
+            for r in dsk.Archive(path).records:
+                wanted.update((r.key, r.kind))
+    book = namelib.harvest(args.sources, wanted)
+    n = namelib.write(book, args.out)
+    if wanted is not None:
+        print(f"{n} names match {len(book)} of {len(wanted)} hashes in the given archives")
+    else:
+        print(f"{n} candidate names")
+    print(f"wrote {args.out}; use it with --names")
+
+
 def cmd_hash(args):
     for s in args.names:
         print(f"{name_hash(s):08X}  {s}")
@@ -127,6 +166,12 @@ def main(argv=None):
     s = add("diff", cmd_diff, "compare two archives"); s.add_argument("a"); s.add_argument("b"); names_opt(s)
     s = add("tree", cmd_tree, "show a record's chunk tree")
     s.add_argument("archive"); s.add_argument("record", help="index, name or key"); names_opt(s)
+    s = add("verify", cmd_verify, "check that archives and decoded records rebuild exactly")
+    s.add_argument("target", help="a .dsk file or a folder such as DATAxbox")
+    s = add("names", cmd_names, "harvest names from the executable and data files")
+    s.add_argument("sources", nargs="+", help="files to scan: default.xbe, .dsk archives, anything")
+    s.add_argument("--match", action="append", help="keep only names whose hash appears in this archive")
+    s.add_argument("-o", "--out", default="names.txt")
     s = add("hash", cmd_hash, "hash names the way the game does"); s.add_argument("names", nargs="+")
 
     args = p.parse_args(argv)
