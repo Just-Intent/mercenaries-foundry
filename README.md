@@ -79,7 +79,7 @@ python -m mercfoundry pack work/assets out/assets.dsk
 python -m mercfoundry model DATAxbox allies_veh_humvee -o models --preview --names names.txt
 ```
 
-Writes `allies_veh_humvee.obj` and `.mtl` (opens in Blender and most 3D tools), each texture it uses as a PNG, and with `--preview` a textured preview image. `--lod N` picks a level of detail; `--damaged` shows a vehicle's damaged body panels. Model names come from `list DATAxbox/streamed.dsk --type Model`.
+Writes `allies_veh_humvee.obj` and `.mtl` (opens in Blender and most 3D tools), each texture it uses as a PNG, and with `--preview` a textured preview image. Add `--glb` for a glTF file with the skeleton as bones, each piece parented to its joint, character skinning and embedded textures; it is checked vertex by vertex against the game model before it's written. (`model-import` reads OBJ; edit glTF exports for reference or re-export as OBJ keeping object names.) `--lod N` picks a level of detail; `--damaged` shows a vehicle's damaged body panels. Model names come from `list DATAxbox/streamed.dsk --type Model`.
 
 ```bash
 python -m mercfoundry texture DATAxbox allies_avehicle_humvee_001 -o textures

@@ -156,6 +156,10 @@ Vertex layout (20 bytes; 28-byte vertices add 8 bytes not yet understood):
 
 Placement: positions are local to the piece's joint. Applying the joint chain (rotation, then translation, up to the root) puts every piece in model space. Checked by comparing the result with the stored bounds: 2,285 of 2,297 models match exactly. The other 12 are helicopters whose stored bounds differ only around the rotor.
 
+Skinned pieces (stride bit 16): each vertex's bone index refers to the model's joints whose names start with `bone`, in skeleton order (e.g. `DummyRoot` is skipped). Inferred from retail data: it fits all 97 skinned models, beats "joint list" and "joint list + 1" where they differ, and posing the exported skeleton in a glTF viewer moves the expected body parts (head, arm with its hand, leg). One bone per vertex.
+
+Handedness: the game's axes are left-handed. Exports negate Z (and quaternion x, y) and reverse triangle winding; checked with a road sign's Korean lettering, which reads correctly on the exported sign's front face.
+
 Vehicles carry two copies of breakable body panels, on joints named `segment_pristine_*` and `segment_damage_*`. Exports show the pristine set by default.
 
 The `model` command exports a model to OBJ with a material file that names its textures, and can write a shaded preview image. Exported OBJ files negate Z (the game's axes are left-handed) and flip V. Each object is named `p<index>_<joint>` after the piece it came from; vertex colours are written as `v x y z r g b`.
@@ -222,7 +226,7 @@ Re-encoding (`extract --decode --textures`, then `pack`): an edited PNG is encod
 ## Open questions
 
 - The grid-index tail (`0x00FF8040`): no retail archive uses it.
-- Models: the extra 8 bytes of 28-byte vertices, `MTRL` words 0, 2 and 4–6, and how skinned bone indices map to joints.
+- Models: the extra 8 bytes of 28-byte vertices, and `MTRL` words 0, 2 and 4–6.
 - Collision: `CMOP` trees, the second `CMSH` layout, and what the material codes mean.
 - Animation, terrain, path and region formats. Whether DXT2 textures are premultiplied (we treat them as DXT3).
 - `INFO` byte 0 in scripts; `TNAM` and `INFO` in world layers.

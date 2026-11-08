@@ -170,7 +170,7 @@ def cmd_model(args):
     tris = sum(len(p.triangles) for p in pieces)
     print(f"{m.name}: {len(m.joints)} joints, {len(m.pieces)} pieces, detail levels {lods}")
     print(f"wrote {out / (m.name + '.obj')} (level {lod}: {len(pieces)} pieces, {tris} triangles)")
-    textures = {}
+    textures, png_files = {}, {}
     if not args.no_textures:
         from . import texture
         wanted = {p.texture for p in pieces}
@@ -184,11 +184,21 @@ def cmd_model(args):
                             textures[r.key] = t.rgba()
                             w, h, px = textures[r.key]
                             from . import png as pngmod
-                            (out / f"{tex_name(r.key)}.png").write_bytes(pngmod.encode(w, h, px, 4))
+                            png_files[r.key] = (pngmod.encode(w, h, px, 4),
+                                                any(px[i] < 255 for i in range(3, len(px), 4)))
+                            (out / f"{tex_name(r.key)}.png").write_bytes(png_files[r.key][0])
                         except ValueError as err:
                             print(f"  skipped texture {tex_name(r.key)}: {err}")
         missing = len(wanted - set(textures))
         print(f"wrote {len(textures)} textures" + (f" ({missing} not found)" if missing else ""))
+    if args.glb:
+        from . import gltf, gltf_check
+        data = gltf.export(m, lod, args.damaged, png_files, tex_name)
+        gltf_check.check(data, m, lod, args.damaged)
+        path = out / f"{m.name}.glb"
+        path.write_bytes(data)
+        print(f"wrote {path} (glTF with {len(m.joints)} joints"
+              + (", skinned" if any(p.bones for p in pieces) else "") + ", textures embedded)")
     if args.preview:
         png = out / f"{m.name}_preview.png"
         png.write_bytes(model.preview_png(m, lod, damaged=args.damaged, textures=textures))
@@ -326,6 +336,7 @@ def main(argv=None):
     s.add_argument("--preview", action="store_true", help="also write a shaded PNG preview")
     s.add_argument("--no-textures", action="store_true", help="don't export textures")
     s.add_argument("--collision", action="store_true", help="also write a preview of the collision shapes")
+    s.add_argument("--glb", action="store_true", help="also write a glTF (.glb) with joints, skinning and textures")
     names_opt(s)
     s = add("model-import", cmd_model_import, "bring an edited OBJ back into extracted folders")
     s.add_argument("obj", help="edited OBJ (from the model command, edited in Blender etc.)")

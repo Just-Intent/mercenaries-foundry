@@ -17,7 +17,8 @@
 - Model import: `model-import` brings an edited OBJ back (edit, add and remove pieces; positions re-quantized; strips rebuilt; geometry recompressed). Unedited exports re-import byte-identical for every model, level of detail and damage state.
 - `mod new` / `mod build`: a mod is a folder of text JSON, Lua scripts, object property rules, PNG textures and OBJ models; one command builds the changed archives, verifies them and writes a summary. Rebuilding the day's hand-made test mod from a project gave byte-identical assets, locked and streamed archives (english.dsk identical in content). Example project in `examples/faster-humvee`.
 - Collision: `cshp` decoded for every model (2,067 box shapes with 28,294 boxes; 149 of 325 mesh shapes). New pieces from `model-import` get box collision (opt out per object with `nocoll` in the name). `model --collision` previews collision.
-- 90 tests pass.
+- glTF export (`model --glb`): joints as a node tree, rigid pieces parented to joints, skinned pieces with a skin (bone palette = joints named `bone*`), embedded textures with alpha masking. All 2,297 models export and pass a vertex-by-vertex check; three.js loads and renders them, posing bones moves the right parts, and sign lettering confirms the handedness conversion.
+- 96 tests pass.
 
 ## Fixed from retail data
 - Text values aren't NUL-terminated. The decoder had assumed they were and found no strings.
@@ -49,7 +50,7 @@
 
 ## Next steps
 1. Collision for models whose shapes can't take more boxes (e.g. the Humvee): needs CMOP trees or the second CMSH layout decoded.
-2. Models: glTF export with the skeleton and skin weights.
+2. glTF import (edit skeleton-aware models in Blender), and animation decoding.
 3. Decode the remaining world-layer chunks (`TNAM`, `INFO`) and `path`/`region`/`encounter` records.
 
 ## Notes

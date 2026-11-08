@@ -23,3 +23,6 @@ Vimm's Lair.txt
 
 # Local mod projects (may contain game-derived scripts or assets)
 dev-mods/
+
+# Local editor/agent settings
+.claude/
