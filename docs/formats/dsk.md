@@ -176,7 +176,7 @@ All 4,715 retail textures decode. Established from retail data.
 
 Models name their textures by hash (`MTRL` word 3), so `model` exports each texture used as a PNG beside the OBJ.
 
-Re-encoding (`extract --decode --textures`, then `pack`): an edited PNG is encoded in the original's format with a full mip chain built by 2×2 averaging. Sizes must be powers of two and may differ from the original; the mip count follows the original. Our DXT encoder picks endpoints along each block's main colour axis, then refines them by least squares. On the game's own textures it is effectively lossless: 124 of 128 sampled textures re-encode to identical pixels and the rest exceed 52 dB. Unchanged records rebuild byte-identical (all 4,715). Cube maps can't be replaced yet.
+Re-encoding (`extract --decode --textures`, then `pack`): an edited PNG is encoded in the original's format with a full mip chain built by 2×2 averaging. Sizes must be powers of two and may differ from the original; the mip count follows the original. Our DXT encoder picks endpoints along each block's main colour axis, then refines them by least squares. On the game's own textures it is effectively lossless: 124 of 128 sampled textures re-encode to identical pixels and the rest exceed 52 dB. Unchanged records rebuild byte-identical (all 4,715). Cube maps can't be replaced yet. Tested in-game (2026-11-08): a repainted DXT3 vehicle texture displayed correctly.
 
 ## Open questions
 

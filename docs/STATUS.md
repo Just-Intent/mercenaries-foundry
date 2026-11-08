@@ -27,6 +27,7 @@
   - A newly added text key (`foundry.test.scriptmsg`) resolved and displayed.
   - Raising `physicsenginetorque` from 850 to 3400 on `player_humvee` (in `swn_hq`) and the Humvee templates made the Humvee visibly faster.
 - So the game accepts our compressor's output, rebuilt world layers with edited properties, and added text entries (with `num_components` raised).
+- 2026-11-08, texture: `allies_avehicle_humvee_001` tinted red, re-encoded by our DXT3 encoder with a full mip chain and packed into `streamed.dsk`, showed on the player's Humvee in the opening mission.
 - Lesson: a new game starts in `playable_intro` (C-17 briefing, then `allies0`), not the Ace of Clubs, which is Allied mission 4. Script tests belong there.
 
 ## Port build (2026-11-08)
@@ -39,11 +40,10 @@
 - Python 3.12.10 alongside 3.13. The port's `.venv` has its pinned CMake 3.31.6, Ninja 1.13.0 and Capstone 5.0.6.
 
 ## Next steps
-1. In-game test of a repainted texture (Humvee tinted red, in `mods/Foundry Test`).
-2. Model import: write edited models back into the game.
-3. Models: glTF export with the skeleton and skin weights.
-4. A `mod` command that builds a mod folder from a list of edits, so tests like these are one step.
-5. Decode the remaining world-layer chunks (`TNAM`, `INFO`) and `path`/`region`/`encounter` records.
+1. Model import: write edited models back into the game.
+2. Models: glTF export with the skeleton and skin weights.
+3. A `mod` command that builds a mod folder from a list of edits, so tests like these are one step.
+4. Decode the remaining world-layer chunks (`TNAM`, `INFO`) and `path`/`region`/`encounter` records.
 
 ## Notes
 - Several port tools mention replacing "source-informed" versions. Use only versions re-derived from retail (see PROVENANCE.md).
