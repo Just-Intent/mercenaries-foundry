@@ -25,7 +25,8 @@
 - Animation encoder and glTF clip import: every retail rotation channel re-encodes byte-identical; a glTF export reads back to the same values. Mods replace clips via `animations/`.
 - glTF model import: `model-import` and mod `models/` take `.glb`/`.gltf`. Pieces are placed by the file's node and skin transforms, new pieces take the joint they're parented to, and skinned vertices keep their bone. Every model round-trips unchanged, including Blender-style restructured files.
 - Collision trees (`CMOP`) decoded from the game's own walker and checked on all 1,402; convex hulls decoded; `cinf` totals understood on all 1,997 blocks. New pieces on Humvee-style vehicles get collision by turning the convex hull into boxes.
-- 136 tests pass.
+- Animation tables decoded (all 95 rebuild exactly; `animtable` exports one). Mods can add clips under new names (`animations/new.json`, built on a template clip and added to its load lists) and repoint handles (`animtables/`).
+- 140 tests pass.
 
 ## Fixed from retail data
 - Text values aren't NUL-terminated. The decoder had assumed they were and found no strings.
@@ -48,6 +49,7 @@
 - 2026-11-08, animation: the three mercenaries' `lb_upright_run_forward` clips exported to glTF, both thighs turned 40° outward, and dropped into a mod's `animations/` folder. The run was bow-legged in game. (The first try turned them inward and gave a cross-legged run, so a thigh's local +x turn is inward on the left leg.)
 - 2026-11-08, glTF model: a top hat added to `prokat_hum_american`, `_british` and `_swedish` as a new glTF node under `bone_head` (named `nocoll`, so no collision). In game the hat sat on the mercenary's head and moved with it.
 - 2026-11-08, Humvee collision: boxes added as triangles to the hull mesh (tree rebuilt) didn't collide; the triangle hull isn't used against the world. Replacing the convex hull with 10 boxes plus the new one worked: the front plate stopped the Humvee at walls, the `nocoll` rear plate passed through, and it didn't sink.
+- 2026-11-08, new animations: cross-legged copies of each mercenary's run added as new clips and pointed to by their animation tables; the run played cross-legged while the original clip was unchanged.
 - Lesson: the C-17 cargo-hold scene uses a separate model, `c17_humvee`, which shares the Humvee texture. Check model edits on the vehicle you drive.
 - Lesson: a new game starts in `playable_intro` (C-17 briefing, then `allies0`), not the Ace of Clubs, which is Allied mission 4. Script tests belong there.
 
@@ -62,7 +64,7 @@
 
 ## Next steps
 1. Collision material codes (surface types); collision for edited existing pieces.
-2. New animations under new names, with `animtable` (which clips a character uses); importing skeleton (joint) edits.
+2. Importing skeleton (joint) edits; what animation-table priorities and flags do.
 3. Path junctions (`JNCT`) and squad types: where `SQD_` names like `nk_hum_ppl_tunnel01` are defined.
 
 ## Notes

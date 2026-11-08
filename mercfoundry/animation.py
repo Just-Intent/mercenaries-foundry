@@ -241,6 +241,8 @@ def encode(anim: Animation, base: bytes = None) -> bytes:
             out.append((tag, info))
         elif tag == b"CJNT":
             out.append((tag, stored))
+        elif tag == b"NAME":
+            out.append((tag, anim.name.encode("latin-1") + b"\0"))
         elif tag == b"jont":
             if k < len(jonts):
                 out.append((tag, ucfb.pack_children(jonts[k][1])))

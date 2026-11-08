@@ -46,7 +46,15 @@ CODECS = {
     name_hash("region"): _ai("region"),
     name_hash("encounter"): _ai("encounter"),
     name_hash("list"): (".list.txt", lambda rec: rec, lambda dec, base: dec),
+    name_hash("animtable"): (".animtable.json",
+                             lambda rec: _json(_animtable().to_json(rec)),
+                             lambda dec, base: _animtable().from_json(json.loads(dec))),
 }
+
+
+def _animtable():
+    from . import animtable
+    return animtable
 
 
 def _texture_encode(decoded, base):

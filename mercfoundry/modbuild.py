@@ -20,6 +20,11 @@ Project layout (every part optional):
     models/<name>.obj|.glb|.gltf  an edited export from the `model` command
     animations/*.glb|.gltf   clips replace the game animations with the same
                           names (export them with `model --glb --anim`)
+    animations/new.json   {"new clip": "template clip"}: clips with these
+                          names are added as new animations, built on the
+                          template's skeleton and loaded wherever it is
+    animtables/<name>.json   replaces a character's animation table (from
+                          the `animtable` command): point handles at clips
     layout/<layer>.<kind>.json  replaces a layer's path, lineregion, region
                           or encounter data (from `layout` or `extract
                           --decode`); layout/<layer>.list.txt replaces its
@@ -102,11 +107,15 @@ class _Data:
     def new(self, name, key, kind, data):
         self.add.setdefault(name, []).append((key, kind, data))
 
+    def added(self):
+        """(key, kind, archive name) of every record added so far."""
+        return [(k, kind, a) for a, recs in self.add.items() for k, kind, _ in recs]
+
 
 def new_project(folder, name=None):
     folder = Path(folder)
     name = name or folder.resolve().name
-    for sub in ("text", "scripts", "objects", "textures", "models", "layout", "animations"):
+    for sub in ("text", "scripts", "objects", "textures", "models", "layout", "animations", "animtables"):
         (folder / sub).mkdir(parents=True, exist_ok=True)
     meta = folder / "mod.json"
     if not meta.exists():
@@ -292,6 +301,11 @@ def _apply_textures(data, folder, result):
 def _apply_animations(data, folder, result):
     from . import animation, gltf_anim
     files = sorted(list((folder / "animations").glob("*.glb")) + list((folder / "animations").glob("*.gltf")))
+    new_path = folder / "animations" / "new.json"
+    new_clips = {}
+    if new_path.exists():
+        new_clips = {k.lower(): v for k, v in json.loads(new_path.read_text(encoding="utf-8")).items()}
+    made = set()
     for f in files:
         clips = gltf_anim.clips(f)
         if not clips:
@@ -299,8 +313,16 @@ def _apply_animations(data, folder, result):
         for name, tracks in clips.items():
             key = name_hash(name)
             hit = [(a, r) for a, r in data.records(animation.ANIMATION) if r.key == key]
+            if name.lower() in new_clips:
+                if hit:
+                    raise ValueError(f"animations/new.json: {name!r} is already a game animation; "
+                                     "leave it out of new.json to replace it")
+                _add_animation(data, name, new_clips[name.lower()], tracks, result)
+                made.add(name.lower())
+                continue
             if not hit:
-                result.warnings.append(f"animations/{f.name}: no game animation named {name!r}; skipped")
+                result.warnings.append(f"animations/{f.name}: no game animation named {name!r}; "
+                                       "add it to animations/new.json to make it a new one")
                 continue
             for a, r in hit:
                 base_rec = data.archive(a).read(r)
@@ -309,6 +331,71 @@ def _apply_animations(data, folder, result):
                 data.set(a, r, animation.encode(new, base_rec))
             touched = sum(1 for t in base.tracks if t.joint.lower() in tracks)
             result.changes.append(f"animation {name}: {new.frames} frames, {touched} of {len(base.tracks)} joints from the clip")
+
+
+    for name in sorted(set(new_clips) - made):
+        result.warnings.append(f"animations/new.json: no clip named {name!r} in the animation files")
+
+
+def _add_animation(data, name, template, tracks, result):
+    """Add a new animation built on a template clip's skeleton, and load it
+    wherever the template is loaded."""
+    from . import animation, gltf_anim
+    tkey = name_hash(template)
+    hit = [(a, r) for a, r in data.records(animation.ANIMATION) if r.key == tkey]
+    if not hit:
+        raise ValueError(f"animations/new.json: template {template!r} isn't a game animation")
+    a, r = hit[0]
+    base_rec = data.current(a, r)
+    base = animation.decode(base_rec)
+    new = gltf_anim.to_animation(tracks, base)
+    new.name = name
+    data.new(a, name_hash(name), animation.ANIMATION, animation.encode(new, base_rec))
+    # Load lists: "load <clip>" lines; add the new clip beside the template.
+    from . import aidata
+    lists = 0
+    for la, lr in data.records(aidata.LIST):
+        text = data.current(la, lr).decode("latin-1")
+        lines = text.split("\n")
+        names = {ln.strip()[5:].strip().lower() for ln in lines if ln.strip().lower().startswith("load ")}
+        if template.lower() not in names or name.lower() in names:
+            continue
+        out = []
+        for ln in lines:
+            out.append(ln)
+            if ln.strip().lower() == f"load {template.lower()}":
+                out.append(ln[:len(ln) - len(ln.lstrip())] + f"load {name}" + ("\r" if ln.endswith("\r") else ""))
+        data.set(la, lr, "\n".join(out).encode("latin-1"))
+        lists += 1
+    touched = sum(1 for t in base.tracks if t.joint.lower() in tracks)
+    result.changes.append(f"animation {name}: new, {new.frames} frames, {touched} of {len(base.tracks)} joints "
+                          f"from the clip, built on {template}, added to {lists} load lists")
+
+
+def _apply_animtables(data, folder, result):
+    from . import animtable
+    for f in sorted((folder / "animtables").glob("*.json")):
+        doc = json.loads(f.read_text(encoding="utf-8"))
+        name = doc.get("name") or f.stem
+        key = name_hash(name)
+        hit = [(a, r) for a, r in data.records(animtable.ANIMTABLE) if r.key == key]
+        if not hit:
+            raise ValueError(f"animtables/{f.name}: no animation table named {name!r}")
+        new = animtable.from_json(doc)
+        norm = animtable.to_json(new)
+        for a, r in hit:
+            old = animtable.to_json(data.current(a, r))
+            data.set(a, r, new)
+        old_map = {(st["name"], e["handle"]): e for st in old["sets"] for e in st["entries"]}
+        changed = [f"{st['name']}/{e['handle']}" for st in norm["sets"] for e in st["entries"]
+                   if old_map.get((st["name"], e["handle"])) != e]
+        known = {r.key for _, r in data.records(name_hash("animation"))} | {k for k, _, _ in data.added()}
+        # Only clips this mod newly refers to (some retail entries name clips the game lacks).
+        missing = sorted(c for c in animtable.clips(norm) - animtable.clips(old) if name_hash(c) not in known)
+        result.changes.append(f"animtable {name}: {len(changed)} entries changed"
+                              + (f" ({', '.join(changed[:6])}{' ...' if len(changed) > 6 else ''})" if changed else ""))
+        if missing:
+            result.warnings.append(f"animtables/{f.name}: clips not in the game or this mod: {', '.join(missing[:6])}")
 
 
 LAYOUT_KINDS = ("path", "lineregion", "region", "encounter", "list")
@@ -392,6 +479,7 @@ def build(project, data_dir, out_dir) -> Result:
     _apply_models(data, project, result)
     _apply_layout(data, project, result)
     _apply_animations(data, project, result)
+    _apply_animtables(data, project, result)
     names = sorted(set(data.replace) | set(data.add))
     names = [n for n in names if data.replace.get(n) or data.add.get(n)]
     out.mkdir(parents=True, exist_ok=True)

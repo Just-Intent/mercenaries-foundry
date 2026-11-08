@@ -361,6 +361,26 @@ def cmd_find(args):
     print(f"{len(hits)} objects" + (" (limit reached)" if args.limit and len(hits) == args.limit else ""))
 
 
+def cmd_animtable(args):
+    import json as _json
+    from . import animtable
+    arcs = _data_archives(args.data)
+    key = name_hash(args.name)
+    for arc in arcs:
+        for r in arc.records:
+            if r.key == key and r.kind == animtable.ANIMTABLE:
+                doc = animtable.to_json(arc.read(r))
+                out = Path(args.out)
+                out.mkdir(parents=True, exist_ok=True)
+                path = out / f"{args.name}.json"
+                path.write_text(_json.dumps(doc, indent=1) + "\n", encoding="utf-8")
+                entries = sum(len(s["entries"]) for s in doc["sets"])
+                print(f"wrote {path} ({len(doc['sets'])} sets, {entries} entries, "
+                      f"{len(doc['variants'])} variants" + (f"; falls back to {doc['fallback']}" if doc.get("fallback") else "") + ")")
+                return
+    sys.exit(f"no animation table named {args.name!r}")
+
+
 def cmd_layout(args):
     from . import aidata
     arcs = _data_archives(args.data)
@@ -493,6 +513,10 @@ def main(argv=None):
     s.add_argument("--layout", action="store_true",
                    help="search paths, boundaries, regions and encounters instead of objects")
     names_opt(s)
+    s = add("animtable", cmd_animtable, "export a character's animation table (handle -> clip) as JSON")
+    s.add_argument("data", help="DATAxbox folder or a .dsk file")
+    s.add_argument("name", help="table name, e.g. player_american (list them with list --type animtable)")
+    s.add_argument("-o", "--out", default="animtables")
     s = add("layout", cmd_layout, "export a layer's paths, boundaries, regions, encounters and load list")
     s.add_argument("data", help="DATAxbox folder or a .dsk file")
     s.add_argument("layer", help="world layer name, e.g. swn_allies0")

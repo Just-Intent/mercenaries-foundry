@@ -227,6 +227,25 @@ Every layer has one record of each kind (most are empty). All 3,329 decode and r
 
 Paths, boundaries and spawn points plotted over the objects follow roads, town grids and compounds. Tested in-game (2026-11-08): shrinking `allies0_killbox` made the game's restricted-area response (air strikes) trigger at the new edge. Our readable form recomputes the count fields that matched their contents in the original, so adding points or properties keeps them right; a path's points and rotations must stay equal in number.
 
+### Animation tables: `animtable` → `atbl`
+
+95 tables, one per character or vehicle kind (`player_american`, `nk_soldier_ehuman`, `allies_veh_humvee`, ...). The game's code asks for handles (the executable holds strings like `lb_upright_run_forward`, but no clip names); a table maps each handle to a clip. All 95 rebuild byte-for-byte from the JSON form (`animtable` command, `extract --decode`). Established from retail data.
+
+```
+ucfb
+  atbl
+    NAME   table name
+    DFLT   optional fallback table for handles this one lacks (24 tables)
+    SIZE   u32 variant count, u32 set count
+    vanm   per variant: ANAM clip name
+    aset   per set (default, rifle, smg, law, gps, driver, gunner, passenger_*, ...)
+      NAME, SIZE (u32 entry count)
+      entr   HNDL handle; ANAM clip, or VARG u32 count + u32 start (a random pick
+             from the variant list, e.g. three ragdoll or fidget clips); PRIO u32; FLGS u32
+```
+
+Clips are streamed only when a load list (`list`, text: `[animation]` then `load <clip>` lines) names them; three lists load the American run. A mod's new clips (`animations/new.json`) are added to `streamed.dsk` and to every load list that loads their template. Tested in-game (2026-11-08): new clips `foundry_<merc>_crossleg_run` (the run with thighs turned inward), pointed to by each player table's `default`/`lb_upright_run_forward` entry, played with the game's own run clip unchanged.
+
 ### Animation: `animation` → `anim`
 
 All 1,835 retail animations decode (43,153 joint tracks, 234,640 frames). Established from retail data.
@@ -290,6 +309,6 @@ How vehicles use the shapes: each has a material-6 triangle hull mesh plus a mat
 - The grid-index tail (`0x00FF8040`): no retail archive uses it.
 - Models: the extra 8 bytes of 28-byte vertices, and `MTRL` words 0, 2 and 4–6.
 - Collision: what the material codes mean; what the walker's carried value (`60`-`68`) is for; 2 of 176 convex hulls have a point up to 13 cm outside one plane.
-- Animation, terrain, path and region formats. Whether DXT2 textures are premultiplied (we treat them as DXT3).
+- Terrain; what animation-table `PRIO` and `FLGS` values mean. Whether DXT2 textures are premultiplied (we treat them as DXT3).
 - `INFO` byte 0 in scripts; `TNAM` and `INFO` in world layers.
 - What `num_components` counts exactly.

@@ -51,6 +51,10 @@ def _check_record(kind, payload):
         name = aidata.KINDS[kind]
         doc = json.loads(json.dumps(aidata.to_json(payload, name)))
         return name, None if aidata.from_json(doc) == payload else "rebuilt bytes differ"
+    from . import animtable
+    if kind == animtable.ANIMTABLE:
+        doc = json.loads(json.dumps(animtable.to_json(payload)))
+        return "animtable", None if animtable.from_json(doc) == payload else "rebuilt bytes differ"
     if kind == WORLD:
         doc = json.loads(json.dumps(world.to_json(payload)))
         return "world", None if world.from_json(doc) == payload else "rebuilt bytes differ"
@@ -85,7 +89,9 @@ def verify_archive(path, max_failures=50) -> Report:
                 result = _check_record(r.kind, payload)
             except ERRORS as err:
                 from . import aidata
-                labels = {SCRIPT: "script", WORLD: "world", REGISTRY: "text", **aidata.KINDS}
+                from . import animtable
+                labels = {SCRIPT: "script", WORLD: "world", REGISTRY: "text", **aidata.KINDS,
+                          animtable.ANIMTABLE: "animtable"}
                 result = (labels[r.kind], f"{type(err).__name__}: {err}")
             if result is None:
                 continue
