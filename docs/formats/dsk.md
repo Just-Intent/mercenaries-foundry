@@ -209,6 +209,20 @@ Kinds: boxes 0 and 2 (plain), 3 (with `CMOP`); meshes 4 (with `CMOP`), 5 (plain)
 
 On import, each new piece gets a box fitted around it. The boxes go into the model's existing plain box shape (no tree) when it has one, re-expressed in that shape's joint space with a rotation; otherwise a new plain box shape (kind 2, material 9 on vehicles) is added only if the model has fewer than two shapes; otherwise collision is skipped with a warning. `cinf` box, shape and kind-2/3 counts are kept in step. Tested in-game (2026-11-08): a box appended to the cargo truck's existing shape collided, and the truck drove normally. Objects whose name contains `nocoll` get no collision; `model-import --no-collision` turns it off entirely. Collision of edited existing pieces is not changed.
 
+### Paths, boundaries, regions, encounters, lists
+
+Every layer has one record of each kind (most are empty). All 3,329 decode and rebuild byte-identical. Established from retail data; count fields verified in every record.
+
+| Kind | Chunks | Contents |
+|---|---|---|
+| `path` (3,367 paths) | `path`: `NAME`, `INFO`, `PROP`, `PNTS`, `ORNT`, `JNCT`; sometimes `EVNT`, `ROTN`, `PSTM`, `RBRG` | Routes for traffic, patrols and flights (e.g. `t_unhq_patrol04`). `INFO` = (`u16` points, `u16` ?, `u16` properties). `PROP` = repeated `name\0` + 4-byte value (e.g. `width` 1.0, `flow` 1.0, `num_pause_times` 0). `ORNT` = one quaternion per point. `JNCT` links to other paths by name and point index (not decoded). |
+| `lineregion` (518) | `lrg_`: `NAME`, `INFO`, `PROP`, `PNTS` | Named boundary polygons: `type=killbox` mission areas (`TestInside=false`: acts when you're outside), trigger zones used by scripts (`allies0_nodrive`), weather areas (`type=atmosphere`). `INFO` = (`u16` 0, `u16` properties, `u16` points). `PROP` = `name\0value\0` pairs. |
+| `region` (42) | `rgns`: `INFO` (`u32` regions, `u32` sum of region `INFO`), `regn`: `INFO` (`u16` properties), `XFRM`, `SIZE` (`float[3]`), `PROP` | Boxes with properties. |
+| `encounter` (646) | `enc_`: `NAME`, `INFO` (`u16`, `u16`, `u16` point sets, `u16` squads), `PSTS` > `PSET` (`NAME` like `A`, `INFO` with point count at byte 4, `PNTS`), `SQDS` > `SQD_` (`NAME` = squad type, `INFO`, `FPNT`/`PPNT` = point-set names) | Squads and the point sets they spawn or form up at. |
+| `list` | plain text | The layer's asset load list (`[animation]`, `load ...`). |
+
+Paths, boundaries and spawn points plotted over the objects follow roads, town grids and compounds. Our readable form recomputes the count fields that matched their contents in the original, so adding points or properties keeps them right; a path's points and rotations must stay equal in number.
+
 ### Textures: `Texture` → `tex_`
 
 All 4,715 retail textures decode. Established from retail data.

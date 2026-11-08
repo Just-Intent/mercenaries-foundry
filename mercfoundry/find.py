@@ -91,3 +91,45 @@ def rule_for(obj):
         rule["radius"] = 0.5
     rule["move"] = [0, 0, 0]
     return rule
+
+
+def layout_items(archives, layer=None):
+    """Named paths, boundaries, regions, encounters and point sets, each with
+    its points (or region position)."""
+    from . import aidata
+    from .hashing import NameBook
+    for arc in archives:
+        with arc.path.open("rb") as f:
+            for r in arc.records:
+                kind = aidata.KINDS.get(r.kind)
+                if not kind:
+                    continue
+                f.seek(r.offset)
+                doc = aidata.to_json(f.read(r.size), kind)
+                for tag, name, node in aidata.items(doc):
+                    pts = [p for n in aidata._walk([node]) if "points" in n for p in n["points"]]
+                    if not pts:
+                        pts = [n["position"] for n in aidata._walk([node]) if "position" in n]
+                    yield {"layer_key": r.key, "kind": kind, "item": {"path": "path", "lrg_": "boundary",
+                           "regn": "region", "enc_": "encounter", "PSET": "point set", "SQD_": "squad"}[tag],
+                           "name": name or "", "points": pts}
+
+
+def search_layout(archives, layer_names, name=None, layer=None, near=None, radius=None, limit=None):
+    hits = []
+    for it in layout_items(archives):
+        it["layer"] = layer_names.get(it["layer_key"], f"{it['layer_key']:08X}")
+        if layer is not None and not _matches(layer, it["layer"]):
+            continue
+        if not _matches(name, it["name"]):
+            continue
+        if near is not None:
+            if not it["points"]:
+                continue
+            it["distance"] = min(math.dist(p, near) for p in it["points"])
+            if radius is not None and it["distance"] > radius:
+                continue
+        hits.append(it)
+    if near is not None:
+        hits.sort(key=lambda o: o["distance"])
+    return hits[:limit] if limit else hits

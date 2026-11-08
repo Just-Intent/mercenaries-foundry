@@ -46,6 +46,11 @@ def _rebuild_layout(arc: dsk.Archive) -> bool:
 
 def _check_record(kind, payload):
     """Return (label, error or None), or None if we don't decode this type."""
+    from . import aidata
+    if kind in aidata.KINDS:
+        name = aidata.KINDS[kind]
+        doc = json.loads(json.dumps(aidata.to_json(payload, name)))
+        return name, None if aidata.from_json(doc) == payload else "rebuilt bytes differ"
     if kind == WORLD:
         doc = json.loads(json.dumps(world.to_json(payload)))
         return "world", None if world.from_json(doc) == payload else "rebuilt bytes differ"
@@ -79,7 +84,9 @@ def verify_archive(path, max_failures=50) -> Report:
             try:
                 result = _check_record(r.kind, payload)
             except ERRORS as err:
-                result = ({SCRIPT: "script", WORLD: "world", REGISTRY: "text"}[r.kind], f"{type(err).__name__}: {err}")
+                from . import aidata
+                labels = {SCRIPT: "script", WORLD: "world", REGISTRY: "text", **aidata.KINDS}
+                result = (labels[r.kind], f"{type(err).__name__}: {err}")
             if result is None:
                 continue
             label, error = result

@@ -20,7 +20,8 @@
 - glTF export (`model --glb`): joints as a node tree, rigid pieces parented to joints, skinned pieces with a skin (bone palette = joints named `bone*`), embedded textures with alpha masking. All 2,297 models export and pass a vertex-by-vertex check; three.js loads and renders them, posing bones moves the right parts, and sign lettering confirms the handedness conversion.
 - Object positions: world-layer `XFRM` decoded (rotation + position in metres) for all 51,731 objects; layer and object `INFO` counts understood and recomputed. Mod object rules can move, place, turn and copy objects, matching by name, model or position.
 - `find`: lists world objects by name, model, layer, property, or distance from a point or named object; `--rule` prints a mod rule that matches exactly that object. Scans all 51,731 objects in under a second.
-- 109 tests pass.
+- Paths, boundaries, regions, encounters and load lists decoded with exact rebuild (all 3,329 records; counts recomputed). `layout` exports a layer's data, mods replace it via `layout/`, `find --layout` searches it, and `verify` checks it.
+- 115 tests pass.
 
 ## Fixed from retail data
 - Text values aren't NUL-terminated. The decoder had assumed they were and found no strings.
@@ -54,7 +55,8 @@
 ## Next steps
 1. Collision for models whose shapes can't take more boxes (e.g. the Humvee): needs CMOP trees or the second CMSH layout decoded.
 2. glTF import (edit skeleton-aware models in Blender), and animation decoding.
-3. Decode `path`, `region`, `encounter` and `lineregion` records (AI routes, zones, spawns).
+3. In-game test of an edited boundary (`allies0_killbox` shrunk to 60 m, in `mods/Foundry Killbox Test`).
+4. Path junctions (`JNCT`) and squad types: where `SQD_` names like `nk_hum_ppl_tunnel01` are defined.
 
 ## Notes
 - Several port tools mention replacing "source-informed" versions. Use only versions re-derived from retail (see PROVENANCE.md).

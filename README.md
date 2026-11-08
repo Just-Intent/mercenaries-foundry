@@ -32,6 +32,7 @@ python -m mercfoundry mod build my_mod --data game_files/DATAxbox --out "<port>/
 | `objects/*.json`: `{"name": "player_humvee", "set": {"physicsenginetorque": "3400"}}` | Change objects in the world. Match by `name` (or `template`), `model`, and/or `near: [x, y, z]` (with `radius`); `layer` narrows it to one world layer. Actions: `set` properties, `move: [dx, dy, dz]`, `position: [x, y, z]`, `turn` (degrees about the vertical), and `copy: true` with `as: "new_name"` to place a duplicate. |
 | `textures/<name>.png` | Replace the texture `<name>`, or add a new one (power-of-two sizes) |
 | `models/<name>.obj` | Replace a model with an edited export from `model` |
+| `layout/<layer>.<kind>.json` | Replace a layer's paths, boundaries, regions or encounters (`kind` = `path`, `lineregion`, `region`, `encounter`), or `layout/<layer>.list.txt` for its load list. Export them with `layout DATAxbox <layer>`. |
 
 ### Finding objects
 
@@ -40,6 +41,8 @@ python -m mercfoundry find game_files/DATAxbox --near-name loc_drop_start --laye
 python -m mercfoundry find game_files/DATAxbox --model "*rock*" --layer swn --limit 20
 python -m mercfoundry find game_files/DATAxbox --property Faction=China --model "*veh*"
 ```
+
+Add `--layout` to search paths, boundaries (e.g. mission kill zones), regions, encounters and spawn point sets instead of objects (pass `--names names.txt` to show layer names).
 
 Lists matching objects with their layer, model, name, position and heading (and distance with `--near`/`--near-name`). Patterns match part of a name, or the whole name when they contain `*` or `?`; case is ignored. `--rule` prints a mod rule for each match, ready to paste into `objects/` and edit (it targets that one object by name, or by position if it has none). `--json` prints full details. Pass a mod's `assets.dsk` instead of `DATAxbox` to search a built mod.
 

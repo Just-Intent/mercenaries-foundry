@@ -26,6 +26,13 @@ def _script_encode(decoded, base):
     return script.encode(script.with_source(old, decoded.decode("latin-1")))
 
 
+def _ai(kind):
+    from . import aidata
+    return (f".{kind}.json",
+            lambda rec: _json(aidata.to_json(rec, kind)),
+            lambda dec, base: aidata.from_json(json.loads(dec)))
+
+
 CODECS = {
     name_hash("script"): (".lua", _script_decode, _script_encode),
     name_hash("world"): (".world.json",
@@ -34,6 +41,11 @@ CODECS = {
     name_hash("registry"): (".text.json",
                             lambda rec: _json(registry.to_json(rec)),
                             lambda dec, base: registry.from_json(json.loads(dec), base)),
+    name_hash("path"): _ai("path"),
+    name_hash("lineregion"): _ai("lineregion"),
+    name_hash("region"): _ai("region"),
+    name_hash("encounter"): _ai("encounter"),
+    name_hash("list"): (".list.txt", lambda rec: rec, lambda dec, base: dec),
 }
 
 

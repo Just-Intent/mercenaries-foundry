@@ -18,6 +18,10 @@ Project layout (every part optional):
                           apply to the copy).
     textures/<name>.png   replaces the texture <name>, or adds it if it's new
     models/<name>.obj     an edited export from the `model` command
+    layout/<layer>.<kind>.json  replaces a layer's path, lineregion, region
+                          or encounter data (from `layout` or `extract
+                          --decode`); layout/<layer>.list.txt replaces its
+                          asset load list
 
 `build` writes only the archives that change into the output folder, which
 can be dropped into Mercenaries Recompiled's mods/ folder as is.
@@ -100,7 +104,7 @@ class _Data:
 def new_project(folder, name=None):
     folder = Path(folder)
     name = name or folder.resolve().name
-    for sub in ("text", "scripts", "objects", "textures", "models"):
+    for sub in ("text", "scripts", "objects", "textures", "models", "layout"):
         (folder / sub).mkdir(parents=True, exist_ok=True)
     meta = folder / "mod.json"
     if not meta.exists():
@@ -283,6 +287,34 @@ def _apply_textures(data, folder, result):
             result.changes.append(f"texture {name}: added ({w}x{h})")
 
 
+LAYOUT_KINDS = ("path", "lineregion", "region", "encounter", "list")
+
+
+def _apply_layout(data, folder, result):
+    from . import aidata
+    files = sorted(list((folder / "layout").glob("*.json")) + list((folder / "layout").glob("*.list.txt")))
+    for f in files:
+        stem = f.name[:-len(".list.txt")] if f.name.endswith(".list.txt") else f.name[:-len(".json")]
+        layer, _, kind = stem.rpartition(".") if not f.name.endswith(".list.txt") else (stem, ".", "list")
+        if kind not in LAYOUT_KINDS or not layer:
+            raise ValueError(f"layout/{f.name}: name it <layer>.<kind>.json with kind one of "
+                             f"path, lineregion, region, encounter (or <layer>.list.txt)")
+        key, kind_hash = name_hash(layer), name_hash(kind)
+        hit = [(a, r) for a, r in data.records(kind_hash) if r.key == key]
+        if not hit:
+            raise ValueError(f"layout/{f.name}: no {kind} record for layer {layer!r}")
+        if kind == "list":
+            new = f.read_bytes()
+        else:
+            doc = json.loads(f.read_text(encoding="utf-8"))
+            if doc.get("kind") != kind:
+                raise ValueError(f"layout/{f.name}: file holds {doc.get('kind')!r} data, not {kind!r}")
+            new = aidata.from_json(doc)
+        for a, r in hit:
+            data.set(a, r, new)
+        result.changes.append(f"layout {layer} {kind}: replaced")
+
+
 def _obj_settings(text):
     first = next((l for l in text.splitlines() if l.startswith("#")), "")
     m = re.search(r"level of detail (\d+)", first)
@@ -328,6 +360,7 @@ def build(project, data_dir, out_dir) -> Result:
     _apply_objects(data, project, result)
     _apply_textures(data, project, result)
     _apply_models(data, project, result)
+    _apply_layout(data, project, result)
     names = sorted(set(data.replace) | set(data.add))
     names = [n for n in names if data.replace.get(n) or data.add.get(n)]
     out.mkdir(parents=True, exist_ok=True)

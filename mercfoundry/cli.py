@@ -300,6 +300,21 @@ def cmd_find(args):
         key, _, value = p.partition("=")
         props.append((key, value if "=" in p else None))
     radius = args.radius if args.radius is not None else (50.0 if near is not None else None)
+    if args.layout:
+        names = NameBook()
+        for path in getattr(args, "names", None) or []:
+            names.add_many(Path(path).read_text(encoding="utf-8").splitlines())
+        for arc in arcs:
+            dsk.collect_names(arc, names)
+        layer_names = {k: n for k, n in names.items()}
+        hits = find.search_layout(arcs, layer_names, args.name, args.layer, near, radius, args.limit)
+        for h in hits:
+            dist = f"{h['distance']:7.1f}m " if "distance" in h else ""
+            first = " ".join(f"{v:9.2f}" for v in h["points"][0]) if h["points"] else ""
+            print(f"{dist}{h['layer']:<30} {h['kind']:<10} {h['item']:<9} {h['name'] or '-':<28} "
+                  f"{len(h['points']):4d} pts  {first}")
+        print(f"{len(hits)} items")
+        return
     hits = find.search(arcs, args.name, args.model, args.layer, near, radius, props, args.limit)
     if args.json or args.rule:
         out = []
@@ -322,6 +337,40 @@ def cmd_find(args):
         print(f"{dist}{h['layer']:<28} {h['model']:<34} {h['name'] or '-':<28} {pos}"
               + (f"  yaw {yaw:6.1f}" if yaw is not None else ""))
     print(f"{len(hits)} objects" + (" (limit reached)" if args.limit and len(hits) == args.limit else ""))
+
+
+def cmd_layout(args):
+    from . import aidata
+    arcs = _data_archives(args.data)
+    key = name_hash(args.layer)
+    out = Path(args.out)
+    out.mkdir(parents=True, exist_ok=True)
+    wrote = 0
+    for arc in arcs:
+        with arc.path.open("rb") as f:
+            for r in arc.records:
+                if r.key != key:
+                    continue
+                kind = aidata.KINDS.get(r.kind) or ("list" if r.kind == aidata.LIST else None)
+                if not kind:
+                    continue
+                f.seek(r.offset)
+                data = f.read(r.size)
+                if kind == "list":
+                    path = out / f"{args.layer}.list.txt"
+                    path.write_bytes(data)
+                else:
+                    doc = aidata.to_json(data, kind)
+                    if not any(True for _ in aidata.items(doc)):
+                        continue  # empty for this layer
+                    path = out / f"{args.layer}.{kind}.json"
+                    import json as _json
+                    path.write_text(_json.dumps(doc, indent=1) + "\n", encoding="utf-8")
+                print(f"wrote {path}")
+                wrote += 1
+    if not wrote:
+        sys.exit(f"no path, boundary, region, encounter or list data for layer {args.layer!r}")
+    print("copy the files you edit into a mod's layout/ folder")
 
 
 def cmd_unpack_iso(args):
@@ -415,6 +464,13 @@ def main(argv=None):
     s.add_argument("--limit", type=int, default=200, help="most results to show (default 200, 0 = all)")
     s.add_argument("--json", action="store_true", help="print matches as JSON")
     s.add_argument("--rule", action="store_true", help="print a mod rule for each match, ready to edit")
+    s.add_argument("--layout", action="store_true",
+                   help="search paths, boundaries, regions and encounters instead of objects")
+    names_opt(s)
+    s = add("layout", cmd_layout, "export a layer's paths, boundaries, regions, encounters and load list")
+    s.add_argument("data", help="DATAxbox folder or a .dsk file")
+    s.add_argument("layer", help="world layer name, e.g. swn_allies0")
+    s.add_argument("-o", "--out", default="layout")
     s = add("unpack-iso", cmd_unpack_iso, "extract an Xbox disc image (.iso or .xiso)")
     s.add_argument("image"); s.add_argument("out")
     s = add("hash", cmd_hash, "hash names the way the game does"); s.add_argument("names", nargs="+")
