@@ -29,7 +29,7 @@ python -m mercfoundry mod build my_mod --data game_files/DATAxbox --out "<port>/
 |---|---|
 | `text/*.json`: `{"interface.shell.newgame": "NEW GAME"}` | Change text. New keys are added. |
 | `scripts/<name>.lua` | Replace the Lua script `<name>`, or add a new one |
-| `objects/*.json`: `{"template": "player_humvee", "set": {"physicsenginetorque": "3400"}}` | Change object properties. Match by `template` and/or `model`; `layer` narrows it to one world layer. |
+| `objects/*.json`: `{"name": "player_humvee", "set": {"physicsenginetorque": "3400"}}` | Change objects in the world. Match by `name` (or `template`), `model`, and/or `near: [x, y, z]` (with `radius`); `layer` narrows it to one world layer. Actions: `set` properties, `move: [dx, dy, dz]`, `position: [x, y, z]`, `turn` (degrees about the vertical), and `copy: true` with `as: "new_name"` to place a duplicate. |
 | `textures/<name>.png` | Replace the texture `<name>`, or add a new one (power-of-two sizes) |
 | `models/<name>.obj` | Replace a model with an edited export from `model` |
 

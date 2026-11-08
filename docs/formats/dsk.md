@@ -103,9 +103,13 @@ Tested in-game (2026-11-08): the game loads scripts compressed by our encoder. W
 ### `world` → `wrld`
 
 - `NAME`: layer name (its hash equals the record key)
-- `TNAM`, `INFO`: present in retail layers, not decoded yet (kept as-is)
+- `TNAM`: territory name, NUL-terminated (e.g. `Aclubs`)
+- `INFO` (16 bytes): `u32` object count, `u32` sum of every object's `INFO` value, two `u32` zeros. Exact in all 824 layers; our tools recompute both when objects change.
 - `TABL`: string table, `count` then `count` × (`hash`, `length`, chars, NUL). Each hash must match its string.
-- `inst` (repeated): object instance. `PROP` holds pairs of string-table hashes: words 0–1 are model and template (0 = none), the rest are (property, value) pairs such as `GeometryFile`, `objectType`, `destructible`, `hitPoints`, `Faction`, `DisplayName`. Retail instances also carry an undecoded `INFO` chunk.
+- `inst` (repeated): object instance, always `INFO`, `XFRM`, `PROP` (51,731 in retail):
+  - `INFO`: `u16`, usually the property-pair count + 1 (87%); kept as an offset from the pair count so added properties stay consistent.
+  - `XFRM`: `float[9]` rotation (rows; all orthonormal) then `float[3]` world position in metres. Plotting every south-west object from above draws the map: roads, town grids, compounds.
+  - `PROP`: pairs of string-table hashes. Word 0 is the model; word 1 is the object's own name (0 = unnamed; in template layers this is the template's name, e.g. `template_allies_humvee`); the rest are (property, value) pairs such as `GeometryFile`, `objectType`, `destructible`, `hitPoints`, `Faction`, `DisplayName`.
 
 Our editable form keeps the string table's order and appends new strings at the end. Whether the game requires a particular table order is unknown.
 

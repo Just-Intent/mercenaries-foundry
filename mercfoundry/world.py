@@ -5,8 +5,12 @@ table) and repeated inst chunks. Each inst has a PROP chunk of u32 string-table
 hashes: model, template, then (property, value) pairs. Observed in retail
 assets.dsk by Mercenaries Recompiled (inspect_retail_templates.py).
 
+Each inst also has INFO (u16; usually the property-pair count + 1) and XFRM:
+float[9] rotation (rows) + float[3] world position in metres.
+
 to_json/from_json give an editable form that rebuilds the record exactly when
-nothing is changed. Unknown chunks are kept as hex.
+nothing is changed: instances show "position" and "rotation". Unknown chunks
+are kept as hex.
 """
 import struct
 
@@ -85,9 +89,26 @@ def to_json(record: bytes) -> dict:
             out["chunks"].append({"tag": "TABL"})
         elif tag == b"inst":
             out["chunks"].append(_inst_to_json(body, word))
+        elif tag == b"INFO" and len(body) == 16:
+            # [object count, sum of object INFO values, 0, 0]; recomputed on
+            # build. Kept raw if a layer ever disagrees.
+            out["chunks"].append({"tag": "INFO", "rest": body[8:].hex()})
         else:
             out["chunks"].append(_raw(tag, body))
+    if not _layer_info_matches(items):
+        out["chunks"] = [_raw(b"INFO", dict(items)[b"INFO"]) if c == {"tag": "INFO", "rest": c.get("rest")} else c
+                         for c in out["chunks"]]
     return out
+
+
+def _layer_info_matches(items):
+    infos = [b for t, b in items if t == b"INFO" and len(b) == 16]
+    if not infos:
+        return True
+    count, total = struct.unpack_from("<II", infos[0])
+    insts = [dict(ucfb.iter_chunks(b)) for t, b in items if t == b"inst"]
+    got = sum(struct.unpack("<H", i[b"INFO"])[0] for i in insts if len(i.get(b"INFO", b"")) == 2)
+    return count == len(insts) and total == got
 
 
 def _inst_to_json(body, word):
@@ -102,12 +123,30 @@ def _inst_to_json(body, word):
         "template": word(words[1]),
         "properties": [[word(words[k]), word(words[k + 1])] for k in range(2, len(words), 2)],
     }
-    layout = ["PROP" if t == b"PROP" else _raw(t, b) for t, b in parts]
+    layout = []
+    for t, b in parts:
+        if t == b"PROP":
+            layout.append("PROP")
+        elif t == b"INFO" and len(b) == 2 and "info_offset" not in inst:
+            # Usually the property-pair count + 1; kept as an offset so edits
+            # that add properties stay consistent.
+            inst["info_offset"] = struct.unpack("<H", b)[0] - len(inst["properties"])
+            layout.append("INFO")
+        elif t == b"XFRM" and len(b) == 48 and "position" not in inst:
+            f = struct.unpack("<12f", b)
+            inst["rotation"] = [list(f[0:3]), list(f[3:6]), list(f[6:9])]
+            inst["position"] = list(f[9:12])
+            layout.append("XFRM")
+        else:
+            layout.append(_raw(t, b))
     if layout != ["PROP"]:
         inst["chunks"] = layout
     if not pad_last:
         inst["pad_last"] = False
     return inst
+
+
+_LAYER_INFO = b"<layer info>"
 
 
 def from_json(doc: dict) -> bytes:
@@ -134,16 +173,33 @@ def from_json(doc: dict) -> bytes:
             built.append((b"NAME", doc["name"].encode("ascii") + b"\0"))
         elif tag == "TABL" and "hex" not in item:
             built.append((b"TABL", None))  # filled once all strings are known
+        elif tag == "INFO" and "hex" not in item:
+            layer_rest = bytes.fromhex(item.get("rest", "00" * 8))
+            built.append((b"INFO", _LAYER_INFO))
         elif tag == "inst" and "hex" not in item:
             words = [word(item["model"]), word(item["template"])]
             for key, value in item["properties"]:
                 words += [word(key), word(value)]
             prop = struct.pack(f"<{len(words)}I", *words)
-            parts = [(b"PROP", prop) if c == "PROP" else _unraw(c) for c in item.get("chunks", ["PROP"])]
+            def part(c):
+                if c == "PROP":
+                    return b"PROP", prop
+                if c == "INFO":
+                    return b"INFO", struct.pack("<H", len(item["properties"]) + item.get("info_offset", 1))
+                if c == "XFRM":
+                    rows = [v for row in item["rotation"] for v in row]
+                    return b"XFRM", struct.pack("<12f", *rows, *item["position"])
+                return _unraw(c)
+            parts = [part(c) for c in item.get("chunks", ["PROP"])]
             built.append((b"inst", ucfb.pack_children(parts, item.get("pad_last", True))))
         else:
             built.append(_unraw(item))
     table = write_table(strings)
     built = [(t, table if b is None else b) for t, b in built]
+    if any(t == b"INFO" and b is _LAYER_INFO for t, b in built):
+        insts = [dict(ucfb.iter_chunks(b)) for t, b in built if t == b"inst"]
+        total = sum(struct.unpack("<H", i[b"INFO"])[0] for i in insts if len(i.get(b"INFO", b"")) == 2)
+        info = struct.pack("<II", len(insts), total) + layer_rest
+        built = [(t, info if b is _LAYER_INFO else b) for t, b in built]
     pad = tuple(doc.get("record_pad", (True, True)))
     return ucfb.wrap(b"wrld", ucfb.pack_children(built, doc.get("pad_last", True)), pad)

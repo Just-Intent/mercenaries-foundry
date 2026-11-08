@@ -5,19 +5,26 @@ Project layout (every part optional):
     mod.json              {"name": ..., "description": ...}
     text/*.json           {"dotted.key": "new text", ...}; unknown keys are added
     scripts/<name>.lua    replaces the script <name>, or adds it if it's new
-    objects/*.json        property rules, a rule or a list of rules:
-                          {"layer": "swn_hq", "template": "player_humvee",
-                           "set": {"physicsenginetorque": "3400"}}
-                          "layer" is optional; match on "template" and/or
-                          "model". Properties are matched case-insensitively;
-                          new ones are appended.
+    objects/*.json        object rules, a rule or a list of rules. Match on
+                          "name" (the object's name; "template" also works)
+                          and/or "model", and/or "near" [x, y, z] (within
+                          "radius" metres, default 0.5), optionally within
+                          one "layer".
+                          Actions: "set" {property: value} (new properties
+                          are appended), "move" [dx, dy, dz], "position"
+                          [x, y, z] (metres), "turn" degrees about the
+                          vertical axis, and "copy": true with "as": a new
+                          name, to place a duplicate (other actions then
+                          apply to the copy).
     textures/<name>.png   replaces the texture <name>, or adds it if it's new
     models/<name>.obj     an edited export from the `model` command
 
 `build` writes only the archives that change into the output folder, which
 can be dropped into Mercenaries Recompiled's mods/ folder as is.
 """
+import copy
 import json
+import math
 import re
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -165,15 +172,52 @@ def _apply_scripts(data, folder, result):
             result.changes.append(f"script {name}: added")
 
 
+ACTIONS = ("set", "move", "position", "turn", "copy")
+
+
 def _rules(folder):
     for f in sorted((folder / "objects").glob("*.json")):
         doc = json.loads(f.read_text(encoding="utf-8"))
         for rule in doc if isinstance(doc, list) else [doc]:
-            if not isinstance(rule, dict) or not isinstance(rule.get("set"), dict):
-                raise ValueError(f"{f.name}: each rule needs a \"set\" object")
-            if not rule.get("template") and not rule.get("model"):
-                raise ValueError(f"{f.name}: each rule needs a \"template\" or \"model\" to match")
+            if not isinstance(rule, dict) or not any(k in rule for k in ACTIONS):
+                raise ValueError(f"{f.name}: each rule needs one of {', '.join(ACTIONS)}")
+            if "set" in rule and not isinstance(rule["set"], dict):
+                raise ValueError(f"{f.name}: \"set\" must be an object of property -> value")
+            if not (rule.get("name") or rule.get("template") or rule.get("model") or rule.get("near")):
+                raise ValueError(f"{f.name}: each rule needs a \"name\", \"model\" or \"near\" to match")
+            if "near" in rule and (not isinstance(rule["near"], list) or len(rule["near"]) != 3):
+                raise ValueError(f"{f.name}: \"near\" must be [x, y, z]")
+            if rule.get("copy") and not rule.get("as"):
+                raise ValueError(f"{f.name}: \"copy\" needs \"as\", the new object's name")
+            for key in ("move", "position"):
+                if key in rule and (not isinstance(rule[key], list) or len(rule[key]) != 3):
+                    raise ValueError(f"{f.name}: \"{key}\" must be [x, y, z]")
             yield f.name, rule
+
+
+def _turn(rotation, degrees):
+    """Rotate an object's axes (rotation rows) about the vertical (Y) axis."""
+    a = math.radians(degrees)
+    c, s = math.cos(a), math.sin(a)
+    return [[r[0] * c + r[2] * s, r[1], -r[0] * s + r[2] * c] for r in rotation]
+
+
+def _apply_rule(inst, rule):
+    for prop, value in rule.get("set", {}).items():
+        for pair in inst["properties"]:
+            if pair[0].lower() == prop.lower():
+                pair[1] = str(value)
+                break
+        else:
+            inst["properties"].append([prop, str(value)])
+    if any(k in rule for k in ("move", "position", "turn")) and "position" not in inst:
+        raise ValueError(f"object {inst['template']!r} has no transform to change")
+    if "position" in rule:
+        inst["position"] = [float(v) for v in rule["position"]]
+    if "move" in rule:
+        inst["position"] = [p + float(d) for p, d in zip(inst["position"], rule["move"])]
+    if "turn" in rule:
+        inst["rotation"] = _turn(inst["rotation"], float(rule["turn"]))
 
 
 def _apply_objects(data, folder, result):
@@ -184,34 +228,43 @@ def _apply_objects(data, folder, result):
     for a, r in data.records(WORLD):
         doc = None
         for n, (fname, rule) in enumerate(rules):
-            if rule.get("layer"):
-                if name_hash(rule["layer"]) != r.key:
-                    continue
+            if rule.get("layer") and name_hash(rule["layer"]) != r.key:
+                continue
             if doc is None:
                 doc = world.to_json(data.current(a, r))
-            for c in doc["chunks"]:
+            want = (rule.get("name") or rule.get("template") or "").lower()
+            chunks = doc["chunks"]
+            k = 0
+            while k < len(chunks):
+                c = chunks[k]
+                k += 1
                 if c.get("tag") != "inst" or "properties" not in c:
                     continue
-                if rule.get("template") and c["template"].lower() != rule["template"].lower():
+                if want and c["template"].lower() != want:
                     continue
                 if rule.get("model") and c["model"].lower() != rule["model"].lower():
                     continue
+                if rule.get("near"):
+                    if "position" not in c or math.dist(c["position"], rule["near"]) > float(rule.get("radius", 0.5)):
+                        continue
                 hits[n] += 1
-                for prop, value in rule["set"].items():
-                    for pair in c["properties"]:
-                        if pair[0].lower() == prop.lower():
-                            pair[1] = str(value)
-                            break
-                    else:
-                        c["properties"].append([prop, str(value)])
+                if rule.get("copy"):
+                    twin = copy.deepcopy(c)
+                    twin["template"] = rule["as"]
+                    _apply_rule(twin, rule)
+                    chunks.insert(k, twin)
+                    k += 1
+                else:
+                    _apply_rule(c, rule)
         if doc is not None:
             data.set(a, r, world.from_json(doc))
     for (fname, rule), n in zip(rules, hits):
-        what = rule.get("template") or rule.get("model")
+        what = rule.get("name") or rule.get("template") or rule.get("model") or f"object near {rule['near']}"
         if not n:
             raise ValueError(f"{fname}: no object matches {what!r}" +
                              (f" in layer {rule['layer']!r}" if rule.get("layer") else ""))
-        result.changes.append(f"objects {what}: {n} instances updated")
+        verb = f"copied as {rule['as']!r}" if rule.get("copy") else "updated"
+        result.changes.append(f"objects {what}: {n} instances {verb}")
 
 
 def _apply_textures(data, folder, result):
