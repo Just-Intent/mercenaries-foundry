@@ -27,6 +27,12 @@ A description (a mod's encounters/<layer>.json):
                                 "pauses": {"0": 3.0},
                                 "links": [{"path": "other", "their_point": 0}]}}}
 
+"boundaries": {"zone": {"points": [[x, y, z], ...], "properties": {"type": "killbox"}}}
+are polygons scripts watch (Event_ActorInBoundary(func, 'b', actor, 'zone',
+TRUE)) and switch (Boundary_Enable('zone', TRUE)).  Without properties a
+boundary is a plain trigger zone; retail types include killbox (restricted
+area), radiation, water, atmosphere, ambience and faction.
+
 Paths (path > NAME, INFO, PROP, [PSTM], PNTS, ORNT, JNCT) are what
 Ai_Command(actor, 'Patrol', '<path>', '1.0', 'loPri') and an object's own
 "path" property follow.  JNCT links join this path's point (default: its
@@ -78,6 +84,21 @@ def _member(source, spec, extra=()):
 
 
 PATH = name_hash("path")
+LINEREGION = name_hash("lineregion")
+
+
+def _boundary_node(name, spec):
+    """A boundary (lineregion > lrg_: NAME, INFO (u16 0, u16 properties,
+    u16 points), PROP name/value pairs, PNTS polygon), as all 518 retail ones."""
+    points = [[float(v) for v in p] for p in spec["points"]]
+    if len(points) < 3:
+        raise ValueError(f"boundary {name}: needs at least three points")
+    pairs = [[str(k), str(v)] for k, v in (spec.get("properties") or {}).items()]
+    return {"tag": "lrg_", "children": [
+        {"tag": "NAME", "text": name},
+        {"tag": "INFO", "hex": "000000000000", "auto": True},
+        {"tag": "PROP", "pairs": pairs},
+        {"tag": "PNTS", "points": points}]}
 
 
 def _path_node(name, spec):
@@ -192,6 +213,11 @@ def build(layer, doc, find_source, source_loads=None):
                 "tree": [{"tag": "ucfb", "children": [_path_node(n, s) for n, s in doc["paths"].items()]}]}
         out[PATH] = aidata.from_json(pdoc)
         sections["path"] = [layer]
+    if doc.get("boundaries"):
+        bdoc = {"format": aidata.FORMAT, "kind": "lineregion",
+                "tree": [{"tag": "ucfb", "children": [_boundary_node(n, s) for n, s in doc["boundaries"].items()]}]}
+        out[LINEREGION] = aidata.from_json(bdoc)
+        sections["lineregion"] = [layer]
     extra = []
     if source_loads is not None and doc.get("copy_loads", True):
         for name in sources(doc):

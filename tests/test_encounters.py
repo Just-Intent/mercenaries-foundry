@@ -74,6 +74,24 @@ class EncounterTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             self.build({"paths": {"bad": {"points": [[0, 0, 0], [1, 0, 0]], "pauses": {"5": 1}}}})
 
+    def test_boundaries(self):
+        doc = {"boundaries": {"zone": {"points": [[0, 0, 0], [10, 0, 0], [10, 0, 10], [0, 0, 10]],
+                                       "properties": {"type": "killbox", "TestInside": "false"}},
+                              "trigger": {"points": [[0, 0, 0], [5, 0, 0], [5, 0, 5]]}}}
+        recs = self.build(doc)
+        self.assertIn("[lineregion]\n\nload my_layer\n", recs[encounters.LIST].decode())
+        bdoc = aidata.to_json(recs[encounters.LINEREGION], "lineregion")
+        self.assertEqual(aidata.from_json(bdoc), recs[encounters.LINEREGION])
+        zone, trigger = bdoc["tree"][0]["children"]
+        kids = {c["tag"]: c for c in zone["children"]}
+        self.assertEqual([c["tag"] for c in zone["children"]], ["NAME", "INFO", "PROP", "PNTS"])
+        self.assertEqual(kids["PROP"]["pairs"], [["type", "killbox"], ["TestInside", "false"]])
+        self.assertEqual(struct.unpack("<3H", bytes.fromhex(kids["INFO"]["hex"])), (0, 2, 4))
+        tkids = {c["tag"]: c for c in trigger["children"]}
+        self.assertEqual(struct.unpack("<3H", bytes.fromhex(tkids["INFO"]["hex"])), (0, 0, 3))
+        with self.assertRaises(ValueError):
+            self.build({"boundaries": {"line": {"points": [[0, 0, 0], [1, 0, 0]]}}})
+
     def test_junction_codec(self):
         body = struct.pack("<H", 2) + b"t_a\0" + struct.pack("<HH", 0, 11) + b"t_b\0" + struct.pack("<HH", 2, 1)
         node = aidata._decode_leaf(b"JNCT", body, b"path")

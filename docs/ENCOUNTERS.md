@@ -51,6 +51,29 @@ A layer can also have paths, for patrols and routes:
 
 Tested in game (2026-11-08): an allied soldier copied into a new layer patrolled such a loop when ordered.
 
+A layer can also have boundaries: named polygons that scripts watch and switch on and off.
+
+```json
+"boundaries": {
+ "foundry_m9_zone": {"points": [[1470, 31, 785], [1502, 31, 785], [1502, 31, 815], [1470, 31, 815]]},
+ "my_killbox": {"points": [[...], [...], [...]], "properties": {"type": "killbox", "TestInside": "false"}}
+}
+```
+
+- **Plain triggers.** Without properties a boundary is a trigger zone. About half of the 518 retail boundaries are like this.
+- **Typed areas.** `type` gives an area behaviour. Retail uses:
+  - `killbox`: restricted area; air strikes come when you're outside it with `TestInside` false;
+  - `radiation`, with `RateOfDamagePerSecond`;
+  - `water`;
+  - `atmosphere`;
+  - `ambience`, with `sound` and `width`;
+  - `faction`, with `faction`.
+- **Scripts:** `Event_ActorInBoundary('Func', 'b', 'player0', 'foundry_m9_zone', TRUE)` calls `Func` when the actor enters (FALSE: when it leaves). `Boundary_Enable('my_killbox', TRUE)` switches a boundary on.
+
+Retail boundaries all have the same chunks (`lrg_`: `NAME`, `INFO` = `u16` 0, `u16` properties, `u16` points, then `PROP` name/value pairs and `PNTS`). The build writes them in that order and adds `[lineregion]` to the layer's list.
+
+Tested in game (2026-11-08): a trigger zone in the test mission's layer showed its message when the player entered it.
+
 Load the layer and command it from a script (a mod's `scripts/<name>.lua`). For example, in a copy of `allies0`:
 
 ```lua
