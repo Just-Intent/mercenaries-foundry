@@ -108,7 +108,7 @@ Tested in-game (2026-11-08): the game loads scripts compressed by our encoder. W
 - `TABL`: string table, `count` then `count` × (`hash`, `length`, chars, NUL). Each hash must match its string.
 - `inst` (repeated): object instance, always `INFO`, `XFRM`, `PROP` (51,731 in retail):
   - `INFO`: `u16`, usually the property-pair count + 1 (87%); kept as an offset from the pair count so added properties stay consistent.
-  - `XFRM`: `float[9]` rotation (rows; all orthonormal) then `float[3]` world position in metres. Plotting every south-west object from above draws the map: roads, town grids, compounds.
+  - `XFRM`: `float[9]` rotation (rows; all orthonormal) then `float[3]` world position in metres. Plotting every south-west object from above draws the map: roads, town grids, compounds. Tested in-game (2026-11-08): a moved location and copied objects appear where placed.
   - `PROP`: pairs of string-table hashes. Word 0 is the model; word 1 is the object's own name (0 = unnamed; in template layers this is the template's name, e.g. `template_allies_humvee`); the rest are (property, value) pairs such as `GeometryFile`, `objectType`, `destructible`, `hitPoints`, `Faction`, `DisplayName`.
 
 Our editable form keeps the string table's order and appends new strings at the end. Whether the game requires a particular table order is unknown.
