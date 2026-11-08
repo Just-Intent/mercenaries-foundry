@@ -12,8 +12,13 @@ glTF tool:
   nearest parent node named like a game joint); a new skinned piece copies
   a skinned piece's vertex format.
 - Materials are texture names, as in the export.
-- Joints aren't imported: the game skeleton stays as it is. A warning lists
-  joints that were moved.
+- Joints: a game joint moved in the file takes its new position (its
+  rotation is kept; Blender may re-orient bones), and whatever hangs from it
+  follows: pieces, collision, child joints. An empty node under a game joint
+  with a new name becomes a new joint (place and rotation from the file),
+  added at the end of the skeleton, e.g. a seat or mount for a template's
+  RiderSeatpoint_* or turret properties. Moving skin bones (bone*) is not
+  fully supported: animations that set a bone's translation override it.
 
 Positions go back to the game's left-handed axes (Z negated) and triangle
 winding is reversed, undoing the export.
@@ -205,6 +210,186 @@ def read(path, model):
     return pieces, warnings, settings
 
 
+def _quat_from_matrix(m):
+    """Unit quaternion (x, y, z, w) of a column-major 4x4's rotation, after
+    taking out any scale."""
+    r = [[m[c * 4 + row] for c in range(3)] for row in range(3)]
+    for c in range(3):
+        n = math.sqrt(sum(r[row][c] ** 2 for row in range(3))) or 1.0
+        for row in range(3):
+            r[row][c] /= n
+    t = r[0][0] + r[1][1] + r[2][2]
+    if t > 0:
+        s = math.sqrt(t + 1.0) * 2
+        q = ((r[2][1] - r[1][2]) / s, (r[0][2] - r[2][0]) / s, (r[1][0] - r[0][1]) / s, 0.25 * s)
+    elif r[0][0] > r[1][1] and r[0][0] > r[2][2]:
+        s = math.sqrt(1.0 + r[0][0] - r[1][1] - r[2][2]) * 2
+        q = (0.25 * s, (r[0][1] + r[1][0]) / s, (r[0][2] + r[2][0]) / s, (r[2][1] - r[1][2]) / s)
+    elif r[1][1] > r[2][2]:
+        s = math.sqrt(1.0 + r[1][1] - r[0][0] - r[2][2]) * 2
+        q = ((r[0][1] + r[1][0]) / s, 0.25 * s, (r[1][2] + r[2][1]) / s, (r[0][2] - r[2][0]) / s)
+    else:
+        s = math.sqrt(1.0 + r[2][2] - r[0][0] - r[1][1]) * 2
+        q = ((r[0][2] + r[2][0]) / s, (r[1][2] + r[2][1]) / s, 0.25 * s, (r[1][0] - r[0][1]) / s)
+    n = math.sqrt(sum(c * c for c in q)) or 1.0
+    return tuple(c / n for c in q)
+
+
+def _conj(q):
+    return (-q[0], -q[1], -q[2], q[3])
+
+
+def read_skeleton(path, model):
+    """(joints, notes): the model's skeleton as edited in the file, or
+    (None, notes) when it is unchanged.
+
+    Moved joints: a game joint's node that sits somewhere else gets the new
+    position; its rotation is kept (Blender may re-orient bones on export,
+    which would otherwise turn every hardpoint). New joints: an empty node
+    (no mesh) whose parent is a game joint (or another new joint) and whose
+    name the model doesn't have; it takes its place and rotation from the
+    file and is added at the end of the skeleton."""
+    doc, _ = gltf_anim.load(path)
+    nodes = doc.get("nodes", [])
+    parent = {}
+    for i, n in enumerate(nodes):
+        for c in n.get("children", []):
+            parent[c] = i
+    world = {}
+
+    def world_of(i, depth=0):
+        if i not in world:
+            m = _node_matrix(nodes[i])
+            if i in parent and depth < 256:
+                m = _mul(world_of(parent[i], depth + 1), m)
+            world[i] = m
+        return world[i]
+
+    game = {j.name.lower(): j for j in model.joints}
+    xforms = {j.name.lower(): t for j, t in zip(model.joints,
+                                                 (mdl.joint_transforms(model.joints)[name_hash(j.name)]
+                                                  for j in model.joints))}
+    node_of = {}
+    for i, n in enumerate(nodes):
+        key = n.get("name", "").lower()
+        if key in game and "mesh" not in n and key not in node_of:
+            node_of[key] = i
+    # New world positions (model space) of the game joints; rotations stay.
+    new_pos = {}
+    for key, (rot, pos) in xforms.items():
+        new_pos[key] = _flip(_point(world_of(node_of[key]), (0.0, 0.0, 0.0))) if key in node_of else None
+    joints, moved, notes = [], [], []
+    world_rot = {k: t[0] for k, t in xforms.items()}
+
+    def resolved_pos(key, depth=0):
+        """New model-space position: from the file, else the old local offset
+        from the parent's new position."""
+        if new_pos.get(key) is not None:
+            return new_pos[key]
+        j = game[key]
+        p = j.parent.lower()
+        if p in game and p != key and depth < 64:
+            new_pos[key] = tuple(a + b for a, b in zip(
+                mdl._qrot(world_rot[p], j.translation), resolved_pos(p, depth + 1)))
+        else:
+            new_pos[key] = xforms[key][1]
+        return new_pos[key]
+
+    for j in model.joints:
+        key, p = j.name.lower(), j.parent.lower()
+        pos = resolved_pos(key)
+        if p in game and p != key:
+            local = mdl._qrot(_conj(world_rot[p]), tuple(a - b for a, b in zip(pos, resolved_pos(p))))
+        else:
+            local = pos
+        if max(abs(a - b) for a, b in zip(local, j.translation)) > 1e-4:
+            moved.append(j.name)
+            joints.append(mdl.Joint(j.name, j.rotation, tuple(local), j.parent))
+        else:
+            joints.append(j)
+    # New joints: empty nodes under game joints (or under new ones).
+    added = []
+    known = dict(game)
+    new_world = {}
+    progress = True
+    while progress:
+        progress = False
+        for i, n in enumerate(nodes):
+            key = n.get("name", "").lower()
+            if not key or "mesh" in n or key in known or i not in parent:
+                continue
+            pkey = nodes[parent[i]].get("name", "").lower()
+            if pkey not in known:
+                continue
+            m = world_of(i)
+            pos = _flip(_point(m, (0.0, 0.0, 0.0)))
+            q = _quat_from_matrix(m)
+            rot = (-q[0], -q[1], q[2], q[3])          # back to the game's axes (as gltf._flip_quat)
+            prot = world_rot[pkey] if pkey in world_rot else new_world[pkey][0]
+            ppos = resolved_pos(pkey) if pkey in game else new_world[pkey][1]
+            local_rot = mdl._qmul(_conj(prot), rot)
+            local_pos = mdl._qrot(_conj(prot), tuple(a - b for a, b in zip(pos, ppos)))
+            pname = known[pkey].name if pkey in known else pkey
+            joint = mdl.Joint(n["name"], local_rot, local_pos, pname)
+            joints.append(joint)
+            known[key] = joint
+            new_world[key] = (rot, pos)
+            added.append(n["name"])
+            progress = True
+    if moved:
+        notes.append(f"moved joints: {', '.join(moved[:8])}{' ...' if len(moved) > 8 else ''}")
+        bones = [m for m in moved if m.lower().startswith("bone")]
+        if bones:
+            notes.append(f"moved skin bones ({', '.join(bones[:4])}): animations that set these bones' "
+                         f"translation will override the move")
+    if added:
+        notes.append(f"new joints: {', '.join(added[:8])}{' ...' if len(added) > 8 else ''}")
+    return (joints if moved or added else None), notes
+
+
+def with_skeleton(model_record, joints):
+    """The Model record with its skeleton (SKEL) and joint count (INFO at 56)
+    replaced."""
+    import struct
+    from . import ucfb
+    body, pads = ucfb.unwrap(model_record, b"modl", with_pad=True)
+    items, pad_last = ucfb.split(body)
+    fields = dict(items)
+    skel_items, skel_pad = ucfb.split(fields[b"SKEL"])
+    old_jont = [b for t, b in skel_items if t == b"JONT"]
+    by_name = {}
+    for b in old_jont:
+        by_name[b[:b.index(b"\0")].decode("latin-1").lower()] = b
+    old = {j.name.lower(): j for j in mdl.read_joints(fields[b"SKEL"])}
+    jonts = []
+    for j in joints:
+        o = old.get(j.name.lower())
+        if o is not None and o == j:
+            jonts.append(by_name[j.name.lower()])          # unchanged: keep its bytes
+        else:
+            jonts.append(j.name.encode("latin-1") + b"\0" + struct.pack("<4f3f", *j.rotation, *j.translation)
+                         + j.parent.encode("latin-1") + b"\0")
+    # Retail SKEL is NBNS, FSBI, then the JONTs; the joints stay last.
+    new_skel = []
+    for t, b in skel_items:
+        if t == b"NBNS":
+            new_skel.append((t, struct.pack("<I", len(joints))))
+        elif t != b"JONT":
+            new_skel.append((t, b))
+    new_skel += [(b"JONT", b) for b in jonts]
+    info = bytearray(fields[b"INFO"])
+    struct.pack_into("<I", info, 56, len(joints))
+    out = []
+    for t, b in items:
+        if t == b"SKEL":
+            out.append((t, ucfb.pack_children(new_skel, skel_pad)))
+        elif t == b"INFO":
+            out.append((t, bytes(info)))
+        else:
+            out.append((t, b))
+    return ucfb.wrap(b"modl", ucfb.pack_children(out, pad_last), pads)
+
+
 def guess_view(model, pieces):
     """(lod, damaged) whose exported pieces best match the p<index> names
     present; for files that lost the export settings."""
@@ -233,7 +418,14 @@ def import_gltf(model_record, segments_record, path, lod=None, damaged=None, mat
     the piece names in it."""
     from . import model_import
     m = mdl.decode(model_record, segments_record)
+    joints, notes = read_skeleton(path, m)
+    if joints is not None:
+        # The new skeleton goes in first: pieces are then read against it (a
+        # piece under a new joint belongs to it) and stored in its joint space.
+        model_record = with_skeleton(model_record, joints)
+        m = mdl.decode(model_record, segments_record)
     pieces, warnings, settings = read(path, m)
+    warnings = list(notes) + [w for w in warnings if not w.startswith("joints aren't imported")]
     if lod is None:
         lod, guessed = (settings["lod"], settings["damaged"]) if settings else guess_view(m, pieces)
         if damaged is None:

@@ -38,6 +38,11 @@ def write_glb(path, doc, binary):
     path.write_bytes(struct.pack("<III", 0x46546C67, 2, 12 + len(body)) + body)
 
 
+def chunk_items(model_record_bytes):
+    from mercfoundry import ucfb
+    return ucfb.iter_chunks(ucfb.unwrap(model_record_bytes, b"modl"))
+
+
 def node(doc, name):
     return next(i for i, n in enumerate(doc["nodes"]) if n.get("name") == name)
 
@@ -111,10 +116,45 @@ class GltfModelImportTests(unittest.TestCase):
         self.assertEqual(settings, {})
         self.assertEqual(gltf_model.guess_view(self.model, pieces), (0, False))
 
-    def test_moved_joint_warns(self):
+    def test_moved_joint(self):
+        # bone_b is local (0, 0.5, 0) to bone_a; move it up to (0, 0.9, 0)
         self.doc["nodes"][node(self.doc, "bone_b")]["translation"] = [0, 0.9, 0]
-        _, _, rep = self.run_import()
-        self.assertTrue(any("bone_b" in w for w in rep.warnings))
+        nm, ns, rep = self.run_import()
+        self.assertTrue(any("moved joints: bone_b" in w for w in rep.warnings))
+        joints = {j.name: j for j in model.decode(nm, ns).joints}
+        self.assertEqual([round(v, 4) for v in joints["bone_b"].translation], [0, 0.9, 0])
+        self.assertEqual(joints["bone_a"].translation, (0.5, 0, 0))        # untouched
+        self.assertEqual(joints["bone_b"].rotation, (0, 0, 0, 1))           # rotations kept
+
+    def test_moved_parent_carries_children(self):
+        self.doc["nodes"][node(self.doc, "bone_a")]["translation"] = [0.5, 0.0, -0.3]   # glTF z = game -z
+        nm, ns, rep = self.run_import()
+        m = model.decode(nm, ns)
+        joints = {j.name: j for j in m.joints}
+        self.assertEqual([round(v, 4) for v in joints["bone_a"].translation], [0.5, 0, 0.3])
+        self.assertEqual(joints["bone_b"].translation, (0, 0.5, 0))         # child keeps its offset
+        # the rigid piece on bone_a moved with it and is stored unchanged
+        # (joint-local); the skinned piece is re-read, its vertices follow the bone
+        self.assertEqual(rep.unchanged, 1)
+        rigid = [p for p in m.pieces if p.bones is None][0]
+        self.assertAlmostEqual(min(v[2] for v in rigid.positions), 0.3, places=3)
+
+    def test_new_joint(self):
+        a = node(self.doc, "bone_a")
+        self.doc["nodes"].append({"name": "hp_new", "translation": [0.0, 0.0, -0.2]})
+        self.doc["nodes"][a].setdefault("children", []).append(len(self.doc["nodes"]) - 1)
+        nm, ns, rep = self.run_import()
+        self.assertTrue(any("new joints: hp_new" in w for w in rep.warnings))
+        m = model.decode(nm, ns)
+        self.assertEqual(len(m.joints), 4)
+        new = m.joints[-1]
+        self.assertEqual((new.name, new.parent), ("hp_new", "bone_a"))
+        self.assertEqual([round(v, 4) for v in new.translation], [0, 0, 0.2])
+        self.assertEqual(struct.unpack_from("<I", dict(chunk_items(nm))[b"INFO"], 56)[0], 4)
+        self.assertEqual(model.joint_transforms(m.joints)[name_hash("hp_new")][1][0], 0.5)
+
+    def test_unchanged_skeleton_rebuilds_exactly(self):
+        self.assertEqual(gltf_model.with_skeleton(self.mr, self.model.joints), self.mr)
 
     def test_mod_models_folder(self):
         n = self.doc["nodes"][node(self.doc, "p000_bone_a")]
