@@ -34,7 +34,7 @@ python -m mercfoundry mod build my_mod --data game_files/DATAxbox --out "<port>/
 | `models/<name>.obj` or `.glb`/`.gltf` | Replace a model with an edited export from `model` |
 | `animations/*.glb` or `.gltf` | Replace game animations with clips of the same name (Blender's `Armature\|` prefix and `.001` suffixes are ignored). Export them with `model --glb --anim`, edit, and drop the file here. Joints a clip doesn't animate keep the game's motion. |
 | `animations/new.json`: `{"my_run": "all_american_lb_upright_run_forward"}` | Add the clips named here (from the `.glb` files beside it) as new animations, built on the template clip's skeleton and loaded wherever it is. |
-| `terrain/<name>.heights.png` | Reshape a map's ground. Export with `terrain DATAxbox swn` (the first level's map), edit the 16-bit PNG in any image editor, and keep the `.heights.json` beside it. |
+| `terrain/<name>.heights.png` | Reshape a map's ground. Export with `terrain DATAxbox swn` (the first level's map), edit the 16-bit PNG in any image editor, and keep the `.heights.json` beside it. The build relights changed slopes and the shadows they cast. |
 | `animtables/<name>.json` | Replace a character's animation table: which clip plays for each handle the game asks for (e.g. `lb_upright_run_forward`), per weapon or seat set. Export one with `animtable DATAxbox player_american`. |
 | `layout/<layer>.<kind>.json` | Replace a layer's paths, boundaries, regions or encounters (`kind` = `path`, `lineregion`, `region`, `encounter`), or `layout/<layer>.list.txt` for its load list. Export them with `layout DATAxbox <layer>`. |
 

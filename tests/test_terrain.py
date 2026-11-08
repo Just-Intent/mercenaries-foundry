@@ -4,7 +4,9 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from mercfoundry import dsk, modbuild, png, terrain, terrain_layers, ucfb
+import math
+
+from mercfoundry import dsk, modbuild, png, terrain, terrain_layers, terrain_light, ucfb
 from mercfoundry.hashing import name_hash
 from tests.test_dsk import build as build_dsk
 
@@ -15,7 +17,29 @@ def chunk(tag, data):
     return ucfb.pack_chunk(tag, data)
 
 
-def tern_record(units):
+def lit_colr(units, sun=(-0.5, 0.7071, -0.5), amb=(40, 38, 36), dif=(44, 48, 60)):
+    """COLR for heights lit by one sun (no shadows), 16 patches of 9 x 9."""
+    H = [[u * STEP for u in row] for row in units]
+    side = SIZE // 8
+    out = b""
+    for pz in range(side):
+        for px in range(side):
+            vals = []
+            for j in range(9):
+                for i in range(9):
+                    n = terrain_light._normal(H, SIZE, 8.0, (px * 8 + i) % SIZE, (pz * 8 + j) % SIZE)
+                    lam = max(0.0, sum(a * b for a, b in zip(n, sun)))
+                    vals.append(terrain_layers.rgb_colr(*(min(248, round((a + d * lam) / 8) * 8) for a, d in zip(amb, dif))))
+            out += terrain_layers.pack_blob(struct.pack("<81H", *vals))
+    return out
+
+
+def hills():
+    return [[int(60 * math.sin(x / 3.1) * math.cos(z / 4.3) + 20 * math.sin((x + z) / 2.2)) for x in range(SIZE)]
+            for z in range(SIZE)]
+
+
+def tern_record(units, colr=None):
     """A 32 x 32 terrain (four 16 x 16 blocks) holding units[z][x], encoded
     the way the retail data is: base = block minimum, smallest fitting shift."""
     bpr = SIZE // BLOCK
@@ -31,6 +55,8 @@ def tern_record(units):
     info = struct.pack("<4f6h", 8.0, STEP, lo, hi, SIZE, 8, BLOCK, 1, 0, 0) + struct.pack("<3f", 0, 0, 0)
     body = chunk(b"INFO", info) + chunk(b"HEXP", hexp) + chunk(b"HGT8", terrain.pack_hgt8(bytes(raw)))
     body += chunk(b"LTEX", b"grass\0")
+    if colr is not None:
+        body += chunk(b"COLR", colr)
     return chunk(b"ucfb", chunk(b"tern", body))
 
 
@@ -87,6 +113,37 @@ class TerrainTests(unittest.TestCase):
         packed = terrain_layers.lz_compress(data)
         self.assertEqual(terrain_layers.lz_decompress(packed)[0], data)
 
+    def test_fit_finds_the_sun(self):
+        units = hills()
+        H = [[u * STEP for u in row] for row in units]
+        chunks = terrain.tern_chunks(tern_record(units, lit_colr(units)))
+        rgb = terrain_light.vertex_rgb(terrain_layers.decode_colr(chunks[b"COLR"], 16), SIZE)
+        light = terrain_light.fit(H, rgb, SIZE, 8.0, stride=1)
+        self.assertGreater(sum(a * b for a, b in zip(light.sun, (-0.5, 0.7071, -0.5))), 0.98)
+        self.assertTrue(light.usable)
+
+    def test_relight(self):
+        units = hills()
+        rec = tern_record(units, lit_colr(units))
+        chunks = terrain.tern_chunks(rec)
+        new_units = [row[:] for row in units]
+        for z in range(8, 17):                       # a 9 x 9 bump at (12, 12)
+            for x in range(8, 17):
+                new_units[z][x] += int(120 * math.exp(-((x - 12) ** 2 + (z - 12) ** 2) / 6))
+        heights = terrain.encode_height_units(chunks, new_units)
+        colr, note = terrain_light.relight_chunks(chunks, heights)
+        self.assertIn("relit", note)
+        old = terrain_layers.decode_colr(chunks[b"COLR"], 16)
+        new = terrain_layers.decode_colr(colr, 16)
+        lum = lambda v: sum(terrain_layers.colr_rgb(v))
+        # patch 5 is cells 8-16 x 8-16; vertex (j=2, i=2) faces the sun (-x, -z), (6, 6) faces away
+        self.assertGreater(lum(new[5][2 * 9 + 2]) - lum(old[5][2 * 9 + 2]),
+                           lum(new[5][6 * 9 + 6]) - lum(old[5][6 * 9 + 6]))
+        # a far patch, out of the bump's reach, keeps its blob byte for byte
+        blobs_old = terrain_light.colr_blobs(chunks[b"COLR"], 16)
+        blobs_new = terrain_light.colr_blobs(colr, 16)
+        self.assertEqual(blobs_old[0], blobs_new[0])
+
     def test_mod_build(self):
         with tempfile.TemporaryDirectory() as tmp:
             d = Path(tmp)
@@ -99,7 +156,7 @@ class TerrainTests(unittest.TestCase):
             (d / "proj" / "terrain" / "sw.heights.png").write_bytes(png.encode_grey16(w, h, values))
             (d / "proj" / "terrain" / "sw.heights.json").write_text(json.dumps(meta))
             result = modbuild.build(d / "proj", d / "data", d / "out")
-            self.assertIn("terrain sw: 1 height samples changed", result.changes)
+            self.assertIn("terrain sw: 1 height samples changed; no baked lighting", result.changes)
             out = dsk.Archive(d / "out" / "assets.dsk")
             rec = out.read(out.records[0])
             _, got, _ = terrain.decode_height_units(terrain.tern_chunks(rec))

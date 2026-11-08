@@ -401,7 +401,7 @@ def _apply_animtables(data, folder, result):
 
 
 def _apply_terrain(data, folder, result):
-    from . import terrain
+    from . import terrain, terrain_light
     for f in sorted((folder / "terrain").glob("*.heights.png")):
         name = f.name[:-len(".heights.png")]
         meta_path = f.with_name(name + ".heights.json")
@@ -418,8 +418,14 @@ def _apply_terrain(data, folder, result):
             units = terrain.units_from_png(f.read_bytes(), meta)
             _, old, _ = terrain.decode_height_units(chunks)
             changed = sum(1 for z in range(len(units)) for x in range(len(units)) if units[z][x] != old[z][x])
-            data.set(a, r, terrain.rebuild(record, terrain.encode_height_units(chunks, units)))
-        result.changes.append(f"terrain {name}: {changed} height samples changed")
+            heights = terrain.encode_height_units(chunks, units)
+            note = "lighting kept (relight: false)"
+            if meta.get("relight", True):
+                colr, note = terrain_light.relight_chunks(chunks, heights)
+                if colr is not None:
+                    heights[b"COLR"] = colr
+            data.set(a, r, terrain.rebuild(record, heights))
+        result.changes.append(f"terrain {name}: {changed} height samples changed; {note}")
 
 
 LAYOUT_KINDS = ("path", "lineregion", "region", "encounter", "list")
