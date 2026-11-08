@@ -8,7 +8,10 @@
  *                game which templates the current area has loaded.
  *   Nearby     - world objects within 100 m of the player, nearest first,
  *                named from objectnames.txt; the selected one's position,
- *                flags and properties as the game reports them.
+ *                flags and properties as the game reports them; bring it
+ *                here, raise or lower it, turn it, or remove it (the same
+ *                engine calls as Actor_SetPosition, Actor_SetYaw and
+ *                Actor_Remove).
  *   Lua        - run a line of Lua in a loaded script's state (an
  *                expression shows its values; a statement shows "ok").
  *
@@ -44,6 +47,18 @@
 #define NEARBY_RADIUS 100.0f
 #define MAX_NEARBY 40
 #define MAX_NAMES 8192
+/* Editing (from Lua_Actor_SetPosition / SetYaw / Remove): objects with flag
+ * bit 3 are plain world objects (transform through vtable slot 0); the rest
+ * have a game actor at +0x24, edited through its vtable when its type bits
+ * match g_HitPointActorType (value at +4, mask at +8). */
+#define FLAG_PLAIN 0x08u
+#define ACTOR_TYPE_VALUE (MF_VAR_g_HitPointActorType + 4u)
+#define ACTOR_TYPE_MASK (MF_VAR_g_HitPointActorType + 8u)
+#define ACTOR_VT_TYPE 0x04u
+#define ACTOR_VT_REMOVE 0x10u
+#define ACTOR_VT_SET_POSITION 0x64u
+#define ACTOR_VT_SET_YAW 0x68u
+enum { EDIT_NONE, EDIT_HERE, EDIT_UP, EDIT_DOWN, EDIT_LEFT, EDIT_RIGHT, EDIT_REMOVE };
 
 typedef struct Template {
     char name[64], layer[40], type[24], faction[16];
@@ -83,6 +98,8 @@ static unsigned nearby_count;
 static uint32_t selected_handle;
 static char details_text[1024] = "Select an object.";
 static volatile LONG nearby_dirty, details_dirty;
+static int pending_edit;
+static uint32_t pending_edit_handle;
 typedef struct Name { uint32_t hash; char text[48]; } Name;
 static Name names[MAX_NAMES];
 static unsigned name_count;
@@ -92,6 +109,7 @@ static DWORD window_thread_id;
 static HWND wnd, info_label, search_edit, list_box, loaded_check, spawn_button, money_button, status_label;
 static HWND script_combo, lua_edit, run_button, output_edit;
 static HWND nearby_list, details_label;
+static HWND edit_buttons[6];
 static unsigned combo_serials[MAX_SCRIPTS + 1];
 static int list_map[MAX_TEMPLATES];
 static unsigned list_size;
@@ -106,6 +124,7 @@ static unsigned list_size;
 #define ID_LUA 108
 #define ID_RUN 109
 #define ID_NEARBY 110
+#define ID_EDIT 120 /* + EDIT_HERE .. EDIT_REMOVE */
 
 static uint32_t hash_name(const char *s)
 {
@@ -603,6 +622,81 @@ static void describe_selected(void)
     InterlockedExchange(&details_dirty, 1);
 }
 
+static uint32_t vcall(uint32_t self, uint32_t slot, unsigned n, const uint32_t *args, int *ok)
+{
+    uint32_t vtable = 0, fn = 0;
+    MercGuestCall c;
+    *ok = host->read_guest(host->context, self, &vtable, 4) && vtable &&
+          host->read_guest(host->context, vtable + slot, &fn, 4) && fn && guest(fn, self, n, args, &c);
+    return *ok ? c.eax : 0;
+}
+
+static void do_edit(int kind, uint32_t handle)
+{
+    MercGuestCall c;
+    uint32_t obj = 0, scratch, size;
+    int ok;
+    if (guest(MF_FN_World_ObjectFromHandle, 0, 1, &handle, &c)) obj = c.eax;
+    if (!obj) { set_status("That object is gone."); return; }
+    if (!host->guest_scratch(host->context, &scratch, &size) || size < 256) { set_status("No scratch memory."); return; }
+    uint16_t flags = 0;
+    float pos[3], q[4];
+    host->read_guest(host->context, obj + MF_OFF_WorldObject_flags, &flags, 2);
+    host->read_guest(host->context, obj + WORLDOBJECT_POSITION, pos, 12);
+    host->read_guest(host->context, obj + WORLDOBJECT_ROTATION, q, 16);
+    float fx = 2.0f * (q[0] * q[2] + q[3] * q[1]), fz = 1.0f - 2.0f * (q[0] * q[0] + q[1] * q[1]);
+    float yaw = atan2f(fx, fz);
+    if (kind == EDIT_HERE) {
+        uint32_t player = find_player();
+        float m[16];
+        if (!player) return;
+        host->read_guest(host->context, player + MF_OFF_Actor_transform, m, sizeof(m));
+        pos[0] = m[12] + m[8] * 3.0f;
+        pos[1] = m[13];
+        pos[2] = m[14] + m[10] * 3.0f;
+    }
+    if (kind == EDIT_UP) pos[1] += 1.0f;
+    if (kind == EDIT_DOWN) pos[1] -= 1.0f;
+    if (kind == EDIT_LEFT) yaw -= 3.14159265f / 4;
+    if (kind == EDIT_RIGHT) yaw += 3.14159265f / 4;
+
+    if (flags & FLAG_PLAIN) {
+        if (kind == EDIT_REMOVE) {
+            guest(MF_FN_WorldObject_Remove, obj, 0, NULL, &c);
+            set_status("Removed.");
+            return;
+        }
+        /* Rebuild the transform (yaw about the vertical axis) and set it. */
+        float m[16] = {cosf(yaw), 0, -sinf(yaw), 0, 0, 1, 0, 0, sinf(yaw), 0, cosf(yaw), 0, pos[0], pos[1], pos[2], 1};
+        host->write_guest(host->context, scratch, m, sizeof(m));
+        vcall(obj, 0x00, 1, &scratch, &ok);
+        set_status(ok ? "Moved." : "Couldn't move it.");
+        return;
+    }
+    uint32_t actor = 0, value = 0, mask = 0;
+    host->read_guest(host->context, obj + MF_OFF_WorldObject_actor, &actor, 4);
+    host->read_guest(host->context, ACTOR_TYPE_VALUE, &value, 4);
+    host->read_guest(host->context, ACTOR_TYPE_MASK, &mask, 4);
+    uint32_t bits = actor ? vcall(actor, ACTOR_VT_TYPE, 0, NULL, &ok) : 0;
+    if (!actor || !ok || (bits & mask) != value) {
+        set_status("The game doesn't edit this kind of object this way.");
+        return;
+    }
+    if (kind == EDIT_REMOVE) {
+        vcall(actor, ACTOR_VT_REMOVE, 0, NULL, &ok);
+        set_status(ok ? "Removed." : "Couldn't remove it.");
+    } else if (kind == EDIT_LEFT || kind == EDIT_RIGHT) {
+        uint32_t bitsyaw;
+        memcpy(&bitsyaw, &yaw, 4);
+        vcall(actor, ACTOR_VT_SET_YAW, 1, &bitsyaw, &ok);
+        set_status(ok ? "Turned." : "Couldn't turn it.");
+    } else {
+        host->write_guest(host->context, scratch, pos, 12);
+        vcall(actor, ACTOR_VT_SET_POSITION, 1, &scratch, &ok);
+        set_status(ok ? "Moved." : "Couldn't move it.");
+    }
+}
+
 static double since_nearby;
 
 static int f7_down;
@@ -642,6 +736,16 @@ static int MERC_PLUGIN_CALL on_update(void *ud, const MercPluginUpdate *u)
     scan = scan_next;
     LeaveCriticalSection(&lock);
     if (spawn >= 0) do_spawn(spawn);
+    int edit;
+    uint32_t edit_handle;
+    EnterCriticalSection(&lock);
+    edit = pending_edit; pending_edit = EDIT_NONE;
+    edit_handle = pending_edit_handle;
+    LeaveCriticalSection(&lock);
+    if (edit != EDIT_NONE && edit_handle) {
+        do_edit(edit, edit_handle);
+        since_nearby = 1.0; /* refresh the list and details right away */
+    }
     char lua_line[1024];
     int lua_serial;
     EnterCriticalSection(&lock);
@@ -839,6 +943,14 @@ static LRESULT CALLBACK window_proc(HWND h, UINT msg, WPARAM wp, LPARAM lp)
                 LeaveCriticalSection(&lock);
             }
             return 0;
+        case ID_EDIT + EDIT_HERE: case ID_EDIT + EDIT_UP: case ID_EDIT + EDIT_DOWN:
+        case ID_EDIT + EDIT_LEFT: case ID_EDIT + EDIT_RIGHT: case ID_EDIT + EDIT_REMOVE:
+            EnterCriticalSection(&lock);
+            pending_edit_handle = selected_handle;
+            pending_edit = LOWORD(wp) - ID_EDIT;
+            LeaveCriticalSection(&lock);
+            if (!selected_handle) set_status("Select an object first.");
+            return 0;
         case ID_MONEY:
             EnterCriticalSection(&lock);
             pending_money += 10000.0f;
@@ -880,7 +992,10 @@ static DWORD WINAPI window_thread(void *arg)
     output_edit = control("EDIT", "", ES_MULTILINE | ES_READONLY | ES_AUTOVSCROLL | WS_VSCROLL, 12, 658, 480, 190, 0, mono);
     control("STATIC", "Nearby objects (100 m, nearest first)", 0, 520, 8, 480, 18, 0, font);
     nearby_list = control("LISTBOX", "", LBS_NOTIFY | WS_VSCROLL | LBS_NOINTEGRALHEIGHT, 520, 28, 490, 420, ID_NEARBY, mono);
-    details_label = control("STATIC", "Select an object.", SS_LEFT, 520, 456, 490, 392, 0, mono);
+    details_label = control("STATIC", "Select an object.", SS_LEFT, 520, 456, 490, 330, 0, mono);
+    static const char *edit_labels[6] = {"Bring here", "Up 1 m", "Down 1 m", "Turn -45", "Turn +45", "Remove"};
+    for (int i = 0; i < 6; i++)
+        edit_buttons[i] = control("BUTTON", edit_labels[i], 0, 520 + i * 82, 800, 78, 28, ID_EDIT + EDIT_HERE + i, font);
     fill_list();
     fill_scripts();
     SetTimer(wnd, ID_TIMER, 250, NULL);

@@ -14890,7 +14890,7 @@
     {
      "offset": "0x00",
      "name": "vtable",
-     "notes": "+0x04 type bits (TypeFilter_Cast); +0x0C property text by name hash (\"hitpoints\" = 0x6E99129D); +0x10 property by name hash (\"name\" = 0x8D39BDE6); live test (2026-11-08, Foundry Console object inspector): +0x0C answered objectType, hitPoints and GeometryFile for a static rock as well as actors"
+     "notes": "+0x04 type bits (TypeFilter_Cast); +0x0C property text by name hash (\"hitpoints\" = 0x6E99129D); +0x10 property by name hash (\"name\" = 0x8D39BDE6); live test (2026-11-08, Foundry Console object inspector): +0x0C answered objectType, hitPoints and GeometryFile for a static rock as well as actors; +0x00 SetTransform(const Matrix *) for plain objects (flag bit 3), as Lua_Actor_SetPosition and SetYaw use it"
     },
     {
      "offset": "0x08",
@@ -14918,14 +14918,24 @@
      "offset": "0x30",
      "name": "flags",
      "type": "uint16",
-     "notes": "bit 0 active, bit 2 removed, bit 3 hit points come from the \"hitpoints\" property, bit 12 released by WorldObject_Remove via 0x1EC420"
+     "notes": "bit 0 active, bit 2 removed, bit 3 plain world object (no game actor: Actor_ commands set its transform through vtable +0x00 and remove it with WorldObject_Remove; Actor_IsAlive reads its \"hitpoints\" property), bit 12 released by WorldObject_Remove via 0x1EC420"
     }
    ]
   },
   {
    "name": "Actor",
-   "evidence": "retail code: Lua_Actor_IsAlive, Actor_EnableCollision, Lua_ArgAi",
+   "evidence": "retail code: Lua_Actor_IsAlive, Actor_EnableCollision, Lua_ArgAi, Lua_Actor_SetPosition, Lua_Actor_SetYaw, Lua_Actor_Remove",
    "fields": [
+    {
+     "offset": "0x00",
+     "name": "vtable",
+     "notes": "+0x04 type bits (checked against g_HitPointActorType), +0x10 Remove(), +0x64 SetPosition(const float[3]), +0x68 SetYaw(float radians): what Lua_Actor_Remove, Lua_Actor_SetPosition and Lua_Actor_SetYaw call; live test (2026-11-08, Foundry Console edits): moved, raised, turned and removed props through them"
+    },
+    {
+     "offset": "0x04",
+     "name": "nameHash",
+     "notes": "Lua_Actor_SetYaw compares it with HashName(\"player0\") (0x660E4490) and then also calls 0x977F0 on 0x4140E8"
+    },
     {
      "offset": "0x98",
      "name": "hitPoints",
