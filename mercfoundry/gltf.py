@@ -234,6 +234,10 @@ def read(glb: bytes):
         raise ValueError("not a glTF 2.0 binary file")
     jlen, jtype = struct.unpack_from("<II", glb, 12)
     doc = json.loads(glb[20:20 + jlen])
+    if 20 + jlen >= len(glb):
+        if jtype != 0x4E4F534A:
+            raise ValueError("bad glTF chunk types")
+        return doc, b""          # no binary chunk (nothing but JSON)
     blen, btype = struct.unpack_from("<II", glb, 20 + jlen)
     if jtype != 0x4E4F534A or btype != 0x004E4942:
         raise ValueError("bad glTF chunk types")

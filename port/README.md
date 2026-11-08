@@ -14,6 +14,8 @@ Mercenaries Foundry needs a few additions to the port's runtime. They live here 
 
 See [docs/PLUGINS.md](../docs/PLUGINS.md) for the API.
 
+[UPSTREAM.md](UPSTREAM.md) plans how these could be offered to Mercenaries Recompiled.
+
 ## Apply and build
 
 From this repository's root in Git Bash, with the port checked out and built once in `external/Mercenaries-Recompiled`:

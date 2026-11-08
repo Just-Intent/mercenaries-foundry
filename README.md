@@ -46,7 +46,26 @@ python -m mercfoundry mod build my_mod --data game_files/DATAxbox --out "<port>/
 
 ### Sharing mods
 
-Share a mod as its source folder, not as a build. A build holds complete copies of the game's archives, so it can't be shared, and two built mods that edit the same shared assets (mission arcs, map script lists, the HQ contact script) overwrite each other.
+Share a mod as its source folder, packed first:
+
+```bash
+python -m mercfoundry mod pack my_mod my_mod_shared --data game_files/DATAxbox --check
+```
+
+Files made from game exports hold the game's own content, so `mod pack` rewrites them as just your changes. The build applies those changes to each player's own copy of the game:
+
+| You edited | Shared as |
+|---|---|
+| a game script (`scripts/<name>.lua`) | `<name>.lua.diff`, a diff against the game's script |
+| the map's heights or ground paint | `<map>.heights.changes.json` (changed samples) and `<map>.layerNN.<texture>.changes.png` (changed pixels) |
+| a game texture | `<name>.changes.png` plus `<name>.mask.png` (changed pixels) |
+| a model, as glTF | `<name>.changes.glb`: edited and new pieces, the joint tree and the removed pieces' numbers; no textures |
+| animation clips | the same `.glb` names, holding only the channels that change the game's clip (or a new clip's template) |
+| animation tables, layouts, load lists | `.changes.json` with only the changed entries or items; load lists as diffs |
+
+`--check` builds both folders and confirms they produce the same archives. Model edits made as OBJ can't be packed; edit models as glTF. Diffs and changes files also merge better: two mods' diffs to one script both apply when they change different lines.
+
+Don't share a build: it holds complete copies of the game's archives. A build holds complete copies of the game's archives, so it can't be shared, and two built mods that edit the same shared assets (mission arcs, map script lists, the HQ contact script) overwrite each other.
 
 Players put source folders in the game's `mods/` like any mod and turn them on in the launcher. `mod sync` builds every enabled source mod together, in load order, from the player's own game data into `mods/Foundry Mods`:
 
@@ -54,7 +73,7 @@ Players put source folders in the game's `mods/` like any mod and turn them on i
 python -m mercfoundry mod sync "<port folder>" --install-hook
 ```
 
-`--install-hook` writes `foundry-sync.cmd`, which the launcher runs before each modded launch (port patch `0007`), so changing the selection is enough. Without the hook, run `mod sync <port folder> --enable` after changing it. Mods merge where they can: text, object rules, missions and their HQ contacts, map lists, level configs and terrain (only the samples and pixels each mod changed). Missions are added in the order their arcs need, whatever the load order. When a later mod replaces something an earlier one changed (a script, model, texture, animation or layout), the later one wins and the sync reports the conflict. Two mods adding an asset with the same name is an error. `mod build` takes several folders the same way.
+The toolkit for players is one file, `mercfoundry.pyz` (built by `python packaging/build.py`), run with Python 3.10 or later: `python mercfoundry.pyz mod sync <port folder> --install-hook`. A standalone `.exe` isn't used, because Windows application control and Smart App Control block unsigned programs. `--install-hook` writes `foundry-sync.cmd`, which the launcher runs before each modded launch (port patch `0007`), so changing the selection is enough. Without the hook, run `mod sync <port folder> --enable` after changing it. Mods merge where they can: text, object rules, missions and their HQ contacts, map lists, level configs and terrain (only the samples and pixels each mod changed). Missions are added in the order their arcs need, whatever the load order. When a later mod replaces something an earlier one changed (a script, model, texture, animation or layout), the later one wins and the sync reports the conflict. Two mods adding an asset with the same name is an error. `mod build` takes several folders the same way.
 
 ### Finding objects
 

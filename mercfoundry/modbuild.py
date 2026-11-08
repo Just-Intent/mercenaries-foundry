@@ -252,6 +252,24 @@ def _set_strings(data, edits):
 
 
 def _apply_scripts(data, folder, result):
+    # scripts/<name>.lua.diff: a change to a game script (mod pack writes
+    # these). It applies to the script as earlier mods left it, so two mods'
+    # diffs to one script both apply when they touch different lines.
+    from . import modpack
+    for f in sorted((folder / "scripts").glob("*.lua.diff")):
+        name = f.name[:-len(".lua.diff")]
+        hit = [(a, r) for a, r in data.records(SCRIPT) if r.key == name_hash(name)]
+        if not hit:
+            raise ValueError(f"scripts/{f.name}: no game script named {name!r} to change")
+        diff = f.read_bytes().decode("latin-1")
+        for a, r in hit:
+            old = script.decode(data.current(a, r))
+            try:
+                text = modpack.apply_diff(old.source, diff)
+            except ValueError as err:
+                raise ValueError(f"scripts/{f.name}: {err}") from err
+            data.set(a, r, script.encode(script.with_source(old, text)))
+        result.changes.append(f"script {name}: changed by {f.name}")
     for f in sorted((folder / "scripts").glob("*.lua")):
         name = f.stem
         source = f.read_bytes().decode("latin-1")
@@ -596,7 +614,31 @@ def _apply_objects(data, folder, result):
 
 
 def _apply_textures(data, folder, result):
+    from . import modpack
     for f in sorted((folder / "textures").glob("*.png")):
+        low = f.name.lower()
+        if low.endswith(".mask.png"):
+            continue
+        if low.endswith(".changes.png"):
+            # Changed pixels only (mod pack): laid over the game's texture.
+            name = f.name[:-len(".changes.png")]
+            mask_path = f.with_name(name + ".mask.png")
+            if not mask_path.exists():
+                raise ValueError(f"textures/{f.name}: {mask_path.name} is missing")
+            hit = [(a, r) for a, r in data.records(texture.TEXTURE) if r.key == name_hash(name)]
+            if not hit:
+                raise ValueError(f"textures/{f.name}: no game texture named {name!r} to change")
+            w, h, pix = png.decode(f.read_bytes())
+            mw, mh, mask = png.decode(mask_path.read_bytes())
+            for a, r in hit:
+                tex = texture.decode(data.archive(a).read(r))
+                bw, bh, base = tex.rgba()
+                if (bw, bh) != (w, h) or (mw, mh) != (w, h):
+                    raise ValueError(f"textures/{f.name}: the game's {name} is {bw}x{bh}, the changes are {w}x{h}")
+                rgba = modpack.apply_rgba_changes(base, pix, mask)
+                data.set(a, r, texture.encode(texture.replace_image(tex, w, h, rgba)))
+            result.changes.append(f"texture {name}: changed by {f.name}")
+            continue
         name = f.stem
         w, h, rgba = png.decode(f.read_bytes())
         key = name_hash(name)
@@ -687,7 +729,19 @@ def _add_animation(data, name, template, tracks, result):
 
 def _apply_animtables(data, folder, result):
     from . import animtable
-    for f in sorted((folder / "animtables").glob("*.json")):
+    from . import modpack
+    for f in sorted((folder / "animtables").glob("*.changes.json")):
+        # Entries only (mod pack), applied to the table as earlier mods left it.
+        changes = json.loads(f.read_text(encoding="utf-8"))
+        name = changes.get("name") or f.name[:-len(".changes.json")]
+        hit = [(a, r) for a, r in data.records(animtable.ANIMTABLE) if r.key == name_hash(name)]
+        if not hit:
+            raise ValueError(f"animtables/{f.name}: no animation table named {name!r}")
+        for a, r in hit:
+            doc = modpack.apply_animtable_changes(animtable.to_json(data.current(a, r)), changes)
+            data.set(a, r, animtable.from_json(doc))
+        result.changes.append(f"animtable {name}: {len(changes.get('entries', []))} entries changed by {f.name}")
+    for f in sorted(p for p in (folder / "animtables").glob("*.json") if not p.name.endswith(".changes.json")):
         doc = json.loads(f.read_text(encoding="utf-8"))
         name = doc.get("name") or f.stem
         key = name_hash(name)
@@ -716,16 +770,21 @@ def _apply_terrain(data, folder, result):
     tdir = folder / "terrain"
     work = {}       # terrain name -> {"heights": path, "table": path, "layers": {index: path}}
     for f in sorted(tdir.glob("*.png")):
-        if f.name.endswith(".heights.png"):
+        # <name>.layerNN.<texture>.changes.png: changed pixels only (mod pack).
+        is_changes = f.name.lower().endswith(".changes.png")
+        plain = f.name[:-len(".changes.png")] + ".png" if is_changes else f.name
+        if plain.endswith(".heights.png") and not is_changes:
             work.setdefault(f.name[:-len(".heights.png")], {})["heights"] = f
-        elif terrain_paint.parse_layer_file(f.name):
-            name, index = terrain_paint.parse_layer_file(f.name)
+        elif terrain_paint.parse_layer_file(plain):
+            name, index = terrain_paint.parse_layer_file(plain)
             layers = work.setdefault(name, {}).setdefault("layers", {})
             if index in layers:
                 raise ValueError(f"terrain/{f.name}: layer {index} has two images")
             layers[index] = f
         else:
             result.warnings.append(f"terrain/{f.name}: not a heights or layer image (name.heights.png, name.layerNN.png)")
+    for f in sorted(tdir.glob("*.heights.changes.json")):
+        work.setdefault(f.name[:-len(".heights.changes.json")], {})["heights"] = f
     for f in sorted(tdir.glob("*.layers.json")):
         work.setdefault(f.name[:-len(".layers.json")], {})["table"] = f
     for f in sorted(tdir.glob("*.decals.json")):
@@ -745,14 +804,19 @@ def _apply_terrain(data, folder, result):
             replace = {}
             if "heights" in job:
                 f = job["heights"]
-                meta_path = f.with_name(name + ".heights.json")
-                if not meta_path.exists():
-                    raise ValueError(f"terrain/{f.name}: {meta_path.name} is missing (export both with the terrain command)")
-                meta = json.loads(meta_path.read_text(encoding="utf-8"))
-                units = terrain.units_from_png(f.read_bytes(), meta)
+                _, base, _ = terrain.decode_height_units(terrain.tern_chunks(data.archive(a).read(r)))
+                if f.name.endswith(".changes.json"):
+                    from . import modpack
+                    meta = json.loads(f.read_text(encoding="utf-8"))
+                    units = modpack.apply_heights_changes(base, meta)
+                else:
+                    meta_path = f.with_name(name + ".heights.json")
+                    if not meta_path.exists():
+                        raise ValueError(f"terrain/{f.name}: {meta_path.name} is missing (export both with the terrain command)")
+                    meta = json.loads(meta_path.read_text(encoding="utf-8"))
+                    units = terrain.units_from_png(f.read_bytes(), meta)
                 # Apply only the samples this mod changed from the game's
                 # heights, so mods built together keep each other's edits.
-                _, base, _ = terrain.decode_height_units(terrain.tern_chunks(data.archive(a).read(r)))
                 _, cur, _ = terrain.decode_height_units(chunks)
                 n = len(units)
                 changed = overlap = 0
@@ -791,8 +855,14 @@ def _apply_terrain(data, folder, result):
                     w, h, rgba = png.decode(f.read_bytes())
                     if w != h:
                         raise ValueError(f"terrain/{f.name}: layer images are square")
-                    img = bytes(rgba[0::4])          # grey (or the red channel)
                     base_img, cur_img = base_imgs.get(index), cur_imgs.get(index)
+                    if f.name.lower().endswith(".changes.png"):
+                        from . import modpack
+                        if base_img is None or len(base_img) != w * h:
+                            raise ValueError(f"terrain/{f.name}: the map has no layer {index} of this size to change")
+                        img = modpack.apply_grey_changes(base_img, rgba)
+                    else:
+                        img = bytes(rgba[0::4])          # grey (or the red channel)
                     if base_img is not None and cur_img is not None and len(base_img) == len(img) == len(cur_img):
                         img = bytes(m if m != b else c for m, b, c in zip(img, base_img, cur_img))
                     images[index] = img
@@ -837,8 +907,37 @@ LAYOUT_KINDS = ("path", "lineregion", "region", "encounter", "list")
 
 
 def _apply_layout(data, folder, result):
-    from . import aidata
-    files = sorted(list((folder / "layout").glob("*.json")) + list((folder / "layout").glob("*.list.txt")))
+    from . import aidata, modpack
+    ldir = folder / "layout"
+    # Changes files (mod pack): items or lines applied to the layer as
+    # earlier mods left it.
+    for f in sorted(ldir.glob("*.changes.json")):
+        layer, _, kind = f.name[:-len(".changes.json")].rpartition(".")
+        if kind not in LAYOUT_KINDS or not layer or kind == "list":
+            raise ValueError(f"layout/{f.name}: name it <layer>.<kind>.changes.json")
+        hit = [(a, r) for a, r in data.records(name_hash(kind)) if r.key == name_hash(layer)]
+        if not hit:
+            raise ValueError(f"layout/{f.name}: no {kind} record for layer {layer!r}")
+        changes = json.loads(f.read_text(encoding="utf-8"))
+        for a, r in hit:
+            doc = modpack.apply_layout_changes(aidata.to_json(data.current(a, r), kind), changes)
+            data.set(a, r, aidata.from_json(doc))
+        result.changes.append(f"layout {layer} {kind}: {len(changes.get('changed', []))} items changed or added, "
+                              f"{len(changes.get('removed', []))} removed")
+    for f in sorted(ldir.glob("*.list.txt.diff")):
+        layer = f.name[:-len(".list.txt.diff")]
+        hit = [(a, r) for a, r in data.records(name_hash("list")) if r.key == name_hash(layer)]
+        if not hit:
+            raise ValueError(f"layout/{f.name}: no load list for layer {layer!r}")
+        for a, r in hit:
+            try:
+                text = modpack.apply_diff(data.current(a, r).decode("latin-1"), f.read_bytes().decode("latin-1"))
+            except ValueError as err:
+                raise ValueError(f"layout/{f.name}: {err}") from err
+            data.set(a, r, text.encode("latin-1"))
+        result.changes.append(f"layout {layer} list: changed by {f.name}")
+    files = sorted([p for p in ldir.glob("*.json") if not p.name.endswith(".changes.json")]
+                   + list(ldir.glob("*.list.txt")))
     for f in files:
         stem = f.name[:-len(".list.txt")] if f.name.endswith(".list.txt") else f.name[:-len(".json")]
         layer, _, kind = stem.rpartition(".") if not f.name.endswith(".list.txt") else (stem, ".", "list")
@@ -871,6 +970,9 @@ def _apply_models(data, folder, result):
     files = sorted(f for f in (folder / "models").glob("*") if f.suffix.lower() in (".obj", ".glb", ".gltf"))
     for f in files:
         name = f.stem
+        is_changes = name.lower().endswith(".changes")     # mod pack output
+        if is_changes:
+            name = name[:-len(".changes")]
         is_gltf = f.suffix.lower() != ".obj"
         text = None if is_gltf else f.read_text(encoding="utf-8", errors="replace")
         lod, damaged = (None, None) if is_gltf else _obj_settings(text)
@@ -888,7 +990,10 @@ def _apply_models(data, folder, result):
         for a, recs in found.items():
             mr = data.archive(a).read(recs[model.MODEL])
             sr = data.archive(a).read(recs[model.SEGMENTS])
-            if is_gltf:
+            if is_changes and is_gltf:
+                from . import model_changes
+                nm, ns, report = model_changes.import_changes(mr, sr, f)
+            elif is_gltf:
                 from . import gltf_model
                 nm, ns, report = gltf_model.import_gltf(mr, sr, f, lod, damaged)
             else:

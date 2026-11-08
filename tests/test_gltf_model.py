@@ -175,3 +175,24 @@ class GltfModelImportTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class ModelChangesTests(GltfModelImportTests):
+    def test_changes_file_builds_the_same(self):
+        from mercfoundry import model_changes
+        self.doc["nodes"][node(self.doc, "p000_bone_a")]["translation"] = [0.0, 0.25, 0.0]
+        full = self.run_import()
+        glb, rep = model_changes.make_changes(self.mr, self.sr, self.path)
+        self.assertEqual(rep.edited, [0])
+        doc, _ = gltf.read(glb)
+        names = [n.get("name") for n in doc["nodes"] if "mesh" in n]
+        self.assertEqual(names, ["p000_bone_a"])          # the unchanged skinned piece is gone
+        self.assertNotIn("images", doc)
+        changes = self.dir / "guy.changes.glb"
+        changes.write_bytes(glb)
+        self.assertEqual(model_changes.import_changes(self.mr, self.sr, changes)[:2], full[:2])
+
+    def test_unedited_makes_no_changes_file(self):
+        from mercfoundry import model_changes
+        write_glb(self.path, self.doc, bytes(self.bin))
+        self.assertIsNone(model_changes.make_changes(self.mr, self.sr, self.path)[0])

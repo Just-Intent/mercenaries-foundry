@@ -202,3 +202,30 @@ class SyncTests(unittest.TestCase):
             self.assertEqual([(m.folder, m.enabled) for m in mods], [("A", True), ("B", False), (sync.OUTPUT, True)])
             self.assertFalse(sync._separate_saves(game))
             self.assertTrue((game / "mod-loader.ini").read_bytes().startswith(b"\xff\xfe"))
+
+
+class PackTests(unittest.TestCase):
+    def setUp(self):
+        self.base = ModBuildTests("test_empty_project_writes_nothing")
+        self.base.setUp()
+
+    def tearDown(self):
+        self.base.tearDown()
+
+    def test_pack_script_and_texture_as_changes(self):
+        from mercfoundry import modpack
+        b = self.base
+        b.write("scripts/mission.lua", "x = 1\ny = 2\n")
+        w, h, rgba = texture.decode(dsk.Archive(b.data / "streamed.dsk").read(
+            next(r for r in dsk.Archive(b.data / "streamed.dsk").records if r.kind == texture.TEXTURE))).rgba()
+        edited = bytearray(rgba)
+        edited[0:4] = bytes((1, 2, 3, 255))
+        b.write("textures/tex.png", png.encode(w, h, bytes(edited), 4))
+        packed = Path(b.tmp.name) / "packed"
+        report = modpack.pack(b.project, packed, b.data)
+        self.assertTrue((packed / "scripts" / "mission.lua.diff").exists())
+        self.assertFalse((packed / "scripts" / "mission.lua").exists())
+        self.assertTrue((packed / "textures" / "tex.changes.png").exists())
+        self.assertFalse((packed / "textures" / "tex.png").exists())
+        self.assertEqual(len(report["converted"]), 2)
+        self.assertEqual(modpack.check(b.project, packed, b.data), [])

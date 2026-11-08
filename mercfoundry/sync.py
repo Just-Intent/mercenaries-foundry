@@ -117,11 +117,20 @@ def install_hook(game: Path) -> Path:
     patch 0007), so enabled source mods are built every time they change."""
     import sys
     game = Path(game)
-    repo = Path(__file__).resolve().parent.parent
+    pyz = Path(sys.argv[0]).resolve() if sys.argv and sys.argv[0].lower().endswith(".pyz") else None
+    if pyz is not None:
+        # The packaged mercfoundry.pyz: run it with a Python bundled beside it
+        # (the embeddable package in python\), else this one.
+        bundled = pyz.parent / "python" / "python.exe"
+        python = bundled if bundled.exists() else Path(sys.executable)
+        setup, command = "", f"\"{python}\" \"{pyz}\""
+    else:
+        repo = Path(__file__).resolve().parent.parent
+        setup, command = f"set PYTHONPATH={repo}\r\n", f"\"{Path(sys.executable)}\" -m mercfoundry"
     text = ("@echo off\r\n"
             "rem Written by mercfoundry: builds enabled source mods before a modded launch.\r\n"
-            f"set PYTHONPATH={repo}\r\n"
-            f"\"{Path(sys.executable)}\" -m mercfoundry mod sync \"%~dp0.\" --enable > \"%~dp0foundry-sync.log\" 2>&1\r\n")
+            + setup +
+            f"{command} mod sync \"%~dp0.\" --enable > \"%~dp0foundry-sync.log\" 2>&1\r\n")
     path = game / HOOK
     path.write_text(text, encoding="ascii", newline="")
     return path

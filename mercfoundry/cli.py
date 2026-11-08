@@ -288,6 +288,26 @@ def cmd_mod_build(args):
         sys.exit(1)
 
 
+def cmd_mod_pack(args):
+    from . import modpack
+    try:
+        report = modpack.pack(args.folder, args.out, args.data)
+    except (ValueError, FileNotFoundError) as err:
+        sys.exit(f"pack failed: {err}")
+    for line in report["converted"]:
+        print(f"  {line}")
+    for line in report["dropped"]:
+        print(f"  dropped {line}")
+    for w in report["warnings"]:
+        print(f"  warning: {w}")
+    print(f"wrote {args.out}")
+    if args.check:
+        problems = modpack.check(args.folder, args.out, args.data)
+        print("check: the packed mod builds the same" if not problems else "check FAILED: " + "; ".join(problems))
+        if problems:
+            sys.exit(1)
+
+
 def cmd_mod_sync(args):
     from . import sync, verify as verifier
     try:
@@ -695,6 +715,12 @@ def main(argv=None):
     m.add_argument("folder", nargs="+", help="mod project folder (several build together, later ones win)")
     m.add_argument("--data", required=True, help="the game's DATAxbox folder")
     m.add_argument("--out", required=True, help="output folder, e.g. <port>/mods/<YourMod>")
+    m = modsub.add_parser("pack", help="copy a mod with game-derived files rewritten as changes, for sharing")
+    m.set_defaults(fn=cmd_mod_pack)
+    m.add_argument("folder", help="mod project folder")
+    m.add_argument("out", help="new folder for the shareable copy")
+    m.add_argument("--data", required=True, help="the game's DATAxbox folder")
+    m.add_argument("--check", action="store_true", help="build both and confirm they give the same result")
     m = modsub.add_parser("sync", help="build the launcher's enabled source mods into mods/Foundry Mods")
     m.set_defaults(fn=cmd_mod_sync)
     m.add_argument("game", help="the folder holding Mercenaries Recompiled.exe and mods/")

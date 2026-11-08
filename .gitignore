@@ -35,3 +35,4 @@ dev-mods/
 /plugins/out/
 /templates.tsv
 /objectnames.txt
+/dist/
