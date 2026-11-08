@@ -389,6 +389,18 @@
    "name": "Transform_ToMatrix",
    "signature": "Matrix * __thiscall Transform_ToMatrix(const Transform *this, Matrix *out)",
    "evidence": "retail code: a rotation matrix from the quaternion at this + 0xC (x, y, z, w) and the position at this + 0"
+  },
+  {
+   "address": "0x001F28E0",
+   "name": "Terrain_GetSurfaceAt",
+   "signature": "int __cdecl Terrain_GetSurfaceAt(float x, float z)",
+   "evidence": "retail code: converts world x, z to a terrain cell with the loaded map's origin offsets and inverse spacing, asks the terrain (0x643370) for the cell's texture slot (0x1F0010) and returns g_TerrainSurfaces[slot] (0 outside 0-31); called by the impact-effect surface sampler 0xB4D80"
+  },
+  {
+   "address": "0x001F0010",
+   "name": "Terrain_GetTextureSlot",
+   "signature": "int __thiscall Terrain_GetTextureSlot(Terrain *this, int col, int row)",
+   "evidence": "retail code: Terrain_GetSurfaceAt calls it on the terrain at 0x643370 and indexes g_TerrainSurfaces (32 entries: 16 ground layers, then 16 decal textures) with the result"
   }
  ],
  "globals": [
@@ -446,6 +458,11 @@
    "address": "0x0063DD70",
    "name": "g_WorldNameHandles",
    "evidence": "retail code: handles World_HandleFromName returns, slot for slot with g_WorldNameKeys"
+  },
+  {
+   "address": "0x006430C0",
+   "name": "g_TerrainSurfaces",
+   "evidence": "retail code: the terrain loader (0x1F0688) stores terrainPhysicsType <slot> <name> from the level config here, int[32]: dirt 1, road 2, snow 3, grass 4, rock 5, other 0"
   }
  ],
  "structures": [

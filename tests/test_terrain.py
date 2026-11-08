@@ -6,7 +6,7 @@ from pathlib import Path
 
 import math
 
-from mercfoundry import dsk, modbuild, png, terrain, terrain_decals, terrain_layers, terrain_light, terrain_paint, ucfb
+from mercfoundry import dsk, modbuild, png, terrain, terrain_decals, terrain_layers, terrain_light, terrain_paint, terrain_surfaces, ucfb
 from mercfoundry.hashing import name_hash
 from tests.test_dsk import build as build_dsk
 
@@ -293,3 +293,57 @@ class DecalTests(unittest.TestCase):
         cells = [d["cell"] for d in new["decals"]]
         self.assertIn([11, 12], cells)       # the map's own decals are still there
         self.assertIn([7, 10], cells)
+
+
+LEVELS_INI = "\n".join(["[LevelNamesList]", "LevelName\tLV_X", "", "[LV_X]", "Name\t\t\tSWN",
+                        r"Path\t\t\t\SW" + "\\", r"ConfigFile		\SW\SWN.ini", "", ""])
+LEVEL_INI = ("RadarTexture rdrSWN\r\n\r\nDirt\t\t 0\tgeneric\r\n\r\nterrainPhysicsType \t0 \t\tdirt\r\n"
+             "terrainPhysicsType \t8 \t\troad\r\n\r\nTerrainDust \t0 \t\tdirt\r\n\r\nlayereffect 8 blowingpaper\r\n")
+
+
+class SurfaceTests(unittest.TestCase):
+    def test_level_config(self):
+        self.assertEqual(terrain_surfaces.level_config(LEVELS_INI, "swn"), r"SW\SWN.ini")
+        self.assertIsNone(terrain_surfaces.level_config(LEVELS_INI, "nw"))
+
+    def test_export(self):
+        doc = terrain_surfaces.export(LEVEL_INI, ["dirt_tex"] + [""] * 7 + ["concrete"], ["road_tex"])
+        by_slot = {e["slot"]: e for e in doc["textures"]}
+        self.assertEqual(by_slot[0], {"slot": 0, "texture": "dirt_tex", "kind": "layer", "surface": "dirt",
+                                      "dust": "dirt", "debris": "generic", "effect": None})
+        self.assertEqual(by_slot[8]["effect"], "blowingpaper")
+        self.assertEqual(by_slot[16]["kind"], "decal")
+        self.assertEqual(terrain_surfaces.apply(LEVEL_INI, doc), (LEVEL_INI, [], []))
+
+    def test_apply(self):
+        doc = {"textures": [{"slot": 8, "surface": "snow", "effect": None},
+                            {"slot": 3, "surface": "rock", "dust": "rock"},
+                            {"slot": 17, "surface": "mud"}]}
+        text, changes, warnings = terrain_surfaces.apply(LEVEL_INI, doc)
+        lines = text.split("\r\n")
+        self.assertIn("terrainPhysicsType \t8 \t\tsnow", lines)
+        self.assertIn("terrainPhysicsType \t3 \t\trock", lines)
+        self.assertNotIn("layereffect 8 blowingpaper", lines)
+        self.assertEqual(lines.index("TerrainDust \t3 \t\trock"), lines.index("TerrainDust \t0 \t\tdirt") + 1)
+        self.assertEqual(len(warnings), 1)                      # mud isn't a surface
+        self.assertEqual(terrain_surfaces.read(text)["surface"], {0: "dirt", 8: "snow", 3: "rock", 17: "mud"})
+        with self.assertRaises(ValueError):
+            terrain_surfaces.apply(LEVEL_INI, {"textures": [{"slot": 40, "surface": "dirt"}]})
+
+    def test_mod_build(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            d = Path(tmp)
+            (d / "data" / "SW").mkdir(parents=True)
+            (d / "data" / "levels.ini").write_text(LEVELS_INI)
+            (d / "data" / "SW" / "SWN.ini").write_bytes(LEVEL_INI.encode())
+            modbuild.new_project(d / "proj")
+            surfaces = d / "proj" / "terrain" / "swn.surfaces.json"
+            surfaces.write_text(json.dumps({"textures": [{"slot": 0, "surface": "snow"}]}))
+            result = modbuild.build(d / "proj", d / "data", d / "out")
+            out = d / "out" / "DATAxbox" / "SW" / "SWN.ini"
+            self.assertIn(b"terrainPhysicsType \t0 \t\tsnow\r\n", out.read_bytes())
+            self.assertEqual(json.loads((d / "out" / "foundry-mod.json").read_text())["files"], ["DATAxbox/SW/SWN.ini"])
+            self.assertEqual(result.written, [])
+            surfaces.unlink()                                     # a later build without it removes the file
+            modbuild.build(d / "proj", d / "data", d / "out")
+            self.assertFalse(out.exists())

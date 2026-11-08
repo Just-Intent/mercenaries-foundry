@@ -82,6 +82,7 @@ class _Data:
         self.archives = {}
         self.replace = {}   # archive name -> {(key, kind): bytes}
         self.add = {}       # archive name -> [(key, kind, bytes)]
+        self.files = {}     # loose game files, "DATAxbox/SW/SWN.ini" -> bytes
 
     def archive(self, name):
         if name not in self.archives:
@@ -422,6 +423,8 @@ def _apply_terrain(data, folder, result):
         work.setdefault(f.name[:-len(".layers.json")], {})["table"] = f
     for f in sorted(tdir.glob("*.decals.json")):
         work.setdefault(f.name[:-len(".decals.json")], {})["decals"] = f
+    for f in sorted(tdir.glob("*.surfaces.json")):
+        _apply_surfaces(data, f, f.name[:-len(".surfaces.json")], result)
     for name, job in work.items():
         key = name_hash(name)
         hit = [(a, r) for a, r in data.records(name_hash("Terrain")) if r.key == key]
@@ -481,6 +484,23 @@ def _apply_terrain(data, folder, result):
                 notes.append(f"{count} decals" + (f" ({roads} road{'s' if roads != 1 else ''} laid)" if roads else ""))
             data.set(a, r, terrain.rebuild(record, replace))
         result.changes.append(f"terrain {name}: " + "; ".join(notes))
+
+
+def _apply_surfaces(data, f, name, result):
+    """terrain/<name>.surfaces.json -> the level config (a loose DATAxbox file)."""
+    from . import terrain_surfaces
+    levels = data.dir / "levels.ini"
+    config = terrain_surfaces.level_config(levels.read_text(encoding="latin-1"), name) if levels.exists() else None
+    if not config or not (data.dir / config).exists():
+        raise ValueError(f"terrain/{f.name}: no level uses terrain {name!r}")
+    path = "DATAxbox/" + config.replace("\\", "/")
+    ini = data.files[path].decode("latin-1") if path in data.files else \
+        (data.dir / config).read_bytes().decode("latin-1")
+    text, changes, warnings = terrain_surfaces.apply(ini, json.loads(f.read_text(encoding="utf-8")))
+    result.warnings += [f"terrain/{f.name}: {w}" for w in warnings]
+    if changes:
+        data.files[path] = text.encode("latin-1")
+        result.changes.append(f"surfaces {name} ({config}): " + ", ".join(changes))
 
 
 LAYOUT_KINDS = ("path", "lineregion", "region", "encounter", "list")
@@ -586,6 +606,17 @@ def build(project, data_dir, out_dir) -> Result:
     for n in ARCHIVES:
         if n not in names and (out / n).exists() and (out / "foundry-mod.json").exists():
             (out / n).unlink()
+    # Loose game files (level configs); remove ones an earlier build wrote
+    # that this one doesn't.
+    previous = []
+    if (out / "foundry-mod.json").exists():
+        previous = json.loads((out / "foundry-mod.json").read_text(encoding="utf-8")).get("files", [])
+    for rel in previous:
+        if rel not in data.files and (out / rel).is_file():
+            (out / rel).unlink()
+    for rel, body in sorted(data.files.items()):
+        (out / rel).parent.mkdir(parents=True, exist_ok=True)
+        (out / rel).write_bytes(body)
     meta = {}
     if (project / "mod.json").exists():
         meta = json.loads((project / "mod.json").read_text(encoding="utf-8"))
@@ -594,6 +625,7 @@ def build(project, data_dir, out_dir) -> Result:
         "description": meta.get("description", ""),
         "built_by": "mercfoundry",
         "archives": result.written,
+        "files": sorted(data.files),
         "changes": result.changes,
     }, indent=1) + "\n", encoding="utf-8")
     return result

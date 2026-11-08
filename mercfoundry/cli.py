@@ -543,6 +543,19 @@ def cmd_terrain(args):
                 (out / f"{args.name}.decals.json").write_text(_json.dumps(decals, indent=None, separators=(",", ":"))
                                                              .replace('{"cell"', '\n{"cell"') + "\n", encoding="utf-8")
                 print(f"wrote {args.name}.decals.json ({len(decals['decals'])} decals)")
+                from . import terrain_surfaces
+                data_dir = Path(args.data) if Path(args.data).is_dir() else Path(args.data).parent
+                levels = data_dir / "levels.ini"
+                config = terrain_surfaces.level_config(levels.read_text(encoding="latin-1"), args.name) \
+                    if levels.exists() else None
+                if config and (data_dir / config).exists():
+                    ini = (data_dir / config).read_bytes().decode("latin-1")
+                    surfaces = terrain_surfaces.export(ini, [t["texture"] for t in table], decals["textures"])
+                    surfaces = {"config": config.replace("\\", "/"), **surfaces}
+                    (out / f"{args.name}.surfaces.json").write_text(_json.dumps(surfaces, indent=1) + "\n", encoding="utf-8")
+                    print(f"wrote {args.name}.surfaces.json (surface types and effects per texture, from {config})")
+                else:
+                    print(f"no level uses terrain {args.name!r}, so no surfaces.json")
                 print(f"wrote {args.name}.layers.json and {len(table)} ground layer images ({w} x {w}, "
                       f"{args.name}.layer00.*.png ...); a mod needs only the ones you change")
                 return

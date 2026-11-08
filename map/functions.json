@@ -5,12 +5,12 @@
  },
  "counts": {
   "functions_in_analysis": 13982,
-  "named": 591,
+  "named": 593,
   "with_file": 1500,
   "file_direct": 224,
   "lua_commands": 360,
-  "manual": 65,
-  "globals": 11,
+  "manual": 67,
+  "globals": 12,
   "structures": 5,
   "derived": 128
  },
@@ -13604,6 +13604,16 @@
    ]
   },
   {
+   "address": "0x001F0010",
+   "names": [
+    "Terrain_GetTextureSlot"
+   ],
+   "evidence": [
+    "retail code: Terrain_GetSurfaceAt calls it on the terrain at 0x643370 and indexes g_TerrainSurfaces (32 entries: 16 ground layers, then 16 decal textures) with the result"
+   ],
+   "signature": "int __thiscall Terrain_GetTextureSlot(Terrain *this, int col, int row)"
+  },
+  {
    "address": "0x001F00E0",
    "file": "RedTerrain.cpp",
    "file_evidence": "direct",
@@ -13712,6 +13722,16 @@
    "lines": [
     211
    ]
+  },
+  {
+   "address": "0x001F28E0",
+   "names": [
+    "Terrain_GetSurfaceAt"
+   ],
+   "evidence": [
+    "retail code: converts world x, z to a terrain cell with the loaded map's origin offsets and inverse spacing, asks the terrain (0x643370) for the cell's texture slot (0x1F0010) and returns g_TerrainSurfaces[slot] (0 outside 0-31); called by the impact-effect surface sampler 0xB4D80"
+   ],
+   "signature": "int __cdecl Terrain_GetSurfaceAt(float x, float z)"
   },
   {
    "address": "0x001F29F0",
@@ -14880,6 +14900,11 @@
    "address": "0x0063DD70",
    "name": "g_WorldNameHandles",
    "evidence": "retail code: handles World_HandleFromName returns, slot for slot with g_WorldNameKeys"
+  },
+  {
+   "address": "0x006430C0",
+   "name": "g_TerrainSurfaces",
+   "evidence": "retail code: the terrain loader (0x1F0688) stores terrainPhysicsType <slot> <name> from the level config here, int[32]: dirt 1, road 2, snow 3, grass 4, rock 5, other 0"
   }
  ],
  "structures": [

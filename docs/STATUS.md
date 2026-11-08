@@ -40,7 +40,8 @@
 - Terrain relighting: mod builds fit each map's baked sun and reshade edited slopes and their shadows, keeping painted tint.
 - Ground painting: `terrain` exports each texture layer as a greyscale image; mods repaint layers and edit the layer table. Draw flags follow the game's patch builder.
 - Terrain decals: `terrain` exports them (all 14 maps rebuild exactly); mods replace them or lay roads from world points. Tested in game.
-- 167 tests pass.
+- Terrain surface types: per-texture surface, dust, debris and effect from the level config; `terrain` exports them and mods change them (the build writes the loose config file). Tested in game; Foundry Console shows the surface underfoot.
+- 171 tests pass.
 
 ## Fixed from retail data
 - Text values aren't NUL-terminated. The decoder had assumed they were and found no strings.

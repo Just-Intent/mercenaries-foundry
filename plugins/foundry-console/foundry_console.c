@@ -353,13 +353,49 @@ static int terrain_units(int col, int row, float *out)
     return 1;
 }
 
-static void terrain_check_once(void)
+/* "Surface: snow (texture slot 0)" for world x, z, asked of the game itself:
+ * Terrain_GetSurfaceAt for the surface the level config gave the texture
+ * there, and Terrain_GetTextureSlot (with the same cell rounding) for which
+ * texture that is (0-15 ground layers, 16-31 decal textures). */
+#define TERRAIN_OBJECT 0x00643370u
+#define TERRAIN_INV_SPACING 0x00643280u
+#define TERRAIN_CELL_ROUND 0x002DC340u
+static const char *surface_line(float x, float z)
 {
-    static int done;
+    static const char *names[] = {"none", "dirt", "road", "snow", "grass", "rock"};
+    static char line[96];
+    MercGuestCall c;
+    uint32_t args[2];
+    memcpy(&args[0], &x, 4);
+    memcpy(&args[1], &z, 4);
+    if (!guest(MF_FN_Terrain_GetSurfaceAt, 0, 2, args, &c)) return "";
+    uint32_t surface = c.eax;
+    float ox = 0, oz = 0, inv = 0, round = 0;
+    host->read_guest(host->context, TERRAIN_ORIGIN_X, &ox, 4);
+    host->read_guest(host->context, TERRAIN_ORIGIN_Z, &oz, 4);
+    host->read_guest(host->context, TERRAIN_INV_SPACING, &inv, 4);
+    host->read_guest(host->context, TERRAIN_CELL_ROUND, &round, 4);
+    uint32_t cell[2] = {(uint32_t)(int)((x + ox) * inv + round), (uint32_t)(int)((z + oz) * inv + round)};
+    int slot = guest(MF_FN_Terrain_GetTextureSlot, TERRAIN_OBJECT, 2, cell, &c) ? (int)c.eax : -1;
+    snprintf(line, sizeof(line), "Surface: %s (texture slot %d)\r\n",
+             surface < 6 ? names[surface] : "?", slot);
+    return line;
+}
+
+/* Logs the loaded terrain's layout and its surface per texture slot (as the
+ * game read them from the level config) whenever they change, e.g. once the
+ * level after the intro has loaded. */
+static void terrain_log_changes(void)
+{
+    static int32_t last[32];
+    static int logged;
+    int32_t now[32];
+    host->read_guest(host->context, MF_VAR_g_TerrainSurfaces, now, sizeof(now));
+    if (logged && !memcmp(now, last, sizeof(now))) return;
+    logged = 1;
+    memcpy(last, now, sizeof(now));
     float ox = 0, oz = 0, spacing = 0;
     int16_t size = 0;
-    if (done) return;
-    done = 1;
     host->read_guest(host->context, TERRAIN_ORIGIN_X, &ox, 4);
     host->read_guest(host->context, TERRAIN_ORIGIN_Z, &oz, 4);
     host->read_guest(host->context, TERRAIN_SPACING, &spacing, 4);
@@ -368,6 +404,11 @@ static void terrain_check_once(void)
     snprintf(text, sizeof(text), "terrain loaded: %d x %d cells of %.1f m; world x + %.1f and z + %.1f give the grid position",
              size, size, spacing, ox, oz);
     host->log(host->context, text);
+    char list[320];
+    int n = snprintf(list, sizeof(list), "terrain surfaces by slot (0 none, 1 dirt, 2 road, 3 snow, 4 grass, 5 rock):");
+    for (int i = 0; i < 32 && n < (int)sizeof(list) - 4; i++)
+        n += snprintf(list + n, sizeof(list) - n, " %d", now[i]);
+    host->log(host->context, list);
 }
 
 static void inspect(void)
@@ -396,8 +437,9 @@ static void inspect(void)
             int col = (int)floorf((m[12] + ox) / spacing + 0.5f), row = (int)floorf((m[14] + oz) / spacing + 0.5f);
             if (terrain_units(col, row, &ground))
                 n += snprintf(text + n, sizeof(text) - n, "Ground (terrain cell %d, %d): %.1f m\r\n", col, row, ground);
+            n += snprintf(text + n, sizeof(text) - n, "%s", surface_line(m[12], m[14]));
         }
-        terrain_check_once();
+        terrain_log_changes();
     }
     EnterCriticalSection(&lock);
     n += snprintf(text + n, sizeof(text) - n, "Recent spawns:");
