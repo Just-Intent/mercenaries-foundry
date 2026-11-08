@@ -531,6 +531,15 @@ def cmd_terrain(args):
                 print(f"wrote {out / (args.name + '.heights.png')} ({meta['size']} x {meta['size']}, "
                       f"{meta['size'] * info['spacing']:.0f} m across, heights {info['min']:.1f} to {info['max']:.1f} m) "
                       f"and {args.name}.heights.json")
+                from . import png, terrain_paint
+                table = terrain_paint.layer_table(chunks)
+                (out / f"{args.name}.layers.json").write_text(_json.dumps({"terrain": args.name, "layers": table}, indent=1) + "\n",
+                                                             encoding="utf-8")
+                w, images = terrain_paint.layer_images(chunks)
+                for k, t in enumerate(table):
+                    (out / terrain_paint.layer_file(args.name, k, t["texture"])).write_bytes(png.encode(w, w, images[k], 1))
+                print(f"wrote {args.name}.layers.json and {len(table)} ground layer images ({w} x {w}, "
+                      f"{args.name}.layer00.*.png ...); a mod needs only the ones you change")
                 return
     sys.exit(f"no terrain named {args.name!r} (list them with list --type Terrain)")
 
@@ -674,7 +683,7 @@ def main(argv=None):
     s = add("templates", cmd_templates, "list the game's object templates (what Spawner_SpawnTemplate spawns) as TSV")
     s.add_argument("data", help="DATAxbox folder or a .dsk file")
     s.add_argument("-o", "--out", default="templates.tsv")
-    s = add("terrain", cmd_terrain, "export a terrain's heightmap as a 16-bit PNG (edit it, then put it in a mod's terrain/ folder)")
+    s = add("terrain", cmd_terrain, "export a terrain's heightmap (16-bit PNG) and ground layers (greyscale PNGs) for a mod's terrain/ folder")
     s.add_argument("data", help="DATAxbox folder or assets.dsk")
     s.add_argument("name", help="terrain name, e.g. sw (the southern province) or nw")
     s.add_argument("-o", "--out", default="terrain")

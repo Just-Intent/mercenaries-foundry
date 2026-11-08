@@ -6,7 +6,7 @@ from pathlib import Path
 
 import math
 
-from mercfoundry import dsk, modbuild, png, terrain, terrain_layers, terrain_light, ucfb
+from mercfoundry import dsk, modbuild, png, terrain, terrain_layers, terrain_light, terrain_paint, ucfb
 from mercfoundry.hashing import name_hash
 from tests.test_dsk import build as build_dsk
 
@@ -39,7 +39,21 @@ def hills():
             for z in range(SIZE)]
 
 
-def tern_record(units, colr=None):
+def painted_chunks():
+    """Two layers: grass everywhere, rock fading in over patch 5 only."""
+    tl = terrain_layers
+    patches, alph = [], b""
+    for n in range(16):
+        if n == 5:
+            patches.append(tl.Patch(0b11, 0))
+            rock = [tl.nibble(255 if i >= 4 else 0) for j in range(9) for i in range(9)]
+            alph += tl.pack_blob(tl._pack_layer([15] * 81) + tl._pack_layer(rock))
+        else:
+            patches.append(tl.Patch(0b01, 0))
+    return {b"PTCH": tl.encode_ptch(patches), b"ALPH": alph}
+
+
+def tern_record(units, colr=None, paint=None):
     """A 32 x 32 terrain (four 16 x 16 blocks) holding units[z][x], encoded
     the way the retail data is: base = block minimum, smallest fitting shift."""
     bpr = SIZE // BLOCK
@@ -52,9 +66,12 @@ def tern_record(units, colr=None):
             raw += bytes((v - base) >> shift for v in vals)
     lo = min(min(r) for r in units) * STEP
     hi = max(max(r) for r in units) * STEP
-    info = struct.pack("<4f6h", 8.0, STEP, lo, hi, SIZE, 8, BLOCK, 1, 0, 0) + struct.pack("<3f", 0, 0, 0)
+    info = struct.pack("<4f6h", 8.0, STEP, lo, hi, SIZE, 8, BLOCK, 2 if paint else 1, 0, 0) + struct.pack("<3f", 0, 0, 0)
     body = chunk(b"INFO", info) + chunk(b"HEXP", hexp) + chunk(b"HGT8", terrain.pack_hgt8(bytes(raw)))
-    body += chunk(b"LTEX", b"grass\0")
+    body += chunk(b"LTEX", b"grass\0rock\0" if paint else b"grass\0")
+    if paint:
+        body += chunk(b"SCAL", struct.pack("<2f", 16, 32)) + chunk(b"AXIS", bytes([0, 5]))
+        body += chunk(b"PTCH", paint[b"PTCH"]) + chunk(b"ALPH", paint[b"ALPH"])
     if colr is not None:
         body += chunk(b"COLR", colr)
     return chunk(b"ucfb", chunk(b"tern", body))
@@ -143,6 +160,50 @@ class TerrainTests(unittest.TestCase):
         blobs_old = terrain_light.colr_blobs(chunks[b"COLR"], 16)
         blobs_new = terrain_light.colr_blobs(colr, 16)
         self.assertEqual(blobs_old[0], blobs_new[0])
+
+    def test_layer_images_round_trip(self):
+        rec = tern_record(sample_units(), paint=painted_chunks())
+        chunks = terrain.tern_chunks(rec)
+        self.assertEqual(terrain_paint.layer_table(chunks), [{"texture": "grass", "scale": 16.0, "axis": 0},
+                                                             {"texture": "rock", "scale": 32.0, "axis": 5}])
+        w, images = terrain_paint.layer_images(chunks)
+        self.assertEqual(w, 33)
+        self.assertEqual(images[1][9 * w + 12], 255)    # patch 5 = (1, 1): cells 8-16
+        self.assertEqual(images[1][9 * w + 9], 0)
+        self.assertEqual(images[1][0], 0)
+        replace, n = terrain_paint.apply(chunks, images, terrain_paint.layer_table(chunks))
+        self.assertEqual((replace, n), ({}, 0))
+
+    def test_paint(self):
+        rec = tern_record(sample_units(), paint=painted_chunks())
+        chunks = terrain.tern_chunks(rec)
+        w, images = terrain_paint.layer_images(chunks)
+        rock = bytearray(images[1])
+        for y in range(w):
+            for x in range(w):
+                if y >= 24 and x >= 24:      # rock over the last patch (3, 3)
+                    rock[y * w + x] = 255
+                if 8 <= y <= 16 and 8 <= x <= 16:
+                    rock[y * w + x] = 0      # and none in patch 5
+        replace, n = terrain_paint.apply(chunks, {1: bytes(rock)})
+        self.assertEqual(n, 6)   # 5 and 1 (its shared top edge); 15 and 10, 11, 14 (sharing its edges)
+        new = terrain.tern_chunks(terrain.rebuild(rec, replace))
+        patches = terrain_layers.decode_ptch(new[b"PTCH"])
+        self.assertEqual(patches[5].layers, [0])
+        self.assertEqual(patches[15].layers, [0, 1])
+        alpha = terrain_layers.decode_alph(new[b"ALPH"], patches)
+        self.assertEqual(alpha[15][1][0], 15)              # opaque and drawn
+        self.assertEqual(alpha[15][0][0] & 8, 0)           # grass hidden under it: not drawn
+        self.assertEqual(terrain_paint.layer_images(new)[1][1], bytes(rock))
+
+    def test_new_layer(self):
+        chunks = terrain.tern_chunks(tern_record(sample_units(), paint=painted_chunks()))
+        table = terrain_paint.layer_table(chunks) + [{"texture": "sand", "scale": 8, "axis": 0}]
+        replace, _ = terrain_paint.apply(chunks, table=table)
+        self.assertEqual(terrain_paint.layer_count({**chunks, **replace}), 3)
+        self.assertEqual(terrain_paint.layer_table({**chunks, **replace})[2], {"texture": "sand", "scale": 8.0, "axis": 0})
+        with self.assertRaises(ValueError):
+            terrain_paint.apply(chunks, table=table[:1])
 
     def test_mod_build(self):
         with tempfile.TemporaryDirectory() as tmp:

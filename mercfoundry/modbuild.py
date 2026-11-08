@@ -25,6 +25,8 @@ Project layout (every part optional):
                           template's skeleton and loaded wherever it is
     terrain/<name>.heights.png  replaces a terrain's heights (from the
                           `terrain` command; keep the .heights.json beside it)
+    terrain/<name>.layerNN.*.png  repaints ground layer NN (from `terrain`);
+                          <name>.layers.json changes or adds layer textures
     animtables/<name>.json   replaces a character's animation table (from
                           the `animtable` command): point handles at clips
     layout/<layer>.<kind>.json  replaces a layer's path, lineregion, region
@@ -401,31 +403,71 @@ def _apply_animtables(data, folder, result):
 
 
 def _apply_terrain(data, folder, result):
-    from . import terrain, terrain_light
-    for f in sorted((folder / "terrain").glob("*.heights.png")):
-        name = f.name[:-len(".heights.png")]
-        meta_path = f.with_name(name + ".heights.json")
-        if not meta_path.exists():
-            raise ValueError(f"terrain/{f.name}: {meta_path.name} is missing (export both with the terrain command)")
-        meta = json.loads(meta_path.read_text(encoding="utf-8"))
+    from . import png, terrain, terrain_light, terrain_paint
+    tdir = folder / "terrain"
+    work = {}       # terrain name -> {"heights": path, "table": path, "layers": {index: path}}
+    for f in sorted(tdir.glob("*.png")):
+        if f.name.endswith(".heights.png"):
+            work.setdefault(f.name[:-len(".heights.png")], {})["heights"] = f
+        elif terrain_paint.parse_layer_file(f.name):
+            name, index = terrain_paint.parse_layer_file(f.name)
+            layers = work.setdefault(name, {}).setdefault("layers", {})
+            if index in layers:
+                raise ValueError(f"terrain/{f.name}: layer {index} has two images")
+            layers[index] = f
+        else:
+            result.warnings.append(f"terrain/{f.name}: not a heights or layer image (name.heights.png, name.layerNN.png)")
+    for f in sorted(tdir.glob("*.layers.json")):
+        work.setdefault(f.name[:-len(".layers.json")], {})["table"] = f
+    for name, job in work.items():
         key = name_hash(name)
         hit = [(a, r) for a, r in data.records(name_hash("Terrain")) if r.key == key]
         if not hit:
-            raise ValueError(f"terrain/{f.name}: no terrain named {name!r}")
+            raise ValueError(f"terrain/{name}.*: no terrain named {name!r}")
+        notes = []
         for a, r in hit:
+            notes = []
             record = data.current(a, r)
             chunks = terrain.tern_chunks(record)
-            units = terrain.units_from_png(f.read_bytes(), meta)
-            _, old, _ = terrain.decode_height_units(chunks)
-            changed = sum(1 for z in range(len(units)) for x in range(len(units)) if units[z][x] != old[z][x])
-            heights = terrain.encode_height_units(chunks, units)
-            note = "lighting kept (relight: false)"
-            if meta.get("relight", True):
-                colr, note = terrain_light.relight_chunks(chunks, heights)
-                if colr is not None:
-                    heights[b"COLR"] = colr
-            data.set(a, r, terrain.rebuild(record, heights))
-        result.changes.append(f"terrain {name}: {changed} height samples changed; {note}")
+            replace = {}
+            if "heights" in job:
+                f = job["heights"]
+                meta_path = f.with_name(name + ".heights.json")
+                if not meta_path.exists():
+                    raise ValueError(f"terrain/{f.name}: {meta_path.name} is missing (export both with the terrain command)")
+                meta = json.loads(meta_path.read_text(encoding="utf-8"))
+                units = terrain.units_from_png(f.read_bytes(), meta)
+                _, old, _ = terrain.decode_height_units(chunks)
+                changed = sum(1 for z in range(len(units)) for x in range(len(units)) if units[z][x] != old[z][x])
+                replace = terrain.encode_height_units(chunks, units)
+                note = "lighting kept (relight: false)"
+                if meta.get("relight", True):
+                    colr, note = terrain_light.relight_chunks(chunks, replace)
+                    if colr is not None:
+                        replace[b"COLR"] = colr
+                notes.append(f"{changed} height samples changed; {note}")
+            if "table" in job or "layers" in job:
+                table = None
+                if "table" in job:
+                    table = json.loads(job["table"].read_text(encoding="utf-8"))["layers"]
+                    known = {rec.key for _, rec in data.records(name_hash("Texture"))}
+                    for t in table:
+                        if name_hash(t["texture"]) not in known:
+                            result.warnings.append(f"terrain/{job['table'].name}: no game texture named {t['texture']!r}")
+                images = {}
+                for index, f in job.get("layers", {}).items():
+                    w, h, rgba = png.decode(f.read_bytes())
+                    if w != h:
+                        raise ValueError(f"terrain/{f.name}: layer images are square")
+                    images[index] = bytes(rgba[0::4])          # grey (or the red channel)
+                paint, patches = terrain_paint.apply({**chunks, **replace}, images, table)
+                replace.update(paint)
+                if table is not None:
+                    notes.append(f"{len(table)} layers in the table")
+                if images:
+                    notes.append(f"{patches} patches repainted")
+            data.set(a, r, terrain.rebuild(record, replace))
+        result.changes.append(f"terrain {name}: " + "; ".join(notes))
 
 
 LAYOUT_KINDS = ("path", "lineregion", "region", "encounter", "list")

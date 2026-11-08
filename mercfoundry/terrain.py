@@ -206,5 +206,8 @@ def rebuild(record: bytes, replace: dict) -> bytes:
     from . import ucfb
     body, pads = ucfb.unwrap(record, b"tern", with_pad=True)
     items, pad_last = ucfb.split(body)
+    missing = set(replace) - {t for t, _ in items}
+    if missing:
+        raise ValueError("terrain record has no %s chunk" % ", ".join(sorted(t.decode() for t in missing)))
     items = [(t, replace.get(t, b)) for t, b in items]
     return ucfb.wrap(b"tern", ucfb.pack_children(items, pad_last), pads)

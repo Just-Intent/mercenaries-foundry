@@ -10,10 +10,10 @@ def _chunk(tag, data):
 
 
 def encode(width: int, height: int, pixels: bytes, channels: int = 4) -> bytes:
-    """pixels: rows top to bottom, `channels` bytes per pixel (3 = RGB, 4 = RGBA)."""
+    """pixels: rows top to bottom, `channels` bytes per pixel (1 = grey, 3 = RGB, 4 = RGBA)."""
     if len(pixels) != width * height * channels:
         raise ValueError("pixel data does not match the image size")
-    colour_type = {3: 2, 4: 6}[channels]
+    colour_type = {1: 0, 3: 2, 4: 6}[channels]
     stride = width * channels
     raw = b"".join(b"\0" + pixels[y * stride:(y + 1) * stride] for y in range(height))
     return (SIGNATURE
