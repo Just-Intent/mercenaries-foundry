@@ -1,7 +1,7 @@
 import struct
 import unittest
 
-from mercfoundry import collision, model, model_import as mi, ucfb
+from mercfoundry import cmop, collision, model, model_import as mi, script, ucfb
 from mercfoundry.hashing import name_hash
 from tests.test_model import QUAD, joint, model_record, segm, segments_record
 
@@ -12,8 +12,10 @@ def box_shape(material, joint_name, boxes, kind=0):
     return ucfb.pack_chunk(b"shap", ucfb.pack_children([(b"sinf", sinf), (b"CBOX", cbox)]))
 
 
-def cshp(shapes, total_boxes):
-    cinf = struct.pack("<7H", len(shapes), 0, 0, total_boxes, 0, 0, 0)
+def cshp(shapes, total_boxes, kinds=(0, 0, 0, 0)):
+    """kinds: (kind 2/3 box shapes, trees, kind-4 meshes, kind-5 hulls) for cinf."""
+    k23, trees, k4, k5 = kinds
+    cinf = struct.pack("<7H", len(shapes), k23, trees, total_boxes, k4, k5, 0)
     return ucfb.pack_chunk(b"cshp", ucfb.pack_chunk(b"cinf", cinf) + b"".join(shapes))
 
 
@@ -117,6 +119,7 @@ class ShapeLimitTests(unittest.TestCase):
         nv = sum(1 for l in lines if l.startswith("v "))
         lines += ["o new_arm", "usemtl tex", "v 5 0 0", "v 6 0 0", "v 5 2 -1", f"f {nv + 1} {nv + 3} {nv + 2}"]
         nm, ns, rep = mi.import_obj(self.mr, sr, "\n".join(lines) + "\n")
+        self.last_sr = ns
         return model.decode(nm, ns), rep
 
     def test_appends_into_existing_box_shape(self):
@@ -131,13 +134,111 @@ class ShapeLimitTests(unittest.TestCase):
         self.assertAlmostEqual(added.centre[0], 5.5, places=3)
         self.assertEqual(rep.collision_boxes, 1)
 
-    def test_adds_second_shape_when_only_one(self):
-        m2, rep = self.run_import(cshp([mesh_shape(6, "root", kind=4)], 0))
-        self.assertEqual(len(m2.collision), 2)
-        self.assertEqual((m2.collision[1].kind, m2.collision[1].material), (2, 9))
+    def test_converts_convex_hull_to_boxes(self):
+        # Like the Humvee: a triangle hull mesh with a tree, and a convex hull.
+        block = cshp([tree_mesh_shape(6, "root"), hull_shape(9, "root")], 0, kinds=(0, 1, 1, 1))
+        m2, rep = self.run_import(block)
+        self.assertEqual(len(m2.collision), 2)            # shape count unchanged
+        mesh, boxes = m2.collision
+        self.assertEqual((len(mesh.vertices), len(mesh.triangles)), (3, 1))   # mesh untouched
+        self.assertEqual((boxes.kind, boxes.material, boxes.is_mesh), (2, 9, False))
+        self.assertEqual(rep.collision_boxes, 1)
+        # Hull slices stay inside the hull's bounds (unit corner, 0..1)...
+        for b in boxes.boxes[:-1]:
+            for c in b.corners():
+                self.assertTrue(all(-1e-6 <= c[k] <= 1 + 1e-6 for k in range(3)))
+        # ...and the new box is stored in the root's space: the arm piece sits at x 5..6.
+        self.assertAlmostEqual(boxes.boxes[-1].centre[0], 5.5, places=3)
+        cinf = list(ucfb.iter_chunks(raw_cshp(self.last_sr)))[0][1]
+        shapes, kind23, trees, total, k4, k5 = struct.unpack_from("<6H", cinf)
+        self.assertEqual((shapes, kind23, trees, total, k4, k5), (2, 1, 1, len(boxes.boxes), 1, 0))
+        verts, tris = struct.unpack_from("<HH", cinf, 14)
+        self.assertEqual((verts, tris), (3, 1))           # hull points no longer counted
 
-    def test_skips_with_warning_when_two_shapes_and_no_box_shape(self):
-        m2, rep = self.run_import(cshp([mesh_shape(6, "root", kind=4), mesh_shape(9, "root")], 0))
+    def test_hull_only_model_is_converted(self):
+        m2, rep = self.run_import(cshp([hull_shape(6, "root")], 0, kinds=(0, 0, 0, 1)))
+        self.assertEqual(len(m2.collision), 1)
+        self.assertEqual((m2.collision[0].kind, m2.collision[0].material), (2, 6))
+
+    def test_triangle_mesh_is_last_resort(self):
+        block = cshp([tree_mesh_shape(6, "root"), tree_mesh_shape(9, "root")], 0, kinds=(0, 2, 2, 0))
+        m2, rep = self.run_import(block)
         self.assertEqual(len(m2.collision), 2)
-        self.assertEqual(rep.collision_boxes, 0)
-        self.assertTrue(any("no collision" in w for w in rep.warnings))
+        mesh = m2.collision[0]
+        self.assertEqual((len(mesh.vertices), len(mesh.triangles)), (3 + 8, 1 + 12))
+        self.assertTrue(any("triangle mesh" in w for w in rep.warnings))
+        # Stored in the root's space: the arm piece sits at x 5..6.
+        self.assertAlmostEqual(max(v[0] for v in mesh.vertices), 6.0, places=3)
+        # The rebuilt tree finds the new triangles, and cinf totals follow.
+        body = raw_cshp(self.last_sr)
+        tree = shape_part(body, 0, b"CMOP")
+        hits = cmop.query(tree, (5.5, 1.0, 0.0), 0.1)
+        self.assertTrue(hits and all(1 <= h < 13 for h in hits))
+        cinf = list(ucfb.iter_chunks(body))[0][1]
+        verts, tris, size = struct.unpack_from("<HHI", cinf, 14)
+        self.assertEqual((verts, tris), (11 + 3, 13 + 1))
+        sizes = [struct.unpack_from("<I", shape_part(body, i, b"CMOP"), 16)[0] for i in (0, 1)]
+        self.assertEqual(size, sum((n + 0x30 + 15) // 16 * 16 for n in sizes))
+
+
+class TreeTests(unittest.TestCase):
+    def test_build_and_query(self):
+        import random
+        random.seed(3)
+        prims = []
+        for _ in range(300):
+            c = [random.uniform(-20, 20) for _ in range(3)]
+            h = [random.uniform(0.05, 1.5) for _ in range(3)]
+            prims.append(([c[k] - h[k] for k in range(3)], [c[k] + h[k] for k in range(3)]))
+        data = cmop.build(prims)
+        self.assertEqual(sorted(cmop.query(data, (0, 0, 0), 100)), list(range(300)))
+        for _ in range(200):
+            c = [random.uniform(-22, 22) for _ in range(3)]
+            r = random.uniform(0.1, 6)
+            got = set(cmop.query(data, c, r))
+            for i, (a, b) in enumerate(prims):
+                d = sum(max(a[k] - c[k], 0, c[k] - b[k]) ** 2 for k in range(3)) ** 0.5
+                if d < r:
+                    self.assertIn(i, got)
+
+    def test_walker_opcodes(self):
+        def tree(stream):  # min (0,0,0); scale makes one 8-bit cell 1 m
+            return struct.pack("<4fI", 0, 0, 0, 65536.0, len(stream)) + bytes(stream)
+        # Split on x: left (max 10) is leaf 0; right (min 20) adds 2 to the base, then leaf 7.
+        s = [0x10, 10, 20, 1, 0x30, 0x09, 2, 0x50, 7]
+        self.assertEqual(cmop.query(tree(s), (5, 0, 0), 1), [0])
+        self.assertEqual(cmop.query(tree(s), (30, 0, 0), 1), [9])
+        self.assertEqual(sorted(cmop.query(tree(s), (15, 0, 0), 8)), [0, 9])
+        # A failed bounds test ends the stream; a 16-bit jump skips bytes.
+        self.assertEqual(cmop.query(tree([0x27, 50, 60, 0x31]), (0, 0, 0), 1), [])
+        self.assertEqual(cmop.query(tree([0x06, 0, 1, 0xFF, 0x32]), (0, 0, 0), 1), [2])
+
+
+def tree_mesh_shape(material, joint_name):
+    verts = [(0, 0, 0), (1, 0, 0), (0, 1, 0)]
+    sinf = struct.pack("<4I", material, name_hash(joint_name), 4, 1)
+    cmsh = struct.pack("<IHHH", 6, 3, 1, 0) + b"".join(struct.pack("<3f", *v) for v in verts)
+    cmsh += struct.pack("<3H", 0, 1, 2)
+    tree = cmop.build([([0, 0, 0], [1, 1, 0])])
+    return ucfb.pack_chunk(b"shap", ucfb.pack_children([(b"sinf", sinf), (b"CMSH", cmsh), (b"CMOP", tree)]))
+
+
+def hull_shape(material, joint_name):
+    verts = [(0, 0, 0), (1, 0, 0), (0, 1, 0), (0, 0, 1)]
+    planes = [(-1, 0, 0, 0), (0, -1, 0, 0), (0, 0, -1, 0), (0.577, 0.577, 0.577, -0.577)]
+    sinf = struct.pack("<4I", material, name_hash(joint_name), 5, 1)
+    cmsh = struct.pack("<IHHH", 9, 4, 0, 4) + b"".join(struct.pack("<3f", *v) for v in verts)
+    cmsh += b"".join(struct.pack("<4f", *pl) for pl in planes)
+    return ucfb.pack_chunk(b"shap", ucfb.pack_children([(b"sinf", sinf), (b"CMSH", cmsh)]))
+
+
+def raw_cshp(segments_record):
+    cseg = ucfb.unwrap(segments_record, b"CSEG")
+    size, _ = struct.unpack_from("<II", cseg)
+    root = list(ucfb.iter_chunks(script.decompress(cseg[8:], size)))[0][1]
+    return next(b for t, b in ucfb.iter_chunks(root) if t == b"cshp")
+
+
+def shape_part(body, index, tag):
+    shapes = [b for t, b in ucfb.iter_chunks(body) if t == b"shap"]
+    return dict(ucfb.iter_chunks(shapes[index]))[tag]

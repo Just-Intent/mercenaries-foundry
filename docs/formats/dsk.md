@@ -185,15 +185,17 @@ If new geometry falls outside the quantization box, the box grows and every piec
 ```
 cshp
   cinf   u16 shapes, u16 box shapes of kind 2 or 3, u16 shapes with a CMOP tree,
-         u16 total boxes, u16 x3 mesh counts, then (only with trees or meshes)
-         [u16 mesh vertices, u16 mesh triangles,] u32 tree size   (14, 18 or 22 bytes)
+         u16 total boxes, u16 kind-4 meshes, u16 kind-5 hulls, u16 0, then
+         u16 mesh vertices + u16 mesh triangles (summed over CMSH) if any mesh,
+         then u32 tree memory if any tree: sum of align16(stream size + 0x30)
   shap   (one per shape)
     sinf u32 material, u32 joint name hash, u32 kind | count << 16, u32 1 = mesh / 0 = boxes
     CBOX count x 64 bytes: u32 material, float[3] half size, float[9] rotation (rows are the
          box axes), float[3] centre, in the joint's space
-    CMSH u32 flags, u16 vertices, u16 triangles, u16, float[3] per vertex, u16[3] per triangle
-         (149 shapes; 176 use another layout, not decoded)
-    CMOP optional precomputed tree, probably OPCODE-style ("Collision Model OPcode"); not decoded
+    CMSH u32 flags, u16 vertices, u16 triangles, u16 planes, float[3] per vertex, then
+         u16[3] per triangle (triangle meshes, 149) or float[4] per plane (convex hulls,
+         176: normal and offset, n.p + d <= 0 inside)
+    CMOP bounding-volume tree over the shape's boxes or triangles (below)
 ```
 
 | Check | Result |
@@ -205,11 +207,11 @@ cshp
 | Box rotations orthonormal | 28,294 of 28,294 |
 | `sinf` joint is one of the model's joints | 2,392 of 2,392 shapes |
 
-Kinds: boxes 0 and 2 (plain), 3 (with `CMOP`); meshes 4 (with `CMOP`), 5 (plain). Drivable vehicles use kind 2 for boxes (with a kind-4 hull mesh, or alone on cargo trucks); kind 0 appears only on static objects such as train cars and props. In-game, kind-0 boxes added to a vehicle had no effect; kind-2 boxes collided. Material codes (3, 6, 7, 9, 11, 15, ...) are not yet mapped to surfaces. Vehicles typically use a simplified hull mesh; buildings use rotated boxes.
+Kinds: boxes 0 and 2 (plain), 3 (with `CMOP`); triangle meshes 4 (with `CMOP`); convex hulls 5. Drivable vehicles use kind 2 for boxes (with a kind-4 hull mesh, or alone on cargo trucks); kind 0 appears only on static objects such as train cars and props. In-game, kind-0 boxes added to a vehicle had no effect; kind-2 boxes collided. Material codes (3, 6, 7, 9, 11, 15, ...) are not yet mapped to surfaces. Vehicles typically use a simplified hull mesh; buildings use rotated boxes.
 
 `model --collision` writes a preview of a model's collision. Shape limits: no vehicle in the game has more than two collision shapes, and giving the Humvee a third (even a 5 cm box) made it sink into the ground after impacts (tested in-game). On vehicles the hull mesh uses material 6 and the second shape 9.
 
-On import, each new piece gets a box fitted around it. The boxes go into the model's existing plain box shape (no tree) when it has one, re-expressed in that shape's joint space with a rotation; otherwise a new plain box shape (kind 2, material 9 on vehicles) is added only if the model has fewer than two shapes; otherwise collision is skipped with a warning. `cinf` box, shape and kind-2/3 counts are kept in step. Tested in-game (2026-11-08): a box appended to the cargo truck's existing shape collided, and the truck drove normally. Objects whose name contains `nocoll` get no collision; `model-import --no-collision` turns it off entirely. Collision of edited existing pieces is not changed.
+On import, each new piece gets a box fitted around it, re-expressed in the target shape's joint space with a rotation. The boxes go into the model's box shape when it has one (its `CMOP` tree rebuilt if it has one); otherwise a convex hull is replaced by a box shape approximating it (see Collision trees) and the boxes join that; otherwise a new plain box shape (kind 2, material 9 on vehicles) is added only if the model has fewer than two shapes; a triangle mesh (boxes as triangles, tree rebuilt) is the last resort, with a warning. `cinf` counts and totals are kept in step. Tested in-game (2026-11-08): a box appended to the cargo truck's existing shape collided, and the truck drove normally. Objects whose name contains `nocoll` get no collision; `model-import --no-collision` turns it off entirely. Collision of edited existing pieces is not changed.
 
 ### Paths, boundaries, regions, encounters, lists
 
@@ -260,11 +262,34 @@ Models name their textures by hash (`MTRL` word 3), so `model` exports each text
 
 Re-encoding (`extract --decode --textures`, then `pack`): an edited PNG is encoded in the original's format with a full mip chain built by 2×2 averaging. Sizes must be powers of two and may differ from the original; the mip count follows the original. Our DXT encoder picks endpoints along each block's main colour axis, then refines them by least squares. On the game's own textures it is effectively lossless: 124 of 128 sampled textures re-encode to identical pixels and the rest exceed 52 dB. Unchanged records rebuild byte-identical (all 4,715). Cube maps can't be replaced yet. Tested in-game (2026-11-08): a repainted DXT3 vehicle texture displayed correctly.
 
+### Collision trees: `CMOP`
+
+Re-derived from the retail executable's tree walker (`sub_001B0990`; two siblings share its opcode table). Header: float[3] minimum corner (the geometry's minimum less 5 cm), float scale (`127 * 2^17 / extent`, units per metre), u32 stream size. The stream is bytecode, big-endian operands. The walker carries a query sphere (centre and radius) in 8-bit cells (full resolution >> 16) and reads until a leaf or a failed bounds test ends the stream:
+
+| Opcode | Meaning |
+|---|---|
+| `00` | end |
+| `01`-`04` x y z | zoom in by 2^n around a new origin |
+| `05`/`06`/`07` n | jump forward by a 1/2/3-byte distance |
+| `09`/`0a` n, `0b` n | add to / set the primitive index base |
+| `10`-`12` a b n | split on x/y/z: left child (n bytes) has max a, the right (the rest) min b |
+| `13`-`1c` a b n | the same on 10 diagonal planes (values x2 or x3; radius x1.5 or x4) |
+| `20`-`22` v n | split at one value |
+| `23`-`25` a b nn mm | split with 16-bit child offsets |
+| `26`-`28` lo hi | stop unless the query overlaps [lo, hi] on x/y/z |
+| `29`-`2b` | the same at full resolution (3-byte bounds) |
+| `30`-`4f`, `50`-`53` i | leaf: primitive base + index |
+| `60`/`64`/`68` | set a value the walker carries |
+
+A split recurses into its left child, then continues with the right. Checks: a Python copy of the walker (`cmop.query`) parses all 1,402 retail trees, and random sphere queries never miss a primitive they touch; the only primitive any tree leaves out is one degenerate (collinear) triangle. `cmop.build` writes trees with bounds tests, axis splits, 16-bit jumps and leaves; on the same retail geometry they never miss either, and are about a third larger.
+
+How vehicles use the shapes: each has a material-6 triangle hull mesh plus a material-9 shape that is a convex hull (Humvee, cars, trucks) or boxes (tanks, helicopters). In-game, boxes added as triangles to the Humvee's hull mesh did not collide with the world; boxes in a box shape do. So on import a convex hull is replaced by a box shape of slices approximating it (for the Humvee: 10 boxes, 98.9% of its volume, at most 11.5 cm proud), and new boxes join it. Tested in-game (2026-11-08): a plate on the Humvee's front stopped it at walls, a `nocoll` plate on the back passed through, and the Humvee drove and crashed without sinking.
+
 ## Open questions
 
 - The grid-index tail (`0x00FF8040`): no retail archive uses it.
 - Models: the extra 8 bytes of 28-byte vertices, and `MTRL` words 0, 2 and 4–6.
-- Collision: `CMOP` trees, the second `CMSH` layout, and what the material codes mean.
+- Collision: what the material codes mean; what the walker's carried value (`60`-`68`) is for; 2 of 176 convex hulls have a point up to 13 cm outside one plane.
 - Animation, terrain, path and region formats. Whether DXT2 textures are premultiplied (we treat them as DXT3).
 - `INFO` byte 0 in scripts; `TNAM` and `INFO` in world layers.
 - What `num_components` counts exactly.

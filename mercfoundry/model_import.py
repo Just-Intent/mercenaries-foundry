@@ -485,9 +485,12 @@ def import_pieces(model_record: bytes, segments_record: bytes, objs: list,
 
     # --- collision: one box around each new piece.
     # Vehicles break if they get a third collision shape (tested in-game), and
-    # the game never gives any vehicle more than two. So boxes go into an
-    # existing plain box shape when there is one; a new shape is added only
-    # when the model has fewer than two; otherwise collision is skipped.
+    # the game never gives any vehicle more than two. So boxes join an
+    # existing shape where one can take them: a box shape (its tree rebuilt
+    # if it has one), else a convex hull turned into boxes approximating it
+    # (the mesh + boxes layout tanks use). A new box shape is added only when
+    # the model has fewer than two shapes; a triangle mesh is the last resort
+    # (vehicle triangle hulls don't collide with the world, tested in-game).
     if collision and any(plan[0] is None for plan in plans):
         from . import collision as coll
         wanted = []  # (piece joint, centre, half) in that joint's space
@@ -531,21 +534,39 @@ def import_pieces(model_record: bytes, segments_record: bytes, objs: list,
                 report.collision_boxes += len(boxes)
             else:
                 body = new_items[where][1]
-                target = coll.plain_box_shape(body)
+                target = coll.plain_box_shape(body, with_tree=True)
+                hull = None if target else coll.convex_hull_shape(body)
+                mesh = None if target or hull else coll.triangle_mesh_shape(body)
                 if target:
                     index, tjoint, _ = target
                     boxes = into(tjoint)
                     new_items[where] = (b"cshp", coll.append_boxes(body, index, boxes))
                     report.collision_boxes += len(boxes)
+                elif hull:
+                    index, tjoint, _ = hull
+                    boxes = into(tjoint)
+                    new_items[where] = (b"cshp", coll.hull_to_box_shape(body, index, boxes))
+                    report.collision_boxes += len(boxes)
+                    report.warnings.append("the model's convex hull collision was replaced by boxes "
+                                           "approximating it, so new boxes can join it")
                 elif coll.shape_count(body) < 2:
                     boxes = into(first_joint)
                     body = coll.add_box_shape(body, material, first_joint, [(c, h) for c, h, _ in boxes])
                     new_items[where] = (b"cshp", body)
                     report.collision_boxes += len(boxes)
+                elif mesh:
+                    # Last resort: triangles in a mesh shape. In-game, a vehicle's
+                    # triangle hull did not collide with the world this way.
+                    index, tjoint, _ = mesh
+                    boxes = into(tjoint)
+                    new_items[where] = (b"cshp", coll.append_mesh_boxes(body, index, boxes))
+                    report.collision_boxes += len(boxes)
+                    report.warnings.append("new boxes were added to a triangle mesh shape; on vehicles "
+                                           "these don't collide with the world")
                 else:
                     report.warnings.append(
                         "new pieces got no collision: this model already has two collision shapes and "
-                        "none of them can take more boxes (a third shape breaks vehicle physics)")
+                        "neither can take more (a third shape breaks vehicle physics)")
 
     new_tree = ucfb.pack_children([(b"ucfb", ucfb.pack_children(new_items, seg_pad_last))], tree_pad)
     packed = script.compress(new_tree)

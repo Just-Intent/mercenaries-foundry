@@ -24,7 +24,8 @@
 - Animation decoder: all 1,835 animations (keyframe compression, per-frame translation, root motion); `model --glb --anim` exports them as glTF clips, `--in-place` drops root motion. Checked against skeleton rest poses and played back in three.js.
 - Animation encoder and glTF clip import: every retail rotation channel re-encodes byte-identical; a glTF export reads back to the same values. Mods replace clips via `animations/`.
 - glTF model import: `model-import` and mod `models/` take `.glb`/`.gltf`. Pieces are placed by the file's node and skin transforms, new pieces take the joint they're parented to, and skinned vertices keep their bone. Every model round-trips unchanged, including Blender-style restructured files.
-- 133 tests pass.
+- Collision trees (`CMOP`) decoded from the game's own walker and checked on all 1,402; convex hulls decoded; `cinf` totals understood on all 1,997 blocks. New pieces on Humvee-style vehicles get collision by turning the convex hull into boxes.
+- 136 tests pass.
 
 ## Fixed from retail data
 - Text values aren't NUL-terminated. The decoder had assumed they were and found no strings.
@@ -46,6 +47,7 @@
 - 2026-11-08, model: `allies_veh_humvee` exported to OBJ, edited (gun barrel pieces stretched 3x, a new crate piece added with the Humvee texture), re-imported with `model-import` into `locked.dsk` and `streamed.dsk`. Both changes showed on the Humvee driven after the airdrop.
 - 2026-11-08, animation: the three mercenaries' `lb_upright_run_forward` clips exported to glTF, both thighs turned 40° outward, and dropped into a mod's `animations/` folder. The run was bow-legged in game. (The first try turned them inward and gave a cross-legged run, so a thigh's local +x turn is inward on the left leg.)
 - 2026-11-08, glTF model: a top hat added to `prokat_hum_american`, `_british` and `_swedish` as a new glTF node under `bone_head` (named `nocoll`, so no collision). In game the hat sat on the mercenary's head and moved with it.
+- 2026-11-08, Humvee collision: boxes added as triangles to the hull mesh (tree rebuilt) didn't collide; the triangle hull isn't used against the world. Replacing the convex hull with 10 boxes plus the new one worked: the front plate stopped the Humvee at walls, the `nocoll` rear plate passed through, and it didn't sink.
 - Lesson: the C-17 cargo-hold scene uses a separate model, `c17_humvee`, which shares the Humvee texture. Check model edits on the vehicle you drive.
 - Lesson: a new game starts in `playable_intro` (C-17 briefing, then `allies0`), not the Ace of Clubs, which is Allied mission 4. Script tests belong there.
 
@@ -59,7 +61,7 @@
 - Python 3.12.10 alongside 3.13. The port's `.venv` has its pinned CMake 3.31.6, Ninja 1.13.0 and Capstone 5.0.6.
 
 ## Next steps
-1. Collision for models whose shapes can't take more boxes (e.g. the Humvee): needs CMOP trees or the second CMSH layout decoded.
+1. Collision material codes (surface types); collision for edited existing pieces.
 2. New animations under new names, with `animtable` (which clips a character uses); importing skeleton (joint) edits.
 3. Path junctions (`JNCT`) and squad types: where `SQD_` names like `nk_hum_ppl_tunnel01` are defined.
 
