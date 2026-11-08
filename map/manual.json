@@ -401,6 +401,187 @@
    "name": "Terrain_GetTextureSlot",
    "signature": "int __thiscall Terrain_GetTextureSlot(Terrain *this, int col, int row)",
    "evidence": "retail code: Terrain_GetSurfaceAt calls it on the terrain at 0x643370 and indexes g_TerrainSurfaces (32 entries: 16 ground layers, then 16 decal textures) with the result"
+  },
+  {
+   "address": "0x001EF620",
+   "name": "Config_FindKey",
+   "signature": "bool __thiscall Config_FindKey(Config *this, uint32_t keyHash, int occurrence)",
+   "evidence": "retail code: walks the config's (key hash, offset) index at this + 0x14 for the occurrence-th line whose key hash matches, seeks the stream at this + 0x418 there and returns 1, else 0; the terrain loader (0x1F0688) reads terrainPhysicsType lines with it, slot by slot; live test (2026-11-08): editing SWN.ini changed what it returned"
+  },
+  {
+   "address": "0x001EF020",
+   "name": "Config_NextToken",
+   "signature": "const char *__thiscall Config_NextToken(Config *this)",
+   "evidence": "retail code: skips whitespace in the current line buffer (this + 0x18, position this + 4, end this + 8), returns the next token, quoted strings as one token"
+  },
+  {
+   "address": "0x001EF0B0",
+   "name": "Config_ReadString",
+   "signature": "const char *__thiscall Config_ReadString(Config *this)",
+   "evidence": "retail code: Config_NextToken, or an empty string and the error flag (this + 0x420) when none"
+  },
+  {
+   "address": "0x001EF0D0",
+   "name": "Config_ReadInt",
+   "signature": "int __thiscall Config_ReadInt(Config *this)",
+   "evidence": "retail code: Config_NextToken converted with the CRT's integer parser (0x237B86), or 0 and the error flag"
+  },
+  {
+   "address": "0x001EF100",
+   "name": "Config_ReadFloat",
+   "signature": "float __thiscall Config_ReadFloat(Config *this)",
+   "evidence": "retail code: Config_NextToken converted with atof (0x237066), or a default and the error flag"
+  },
+  {
+   "address": "0x001EF130",
+   "name": "Config_MatchToken",
+   "signature": "int __thiscall Config_MatchToken(Config *this, const char *words)",
+   "evidence": "retail code: compares the next token with a whitespace-separated word list and returns -1 when the list is empty; the terrain loader uses its result as a flag (0x1F067A)"
+  },
+  {
+   "address": "0x00183550",
+   "name": "Level_ReadDefinition",
+   "evidence": "retail code (RsMainStateGame.cpp): reads a levels.ini section's AssetFile, TextureFile, WorldFile and ConfigFile (key hashes 0x12B81135, 0x85F62682, 0x767959CD, 0x67A3A3F9) and keeps the config path at + 0x1C"
+  },
+  {
+   "address": "0x00178B40",
+   "name": "Level_ConfigureSystems",
+   "evidence": "retail code: passes the level's config object to each system's reader in turn, among them Terrain_ReadLevelConfig (0x1F0500)"
+  },
+  {
+   "address": "0x001F07A0",
+   "name": "Terrain_Load",
+   "evidence": "retail code (RedTerrain.cpp): reads a tern record's INFO, HEXP, HGT8 (PackBits), PTCH, COLR, ALPH, DCAL, LTEX, DTEX, SCAL and AXIS chunks into the terrain globals (heights 0x64326C, blocks 0x643274, ...); see docs/formats/dsk.md"
+  },
+  {
+   "address": "0x00146A10",
+   "name": "Terrain_GetCellHeight",
+   "evidence": "retail code: height of a terrain cell: ((byte << shift) + base) * step from the unpacked heights (0x64326C) and the 16 x 16 block's shift and base (0x643274), columns and rows masked with size - 1; live test (2026-11-08): Foundry Console's ground readout, using the same formula, read an edited hill's 28.7 m"
+  },
+  {
+   "address": "0x001F0500",
+   "name": "Terrain_ReadLevelConfig",
+   "signature": "void __cdecl Terrain_ReadLevelConfig(Config *config)",
+   "evidence": "retail code: reads terrainPhysicsType <slot> <surface> lines (Config_FindKey, nth occurrence) into g_TerrainSurfaces: dirt 1, road 2, snow 3, grass 4, rock 5, anything else 0; called by Level_ConfigureSystems; live test (2026-11-08): an edited SWN.ini set slots 0 and 8 to snow"
+  },
+  {
+   "address": "0x001EFD10",
+   "name": "Terrain_ResetLevelConfig",
+   "evidence": "retail code: clears g_TerrainSurfaces and the terrain's other per-level tables before a level's config is read (called by 0x179D30)"
+  },
+  {
+   "address": "0x0021A750",
+   "name": "Terrain_LzDecompress",
+   "evidence": "retail code: the per-patch LZ scheme of the terrain's COLR and ALPH blobs (literal bit, short matches 3-6 bytes, long matches with a 12-bit distance); mercfoundry.terrain_layers decodes all 14 maps with it"
+  },
+  {
+   "address": "0x0021D650",
+   "name": "Terrain_BuildPatch",
+   "evidence": "retail code (xboxRedTerrain.cpp): builds a terrain patch's render data from its layers, blend weights and colours; calls Terrain_BuildPatchLayers"
+  },
+  {
+   "address": "0x0021C600",
+   "name": "Terrain_BuildPatchLayers",
+   "evidence": "retail code: per pass of up to four layers, emits cell (j, i) when any layer has the draw bit (nibble bit 3) at the cell's top-left vertex (0x21CB20), with each layer's alpha from ALPHA_TABLE (0x2FC85C)"
+  },
+  {
+   "address": "0x00145ED0",
+   "name": "Surface_GetRecordAt",
+   "evidence": "retail code: returns this + 0xD0 + 0x10 * Terrain_GetSurfaceAt(x, z) (or this + 0xD0 below a threshold), a per-surface 16-byte record; reached only through a pointer built at runtime"
+  },
+  {
+   "address": "0x000AD250",
+   "name": "Effects_ReadTerrainEffects",
+   "signature": "void __cdecl Effects_ReadTerrainEffects(Config *config)",
+   "evidence": "retail code: reads Dirt, TerrainDust and layereffect <slot> <name> lines from the level config into name hash tables at 0x323E88, 0x323E08 and 0x323F08"
+  },
+  {
+   "address": "0x000B4D80",
+   "name": "Impact_PickTerrainSurface",
+   "evidence": "retail code: samples Terrain_GetSurfaceAt at 9 points around a hit and returns the surface with the lowest priority from a per-mode table"
+  },
+  {
+   "address": "0x000B5460",
+   "name": "Impact_ChooseEffect",
+   "evidence": "retail code: picks a hit's effect name: water when the ray hits water, else from the hit body's material (+0xB4; table 0xB58F0: 2, 3, 12 metal, 5 dirt, 6 road, 9 snow, other rock), else from Impact_PickTerrainSurface; live test (2026-11-08): a concrete gate set to solidmetal sparked when shot"
+  },
+  {
+   "address": "0x0012B5F0",
+   "name": "Material_FromName",
+   "signature": "int __cdecl Material_FromName(uint32_t nameHash)",
+   "evidence": "retail code: wood 1, solidmetal 2, sheetmetal 3, vehicle 4, dirt 5, concrete 6, rock 7, plant 8, snow 9, glass 10, rubber 11, chain 12, anything else 0 (obstaclematerialtype values)"
+  },
+  {
+   "address": "0x0012B7C0",
+   "name": "PhysicsBody_SetMaterial",
+   "signature": "void __thiscall PhysicsBody_SetMaterial(PhysicsBody *this, uint32_t nameHash)",
+   "evidence": "retail code: this + 0xB4 = Material_FromName(nameHash)"
+  },
+  {
+   "address": "0x000393F0",
+   "name": "PhysicsProp_ReadProperties",
+   "evidence": "retail code: reads obstaclematerialtype (Material_FromName, default 6), physicsFriction, physicsRestitution and physicsBumplitude from an object's properties, then PhysicsProp_ApplyProperties"
+  },
+  {
+   "address": "0x00039220",
+   "name": "PhysicsProp_ApplyProperties",
+   "evidence": "retail code: copies the object's friction and restitution (+0x25C, +0x260) and material (+0x270) to its physics body (+0x180; the material to body + 0xB4)"
+  },
+  {
+   "address": "0x001319F0",
+   "name": "PhysicsVehicle_ReadBodyProperties",
+   "evidence": "retail code: reads physicsmass, physicsFriction, physicsRestitution and physicsBumplitude and the obstacle material for a vehicle's body; called by the wheeled, tracked and flying vehicle setups"
+  },
+  {
+   "address": "0x00136650",
+   "name": "Drivetrain_SetPhysicsValue",
+   "signature": "void __thiscall Drivetrain_SetPhysicsValue(void *this, uint32_t propertyHash, float value)",
+   "evidence": "retail code: a switch on 31 physics* name hashes (engine torque, rpm curve, gear ratios, wheel mass and friction, suspension, brakes, drag, steering) storing the float argument in the drivetrain"
+  },
+  {
+   "address": "0x00136AD0",
+   "name": "Drivetrain_GetPhysicsValue",
+   "signature": "float __thiscall Drivetrain_GetPhysicsValue(void *this, uint32_t propertyHash)",
+   "evidence": "retail code: the matching getter (32 name hashes, fld of the drivetrain field); WheeledVehicle_GetPhysicsValue falls through to it for keys it doesn't hold"
+  },
+  {
+   "address": "0x001330F0",
+   "name": "WheeledVehicle_GetPhysicsValue",
+   "signature": "float __thiscall WheeledVehicle_GetPhysicsValue(void *this, uint32_t propertyHash)",
+   "evidence": "retail code: returns physicsSteeringRate, physicsSlideBoost, physicsHillBoost, physicsSpoilerEffect, physicsWheelFrictionFrontMax or physicsmaxsteeringangle, else Drivetrain_GetPhysicsValue(this + 0xA0, hash)"
+  },
+  {
+   "address": "0x00133640",
+   "name": "WheeledVehicle_ApplyWheelFriction",
+   "evidence": "retail code: reads physicswheelfrictionfront and physicswheelfrictionback through WheeledVehicle_GetPhysicsValue and writes them to the wheels' tyre data"
+  },
+  {
+   "address": "0x00133AD0",
+   "name": "WheeledVehicle_Init",
+   "evidence": "retail code: sets up a wheeled vehicle from its properties (PhysicsVehicle_ReadBodyProperties, the steering and boost values, the drivetrain)"
+  },
+  {
+   "address": "0x00141690",
+   "name": "TrackedVehicle_SetPhysicsValue",
+   "signature": "void __thiscall TrackedVehicle_SetPhysicsValue(void *this, uint32_t propertyHash, float value)",
+   "evidence": "retail code: a switch on physicsForwardSpeed, physicsForwardAccel, physicsYawSpeed, physicsYawAccel, physicsYawCorrection, physicsbraketorque and one more hash, storing the float argument (tanks)"
+  },
+  {
+   "address": "0x00141750",
+   "name": "TrackedVehicle_GetPhysicsValue",
+   "signature": "float __thiscall TrackedVehicle_GetPhysicsValue(void *this, uint32_t propertyHash)",
+   "evidence": "retail code: the matching getter (7 name hashes)"
+  },
+  {
+   "address": "0x00138FC0",
+   "name": "Helicopter_SetPhysicsValue",
+   "signature": "void __thiscall Helicopter_SetPhysicsValue(void *this, uint32_t propertyHash, float value)",
+   "evidence": "retail code: a switch on 14 name hashes (physicsclimbspeed and climbaccel, side speed and accel, max pitch and roll, pitch and roll accel, forward and backward speed, yaw values) storing the float argument"
+  },
+  {
+   "address": "0x00147ED0",
+   "name": "Airplane_Init",
+   "evidence": "retail code: reads physicsMaxVelocity, physicsAccelerationRate, physicsMaxAngularVelocityYaw and Pitch, physicsMaxRoll, physicsRollDragModifier and physicsStandardAltitude"
   }
  ],
  "globals": [
@@ -463,6 +644,66 @@
    "address": "0x006430C0",
    "name": "g_TerrainSurfaces",
    "evidence": "retail code: the terrain loader (0x1F0688) stores terrainPhysicsType <slot> <name> from the level config here, int[32]: dirt 1, road 2, snow 3, grass 4, rock 5, other 0"
+  },
+  {
+   "address": "0x0064326C",
+   "name": "g_TerrainHeights",
+   "evidence": "retail code: Terrain_Load's unpacked HGT8 bytes, block-major; read by Terrain_GetCellHeight"
+  },
+  {
+   "address": "0x00643274",
+   "name": "g_TerrainBlocks",
+   "evidence": "retail code: per 16 x 16 block shift and base (HEXP), read by Terrain_GetCellHeight"
+  },
+  {
+   "address": "0x00643310",
+   "name": "g_TerrainSize",
+   "evidence": "retail code: cells per side (int16; 512, or 128 for shl)"
+  },
+  {
+   "address": "0x00643300",
+   "name": "g_TerrainBlockSize",
+   "evidence": "retail code: cells per height block side (int16; 16)"
+  },
+  {
+   "address": "0x00643290",
+   "name": "g_TerrainHeightStep",
+   "evidence": "retail code: metres per height unit (float; 0.35)"
+  },
+  {
+   "address": "0x00643284",
+   "name": "g_TerrainSpacing",
+   "evidence": "retail code: metres per cell (float; 8)"
+  },
+  {
+   "address": "0x0064327C",
+   "name": "g_TerrainOriginX",
+   "evidence": "retail code: added to world x before dividing by the spacing (float; 2048 on a 512-cell map)"
+  },
+  {
+   "address": "0x00643278",
+   "name": "g_TerrainOriginZ",
+   "evidence": "retail code: added to world z before dividing by the spacing (float; 2040 on a 512-cell map)"
+  },
+  {
+   "address": "0x00643370",
+   "name": "g_Terrain",
+   "evidence": "retail code: the terrain object Terrain_GetSurfaceAt passes to Terrain_GetTextureSlot"
+  },
+  {
+   "address": "0x00323E08",
+   "name": "g_TerrainDustEffects",
+   "evidence": "retail code: TerrainDust <slot> effect name hashes (Effects_ReadTerrainEffects)"
+  },
+  {
+   "address": "0x00323E88",
+   "name": "g_TerrainDebrisEffects",
+   "evidence": "retail code: Dirt <slot> effect name hashes (Effects_ReadTerrainEffects)"
+  },
+  {
+   "address": "0x00323F08",
+   "name": "g_TerrainLayerEffects",
+   "evidence": "retail code: layereffect <slot> effect name hashes (Effects_ReadTerrainEffects)"
   }
  ],
  "structures": [

@@ -53,6 +53,7 @@
 - Plugin overlays (port patch `0005`): `set_overlay` draws a plugin's image into the game's frames each present, after the F9 overlay, so it shows in exclusive fullscreen. Foundry Console's F8 panel shows the inspector in game. Tested in game.
 - In-game console (port patch `0006`): `set_text_input` / `read_text_input` let a plugin take the keyboard without leaving fullscreen. Foundry Console's F8 panel takes Lua lines (`` ` `` to type, Enter runs, Esc stops). Tested in game.
 - Skeleton edits from glTF: moved joints take their new positions (rotations kept) with pieces, collision and child joints following; new empties under a joint become joints. Tested in game: a raised Humvee turret and a new driver seat joint.
+- Function map, third pass: 626 named functions (33 new, from the terrain, surface, material, vehicle and mission work: the level config reader, terrain loading and lookups, impact effects, physics bodies, vehicle handling getters and setters) and 24 globals (the loaded terrain's buffers and sizes, terrain effect tables). All are hookable.
 - 193 tests pass.
 
 ## Fixed from retail data
@@ -101,7 +102,7 @@
 1. Collision flags: what each `sinf` bit means; collision for edited existing pieces; whether retail pines stop bullets.
 2. Missions: regions (boxes) in mod layers, radio voice-overs, traffic zones, path animation events (`EVNT`).
 3. Moving skin bones on characters (animations override bone translations); what animation-table priorities and flags do.
-4. Function map: name more engine functions (actors, vehicles, AI commands, missions); name the vehicle and material readers found so far.
+4. Function map: name more engine functions (actors, AI commands, missions); find the path from a vehicle actor to its drivetrain, so plugins can change handling live with the setters.
 5. Overlay: spawning and object editing from the in-game panel (now only in the window).
 
 ## Notes

@@ -43,6 +43,10 @@ There is no RTTI or symbol table in the retail executable; every name is earned.
 | `WorldObject_Remove`, `Actor_EnableCollision` | `0x001EE0E0`, `0x0004EC40` | Removing objects; counted collision on/off. |
 | `HashTable_Find` | `0x001F2A20` | The engine's general lookup (linear probing on name hashes and handles). |
 | `lua_tostring`, `lua_tonumber`, `lua_pushnumber`, `lua_gettop`, `luaL_error`, ... | `0x001DBxxx`-`0x001DCxxx` | The embedded Lua 5.0 C API. |
+| `Config_FindKey`, `Config_ReadInt`, `Config_ReadFloat`, `Config_ReadString`, ... | `0x001EF0xx`-`0x001EF620` | The level config reader every system gets at level load: lines indexed by key hash, read token by token. |
+| `Terrain_ReadLevelConfig`, `Terrain_GetSurfaceAt`, `Terrain_GetCellHeight`, `Terrain_Load` | `0x001F0500`, `0x001F28E0`, `0x00146A10`, `0x001F07A0` | Terrain surfaces from the level config, the surface and height at a point, and the terrain loader. Globals `g_TerrainHeights`, `g_TerrainSpacing`, `g_TerrainOriginX` and others give the loaded map. |
+| `Impact_ChooseEffect`, `Material_FromName`, `PhysicsBody_SetMaterial` | `0x000B5460`, `0x0012B5F0`, `0x0012B7C0` | How a hit picks its effect from the object's material (`obstaclematerialtype`) or the ground's surface. |
+| `Drivetrain_SetPhysicsValue` / `GetPhysicsValue`, `WheeledVehicle_GetPhysicsValue`, `TrackedVehicle_SetPhysicsValue`, `Helicopter_SetPhysicsValue` | `0x00136650`, `0x00136AD0`, `0x001330F0`, `0x00141690`, `0x00138FC0` | Vehicle handling values by `physics*` name hash: the setters store a float, the getters return one. |
 
 ## Structures
 
