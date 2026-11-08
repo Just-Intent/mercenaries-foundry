@@ -88,11 +88,11 @@
 - Python 3.12.10 alongside 3.13. The port's `.venv` has its pinned CMake 3.31.6, Ninja 1.13.0 and Capstone 5.0.6.
 
 ## Next steps
-1. Overlay: draw inside the game's frames (no mode switch); edit object properties.
-2. Function map: name more engine functions (actors, vehicles, AI commands, missions).
-3. Collision material codes (surface types); collision for edited existing pieces.
-4. Importing skeleton (joint) edits; what animation-table priorities and flags do.
-5. Path junctions (`JNCT`) and squad types: where `SQD_` names like `nk_hum_ppl_tunnel01` are defined.
+1. Collision flags: what each `sinf` bit means; collision for edited existing pieces; whether retail pines stop bullets.
+2. Missions: path junctions (`JNCT`) and squad types (where `SQD_` names like `nk_hum_ppl_tunnel01` are defined), toward new encounters.
+3. Importing skeleton (joint) edits; what animation-table priorities and flags do.
+4. Function map: name more engine functions (actors, vehicles, AI commands, missions); name the vehicle and material readers found so far.
+5. Overlay: draw inside the game's frames (no mode switch).
 
 ## Notes
 - Several port tools mention replacing "source-informed" versions. Use only versions re-derived from retail (see PROVENANCE.md).
