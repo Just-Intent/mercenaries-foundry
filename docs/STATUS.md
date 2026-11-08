@@ -53,7 +53,8 @@
 ## Next steps
 1. Collision for models whose shapes can't take more boxes (e.g. the Humvee): needs CMOP trees or the second CMSH layout decoded.
 2. glTF import (edit skeleton-aware models in Blender), and animation decoding.
-3. Decode the remaining world-layer chunks (`TNAM`, `INFO`) and `path`/`region`/`encounter` records.
+3. A `find` command to list objects by name, model or distance from a point (today done with ad-hoc scripts).
+4. Decode `path`, `region`, `encounter` and `lineregion` records (AI routes, zones, spawns).
 
 ## Notes
 - Several port tools mention replacing "source-informed" versions. Use only versions re-derived from retail (see PROVENANCE.md).
