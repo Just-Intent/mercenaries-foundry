@@ -6,6 +6,8 @@
  *                templates.tsv, written by `python -m mercfoundry templates`),
  *                placed 8 m ahead of the player; "Loaded here only" asks the
  *                game which templates the current area has loaded.
+ *   Lua        - run a line of Lua in a loaded script's state (an
+ *                expression shows its values; a statement shows "ok").
  *
  * The window runs on its own thread. Everything that touches the game is
  * queued and done in on_update, on the game's thread, through the plugin
@@ -48,9 +50,21 @@ static char recent[5][64];
 static unsigned recent_count;
 static volatile LONG list_dirty;
 
+/* Lua console: scripts seen loading (a hook after LuaScript_RegisterCommands). */
+#define MAX_SCRIPTS 32
+typedef struct Script { uint32_t object, L; unsigned serial; } Script;
+static Script scripts[MAX_SCRIPTS];
+static unsigned script_count, script_serial;
+static char pending_lua[1024];
+static int pending_lua_serial = -1; /* script serial to run in; 0 = newest; -1 = nothing */
+static char lua_output[8192];
+static volatile LONG output_dirty, scripts_dirty;
+
 /* Window */
 static DWORD window_thread_id;
 static HWND wnd, info_label, search_edit, list_box, loaded_check, spawn_button, money_button, status_label;
+static HWND script_combo, lua_edit, run_button, output_edit;
+static unsigned combo_serials[MAX_SCRIPTS + 1];
 static int list_map[MAX_TEMPLATES];
 static unsigned list_size;
 #define WM_APP_TOGGLE (WM_APP + 1)
@@ -60,6 +74,9 @@ static unsigned list_size;
 #define ID_SPAWN 104
 #define ID_MONEY 105
 #define ID_TIMER 106
+#define ID_SCRIPT 107
+#define ID_LUA 108
+#define ID_RUN 109
 
 static uint32_t hash_name(const char *s)
 {
@@ -246,6 +263,137 @@ static void MERC_PLUGIN_CALL spawn_after(void *ud, MercHookContext *c)
     LeaveCriticalSection(&lock);
 }
 
+static void append_output(const char *fmt, ...)
+{
+    char line[1200];
+    va_list ap;
+    va_start(ap, fmt);
+    vsnprintf(line, sizeof(line), fmt, ap);
+    va_end(ap);
+    EnterCriticalSection(&lock);
+    size_t have = strlen(lua_output), add = strlen(line) + 2;
+    if (have + add >= sizeof(lua_output)) {
+        /* drop the oldest half */
+        const char *cut = strchr(lua_output + sizeof(lua_output) / 2, '\n');
+        size_t keep = cut ? strlen(cut + 1) : 0;
+        memmove(lua_output, cut ? cut + 1 : lua_output + have, keep + 1);
+        have = keep;
+    }
+    snprintf(lua_output + have, sizeof(lua_output) - have, "%s\r\n", line);
+    LeaveCriticalSection(&lock);
+    InterlockedExchange(&output_dirty, 1);
+}
+
+static void read_text(uint32_t address, char *out, size_t size)
+{
+    size_t n = 0;
+    out[0] = 0;
+    while (address && n + 1 < size) {
+        char chunk[64];
+        size_t want = size - 1 - n < sizeof(chunk) ? size - 1 - n : sizeof(chunk);
+        if (!host->read_guest(host->context, address + (uint32_t)n, chunk, want)) break;
+        size_t len = strnlen(chunk, want);
+        memcpy(out + n, chunk, len);
+        n += len;
+        if (len < want) break;
+    }
+    out[n] = 0;
+}
+
+static void MERC_PLUGIN_CALL script_loaded(void *ud, MercHookContext *c)
+{
+    (void)ud;
+    uint32_t object = c->ecx, L = 0;
+    if (!host->read_guest(host->context, object + MF_OFF_LuaScript_luaState, &L, 4) || !L) return;
+    EnterCriticalSection(&lock);
+    unsigned slot = script_count < MAX_SCRIPTS ? script_count++ : (script_serial % MAX_SCRIPTS);
+    scripts[slot].object = object;
+    scripts[slot].L = L;
+    scripts[slot].serial = ++script_serial;
+    unsigned serial = script_serial;
+    LeaveCriticalSection(&lock);
+    InterlockedExchange(&scripts_dirty, 1);
+    /* Note any text the script object points to (to learn where its name is). */
+    char found[256] = "";
+    for (uint32_t off = 0; off < 0x80; off += 4) {
+        uint32_t ptr = 0;
+        char text[33];
+        if (!host->read_guest(host->context, object + off, &ptr, 4) || ptr < 0x10000 || ptr >= 0x4000000) continue;
+        if (!host->read_guest(host->context, ptr, text, 32)) continue;
+        text[32] = 0;
+        size_t len = 0;
+        while (len < 32 && text[len] >= 32 && text[len] < 127) len++;
+        if (len >= 4 && text[len] == 0) {
+            size_t have = strlen(found);
+            snprintf(found + have, sizeof(found) - have, " +0x%02X=\"%s\"", off, text);
+        }
+    }
+    char msg[400];
+    snprintf(msg, sizeof(msg), "script #%u loaded: object 0x%08X, Lua state 0x%08X;%s", serial, object, L,
+             found[0] ? found : " no text fields");
+    host->log(host->context, msg);
+}
+
+static uint32_t lua_call(uint32_t fn, unsigned n, const uint32_t *args)
+{
+    MercGuestCall c;
+    return guest(fn, 0, n, args, &c) ? c.eax : 0;
+}
+
+static void run_lua(int serial, const char *line)
+{
+    Script target = {0};
+    EnterCriticalSection(&lock);
+    for (unsigned i = 0; i < script_count; i++)
+        if ((serial == 0 && scripts[i].serial > target.serial) || (serial > 0 && scripts[i].serial == (unsigned)serial))
+            target = scripts[i];
+    LeaveCriticalSection(&lock);
+    if (!target.L) { append_output("> %s\r\n  no script loaded yet", line); return; }
+    /* Only use a state the game still knows. */
+    uint32_t args[4];
+    args[0] = target.L;
+    if (lua_call(MF_FN_LuaScript_FromState, 1, args) != target.object) {
+        append_output("> %s\r\n  script #%u has been unloaded; pick another", line, target.serial);
+        return;
+    }
+    uint32_t scratch, size;
+    if (!host->guest_scratch(host->context, &scratch, &size) || size < 4096) { append_output("no scratch memory"); return; }
+    static const char prefix[] =
+        "local function __out(...) local s = '' for i = 1, arg.n do if i > 1 then s = s .. '   ' end "
+        "s = s .. tostring(arg[i]) end return s end return __out(";
+    char chunk[1400];
+    const uint32_t name = scratch, text = scratch + 32;
+    host->write_guest(host->context, name, "=console", 9);
+    uint32_t top = lua_call(MF_FN_lua_gettop, 1, args);
+    /* Try it as an expression (show its values), then as a statement. */
+    int expression = 1;
+    int len = snprintf(chunk, sizeof(chunk), "%s%s\n)", prefix, line);
+    host->write_guest(host->context, text, chunk, (size_t)len + 1);
+    uint32_t load[4] = {target.L, text, (uint32_t)len, name};
+    uint32_t status = lua_call(MF_FN_luaL_loadbuffer, 4, load);
+    if (status) {
+        uint32_t settop[2] = {target.L, top};
+        lua_call(MF_FN_lua_settop, 2, settop);
+        expression = 0;
+        len = snprintf(chunk, sizeof(chunk), "%s", line);
+        host->write_guest(host->context, text, chunk, (size_t)len + 1);
+        load[2] = (uint32_t)len;
+        status = lua_call(MF_FN_luaL_loadbuffer, 4, load);
+    }
+    if (!status) {
+        uint32_t pcall[4] = {target.L, 0, 1, 0};
+        status = lua_call(MF_FN_lua_pcall, 4, pcall);
+    }
+    char result[1024];
+    uint32_t tostr[2] = {target.L, (uint32_t)-1};
+    read_text(lua_call(MF_FN_lua_tostring, 2, tostr), result, sizeof(result));
+    uint32_t settop[2] = {target.L, top};
+    lua_call(MF_FN_lua_settop, 2, settop);
+    if (status) append_output("> %s\r\n  error: %s", line, result[0] ? result : "(no message)");
+    else if (expression) append_output("> %s\r\n  = %s", line, result);
+    else append_output("> %s\r\n  ok", line);
+}
+
 static int f7_down;
 static double since_inspect;
 
@@ -277,6 +425,14 @@ static int MERC_PLUGIN_CALL on_update(void *ud, const MercPluginUpdate *u)
     scan = scan_next;
     LeaveCriticalSection(&lock);
     if (spawn >= 0) do_spawn(spawn);
+    char lua_line[1024];
+    int lua_serial;
+    EnterCriticalSection(&lock);
+    lua_serial = pending_lua_serial;
+    pending_lua_serial = -1;
+    memcpy(lua_line, pending_lua, sizeof(lua_line));
+    LeaveCriticalSection(&lock);
+    if (lua_serial >= 0) run_lua(lua_serial, lua_line);
     if (money != 0) do_money(money);
     if (scan < template_count) {
         unsigned end = scan + 128 < template_count ? scan + 128 : template_count, loaded = 0;
@@ -326,6 +482,27 @@ static void fill_list(void)
     InvalidateRect(list_box, NULL, TRUE);
 }
 
+static void fill_scripts(void)
+{
+    char row[96];
+    LRESULT sel = SendMessageW(script_combo, CB_GETCURSEL, 0, 0);
+    unsigned keep = sel > 0 && sel <= MAX_SCRIPTS ? combo_serials[sel] : 0;
+    SendMessageA(script_combo, CB_RESETCONTENT, 0, 0);
+    SendMessageA(script_combo, CB_ADDSTRING, 0, (LPARAM)"Newest script");
+    combo_serials[0] = 0;
+    int choose = 0, n = 1;
+    EnterCriticalSection(&lock);
+    for (unsigned i = 0; i < script_count; i++) {
+        snprintf(row, sizeof(row), "Script #%u (Lua state 0x%08X)", scripts[i].serial, scripts[i].L);
+        SendMessageA(script_combo, CB_ADDSTRING, 0, (LPARAM)row);
+        combo_serials[n] = scripts[i].serial;
+        if (scripts[i].serial == keep) choose = n;
+        n++;
+    }
+    LeaveCriticalSection(&lock);
+    SendMessageW(script_combo, CB_SETCURSEL, (WPARAM)choose, 0);
+}
+
 static HWND control(const char *cls, const char *text, DWORD style, int x, int y, int w, int h, int id, HFONT font)
 {
     HWND c = CreateWindowExA(cls[0] == 'E' || cls[0] == 'L' ? WS_EX_CLIENTEDGE : 0, cls, text,
@@ -355,6 +532,15 @@ static LRESULT CALLBACK window_proc(HWND h, UINT msg, WPARAM wp, LPARAM lp)
         GetWindowTextA(status_label, old, sizeof(old));
         if (strcmp(old, status)) SetWindowTextA(status_label, status);
         if (InterlockedExchange(&list_dirty, 0)) fill_list();
+        if (InterlockedExchange(&scripts_dirty, 0)) fill_scripts();
+        if (InterlockedExchange(&output_dirty, 0)) {
+            static char out[8192];
+            EnterCriticalSection(&lock);
+            memcpy(out, lua_output, sizeof(out));
+            LeaveCriticalSection(&lock);
+            SetWindowTextA(output_edit, out);
+            SendMessageW(output_edit, EM_LINESCROLL, 0, 0x7FFF);
+        }
         return 0;
     }
     case WM_COMMAND:
@@ -383,6 +569,18 @@ static LRESULT CALLBACK window_proc(HWND h, UINT msg, WPARAM wp, LPARAM lp)
             LeaveCriticalSection(&lock);
             return 0;
         }
+        case ID_RUN: {
+            char line[1000];
+            GetWindowTextA(lua_edit, line, sizeof(line));
+            if (!line[0]) return 0;
+            LRESULT sel = SendMessageW(script_combo, CB_GETCURSEL, 0, 0);
+            EnterCriticalSection(&lock);
+            snprintf(pending_lua, sizeof(pending_lua), "%s", line);
+            pending_lua_serial = sel > 0 && sel <= MAX_SCRIPTS ? (int)combo_serials[sel] : 0;
+            LeaveCriticalSection(&lock);
+            SetWindowTextA(lua_edit, "");
+            return 0;
+        }
         case ID_MONEY:
             EnterCriticalSection(&lock);
             pending_money += 10000.0f;
@@ -405,7 +603,7 @@ static DWORD WINAPI window_thread(void *arg)
     wc.lpszClassName = L"FoundryConsole";
     RegisterClassW(&wc);
     wnd = CreateWindowExW(WS_EX_TOOLWINDOW | WS_EX_TOPMOST, wc.lpszClassName, L"Foundry Console (F7)",
-                          WS_CAPTION | WS_SYSMENU, 40, 40, 520, 600, NULL, NULL, wc.hInstance, NULL);
+                          WS_CAPTION | WS_SYSMENU, 40, 40, 520, 900, NULL, NULL, wc.hInstance, NULL);
     HFONT font = CreateFontW(-14, 0, 0, 0, FW_NORMAL, 0, 0, 0, DEFAULT_CHARSET, 0, 0, CLEARTYPE_QUALITY, 0, L"Segoe UI");
     HFONT mono = CreateFontW(-13, 0, 0, 0, FW_NORMAL, 0, 0, 0, DEFAULT_CHARSET, 0, 0, CLEARTYPE_QUALITY, 0, L"Consolas");
     control("STATIC", "Inspector", 0, 12, 8, 480, 18, 0, font);
@@ -417,10 +615,20 @@ static DWORD WINAPI window_thread(void *arg)
     spawn_button = control("BUTTON", "Spawn", BS_DEFPUSHBUTTON, 12, 494, 100, 28, ID_SPAWN, font);
     money_button = control("BUTTON", "+$10,000", 0, 120, 494, 100, 28, ID_MONEY, font);
     status_label = control("STATIC", "", SS_LEFT, 12, 530, 480, 36, 0, font);
+    control("STATIC", "Lua: run a line in a script's state (Enter runs it)", 0, 12, 574, 480, 18, 0, font);
+    script_combo = control("COMBOBOX", "", CBS_DROPDOWNLIST | WS_VSCROLL, 12, 594, 480, 200, ID_SCRIPT, font);
+    lua_edit = control("EDIT", "", ES_AUTOHSCROLL, 12, 626, 400, 24, ID_LUA, mono);
+    run_button = control("BUTTON", "Run", 0, 418, 625, 74, 26, ID_RUN, font);
+    output_edit = control("EDIT", "", ES_MULTILINE | ES_READONLY | ES_AUTOVSCROLL | WS_VSCROLL, 12, 658, 480, 190, 0, mono);
     fill_list();
+    fill_scripts();
     SetTimer(wnd, ID_TIMER, 250, NULL);
     MSG msg;
     while (GetMessageW(&msg, NULL, 0, 0) > 0) {
+        if (msg.message == WM_KEYDOWN && msg.wParam == VK_RETURN && msg.hwnd == lua_edit) {
+            SendMessageW(wnd, WM_COMMAND, MAKEWPARAM(ID_RUN, BN_CLICKED), (LPARAM)run_button);
+            continue;
+        }
         if (!IsDialogMessageW(wnd, &msg)) {
             TranslateMessage(&msg);
             DispatchMessageW(&msg);
@@ -447,6 +655,8 @@ MERC_PLUGIN_EXPORT int MERC_PLUGIN_CALL MercenariesPlugin_Init(
     load_templates();
     if (!h->hook_guest(h->context, MF_FN_Spawner_SpawnTemplate, NULL, spawn_after, NULL))
         h->log(h->context, "spawn hook unavailable (run port-hooks); recent spawns won't show");
+    if (!h->hook_guest(h->context, MF_FN_LuaScript_RegisterCommands, NULL, script_loaded, NULL))
+        h->log(h->context, "script hook unavailable (run port-hooks); the Lua console can't find scripts");
     plugin->on_update = on_update;
     plugin->on_shutdown = on_shutdown;
     HANDLE t = CreateThread(NULL, 0, window_thread, NULL, 0, &window_thread_id);

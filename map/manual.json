@@ -59,7 +59,7 @@
    "address": "0x00112120",
    "name": "LuaScript_FromState",
    "signature": "LuaScript * __cdecl LuaScript_FromState(lua_State *L)",
-   "evidence": "retail code: one-entry cache (state at 0x3717BC, script at 0x3717A0), else a lookup on the script manager at 0x371848"
+   "evidence": "retail code: one-entry cache (state at 0x3717BC, script at 0x3717A0), else a lookup on the script manager at 0x371848; live test (2026-11-08, Foundry Console): returned the registered script object for its Lua state"
   },
   {
    "address": "0x00113B60",
@@ -311,6 +311,66 @@
    "name": "lua_settable",
    "signature": "void __cdecl lua_settable(lua_State *L, int index)",
    "evidence": "retail code: LuaScript_RegisterCommands stores each name/function pair with (L, -10001), Lua 5.0's LUA_GLOBALSINDEX; live test (2026-11-08, plugin script commands): used to register plugin commands as globals"
+  },
+  {
+   "address": "0x001DC480",
+   "name": "luaL_loadbuffer",
+   "signature": "int __cdecl luaL_loadbuffer(lua_State *L, const char *buff, size_t size, const char *name)",
+   "evidence": "retail code: LuaLib_base_loadstring (luaB_loadstring) is luaL_checklstring(L, 1, &len), luaL_optlstring(L, 2, s, 0), then this with (L, s, len, chunkname), then lua_pushnil and lua_insert(L, -2) on failure; live test (2026-11-08, Foundry Console): ran console lines (\"2 + 3\" returned 5) and restored the stack"
+  },
+  {
+   "address": "0x001DC6A0",
+   "name": "luaL_checklstring",
+   "signature": "const char * __cdecl luaL_checklstring(lua_State *L, int n, size_t *len)",
+   "evidence": "retail code: first call of LuaLib_base_loadstring, with (L, 1, &len)"
+  },
+  {
+   "address": "0x001DCF70",
+   "name": "lua_pushnil",
+   "signature": "void __cdecl lua_pushnil(lua_State *L)",
+   "evidence": "retail code: LuaLib_base_loadstring pushes it on a load failure; LuaLib_base_next when the table is done"
+  },
+  {
+   "address": "0x001DCA40",
+   "name": "lua_insert",
+   "signature": "void __cdecl lua_insert(lua_State *L, int index)",
+   "evidence": "retail code: LuaLib_base_loadstring calls it with (L, -2) after lua_pushnil; LuaLib_base_pcall with (L, 1)"
+  },
+  {
+   "address": "0x001DD5A0",
+   "name": "lua_pcall",
+   "signature": "int __cdecl lua_pcall(lua_State *L, int nargs, int nresults, int errfunc)",
+   "evidence": "retail code: LuaLib_base_pcall (luaB_pcall) is luaL_checkany(L, 1), then this with (L, lua_gettop(L) - 1, -1 (LUA_MULTRET), 0), then lua_pushboolean(L, status == 0) and lua_insert(L, 1); live test (2026-11-08, Foundry Console): ran console lines (\"2 + 3\" returned 5) and restored the stack"
+  },
+  {
+   "address": "0x001DD160",
+   "name": "lua_pushboolean",
+   "signature": "void __cdecl lua_pushboolean(lua_State *L, int b)",
+   "evidence": "retail code: LuaLib_base_pcall pushes (status == 0) with it"
+  },
+  {
+   "address": "0x001DC980",
+   "name": "lua_settop",
+   "signature": "void __cdecl lua_settop(lua_State *L, int index)",
+   "evidence": "retail code: LuaLib_base_next (luaB_next) is luaL_checktype(L, 1, 5), this with (L, 2), then lua_next(L, 1); live test (2026-11-08, Foundry Console): ran console lines (\"2 + 3\" returned 5) and restored the stack"
+  },
+  {
+   "address": "0x001DC620",
+   "name": "luaL_checktype",
+   "signature": "void __cdecl luaL_checktype(lua_State *L, int n, int type)",
+   "evidence": "retail code: first call of LuaLib_base_next, with (L, 1, 5 = LUA_TTABLE)"
+  },
+  {
+   "address": "0x001DD6D0",
+   "name": "lua_next",
+   "signature": "int __cdecl lua_next(lua_State *L, int index)",
+   "evidence": "retail code: LuaLib_base_next returns 2 results when it returns non-zero for (L, 1), else pushes nil"
+  },
+  {
+   "address": "0x001DD190",
+   "name": "lua_gettable",
+   "signature": "void __cdecl lua_gettable(lua_State *L, int index)",
+   "evidence": "retail code: LuaLib_base_print pushes \"tostring\" then calls it with (L, -10001 = LUA_GLOBALSINDEX) to fetch the global"
   }
  ],
  "globals": [
@@ -326,8 +386,8 @@
   },
   {
    "address": "0x00371848",
-   "name": "g_LuaScriptManager",
-   "evidence": "inferred: LuaScript_FromState looks scripts up through it"
+   "name": "g_LuaScriptB",
+   "evidence": "retail code: LuaScript_FromState looks scripts up through it (0x11D2E0); live test (2026-11-08, Foundry Console): LuaScript_RegisterCommands ran with this = 0x371848, so it is itself a script object with a Lua state"
   },
   {
    "address": "0x0030C0B0",
@@ -353,6 +413,11 @@
    "address": "0x00413FC0",
    "name": "g_StringTables",
    "evidence": "inferred: Lua_Player_AdjustMoney passes it to 0x121650 with a hashed table name before StringTable_GetAscii"
+  },
+  {
+   "address": "0x003717A0",
+   "name": "g_LuaScriptA",
+   "evidence": "retail code: the script LuaScript_FromState returns from its one-entry cache; live test (2026-11-08, Foundry Console): LuaScript_RegisterCommands ran twice with this = 0x3717A0 (a new Lua state each time)"
   }
  ],
  "structures": [
