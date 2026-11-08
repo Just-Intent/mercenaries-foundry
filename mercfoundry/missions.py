@@ -131,21 +131,28 @@ def text_plan(asset_id, doc, section):
 
 
 CONTRACTS_SCRIPT = "foundry_contracts"
-_HOOK = "Utility_LoadUtilityScript('foundry_contracts') foundry_SetupContracts()"
+_HOOK_START = "Utility_LoadUtilityScript('foundry_contracts') foundry_ReturnFromContract()"
+_HOOK_SPAWN = "foundry_SetupContracts()"
 
 
 def patch_global(global_text):
-    """global with a call to foundry_contracts in LoadNoMissionState, right
-    after the HQ bouncers spawn (free roam, no contract accepted)."""
-    if _HOOK in global_text:
+    """global with two calls into foundry_contracts in LoadNoMissionState
+    (free roam, no contract accepted): first thing, to settle a side contract
+    that just ended (before the function reads and erases
+    JustCompletedStandardMission), and after the HQ bouncers spawn, to spawn
+    the contacts."""
+    if _HOOK_START in global_text:
         return global_text
-    start = global_text.find("function LoadNoMissionState()")
+    head = "function LoadNoMissionState()"
+    start = global_text.find(head)
     at = global_text.find("SpawnBouncers(TRUE)", start)
     if start < 0 or at < 0:
         raise ValueError("global's LoadNoMissionState has no SpawnBouncers(TRUE) to hook after")
-    end = at + len("SpawnBouncers(TRUE)")
     nl = "\r\n" if "\r\n" in global_text else "\n"
-    return global_text[:end] + nl + _HOOK + global_text[end:]
+    end = at + len("SpawnBouncers(TRUE)")
+    text = global_text[:end] + nl + _HOOK_SPAWN + global_text[end:]
+    body = start + len(head)
+    return text[:body] + nl + _HOOK_START + text[body:]
 
 
 FACTION_NAMES = {"allies": "Allied", "china": "Chinese", "mafia": "Mafia", "sk": "South Korean"}
@@ -165,6 +172,7 @@ def contract(asset_id, doc, title_key, description_key):
                name_key: c.get("name", f"{FACTION_NAMES[faction]} contact"),
                desc_key: c.get("name", f"{FACTION_NAMES[faction]} contact")}
     return {"id": asset_id, "map": map_, "faction": faction, "number": number,
+            "repeatable": bool(doc.get("repeatable", False)),
             "template": c.get("template", f"template_{faction}_bouncer"),
             "location": c.get("location", f"loc_hq-{faction}-bouncer"),
             "offset": [float(v) for v in c.get("offset", [3.0, 0.0, 0.0])],
@@ -186,21 +194,47 @@ def contracts_script(contracts):
            "tFoundryContracts = {"]
     for c in contracts:
         dx, dy, dz = c["offset"]
-        out.append("{ id = %s, map = %s, faction = %s, number = %d, template = %s, location = %s, "
-                   "dx = %g, dy = %g, dz = %g, yaw = %g, prompt = %s, name = %s, desc = %s, "
+        out.append("{ id = %s, map = %s, faction = %s, number = %d, repeatable = %s, template = %s, "
+                   "location = %s, dx = %g, dy = %g, dz = %g, yaw = %g, prompt = %s, name = %s, desc = %s, "
                    "targettype = %s, blip = %s }," % (
-                       _lua(c["id"]), _lua(c["map"]), _lua(c["faction"]), c["number"], _lua(c["template"]),
+                       _lua(c["id"]), _lua(c["map"]), _lua(c["faction"]), c["number"],
+                       "TRUE" if c["repeatable"] else "FALSE", _lua(c["template"]),
                        _lua(c["location"]), dx, dy, dz, c["yaw"], _lua(c["prompt_key"]), _lua(c["name_key"]),
                        _lua(c["desc_key"]), _lua(c["target_type"]), _lua(c["blip"])))
     out.append("}")
     out += [
         "Utility_LoadUtilityScript('util_objectives')",
+        "-- Campaign values a side contract must not change: the faction's arc",
+        "-- position and its completed-mission counters (mission_MissionComplete2).",
+        "function foundry_Kept(f) return { 'current_' .. f .. '_mission', 'total_missions_completed' .. f, "
+        "'num_std_missions_cmpl_' .. f } end",
         "function foundry_ContactName(c) return 'foundry_contact_' .. c.id end",
+        "function foundry_IsDone(c) return Utility_ReadNumberFromScribbleMemory('foundry_done_' .. c.id) end",
+        "-- First thing in LoadNoMissionState: a side contract just ended (done,",
+        "-- failed or cancelled). Put the campaign back and note a completion.",
+        "function foundry_ReturnFromContract()",
+        "local id = Utility_ReadStringFromScribbleMemory('foundry_active_contract')",
+        "if not id then return end",
+        "local f = Utility_ReadStringFromScribbleMemory('foundry_active_faction')",
+        "for i, key in foundry_Kept(f) do",
+        "local v = Utility_ReadNumberFromScribbleMemory('foundry_kept_' .. key)",
+        "if v then Utility_WriteNumberToScribbleMemory(key, v) else Utility_EraseValueFromScribbleMemory(key) end",
+        "Utility_EraseValueFromScribbleMemory('foundry_kept_' .. key)",
+        "end",
+        "if Utility_ReadStringFromScribbleMemory('JustCompletedStandardMission') == id then",
+        "Utility_WriteNumberToScribbleMemory('foundry_done_' .. id, 1)",
+        "Utility_EraseValueFromScribbleMemory('JustCompletedStandardMission')",
+        "end",
+        "Utility_EraseValueFromScribbleMemory('foundry_active_contract')",
+        "Utility_EraseValueFromScribbleMemory('foundry_active_faction')",
+        "end",
         "function foundry_SetupContracts()",
         "local map = Utility_ReadStringFromScribbleMemory('SkipTo_Map')",
         "for i, c in tFoundryContracts do",
-        "if c.map == map then",
         "local name = foundry_ContactName(c)",
+        "if c.map == map and foundry_IsDone(c) and not c.repeatable then",
+        "if Utility_DoesActorExist(name) then Objective_Remove(name) Actor_Remove(name) end",
+        "elseif c.map == map then",
         "if not Utility_DoesActorExist(name) then",
         "local x, y, z = Location_GetPosition(c.location)",
         "-- face the way the location faces, as util_Mission_SpawnAtLocation does",
@@ -222,8 +256,15 @@ def contracts_script(contracts):
             f"'foundry_Start_{c['id']}', 'foundry_SetupContracts')",
             "end",
             f"function foundry_Start_{c['id']}()",
+            f"local f = {_lua(c['faction'])}",
+            "for i, key in foundry_Kept(f) do",
+            "local v = Utility_ReadNumberFromScribbleMemory(key)",
+            "if v then Utility_WriteNumberToScribbleMemory('foundry_kept_' .. key, v) end",
+            "end",
+            f"Utility_WriteStringToScribbleMemory('foundry_active_contract', {_lua(c['id'])})",
+            "Utility_WriteStringToScribbleMemory('foundry_active_faction', f)",
             f"Objective_Remove(foundry_ContactName(tFoundryContracts[{contracts.index(c) + 1}]))",
-            f"DebugSkipToMission({_lua(c['faction'])}, {c['number']})",
+            f"DebugSkipToMission(f, {c['number']})",
             "end"]
     return "\n".join(out) + "\n"
 

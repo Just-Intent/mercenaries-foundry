@@ -110,8 +110,10 @@ class MissionTests(unittest.TestCase):
         src = ("function LoadNoMissionState()\nlocal a = 1\nSpawnBouncers(TRUE)\nEnableBouncers(TRUE)\nend\n"
                "function Other()\nSpawnBouncers(TRUE)\nend\n")
         out = missions.patch_global(src)
-        self.assertIn("SpawnBouncers(TRUE)\nUtility_LoadUtilityScript('foundry_contracts') foundry_SetupContracts()\n"
-                      "EnableBouncers(TRUE)", out)
+        self.assertTrue(out.startswith("function LoadNoMissionState()\n"
+                                       "Utility_LoadUtilityScript('foundry_contracts') foundry_ReturnFromContract()\n"
+                                       "local a = 1\n"))
+        self.assertIn("SpawnBouncers(TRUE)\nfoundry_SetupContracts()\nEnableBouncers(TRUE)", out)
         self.assertEqual(out.count("foundry_SetupContracts"), 1)          # only in LoadNoMissionState
         self.assertEqual(missions.patch_global(out), out)                 # once
         with self.assertRaises(ValueError):
@@ -129,9 +131,18 @@ class MissionTests(unittest.TestCase):
         self.assertIn("function foundry_SetupContracts()", lua)
         self.assertIn("function foundry_Use_sw_allies9()", lua)
         self.assertIn("'foundry_Start_sw_allies9', 'foundry_SetupContracts')", lua)
-        self.assertIn("DebugSkipToMission('allies', 9)", lua)
+        self.assertIn("local f = 'allies'", lua)
+        self.assertIn("DebugSkipToMission(f, 9)", lua)
         self.assertIn("util_SetupSingleTargetActorObjective(", lua)
         self.assertIn("-Location_GetYaw(c.location) + c.yaw", lua)
+        # the campaign position and counters are kept and put back
+        self.assertIn("'current_' .. f .. '_mission', 'total_missions_completed' .. f, "
+                      "'num_std_missions_cmpl_' .. f", lua)
+        self.assertIn("Utility_WriteStringToScribbleMemory('foundry_active_contract', 'sw_allies9')", lua)
+        self.assertIn("Utility_WriteNumberToScribbleMemory('foundry_done_' .. id, 1)", lua)
+        self.assertIn("repeatable = FALSE", lua)
+        self.assertIn("repeatable = TRUE", missions.contracts_script(
+            [missions.contract("sw_allies9", {"repeatable": True}, "a", "b")[0]]))
         _, strings = missions.contract("nw_sk7", {}, "a", "b")
         self.assertEqual(strings["standardMission.foundry.nw_sk7.tgtCaption"], "South Korean contact")
 

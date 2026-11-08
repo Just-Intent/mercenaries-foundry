@@ -162,6 +162,8 @@ Instead, each mod mission gets a contact at its faction's HQ, a side contract yo
 - **Where it comes from.** The build patches one line into `global`'s `LoadNoMissionState`, right after `SpawnBouncers(TRUE)`. That line runs a generated script, `foundry_contracts`, listed in `sw` and `nw`. The script spawns each contact on its map.
 - **How it looks.** The contact uses the faction's bouncer template and stands 3 m from `loc_hq-<faction>-bouncer`, facing the way that spot faces. It is marked like a bouncer (`util_SetupSingleTargetActorObjective` with `TARGET_TYPE_HQ_<FACTION>`): a gold ring, a name above it and an HQ blip.
 - **Using it.** The prompt reads "Discuss contract: <title>". Using the contact asks yes/no with the mission's title and description (`Utility_QuestionBox`). Yes starts the mission through `DebugSkipToMission`; no leaves the contact there.
+- **Campaign progress is kept.** Starting a mission through `DebugSkipToMission` makes it the faction's current arc position, and finishing it adds to `current_<faction>_mission` and the completed-mission counters (`mission_MissionComplete2`). So the contact saves `current_<faction>_mission`, `total_missions_completed<faction>` and `num_std_missions_cmpl_<faction>` before starting. A second hook, the first line of `LoadNoMissionState`, puts them back when the contract ends, however it ends. The game runs `LoadNoMissionState` when a mission script closes; it is the first argument of `LoadMission`'s `Utility_RunLuaScript`.
+- **Completions are remembered.** If the mission just completed (`JustCompletedStandardMission`, read before `LoadNoMissionState` erases it), the scribble value `foundry_done_<id>` is set and the contact no longer appears. `"repeatable": true` in the mission file keeps offering it.
 - **Settings.** Change the contact with `"contact": {"name": "Major Kim", "prompt": "Ask about the job", "template": ..., "location": ..., "offset": [3, 0, 0], "yaw": 0}`. Leave it out with `"contact": false`.
 
 To reach free roam at a faction HQ from Skip Intro (Foundry Console's Lua box):
@@ -170,7 +172,7 @@ To reach free roam at a faction HQ from Skip Intro (Foundry Console's Lua box):
 Utility_WriteStringToScribbleMemory('SkipTo_Map','sw') Utility_EraseValueFromScribbleMemory('SkipTo_Faction') Utility_EraseValueFromScribbleMemory('SkipTo_MissionNumber') Utility_EraseValueFromScribbleMemory('mission_accepted') Utility_WriteStringToScribbleMemory('PlayerStartLocationName','loc_hq-allies-respawn') Utility_ResetToBaseLayerOnly('sw')
 ```
 
-Tested in game (2026-11-08): the contact stood beside the allies bouncer with a ring, its name and the right facing, offered the contract, and started it.
+Tested in game (2026-11-08): the contact stood beside the allies bouncer with a ring, its name and the right facing, offered the contract, and started it. After the contract was completed, `current_allies_mission` was still 2, as before, and the contact was gone.
 
 To try a mission without playing up to it, run this in Foundry Console's Lua box. It works from anywhere, including Skip Intro, and reloads the `sw` map at the faction's HQ with the contract accepted:
 
