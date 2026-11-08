@@ -10,7 +10,7 @@ No game data is included. You need your own US retail Xbox copy. See [docs/PROVE
 
 1. **Reproducible build** of the port from your disc image. *(done with the port's own build script and the free Build Tools 2022; see docs/STATUS.md)*
 2. **`.dsk` archive tool**: list, extract, repack, compare. *(done; all four retail archives rebuild byte-for-byte)*
-3. **Asset decoders**: scripts, world/ODF properties, localization *(done; checked on retail data, and edited text, scripts and object properties work in-game)*, then models (geometry decompresses; layout in progress), textures and animation.
+3. **Asset decoders**: scripts, world/ODF properties, localization *(done; checked on retail data, and edited text, scripts and object properties work in-game)*, models *(done: all 2,297 export to OBJ)*, then textures and animation.
 4. **Function and data map**: named functions and structures for entities, factions, spawning, Lua bindings and missions.
 5. **Plugin interface v2**: call game functions, hooks, new Lua commands, overlay drawing.
 6. **Developer overlay**: inspector, Lua console, spawning by name.
@@ -52,6 +52,14 @@ python -m mercfoundry pack work/assets out/assets.dsk
 ```
 
 `--decode` writes a readable copy of each Lua script (decompressed), world layer (object instances with named properties) and text table (strings by dotted key). `pack` re-encodes any decoded file you changed back into its record first; untouched files leave the archive byte-identical. Run `rebuild` to do that step on its own, or `pack --no-rebuild` to skip it. In a text file, change a value to edit a string or add a new key to add one; keys you delete are left unchanged in the archive.
+
+### Exporting models
+
+```bash
+python -m mercfoundry model DATAxbox allies_veh_humvee -o models --preview --names names.txt
+```
+
+Writes `allies_veh_humvee.obj` and `.mtl` (opens in Blender and most 3D tools) and, with `--preview`, a shaded PNG. `--lod N` picks a level of detail; `--damaged` shows a vehicle's damaged body panels. Model names come from `list DATAxbox/streamed.dsk --type Model`. Textures are named in the `.mtl` but not exported yet.
 
 Format details: [docs/formats/dsk.md](docs/formats/dsk.md). Related Battlefront tools and docs: [docs/RESOURCES.md](docs/RESOURCES.md).
 

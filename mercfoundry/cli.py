@@ -135,6 +135,42 @@ def cmd_names(args):
     print(f"wrote {args.out}; use it with --names")
 
 
+def _data_archives(target):
+    p = Path(target)
+    paths = sorted(p.glob("*.dsk")) if p.is_dir() else [p]
+    # Prefer locked over streamed when a model is in both.
+    paths.sort(key=lambda q: (q.name.lower() != "locked.dsk", q.name.lower()))
+    return [dsk.Archive(q) for q in paths]
+
+
+def cmd_model(args):
+    from . import model
+    arcs = _data_archives(args.data)
+    try:
+        records = model.find(arcs, args.name)
+    except KeyError:
+        sys.exit(f"no model named {args.name!r}; list them with: list <archive> --type Model")
+    m = model.decode(*records)
+    names = _names(args)
+    for arc in arcs:
+        dsk.collect_names(arc, names)
+    lods = m.lods()
+    lod = args.lod if args.lod is not None else (lods[0] if lods else 0)
+    out = Path(args.out)
+    out.mkdir(parents=True, exist_ok=True)
+    obj, mtl = model.to_obj(m, lod, lambda h: names.get(h) or f"{h:08X}", args.damaged)
+    (out / f"{m.name}.obj").write_text(obj, encoding="utf-8")
+    (out / f"{m.name}.mtl").write_text(mtl, encoding="utf-8")
+    pieces = m.at_lod(lod, args.damaged)
+    tris = sum(len(p.triangles) for p in pieces)
+    print(f"{m.name}: {len(m.joints)} joints, {len(m.pieces)} pieces, detail levels {lods}")
+    print(f"wrote {out / (m.name + '.obj')} (level {lod}: {len(pieces)} pieces, {tris} triangles)")
+    if args.preview:
+        png = out / f"{m.name}.png"
+        png.write_bytes(model.preview_png(m, lod, damaged=args.damaged))
+        print(f"wrote {png}")
+
+
 def cmd_unpack_iso(args):
     from . import xiso
     n = xiso.extract(args.image, args.out)
@@ -178,6 +214,14 @@ def main(argv=None):
     s.add_argument("sources", nargs="+", help="files to scan: default.xbe, .dsk archives, anything")
     s.add_argument("--match", action="append", help="keep only names whose hash appears in this archive")
     s.add_argument("-o", "--out", default="names.txt")
+    s = add("model", cmd_model, "export a model to OBJ (with optional preview image)")
+    s.add_argument("data", help="DATAxbox folder or a .dsk file")
+    s.add_argument("name", help="model name or 8-digit key")
+    s.add_argument("-o", "--out", default="models")
+    s.add_argument("--lod", type=int, help="level of detail (default: most detailed)")
+    s.add_argument("--damaged", action="store_true", help="show damaged body panels instead of pristine")
+    s.add_argument("--preview", action="store_true", help="also write a shaded PNG preview")
+    names_opt(s)
     s = add("unpack-iso", cmd_unpack_iso, "extract an Xbox disc image (.iso or .xiso)")
     s.add_argument("image"); s.add_argument("out")
     s = add("hash", cmd_hash, "hash names the way the game does"); s.add_argument("names", nargs="+")

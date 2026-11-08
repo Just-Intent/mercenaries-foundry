@@ -11,7 +11,8 @@
   - Editing a vehicle name and adding a new string works and changes only that record.
   - 9,618 of 9,723 hashes named from strings in the game; every record type now has a name.
   - Model geometry (`segments`) uses the script compression; all 2,954 records decompress.
-- 35 tests pass.
+- Model decoder: all 2,297 models decode (1.35 million triangles): skeleton, joint placement, levels of detail, pristine/damaged panels, normals, texture coordinates, vertex colours, texture names. `model` exports OBJ plus a preview image. 2,285 models match their stored bounds exactly; the other 12 differ only around helicopter rotors.
+- 42 tests pass.
 
 ## Fixed from retail data
 - Text values aren't NUL-terminated. The decoder had assumed they were and found no strings.
@@ -36,8 +37,8 @@
 - Python 3.12.10 alongside 3.13. The port's `.venv` has its pinned CMake 3.31.6, Ninja 1.13.0 and Capstone 5.0.6.
 
 ## Next steps
-1. Model decoder: vertex layout in `VBUF`, materials, skeleton; export to a standard format (glTF or OBJ).
-2. Texture decoder; check whether swbf-unmunge's Xbox texture code (MIT) applies.
+1. Texture decoder (then models export with their textures); check whether swbf-unmunge's Xbox texture code (MIT) applies.
+2. Models: glTF export with the skeleton and skin weights; model import (edit in Blender, write back).
 3. A `mod` command that builds a mod folder from a list of edits, so tests like these are one step.
 4. Decode the remaining world-layer chunks (`TNAM`, `INFO`) and `path`/`region`/`encounter` records.
 

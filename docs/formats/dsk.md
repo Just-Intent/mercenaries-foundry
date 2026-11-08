@@ -47,8 +47,8 @@ Type names (`kind`). The first three were known from the port; the rest were fou
 | `203E6FAA` | `script` | 208 | Lua scripts (`scr_`) |
 | `37A3E893` | `world` | 824 | World layers: object instances and properties (`wrld`) |
 | `3884598E` | `registry` | 91 | Localized text (`reg_`) |
-| `B08B665A` | `Model` | 2,954 | Model header and skeleton (`modl`: `NAME`, `NODE`, `INFO`, `SKEL` → `JONT`...) |
-| `5161D08F` | `segments` | 2,954 | Model geometry, compressed (`CSEG`); one per model, same key |
+| `B08B665A` | `Model` | 2,954 | Model header and skeleton (`modl`); see Models |
+| `5161D08F` | `segments` | 2,954 | Model geometry, compressed (`CSEG`); see Models |
 | `3C6468F4` | `Texture` | 4,715 | Textures |
 | `E145EE5D` | `animation` | 1,835 | Animation |
 | `F64FFC34` | `animtable` | 95 | |
@@ -123,21 +123,47 @@ All 6,905 retail values are text. Keys are dotted scope paths, e.g. `veh.allies_
 
 `num_components` is close to the number of entries but runs 1–7 higher, so it may be a size hint. When we add entries we raise it by the number added; an added key resolved and displayed in-game (2026-11-08).
 
-### `segments` → `CSEG`
+### Models: `Model` (`modl`) + `segments` (`CSEG`)
 
-`CSEG` data: `u32` decompressed size, `u32` compressed size, then the compressed stream (see Compression). All 2,954 retail records decompress. The result is a `ucfb` tree of `segm` chunks, one per mesh piece:
+A model is two records with the same key: `Model` (header and skeleton) and `segments` (geometry). Our decoder reads all 2,297 retail models (1.35 million triangles). Everything below was established from retail data, as noted.
 
-- `INFO` (16 bytes): four `u32`s. In samples, word 0 = vertex count, word 1 = index count, word 2 = vertex stride (20), word 3 unknown.
-- `MTRL`: material (28 bytes; starts with hashes)
-- `VBUF`: vertices (`count × stride` bytes)
-- `IBUF`: 16-bit indices
+`modl` children:
 
-Inferred from a few samples; not yet checked across all records.
+- `NAME`: model name. `NODE`: root node name.
+- `INFO` (77 bytes): `u16` version (9), `u16` piece count, `u16` 0, `u16` flags (`0x100`); `float[6]` quantization box (min xyz, max xyz); `float[6]` bounds; `u32` joint count; `float[4]` level-of-detail switch distances (e.g. 0, 30, 300, 1000); one more `float`; one byte.
+- `SKEL`: `NBNS` (`u32` joint count), `FSBI` (4 bytes, `ff ff ff ff` in samples), then one `JONT` per joint: `name\0`, rotation quaternion `float[4]` (x y z w), translation `float[3]`, `parent\0`. All 10,138 retail joints parse with unit quaternions and no leftover bytes.
+
+`segments`: `CSEG` data is `u32` decompressed size, `u32` compressed size, then the compressed stream (see Compression). All 2,954 records decompress. The result is a `ucfb` tree of `segm` chunks (one per piece) and, in some models, `cshp` (collision; not decoded).
+
+`segm` children:
+
+| Chunk | Contents |
+|---|---|
+| `INFO` | `u32` vertex count, `u32` index count, `u32` stride word (low 16 bits = vertex size, 20 or 28; bit 16 = vertices carry a bone index, used by skinned character bodies), `u32` level-of-detail bitmask (bit *n* = drawn at level *n*) |
+| `MTRL` | `u32` words (28 bytes, 36 in 18 pieces). Word 1: hash of the joint the piece hangs from (matches in all 19,755 pieces). Word 3: hash of the texture name (matches a `Texture` record in 98.5%). Word 0: probably a shader or material type. Word 2: often the same joint, or the panel group for damage states. The rest are not understood. |
+| `VBUF` | Vertices, see below |
+| `IBUF` | `u16` triangle strip. Strips are joined by repeating indices (`… 2, 2, 5, 5 …`). |
+
+Vertex layout (20 bytes; 28-byte vertices add 8 bytes not yet understood):
+
+| Bytes | Contents |
+|---|---|
+| 0–5 | Position, `s16` × 3: `centre + halfsize × value / 32767` per axis, using the quantization box |
+| 6–7 | Bone index for skinned vertices, otherwise 0 |
+| 8–11 | Normal, packed 11:11:10 signed (x = bits 0–10 / 1023, y = bits 11–21 / 1023, z = bits 22–31 / 511). All sampled normals decode to unit length. |
+| 12–15 | Vertex colour, B G R A |
+| 16–19 | Texture coordinates, `s16` × 2, divided by 2048 |
+
+Placement: positions are local to the piece's joint. Applying the joint chain (rotation, then translation, up to the root) puts every piece in model space. Checked by comparing the result with the stored bounds: 2,285 of 2,297 models match exactly. The other 12 are helicopters whose stored bounds differ only around the rotor.
+
+Vehicles carry two copies of breakable body panels, on joints named `segment_pristine_*` and `segment_damage_*`. Exports show the pristine set by default.
+
+The `model` command exports a model to OBJ with a material file that names its textures, and can write a shaded preview image. Exported OBJ files negate Z (the game's axes are left-handed).
 
 ## Open questions
 
 - The grid-index tail (`0x00FF8040`): no retail archive uses it.
-- Vertex layout in `VBUF`, `MTRL` fields, and the `modl` `INFO` block.
+- Models: the extra 8 bytes of 28-byte vertices, `MTRL` words 0, 2 and 4–6, `cshp` collision, and how skinned bone indices map to joints.
 - Texture, animation, terrain, path and region formats.
 - `INFO` byte 0 in scripts; `TNAM` and `INFO` in world layers.
 - What `num_components` counts exactly.
