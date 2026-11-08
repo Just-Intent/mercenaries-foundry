@@ -7,6 +7,7 @@ Mercenaries Foundry needs a few additions to the port's runtime. They live here 
 | `0001-Plugin-guest-calls-...patch` | Plugin guest calls: `call_guest`, `guest_scratch` and `in_gameplay` on `MercPluginHost`. |
 | `0002-Plugin-function-hooks.patch` | Plugin function hooks: `hook_guest`, and the runtime side of the hook wrappers. Also makes `read_guest`/`write_guest` fast enough for hooks on hot functions. |
 | `0003-Plugin-script-commands.patch` | Plugin script commands: `add_lua_command`, trampolines at reserved guest addresses, and registration on every script's Lua state. |
+| `0004-Plugin-tool-windows.patch` | `set_tool_window`: while a plugin's tool window is open the game leaves exclusive fullscreen and ignores game input, as for the F9 panel. |
 
 See [docs/PLUGINS.md](../docs/PLUGINS.md) for the API.
 

@@ -4,7 +4,7 @@ With the [port patches](../port/README.md), a native plugin for Mercenaries Reco
 
 ## What the host adds
 
-Five functions appended to `MercPluginHost` (older plugins are unaffected; check with `MERC_PLUGIN_HOST_HAS(host, call_guest)`):
+Six functions appended to `MercPluginHost` (older plugins are unaffected; check with `MERC_PLUGIN_HOST_HAS(host, call_guest)`):
 
 | Function | Use |
 |---|---|
@@ -13,6 +13,7 @@ Five functions appended to `MercPluginHost` (older plugins are unaffected; check
 | `in_gameplay(ctx)` | 1 while normal gameplay is running (not menus or loading). |
 | `hook_guest(ctx, address, before, after, userdata)` | Run `before` and/or `after` whenever the game calls a function (see Hooks). |
 | `add_lua_command(ctx, name, fn, userdata)` | Add a global script command (see Script commands). |
+| `set_tool_window(ctx, open)` | Say a plugin window is open (1) or closed (0). While any is open the game treats it like the F9 developer panel: it leaves exclusive fullscreen so the window can show, and ignores game input. Call from `on_update`. |
 
 Rules:
 - Calls only work inside `on_update`. That runs on the game's own thread at its input checkpoint, the same place the port's developer tools call the game.

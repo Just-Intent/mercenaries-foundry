@@ -15,6 +15,10 @@
  *   Lua        - run a line of Lua in a loaded script's state (an
  *                expression shows its values; a statement shows "ok").
  *
+ * While the console has focus it tells the game a tool window is open (as
+ * the F9 panel does): the game leaves exclusive fullscreen so the window
+ * shows, and ignores game input so typing doesn't move the player.
+ *
  * The window runs on its own thread. Everything that touches the game is
  * queued and done in on_update, on the game's thread, through the plugin
  * API (call_guest, hooks) and the Foundry function map.
@@ -106,6 +110,9 @@ static unsigned name_count;
 
 /* Window */
 static DWORD window_thread_id;
+static HWND game_window;            /* foreground window when the console was opened */
+static volatile LONG want_tool;    /* 1 while the console has focus */
+static int tool_state;
 static HWND wnd, info_label, search_edit, list_box, loaded_check, spawn_button, money_button, status_label;
 static HWND script_combo, lua_edit, run_button, output_edit;
 static HWND nearby_list, details_label;
@@ -712,6 +719,11 @@ static int MERC_PLUGIN_CALL on_update(void *ud, const MercPluginUpdate *u)
     if (down && !f7_down && pid == GetCurrentProcessId() && wnd)
         PostMessageW(wnd, WM_APP_TOGGLE, 0, 0);
     f7_down = down;
+    LONG want = InterlockedCompareExchange(&want_tool, 0, 0);
+    if (want != tool_state && MERC_PLUGIN_HOST_HAS(host, set_tool_window)) {
+        host->set_tool_window(host->context, want);
+        tool_state = want;
+    }
 
     since_inspect += u->wall_delta_seconds;
     if (since_inspect >= 0.25) {
@@ -861,10 +873,23 @@ static LRESULT CALLBACK window_proc(HWND h, UINT msg, WPARAM wp, LPARAM lp)
 {
     switch (msg) {
     case WM_APP_TOGGLE:
-        ShowWindow(h, IsWindowVisible(h) ? SW_HIDE : SW_SHOWNOACTIVATE);
+        if (IsWindowVisible(h) && GetForegroundWindow() == h) {
+            ShowWindow(h, SW_HIDE);
+            if (game_window) SetForegroundWindow(game_window);
+        } else {
+            HWND fg = GetForegroundWindow();
+            if (fg && fg != h) game_window = fg;
+            ShowWindow(h, SW_SHOW);
+            SetForegroundWindow(h);
+        }
         return 0;
+    case WM_ACTIVATE:
+        InterlockedExchange(&want_tool, LOWORD(wp) != WA_INACTIVE);
+        break;
     case WM_CLOSE:
         ShowWindow(h, SW_HIDE);
+        InterlockedExchange(&want_tool, 0);
+        if (game_window) SetForegroundWindow(game_window);
         return 0;
     case WM_TIMER: {
         char info[1024], status[256];

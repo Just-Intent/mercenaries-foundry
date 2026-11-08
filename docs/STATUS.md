@@ -35,6 +35,7 @@
 - Lua console in Foundry Console: runs a line in a game Lua state (expression values or ok, errors caught, stack restored). Ten more Lua API functions mapped (luaL_loadbuffer, lua_pcall, lua_settop, ...).
 - Object inspector in Foundry Console: nearby objects from the world's object table (position at +0x08, rotation at +0x14), named through the named-object table, with properties from the object's own lookup. `objectnames` command.
 - Object editing in Foundry Console: bring here, up/down, turn and remove, through the engine calls behind Actor_SetPosition, Actor_SetYaw and Actor_Remove.
+- Plugin tool windows (port patch `0004`): Foundry Console works in exclusive fullscreen by stepping the game out of it while the console has focus, and the game ignores input then.
 - 149 tests pass.
 
 ## Fixed from retail data
@@ -66,6 +67,7 @@
 - 2026-11-08, Lua console: `2 + 3` in the console returned `= 5` in the game's Lua state. The game registered commands only three times (script objects 0x3717A0, twice, and 0x371848): mission scripts share a few long-lived states.
 - 2026-11-08, object inspector: the nearby list showed objects within 100 m with names where they have one (loc_hospital, c_race_HQm2HQa_01_gate16b); a static rock reported objectType static, hitPoints 1, GeometryFile summer_env_rock01. Unnamed objects are labelled by model (the player's own gear at 1 m, pickups such as global_pic_ammo, props such as global_militaryboxstack with hitPoints 3000).
 - 2026-11-08, object edits: on nearby props, Bring here, Up/Down 1 m, Turn ±45 and Remove all worked.
+- 2026-11-08, console in fullscreen: with DISPLAY: FULLSCREEN, F7 blinked the screen, the game switched to a borderless window and the console appeared over it. At the native 640 x 480 the picture turned 4:3 (the game's real aspect; exclusive mode had the monitor stretch it).
 - Lesson: the C-17 cargo-hold scene uses a separate model, `c17_humvee`, which shares the Humvee texture. Check model edits on the vehicle you drive.
 - Lesson: a new game starts in `playable_intro` (C-17 briefing, then `allies0`), not the Ace of Clubs, which is Allied mission 4. Script tests belong there.
 
@@ -79,7 +81,7 @@
 - Python 3.12.10 alongside 3.13. The port's `.venv` has its pinned CMake 3.31.6, Ninja 1.13.0 and Capstone 5.0.6.
 
 ## Next steps
-1. Overlay polish: draw inside the game window instead of beside it (open the port's host overlay to plugins); edit object properties.
+1. Overlay: draw inside the game's frames (no mode switch); edit object properties.
 2. Function map: name more engine functions (actors, vehicles, AI commands, missions).
 3. Collision material codes (surface types); collision for edited existing pieces.
 4. Importing skeleton (joint) edits; what animation-table priorities and flags do.

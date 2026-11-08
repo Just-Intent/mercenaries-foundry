@@ -1,0 +1,153 @@
+From 3d58bacd281bf4943cda1ccab26752333c534958 Mon Sep 17 00:00:00 2001
+From: Just-Intent <346791974+Just-Intent@users.noreply.github.com>
+Date: Sun, 8 Nov 2026 11:39:32 -0600
+Subject: [PATCH] Plugin tool windows
+
+set_tool_window lets a plugin say its tool window is open. While any is
+open the host treats it like the F9 panel: it leaves exclusive
+fullscreen (posted to the window's thread) and captures game input.
+The F9 panel and plugins are tracked separately so one closing doesn't
+undo the other; plugins that stop or shut down release theirs.
+---
+ ports/mercenaries/sdk/mercenaries_plugin.h |  5 +++++
+ ports/mercenaries/src/main.c               | 16 ++++++++++++++-
+ ports/mercenaries/src/plugin_host.cpp      | 24 +++++++++++++++++++---
+ ports/mercenaries/src/plugin_host.h        |  3 +++
+ 4 files changed, 44 insertions(+), 4 deletions(-)
+
+diff --git a/ports/mercenaries/sdk/mercenaries_plugin.h b/ports/mercenaries/sdk/mercenaries_plugin.h
+index 4269686..dbdbfc2 100644
+--- a/ports/mercenaries/sdk/mercenaries_plugin.h
++++ b/ports/mercenaries/sdk/mercenaries_plugin.h
+@@ -79,6 +79,11 @@ typedef struct MercPluginHost {
+      * every script loaded from now on. Call it from init. Returns 0 if the
+      * name is taken or invalid, or the build can't add commands. */
+     int (MERC_PLUGIN_CALL *add_lua_command)(void *, const char *, MercLuaFn, void *);
++    /* Tell the game a plugin tool window is open (1) or closed (0). While any
++     * is open the game treats it like the F9 developer panel: it leaves
++     * exclusive fullscreen (so the window can show) and ignores game input.
++     * Call from on_update. */
++    int (MERC_PLUGIN_CALL *set_tool_window)(void *, int);
+ } MercPluginHost;
+ /* True when the host provides a field (older hosts have a smaller struct). */
+ #define MERC_PLUGIN_HOST_HAS(host, field) \
+diff --git a/ports/mercenaries/src/main.c b/ports/mercenaries/src/main.c
+index 532ea48..d7baa33 100644
+--- a/ports/mercenaries/src/main.c
++++ b/ports/mercenaries/src/main.c
+@@ -905,12 +905,25 @@ static void host_apply_recomp_options(uint32_t changes)
+                  SWP_NOZORDER | SWP_FRAMECHANGED | SWP_SHOWWINDOW | SWP_NOACTIVATE);
+     g_host_resizing=0;
+ }
++static int g_dev_tools_open, g_plugin_tools_open;
+ static void host_dev_display(int open){
+-    g_host_tools_open=open;
++    g_dev_tools_open=open;
++    g_host_tools_open=g_dev_tools_open||g_plugin_tools_open;
+     if(recomp_options_display_mode()!=RECOMP_DISPLAY_FULLSCREEN)return;
+     if(open)host_apply_recomp_options(RECOMP_OPTIONS_CHANGE_DISPLAY);
+     else PostMessageA(g_host_window,WM_RECOMP_DISPLAY,0,0);
+ }
++/* Plugin tool windows (Mercenaries Foundry): treated like the F9 panel. Called
++ * on the guest thread, so the display change is posted to the window's thread. */
++void xbox_InputSetOverlayCapture(BOOL captured);
++static void host_plugin_tools(int open){
++    g_plugin_tools_open=open;
++    g_host_tools_open=g_dev_tools_open||g_plugin_tools_open;
++    if(open)xbox_InputSetOverlayCapture(TRUE);
++    else if(!g_dev_tools_open)xbox_InputSetOverlayCapture(FALSE);
++    if(g_host_window&&recomp_options_display_mode()==RECOMP_DISPLAY_FULLSCREEN)
++        PostMessageA(g_host_window,WM_RECOMP_DISPLAY,0,0);
++}
+ 
+ 
+ static void dev_bookmark(void) { preview_snapshot("USER-MARKER-DEV-MENU"); }
+@@ -1064,6 +1077,7 @@ static BOOL host_graphics_init(HINSTANCE instance, int show_command)
+     recomp_options_set_apply_callback(host_apply_recomp_options);
+     recomp_dev_menu_init(g_host_window, dev_bookmark);
+     recomp_dev_menu_set_display_callback(host_dev_display);
++    merc_plugins_set_tool_display(host_plugin_tools);
+     recomp_dev_overlay_init();
+     g_host_ready=1;
+     recomp_controls_init(g_host_window);
+diff --git a/ports/mercenaries/src/plugin_host.cpp b/ports/mercenaries/src/plugin_host.cpp
+index c8c708a..1938db2 100644
+--- a/ports/mercenaries/src/plugin_host.cpp
++++ b/ports/mercenaries/src/plugin_host.cpp
+@@ -15,7 +15,7 @@ struct Loaded {
+     MercPluginHost host{};
+     MercPlugin callbacks{};
+     std::string directory,settings;
+-    bool entered=false,active=false;
++    bool entered=false,active=false,tool_open=false;
+ };
+ std::vector<std::unique_ptr<Loaded>> loaded;
+ DWORD owner=0;
+@@ -185,7 +185,24 @@ int MERC_PLUGIN_CALL add_lua_command(void *ctx,const char *name,MercLuaFn fn,voi
+     record(calling->manifest.id+": added script command "+name);
+     return 1;
+ }
++/* Plugin tool windows (counted; the host hears when the first opens and the
++ * last closes). */
++void (*tool_display)(int)=nullptr;
++unsigned tools_open=0;
++void set_tool(Loaded &p,bool open) {
++    if(p.tool_open==open)return;
++    p.tool_open=open;
++    unsigned before=tools_open;
++    tools_open+=open?1:-1;
++    if(tool_display&&(before==0)!=(tools_open==0))tool_display(tools_open?1:0);
++}
++int MERC_PLUGIN_CALL set_tool_window(void *ctx,int open) {
++    if(GetCurrentThreadId()!=owner||!calling||ctx!=calling)return 0;
++    set_tool(*calling,open!=0);
++    return 1;
++}
+ void shutdown_all() {
++    for(auto &entry:loaded)set_tool(*entry,false);
+     for(auto it=loaded.rbegin();it!=loaded.rend();++it) {
+         auto &p=**it;
+         if(p.entered&&p.callbacks.on_shutdown) {
+@@ -235,7 +252,7 @@ extern "C" int merc_plugins_initialize(void *base,size_t bytes) {
+             fs::create_directories(fs::path(wide(p->settings)));
+             p->host={sizeof(MercPluginHost),MERCENARIES_PLUGIN_API_VERSION,p.get(),
+                 p->manifest.id.c_str(),p->directory.c_str(),p->settings.c_str(),plugin_log,read_guest,write_guest,
+-                call_guest,guest_scratch,in_gameplay,hook_guest,add_lua_command};
++                call_guest,guest_scratch,in_gameplay,hook_guest,add_lua_command,set_tool_window};
+             p->callbacks.struct_size=sizeof(MercPlugin);p->callbacks.api_version=MERCENARIES_PLUGIN_API_VERSION;
+             auto library=m.root/wide(m.library);
+             // Own directory for dependencies; no working-directory or PATH search.
+@@ -281,7 +298,7 @@ extern "C" int merc_plugins_update(void) {
+         try {ok=p.callbacks.on_update(p.callbacks.userdata,&update);}catch(...) {ok=0;}
+         updating=false;calling=nullptr;
+         if(!ok) {
+-            p.active=false;stopped.insert(p.manifest.id);
++            p.active=false;stopped.insert(p.manifest.id);set_tool(p,false);
+             if(!failure.empty())failure+="\n";
+             failure+=p.manifest.name+": update failed; this plugin and its dependents will receive no further updates. Restart the game after correcting the mod.";
+             record(failure);
+@@ -294,6 +311,7 @@ extern "C" int merc_plugins_hook_ready(void) {
+ }
+ extern "C" void merc_plugins_hook_before(unsigned index,MercHookContext *call) {run_hooks(index,call,false);}
+ extern "C" void merc_plugins_hook_after(unsigned index,MercHookContext *call) {run_hooks(index,call,true);}
++extern "C" void merc_plugins_set_tool_display(void (*callback)(int)) {tool_display=callback;}
+ extern "C" unsigned merc_plugins_lua_count(void) {return unsigned(lua_commands.size());}
+ extern "C" int merc_plugins_lua_command(unsigned index,uint32_t L) {
+     if(!initialized||GetCurrentThreadId()!=owner||index>=lua_commands.size())return 0;
+diff --git a/ports/mercenaries/src/plugin_host.h b/ports/mercenaries/src/plugin_host.h
+index 178b70d..ec672ca 100644
+--- a/ports/mercenaries/src/plugin_host.h
++++ b/ports/mercenaries/src/plugin_host.h
+@@ -33,6 +33,9 @@ void merc_plugins_hook_after(unsigned index, MercHookContext *call);
+ #define FOUNDRY_LUA_PUSHCCLOSURE 0x001DD0D0u
+ #define FOUNDRY_LUA_SETTABLE 0x001DD380u
+ #define FOUNDRY_LUA_GLOBALSINDEX 0xFFFFD8EFu /* -10001 */
++/* Plugin tool windows: the host (main.c) gets told when the first opens and
++ * the last closes, and treats that like the F9 panel. */
++void merc_plugins_set_tool_display(void (*callback)(int open));
+ unsigned merc_plugins_lua_count(void);
+ int merc_plugins_lua_command(unsigned index, uint32_t L);
+ #ifdef __cplusplus
+-- 
+2.55.0.windows.5
+
