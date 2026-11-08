@@ -49,7 +49,7 @@ Type names (`kind`). The first three were known from the port; the rest were fou
 | `3884598E` | `registry` | 91 | Localized text (`reg_`) |
 | `B08B665A` | `Model` | 2,954 | Model header and skeleton (`modl`); see Models |
 | `5161D08F` | `segments` | 2,954 | Model geometry, compressed (`CSEG`); see Models |
-| `3C6468F4` | `Texture` | 4,715 | Textures |
+| `3C6468F4` | `Texture` | 4,715 | Textures (`tex_`); see Textures |
 | `E145EE5D` | `animation` | 1,835 | Animation |
 | `F64FFC34` | `animtable` | 95 | |
 | `74DBC80E` | `Terrain` | 14 | |
@@ -160,10 +160,26 @@ Vehicles carry two copies of breakable body panels, on joints named `segment_pri
 
 The `model` command exports a model to OBJ with a material file that names its textures, and can write a shaded preview image. Exported OBJ files negate Z (the game's axes are left-handed).
 
+### Textures: `Texture` → `tex_`
+
+All 4,715 retail textures decode. Established from retail data.
+
+- `NAME`: texture name (present in 540 records; the rest are named by their key's hash)
+- `INFO` (24 bytes): `u16` width, `u16` height, `u16` 1, `u16` mip levels, `u16` kind (1 = 2D, 2 = cube map), `u16` 1, `u32` Xbox D3D format, `u32` 0, `u32` `BODY` size
+- `BODY`: mip levels in order, largest first. Cube maps (4 textures) hold 6 faces, each with its own full mip chain. Every record's size matches its format, size and mip count exactly.
+
+| Format | Code | Count | Storage |
+|---|---|---|---|
+| DXT1 | `0x0C` | 3,526 | 8-byte 4×4 blocks, left to right, top to bottom |
+| DXT2/3 | `0x0E` | 1,097 | 16-byte blocks: 4-bit alpha, then a DXT1 colour block. The Xbox uses one code for DXT2 and DXT3. |
+| A8R8G8B8 | `0x06` | 92 | 32-bit B G R A, **swizzled**: pixels in Morton (Z-order) as the Xbox GPU stores them, interleaving x and y address bits starting with x |
+
+Models name their textures by hash (`MTRL` word 3), so `model` exports each texture used as a PNG beside the OBJ.
+
 ## Open questions
 
 - The grid-index tail (`0x00FF8040`): no retail archive uses it.
 - Models: the extra 8 bytes of 28-byte vertices, `MTRL` words 0, 2 and 4–6, `cshp` collision, and how skinned bone indices map to joints.
-- Texture, animation, terrain, path and region formats.
+- Animation, terrain, path and region formats. Whether DXT2 textures are premultiplied (we treat them as DXT3).
 - `INFO` byte 0 in scripts; `TNAM` and `INFO` in world layers.
 - What `num_components` counts exactly.

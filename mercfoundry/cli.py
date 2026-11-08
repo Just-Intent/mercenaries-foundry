@@ -158,17 +158,54 @@ def cmd_model(args):
     lod = args.lod if args.lod is not None else (lods[0] if lods else 0)
     out = Path(args.out)
     out.mkdir(parents=True, exist_ok=True)
-    obj, mtl = model.to_obj(m, lod, lambda h: names.get(h) or f"{h:08X}", args.damaged)
+    tex_name = lambda h: names.get(h) or f"{h:08X}"
+    obj, mtl = model.to_obj(m, lod, tex_name, args.damaged)
     (out / f"{m.name}.obj").write_text(obj, encoding="utf-8")
     (out / f"{m.name}.mtl").write_text(mtl, encoding="utf-8")
     pieces = m.at_lod(lod, args.damaged)
     tris = sum(len(p.triangles) for p in pieces)
     print(f"{m.name}: {len(m.joints)} joints, {len(m.pieces)} pieces, detail levels {lods}")
     print(f"wrote {out / (m.name + '.obj')} (level {lod}: {len(pieces)} pieces, {tris} triangles)")
+    textures = {}
+    if not args.no_textures:
+        from . import texture
+        wanted = {p.texture for p in pieces}
+        for arc in arcs:
+            with arc.path.open("rb") as f:
+                for r in arc.records:
+                    if r.kind == texture.TEXTURE and r.key in wanted and r.key not in textures:
+                        f.seek(r.offset)
+                        try:
+                            t = texture.decode(f.read(r.size))
+                            textures[r.key] = t.rgba()
+                            w, h, px = textures[r.key]
+                            from . import png as pngmod
+                            (out / f"{tex_name(r.key)}.png").write_bytes(pngmod.encode(w, h, px, 4))
+                        except ValueError as err:
+                            print(f"  skipped texture {tex_name(r.key)}: {err}")
+        missing = len(wanted - set(textures))
+        print(f"wrote {len(textures)} textures" + (f" ({missing} not found)" if missing else ""))
     if args.preview:
-        png = out / f"{m.name}.png"
-        png.write_bytes(model.preview_png(m, lod, damaged=args.damaged))
+        png = out / f"{m.name}_preview.png"
+        png.write_bytes(model.preview_png(m, lod, damaged=args.damaged, textures=textures))
         print(f"wrote {png}")
+
+
+def cmd_texture(args):
+    from . import texture
+    arcs = _data_archives(args.data)
+    try:
+        t = texture.decode(texture.find(arcs, args.name))
+    except KeyError:
+        sys.exit(f"no texture named {args.name!r}; list them with: list <archive> --type Texture")
+    out = Path(args.out)
+    out.mkdir(parents=True, exist_ok=True)
+    base = t.name or args.name
+    for face in range(t.faces):
+        path = out / (f"{base}.png" if t.faces == 1 else f"{base}_face{face}.png")
+        path.write_bytes(t.to_png(args.mip, face))
+        print(f"wrote {path}")
+    print(f"{base}: {t.width}x{t.height} {t.format_name}, {t.mips} mip levels" + (", cube map" if t.faces == 6 else ""))
 
 
 def cmd_unpack_iso(args):
@@ -221,7 +258,13 @@ def main(argv=None):
     s.add_argument("--lod", type=int, help="level of detail (default: most detailed)")
     s.add_argument("--damaged", action="store_true", help="show damaged body panels instead of pristine")
     s.add_argument("--preview", action="store_true", help="also write a shaded PNG preview")
+    s.add_argument("--no-textures", action="store_true", help="don't export textures")
     names_opt(s)
+    s = add("texture", cmd_texture, "export a texture to PNG")
+    s.add_argument("data", help="DATAxbox folder or a .dsk file")
+    s.add_argument("name", help="texture name or 8-digit key")
+    s.add_argument("-o", "--out", default="textures")
+    s.add_argument("--mip", type=int, default=0, help="mip level (0 = full size)")
     s = add("unpack-iso", cmd_unpack_iso, "extract an Xbox disc image (.iso or .xiso)")
     s.add_argument("image"); s.add_argument("out")
     s = add("hash", cmd_hash, "hash names the way the game does"); s.add_argument("names", nargs="+")

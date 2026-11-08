@@ -263,13 +263,19 @@ def to_obj(model: Model, lod=0, texture_name=None, damaged=False) -> tuple:
     return "\n".join(obj) + "\n", "\n".join(mtl)
 
 
-def preview_png(model: Model, lod=0, size=512, yaw=35.0, pitch=-25.0, damaged=False) -> bytes:
-    """Flat-shaded preview image, no dependencies."""
-    import zlib
+def preview_png(model: Model, lod=0, size=512, yaw=35.0, pitch=-25.0, damaged=False,
+                textures=None) -> bytes:
+    """Shaded preview image, no dependencies.
+
+    textures: optional {texture hash: (width, height, RGBA bytes)}; pieces
+    with a texture are drawn with it (nearest sample), others flat."""
+    from . import png
+    textures = textures or {}
     tris = []
     for p in model.at_lod(lod, damaged):
+        tex = textures.get(p.texture)
         for t in p.triangles:
-            tris.append([p.positions[i] for i in t])
+            tris.append(([p.positions[i] for i in t], [p.uvs[i] for i in t], tex))
     cy, sy = math.cos(math.radians(yaw)), math.sin(math.radians(yaw))
     cp, sp = math.cos(math.radians(pitch)), math.sin(math.radians(pitch))
 
@@ -279,30 +285,28 @@ def preview_png(model: Model, lod=0, size=512, yaw=35.0, pitch=-25.0, damaged=Fa
         y, z = y * cp - z * sp, y * sp + z * cp
         return x, y, z
 
-    tris = [[view(v) for v in t] for t in tris]
-    pts = [v for t in tris for v in t] or [(0, 0, 0)]
+    tris = [([view(v) for v in pos], uv, tex) for pos, uv, tex in tris]
+    pts = [v for pos, _, _ in tris for v in pos] or [(0, 0, 0)]
     xs, ys = [v[0] for v in pts], [v[1] for v in pts]
     span = max(max(xs) - min(xs), max(ys) - min(ys)) or 1
     scale = size * 0.9 / span
     ox, oy = (max(xs) + min(xs)) / 2, (max(ys) + min(ys)) / 2
-    depth = [[float("inf")] * size for _ in range(size)]
-    img = [[(40, 44, 52)] * size for _ in range(size)]
+    depth = [float("inf")] * (size * size)
+    img = bytearray(bytes((40, 44, 52)) * (size * size))
     light = (0.4, 0.8, -0.45)
-    for t in tris:
-        (x0, y0, z0), (x1, y1, z1), (x2, y2, z2) = t
-        ux, uy, uz = x1 - x0, y1 - y0, z1 - z0
-        vx, vy, vz = x2 - x0, y2 - y0, z2 - z0
+    for (p0, p1, p2), uvs, tex in tris:
+        ux, uy, uz = p1[0] - p0[0], p1[1] - p0[1], p1[2] - p0[2]
+        vx, vy, vz = p2[0] - p0[0], p2[1] - p0[1], p2[2] - p0[2]
         nx, ny, nz = uy * vz - uz * vy, uz * vx - ux * vz, ux * vy - uy * vx
         ln = math.sqrt(nx * nx + ny * ny + nz * nz) or 1
-        shade = abs(nx * light[0] + ny * light[1] + nz * light[2]) / ln
-        c = int(60 + 180 * shade)
-        colour = (c, int(c * 0.95), int(c * 0.85))
-        sx = [(x - ox) * scale + size / 2 for x in (x0, x1, x2)]
-        syy = [size / 2 - (y - oy) * scale for y in (y0, y1, y2)]
-        zs = (z0, z1, z2)
+        shade = 0.35 + 0.65 * abs(nx * light[0] + ny * light[1] + nz * light[2]) / ln
+        sx = [(p[0] - ox) * scale + size / 2 for p in (p0, p1, p2)]
+        syy = [size / 2 - (p[1] - oy) * scale for p in (p0, p1, p2)]
+        zs = (p0[2], p1[2], p2[2])
         area = (sx[1] - sx[0]) * (syy[2] - syy[0]) - (sx[2] - sx[0]) * (syy[1] - syy[0])
         if abs(area) < 1e-9:
             continue
+        flat = bytes((int(240 * shade), int(228 * shade), int(204 * shade)))
         for py in range(max(0, int(min(syy))), min(size, int(max(syy)) + 1)):
             for px in range(max(0, int(min(sx))), min(size, int(max(sx)) + 1)):
                 fx, fy = px + 0.5, py + 0.5
@@ -312,13 +316,19 @@ def preview_png(model: Model, lod=0, size=512, yaw=35.0, pitch=-25.0, damaged=Fa
                 if w0 < 0 or w1 < 0 or w2 < 0:
                     continue
                 z = w0 * zs[0] + w1 * zs[1] + w2 * zs[2]
-                if z < depth[py][px]:
-                    depth[py][px] = z
-                    img[py][px] = colour
-    raw = b"".join(b"\0" + bytes(c for px in row for c in px) for row in img)
-
-    def chunk(tag, data):
-        return struct.pack(">I", len(data)) + tag + data + struct.pack(">I", zlib.crc32(tag + data) & 0xFFFFFFFF)
-
-    return (b"\x89PNG\r\n\x1a\n" + chunk(b"IHDR", struct.pack(">IIBBBBB", size, size, 8, 2, 0, 0, 0))
-            + chunk(b"IDAT", zlib.compress(raw, 6)) + chunk(b"IEND", b""))
+                k = py * size + px
+                if z >= depth[k]:
+                    continue
+                if tex:
+                    tw, th, data = tex
+                    u = w0 * uvs[0][0] + w1 * uvs[1][0] + w2 * uvs[2][0]
+                    v = w0 * uvs[0][1] + w1 * uvs[1][1] + w2 * uvs[2][1]
+                    o = ((int(v * th) % th) * tw + int(u * tw) % tw) * 4
+                    if data[o + 3] < 128:
+                        continue  # transparent texel
+                    colour = bytes(int(c * shade) for c in data[o:o + 3])
+                else:
+                    colour = flat
+                depth[k] = z
+                img[k * 3:k * 3 + 3] = colour
+    return png.encode(size, size, bytes(img), 3)

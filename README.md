@@ -10,7 +10,7 @@ No game data is included. You need your own US retail Xbox copy. See [docs/PROVE
 
 1. **Reproducible build** of the port from your disc image. *(done with the port's own build script and the free Build Tools 2022; see docs/STATUS.md)*
 2. **`.dsk` archive tool**: list, extract, repack, compare. *(done; all four retail archives rebuild byte-for-byte)*
-3. **Asset decoders**: scripts, world/ODF properties, localization *(done; checked on retail data, and edited text, scripts and object properties work in-game)*, models *(done: all 2,297 export to OBJ)*, then textures and animation.
+3. **Asset decoders**: scripts, world/ODF properties, localization *(done; checked on retail data, and edited text, scripts and object properties work in-game)*, models and textures *(done: all 2,297 models export to OBJ with their textures; all 4,715 textures export to PNG)*, then animation.
 4. **Function and data map**: named functions and structures for entities, factions, spawning, Lua bindings and missions.
 5. **Plugin interface v2**: call game functions, hooks, new Lua commands, overlay drawing.
 6. **Developer overlay**: inspector, Lua console, spawning by name.
@@ -59,7 +59,13 @@ python -m mercfoundry pack work/assets out/assets.dsk
 python -m mercfoundry model DATAxbox allies_veh_humvee -o models --preview --names names.txt
 ```
 
-Writes `allies_veh_humvee.obj` and `.mtl` (opens in Blender and most 3D tools) and, with `--preview`, a shaded PNG. `--lod N` picks a level of detail; `--damaged` shows a vehicle's damaged body panels. Model names come from `list DATAxbox/streamed.dsk --type Model`. Textures are named in the `.mtl` but not exported yet.
+Writes `allies_veh_humvee.obj` and `.mtl` (opens in Blender and most 3D tools), each texture it uses as a PNG, and with `--preview` a textured preview image. `--lod N` picks a level of detail; `--damaged` shows a vehicle's damaged body panels. Model names come from `list DATAxbox/streamed.dsk --type Model`.
+
+```bash
+python -m mercfoundry texture DATAxbox allies_avehicle_humvee_001 -o textures
+```
+
+Exports one texture as PNG (all six faces for cube maps; `--mip N` for smaller levels).
 
 Format details: [docs/formats/dsk.md](docs/formats/dsk.md). Related Battlefront tools and docs: [docs/RESOURCES.md](docs/RESOURCES.md).
 
