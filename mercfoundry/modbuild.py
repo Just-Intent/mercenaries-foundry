@@ -19,6 +19,9 @@ Project layout (every part optional):
     encounters/<layer>.json  a new world layer: objects copied from existing
                           ones, encounters, point sets and squads (see
                           docs/ENCOUNTERS.md); load it from a script
+    missions/<map>_<faction><n>.json  a new contract: added to the
+                          faction's arc, its script listed in the map, a
+                          mission.ini section (supply the script and layer)
     textures/<name>.png   replaces the texture <name>, or adds it if it's new
     models/<name>.obj|.glb|.gltf  an edited export from the `model` command
     animations/*.glb|.gltf   clips replace the game animations with the same
@@ -124,7 +127,7 @@ class _Data:
 def new_project(folder, name=None):
     folder = Path(folder)
     name = name or folder.resolve().name
-    for sub in ("text", "scripts", "objects", "encounters", "textures", "models", "layout", "animations",
+    for sub in ("text", "scripts", "objects", "encounters", "missions", "textures", "models", "layout", "animations",
                 "animtables", "terrain"):
         (folder / sub).mkdir(parents=True, exist_ok=True)
     meta = folder / "mod.json"
@@ -272,17 +275,88 @@ def _apply_encounters(data, folder, result):
         return next(c for c in layers[layer]["chunks"]
                     if c.get("tag") == "inst" and c.get("template", "").lower() == name.lower())
 
+    lists = {}
+
+    def source_loads(name):
+        layer = find.search(archives, name=name)
+        layer = next(h["layer"] for h in layer if (h.get("name") or "").lower() == name.lower())
+        if layer not in lists:
+            hit = [(a, r) for a, r in data.records(name_hash("list")) if r.key == name_hash(layer)]
+            lists[layer] = encounters.parse_list(data.current(*hit[0]).decode("latin-1")) if hit else {}
+        return lists[layer]
+
     for f in files:
         layer = f.stem
         if name_hash(layer) in existing:
             raise ValueError(f"encounters/{f.name}: the game already has a layer named {layer!r}")
         doc = json.loads(f.read_text(encoding="utf-8"))
-        records = encounters.build(layer, doc, find_source)
+        records = encounters.build(layer, doc, find_source, source_loads)
         for kind, body in records.items():
             data.new("assets.dsk", name_hash(layer), kind, body)
         n = len(encounters.member_names(doc))
         result.changes.append(f"layer {layer}: {n} objects, {len(doc.get('encounters', []))} encounters "
                               f"(load it from a script with Utility_ReadLevelFile('{layer}'))")
+
+
+def _apply_missions(data, folder, result):
+    """missions/<map>_<faction><n>.json: a new contract in a faction's arc."""
+    from . import missions
+    files = sorted((folder / "missions").glob("*.json")) if (folder / "missions").is_dir() else []
+    for f in files:
+        asset_id = f.stem.lower()
+        map_, faction, number = missions.parse_id(asset_id)
+        doc = json.loads(f.read_text(encoding="utf-8"))
+        hit = [(a, r) for a, r in data.records(SCRIPT) if r.key == name_hash("util_misc")]
+        if not hit:
+            raise ValueError("the game data has no util_misc script (needed for mission arcs)")
+        for a, r in hit:
+            old = script.decode(data.current(a, r))
+            text = missions.add_to_arc(old.source, faction, map_, number, doc.get("after"))
+            data.set(a, r, script.encode(script.with_source(old, text)))
+        lists = [(a, r) for a, r in data.records(name_hash("list")) if r.key == name_hash(map_)]
+        if not lists:
+            raise ValueError(f"the game data has no {map_} load list")
+        for a, r in lists:
+            text_list = missions.add_to_list(data.current(a, r).decode("latin-1"), "script", asset_id)
+            data.set(a, r, text_list.encode("latin-1"))
+        path = "DATAxbox/mission.ini"
+        ini = data.files[path].decode("latin-1") if path in data.files else \
+            (data.dir / "mission.ini").read_bytes().decode("latin-1")
+        ini, section = missions.add_to_mission_ini(ini, asset_id, doc.get("ini"))
+        data.files[path] = ini.encode("latin-1")
+        known = {r.key for _, r in data.records(SCRIPT)} | {k for k, kind, _ in data.added() if kind == SCRIPT}
+        if name_hash(asset_id) not in known:
+            result.warnings.append(f"missions/{f.name}: no script {asset_id} (add scripts/{asset_id}.lua)")
+        if not (folder / "encounters" / f"{asset_id}.json").exists():
+            result.warnings.append(f"missions/{f.name}: no layer {asset_id} (mission_GenericInit loads it; "
+                                   f"add encounters/{asset_id}.json)")
+        arc = missions.arc(text, faction, map_)
+        result.changes.append(f"mission {asset_id}: [{section}] in mission.ini, script listed in {map_}, "
+                              f"{faction} {map_} arc now {arc} "
+                              f"(start it with DebugSkipToMission('{faction}', {number}))")
+
+
+def _check_new_scripts(data, result):
+    """The game only runs scripts that a load list names under [script]."""
+    from . import encounters
+    new = {k: None for k, kind, _ in data.added() if kind == SCRIPT}
+    if not new:
+        return
+    listed = set()
+    for a, r in data.records(name_hash("list")):
+        for n in encounters.parse_list(data.current(a, r).decode("latin-1")).get("script", []):
+            listed.add(name_hash(n))
+    for recs in data.add.values():
+        for key, kind, body in recs:
+            if kind == name_hash("list"):
+                for n in encounters.parse_list(body.decode("latin-1")).get("script", []):
+                    listed.add(name_hash(n))
+    for archive, recs in data.add.items():
+        for key, kind, body in recs:
+            if kind == SCRIPT and key not in listed:
+                name = script.decode(body).name
+                result.warnings.append(f"scripts/{name}.lua is new but no load list names it under [script], so "
+                                       f"the game won't find it (missions/ lists mission scripts in their map)")
 
 
 def _material_warnings(rules):
@@ -636,6 +710,8 @@ def build(project, data_dir, out_dir) -> Result:
     _apply_scripts(data, project, result)
     _apply_objects(data, project, result)
     _apply_encounters(data, project, result)
+    _apply_missions(data, project, result)
+    _check_new_scripts(data, result)
     _apply_textures(data, project, result)
     _apply_models(data, project, result)
     _apply_layout(data, project, result)

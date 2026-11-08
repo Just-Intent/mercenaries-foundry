@@ -1,6 +1,6 @@
-# Layers and encounters
+# Layers, encounters and missions
 
-How missions put soldiers and vehicles into the world, and how a mod adds its own. Established from retail data and scripts. Tested in game (2026-11-08).
+How missions put soldiers and vehicles into the world, and how a mod adds its own layers and contract missions. Established from retail data and scripts. Tested in game (2026-11-08).
 
 ## How the game does it
 
@@ -63,5 +63,51 @@ end
 ```
 
 Tested in game (2026-11-08): the layer above (three NK soldiers copied from the roadblock runner) loaded from the opening mission's script, and the soldiers appeared and attacked.
+
+## New missions
+
+How a contract runs, all in the game's scripts:
+
+1. **The arc.** Each faction has an ordered list of missions per map, in `util_GetMissionArcTable()` in the `util_misc` script. Allies on `sw` is `{ 1, 3, 4, 5, 6, 8 }`. `current_<faction>_mission` (scribble memory) holds the position in that list.
+2. **Launch.** `global`'s `LoadMission(map, faction, position)` turns the position into an asset ID (`sw_allies3`) and runs the script of that name.
+3. **Script list.** The game only runs scripts that a loaded list names under `[script]`. Each map's own list (`sw`, `nw`) names its mission scripts.
+4. **Start-up.** The mission script's `ScriptInit()` calls `mission_GenericInit()`. That reads the mission's `mission.ini` section (fee, title and description string keys) and loads the layer named after the mission.
+5. **End.** The script finishes with `mission_MissionComplete()` or `mission_MissionFailure()`. Optional hooks such as `custom_InitialNotifications`, `post_InitialNotifications` and `pre_MissionComplete` change the standard flow.
+
+A mod mission is three files named after its asset ID, `<map>_<faction><number>`:
+
+- `missions/sw_allies9.json`: `{"after": 8, "ini": {"ContractFee": 50000}}`. The build:
+  - adds 9 to the allies `sw` arc, after mission 8 (at the end without `after`);
+  - lists `sw_allies9` under `[script]` in the `sw` list;
+  - adds `[SW_Allies9]` and its `MissionName` to `mission.ini` (written into the mod as `DATAxbox/mission.ini`), copied from the faction's first mission on the map, with `ini` applied.
+- `scripts/sw_allies9.lua`: the mission script. A minimal one:
+
+  ```lua
+  function ScriptInit()
+  Utility_LoadUtilityScript('mission')
+  Utility_LoadUtilityScript('mission_objective')
+  Utility_LoadUtilityScript('util_misc')
+  mission_GenericInit()
+  Event_ActorHitPointsLessThan('TargetDown', 'b', 'FoundryM9Nk01', 1)
+  end
+  function custom_InitialNotifications()   -- skips the standard opening mail
+  Ui_MessageBoxPrint('[yellow]Defeat the soldier north of the HQ', 0)
+  end
+  function TargetDown() mission_MissionComplete() end
+  ```
+
+- `encounters/sw_allies9.json`: the mission's layer. Copied objects bring their own layer's model, texture and animation loads, so soldiers from any mission work (`"copy_loads": false` turns that off).
+
+The build warns about any new script that no list names: the game silently ignores those.
+
+To try a mission without playing up to it, run this in Foundry Console's Lua box. It works from anywhere, including Skip Intro, and reloads the `sw` map at the faction's HQ with the contract accepted:
+
+```lua
+Utility_WriteStringToScribbleMemory('SkipTo_Map','sw') Utility_WriteStringToScribbleMemory('SkipTo_Faction','allies') Utility_WriteNumberToScribbleMemory('SkipTo_MissionNumber',9) Utility_WriteStringToScribbleMemory('skipto_via_cheating','true') Utility_EraseValueFromScribbleMemory('mission_accepted') Utility_ResetToBaseLayerOnly('sw')
+```
+
+This is what `global`'s `DebugSkipToMission` does, plus the map switch. Use a throwaway session.
+
+Tested in game (2026-11-08): `sw_allies9`, three NK soldiers copied from a mission-6 template placed north of the allies HQ, started from the skip line above with its message and soldiers.
 
 Not yet decoded: path animation events (`EVNT`), how traffic zones pick encounters (`Traffic_SetZoneEncounter`), and the first `INFO` word of point sets (always 1).

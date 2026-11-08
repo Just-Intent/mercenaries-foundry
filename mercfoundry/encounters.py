@@ -114,9 +114,29 @@ def sources(doc):
     return sorted(set(out + [o["from"] for o in doc.get("objects", [])]), key=str.lower)
 
 
-def build(layer, doc, find_source):
+LAYER_KINDS = ("world", "encounter", "path", "lineregion", "region")
+
+
+def parse_list(text):
+    """{section: [names]} from a load list ("[model]" ... "load name")."""
+    out, section = {}, None
+    for line in text.splitlines():
+        s = line.strip()
+        if s.startswith("[") and s.endswith("]"):
+            section = s[1:-1]
+            out.setdefault(section, [])
+        elif section and s.lower().startswith("load "):
+            out[section].append(s[5:].strip())
+    return out
+
+
+def build(layer, doc, find_source, source_loads=None):
     """{kind: record bytes} for a new layer.  find_source(name) returns the
-    world-JSON inst chunk of an existing object."""
+    world-JSON inst chunk of an existing object; source_loads(name), when
+    given, the asset loads ({section: [names]}) of that object's own layer,
+    which are copied into the new layer's list (unless "copy_loads": false)
+    so the copies' models, textures and animations are loaded wherever the
+    layer is used."""
     names = member_names(doc)
     dup = sorted({n for n in names if names.count(n) > 1})
     if dup:
@@ -172,8 +192,16 @@ def build(layer, doc, find_source):
                 "tree": [{"tag": "ucfb", "children": [_path_node(n, s) for n, s in doc["paths"].items()]}]}
         out[PATH] = aidata.from_json(pdoc)
         sections["path"] = [layer]
-    for kind, names_ in (doc.get("loads") or {}).items():
-        sections.setdefault(kind, []).extend(names_)
+    extra = []
+    if source_loads is not None and doc.get("copy_loads", True):
+        for name in sources(doc):
+            for kind, names_ in source_loads(name).items():
+                if kind.lower() not in LAYER_KINDS:
+                    extra.append((kind, names_))
+    extra += list((doc.get("loads") or {}).items())
+    for kind, names_ in extra:
+        have = sections.setdefault(kind, [])
+        have += [n for n in names_ if n.lower() not in {h.lower() for h in have}]
     text = "".join(f"\n[{kind}]\n\n" + "".join(f"load {n}\n" for n in sections[kind]) for kind in sorted(sections))
     out[LIST] = text.encode("latin-1")
     return out
