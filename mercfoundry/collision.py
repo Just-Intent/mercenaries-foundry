@@ -94,6 +94,53 @@ def parse(cshp: bytes) -> list:
     return shapes
 
 
+def set_shape_flags(cshp_body: bytes, flags: dict) -> bytes:
+    """A cshp with some shapes' flags changed ({shape index: flags}): the sinf
+    word and every box's copy of it (retail boxes always repeat the shape's
+    value). Other bytes are kept."""
+    items, pad_last = ucfb.split(cshp_body)
+    out, index = [], 0
+    for tag, body in items:
+        if tag == b"shap":
+            if index in flags:
+                parts, shap_pad = ucfb.split(body)
+                new_parts = []
+                for t, b in parts:
+                    if t == b"sinf":
+                        b = struct.pack("<I", flags[index]) + b[4:]
+                    elif t == b"CBOX":
+                        b = bytearray(b)
+                        for i in range(len(b) // BOX_SIZE):
+                            struct.pack_into("<I", b, i * BOX_SIZE, flags[index])
+                        b = bytes(b)
+                    new_parts.append((t, b))
+                body = ucfb.pack_children(new_parts, shap_pad)
+            index += 1
+        out.append((tag, body))
+    missing = [i for i in flags if i >= index]
+    if missing:
+        raise ValueError(f"the model has {index} collision shapes; no shape {missing[0]}")
+    return ucfb.pack_children(out, pad_last)
+
+
+def set_segments_flags(segments_record: bytes, flags: dict) -> bytes:
+    """A segments record with collision shape flags changed (see set_shape_flags)."""
+    from . import script
+    cseg, cseg_pad = ucfb.unwrap(segments_record, b"CSEG", with_pad=True)
+    size, _ = struct.unpack_from("<II", cseg)
+    tree = script.decompress(cseg[8:], size)
+    roots, tree_pad = ucfb.split(tree)
+    items, pad_last = ucfb.split(roots[0][1])
+    if not any(t == b"cshp" for t, _ in items):
+        raise ValueError("the model has no collision")
+    items = [(t, set_shape_flags(b, flags) if t == b"cshp" else b) for t, b in items]
+    new_tree = ucfb.pack_children([(b"ucfb", ucfb.pack_children(items, pad_last))], tree_pad)
+    if new_tree == tree:
+        return segments_record
+    packed = script.compress(new_tree)
+    return ucfb.wrap(b"CSEG", struct.pack("<II", len(new_tree), len(packed)) + packed, cseg_pad)
+
+
 def box_triangles(box):
     c = box.corners()
     quads = [(0, 1, 3, 2), (4, 6, 7, 5), (0, 4, 5, 1), (2, 3, 7, 6), (0, 2, 6, 4), (1, 5, 7, 3)]

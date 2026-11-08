@@ -28,6 +28,17 @@ class CollisionTests(unittest.TestCase):
         self.assertEqual(min(c[1] for c in corners), -1)
         self.assertEqual(max(c[2] for c in corners), 3)
 
+    def test_set_shape_flags(self):
+        body = list(ucfb.iter_chunks(cshp([box_shape(7, "a", [((0, 0, 0), (1, 1, 1))] * 2),
+                                           box_shape(9, "b", [((0, 0, 0), (1, 1, 1))])], 3)))[0][1]
+        new = collision.set_shape_flags(body, {0: 2})
+        a, b = collision.parse(new)
+        self.assertEqual((a.material, [x.material for x in a.boxes]), (2, [2, 2]))
+        self.assertEqual((b.material, b.boxes[0].material), (9, 9))
+        self.assertEqual(len(new), len(body))
+        with self.assertRaises(ValueError):
+            collision.set_shape_flags(body, {5: 1})
+
     def test_rotated_box_rows(self):
         # Rows are the box's axes: a box turned 90 degrees about Y swaps X and Z extents.
         b = collision.Box(1, (2, 1, 1), (0, 0, -1, 0, 1, 0, 1, 0, 0), (0, 0, 0))

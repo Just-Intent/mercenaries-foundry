@@ -38,8 +38,8 @@ Ai_Command(actor, 'Patrol', '<path>', '1.0', 'loPri') and an object's own
 "path" property follow.  JNCT links join this path's point (default: its
 last) to another path's point (default: its first), as most retail links do.
 
-"from" names any world object (a template_* or a placed one) whose model and
-properties are copied; "set" changes properties.  Copy objects whose assets
+"from" names any world object (a template_* or a placed one), or "model:<name>"
+for the first unnamed object with that model, whose model and properties are copied; "set" changes properties.  Copy objects whose assets
 are already loaded where the layer is used, or add their models to "loads".
 """
 

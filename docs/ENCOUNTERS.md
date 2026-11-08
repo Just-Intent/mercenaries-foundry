@@ -28,7 +28,7 @@ How missions put soldiers and vehicles into the world, and how a mod adds its ow
 }
 ```
 
-- **Copying objects:** `from` names any existing world object, a `template_*` or a placed one. Its model and all its properties are copied. Members get `encounter`, `squad` and `path: none`, and `set` overrides any property. Names must be new and unique.
+- **Copying objects:** `from` names any existing world object, a `template_*` or a placed one. For unnamed scenery, `"from": "model:global_sandbagsstraight"` copies the first placed object with that model, preferring the layer's own map. Its model and all its properties are copied. Members get `encounter`, `squad` and `path: none`, and `set` overrides any property. Names must be new and unique.
 - **Assets:** copy objects whose assets are already loaded where the layer is used, for example soldiers from a layer the same mission loads. Otherwise list what to load under `"loads": {"model": [...], "texture": [...], "animation": [...]}`.
 - **Positions:** world x, y, z in metres (Foundry Console's Position line). Yaw is in degrees. Lower z is north.
 - **Map:** `map` is the layer's terrain tag (`SWN` for the opening map).

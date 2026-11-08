@@ -54,7 +54,8 @@
 - In-game console (port patch `0006`): `set_text_input` / `read_text_input` let a plugin take the keyboard without leaving fullscreen. Foundry Console's F8 panel takes Lua lines (`` ` `` to type, Enter runs, Esc stops). Tested in game.
 - Skeleton edits from glTF: moved joints take their new positions (rotations kept) with pieces, collision and child joints following; new empties under a joint become joints. Tested in game: a raised Humvee turret and a new driver seat joint.
 - Function map, third pass: 626 named functions (33 new, from the terrain, surface, material, vehicle and mission work: the level config reader, terrain loading and lookups, impact effects, physics bodies, vehicle handling getters and setters) and 24 globals (the loaded terrain's buffers and sizes, terrain effect tables). All are hookable.
-- 193 tests pass.
+- Collision flag bits: traced in the code (shape lookup by flags, static collision layers, moving objects' physics and hull bodies) and tested in game on a row of box-collision props: bit 1 is solid to people and vehicles, bit 2 is hit by bullets. Mods set flags with `models/<name>.collision.json`. Mod layers can copy unnamed scenery by model (`"from": "model:<name>"`).
+- 194 tests pass.
 
 ## Fixed from retail data
 - Text values aren't NUL-terminated. The decoder had assumed they were and found no strings.
@@ -99,7 +100,7 @@
 - Python 3.12.10 alongside 3.13. The port's `.venv` has its pinned CMake 3.31.6, Ninja 1.13.0 and Capstone 5.0.6.
 
 ## Next steps
-1. Collision flags: what each `sinf` bit means; collision for edited existing pieces; whether retail pines stop bullets.
+1. Collision flags: what bit 4 does; why bullets pass through pines and some rock meshes; collision for edited existing pieces.
 2. Missions: regions (boxes) in mod layers, radio voice-overs, traffic zones, path animation events (`EVNT`).
 3. Moving skin bones on characters (animations override bone translations); what animation-table priorities and flags do.
 4. Function map: name more engine functions (actors, AI commands, missions); find the path from a vehicle actor to its drivetrain, so plugins can change handling live with the setters.

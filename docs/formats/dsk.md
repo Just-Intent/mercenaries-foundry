@@ -306,7 +306,19 @@ A split recurses into its left child, then continues with the right. Checks: a P
 
 How vehicles use the shapes: each has a material-6 triangle hull mesh plus a material-9 shape that is a convex hull (Humvee, cars, trucks) or boxes (tanks, helicopters). In-game, boxes added as triangles to the Humvee's hull mesh did not collide with the world; boxes in a box shape do. So on import a convex hull is replaced by a box shape of slices approximating it (for the Humvee: 10 boxes, 98.9% of its volume, at most 11.5 cm proud), and new boxes join it. Tested in-game (2026-11-08): a plate on the Humvee's front stopped it at walls, a `nocoll` plate on the back passed through, and the Humvee drove and crashed without sinking.
 
-The `sinf` "material" word is not a surface material. Its values are bit combinations: 1, 2, 4 and 8 in combination (3, 5, 6, 7, 9, 11, 15), plus 16, 32 and 64. Every box in a shape repeats the shape's value (28,294 of 28,294). These look like collision flags: the Humvee's hull mesh is 6 and its physics shape 9, and only boxes in the 9 shape stopped it at walls, so bit 1 or 8 makes a shape collide with the world. Props are mostly 7 (bullets hit a concrete post with 7) and ruins 15. Gates and fences also use 32 and 64. What each bit means is still open.
+The `sinf` "material" word is not a surface material: it is the shape's collision flags. Every box in a shape repeats the value (28,294 of 28,294). The shape loader (`0x12EBA0`, called by `0x12F560`) keeps it as word 0 of a 12-byte shape entry (flags, joint, geometry). `0x12BB40` picks a shape by flags: an exact match first, else one sharing a wanted bit and none of an excluded mask, optionally on a given joint.
+
+| Bit | Meaning | Evidence |
+|---|---|---|
+| 1 | Solid to people and vehicles | Static objects (`0x12FCC0`) put a shape with bit 1 in collision layer 1, or layer 2 with bit 8 too, and a shape without bit 1 in layer 7. In game, box shapes with 1, 3, 5 and 7 stopped walking and the Humvee; 2, 4 and 6 didn't. |
+| 2 | Bullets hit it | In game, bullets sparked on box shapes with 2, 3, 6 and 7 but passed through 1, 4 and 5. |
+| 4 | Not seen to change anything in game | Set with 2 on vehicle hull meshes (6). |
+| 8 | Main physics body of a moving object | Vehicles and physics props (`0x1319F0`) take the bit-8 shape as the body that collides with the world. Without one they fall back to a bit-1 shape and treat it as 9. The Humvee's 9 shape stopped it at walls; its 6 shape didn't. |
+| 2, 4, 32 | Second body of a moving object | `0x1319F0` builds it from a shape with any of these bits and neither 1 nor 8, e.g. the Humvee's hull (6). |
+| 16 | No static body | `0x12FCC0` skips these shapes. |
+| 64 | Separate special body | `0x12FCC0` skips these shapes; `0x25C40` builds one bit-64 shape as its own body (`0x12F0B0`) with flags 0x40. |
+
+A body's flags (shape flags plus engine bits, at +0xB0) are what world queries (`0x12D160` via `0x12E440`/`0x12E690`/`0x12E8C0`) test against their mask. Explosions query with mask 2. Retail values: props mostly 7, ruins 15, vehicles 6 plus 9, gates 2 plus 33, fences 41 plus 2. Mods set a model's flags with `models/<name>.collision.json` (`{"shapes": {"0": 7}}`; shape numbers as in `model --collision`). The test used box shapes; mesh shapes (rocks) gave mixed bullet results, and pines (flags 7) let bullets through, so trees or meshes may be handled differently.
 
 What an object counts as when hit is its `obstaclematerialtype` property. `0x12B5F0` maps the name hash to a number: `none` (or anything else) 0, `wood` 1, `solidmetal` 2, `sheetmetal` 3, `vehicle` 4, `dirt` 5, `concrete` 6, `rock` 7, `plant` 8, `snow` 9, `glass` 10, `rubber` 11, `chain` 12. The retail data uses wood, concrete, none, chain, sheetmetal, solidmetal and vehicle; `plant` and `rubber` were recovered from their hashes. Objects store it (`0x3962B`; 6 when absent) and copy it to their physics body at +0xB4 (`0x392E0`, from the body setup `0x393F0` that also reads `physicsFriction` and `physicsRestitution`). A body without the property gets 3 (`0x132542`). The impact code (`0xB5460`, table `0xB58F0`) turns it into an effect: 2, 3 and 12 metal; 5 dirt; 6 road; 9 snow; everything else (wood, rock, plant, glass, rubber, vehicle, none) rock. `0x131230` also special-cases 2, 3 and 6 when bodies touch (not yet traced). Mods set it with an object rule (`"set": {"obstaclematerialtype": "solidmetal"}`); the build warns about names the game doesn't know. Tested in-game (2026-11-08): a concrete gate and guard post set to `solidmetal` sparked like metal when shot. Bullets passed through pine trees while they were set to `solidmetal` (they have one box shape, flags 7); whether retail `wood` pines stop bullets wasn't checked.
 
@@ -339,7 +351,7 @@ Surface types aren't in the archive. Each level's `ConfigFile` (from `levels.ini
 
 - The grid-index tail (`0x00FF8040`): no retail archive uses it.
 - Models: the extra 8 bytes of 28-byte vertices, and `MTRL` words 0, 2 and 4–6.
-- Collision: what each `sinf` flag bit means (see above); what the walker's carried value (`60`-`68`) is for; 2 of 176 convex hulls have a point up to 13 cm outside one plane.
+- Collision: what flag bit 4 does, and why bullets pass through pines and some rock meshes (see above); what the walker's carried value (`60`-`68`) is for; 2 of 176 convex hulls have a point up to 13 cm outside one plane.
 - Terrain: the meaning of `INFO`'s 3 trailing floats and of `ROTN`. What animation-table `PRIO` and `FLGS` values mean. Whether DXT2 textures are premultiplied (we treat them as DXT3).
 - `INFO` byte 0 in scripts; `TNAM` and `INFO` in world layers.
 - What `num_components` counts exactly.

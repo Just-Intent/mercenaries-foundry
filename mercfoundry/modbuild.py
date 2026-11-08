@@ -24,6 +24,8 @@ Project layout (every part optional):
                           mission.ini section (supply the script and layer)
     textures/<name>.png   replaces the texture <name>, or adds it if it's new
     models/<name>.obj|.glb|.gltf  an edited export from the `model` command
+    models/<name>.collision.json  {"shapes": {"0": 7}}: sets collision
+                          shape flags (see docs/formats/dsk.md)
     animations/*.glb|.gltf   clips replace the game animations with the same
                           names (export them with `model --glb --anim`)
     animations/new.json   {"new clip": "template clip"}: clips with these
@@ -287,23 +289,40 @@ def _apply_encounters(data, folder, result):
     existing = {r.key for _, r in data.records(WORLD)}
     layers = {}
 
+    current_map = [""]
+
+    def source_hit(name):
+        """The object to copy: a named one, or for "model:<model>" the first
+        unnamed scenery object with that model (preferring this map's layers)."""
+        if name.lower().startswith("model:"):
+            m = name[6:]
+            hits = [h for h in find.search(archives, model=m)
+                    if (h.get("model") or "").lower() == m.lower() and not h.get("name")]
+            hits.sort(key=lambda h: not h["layer"].lower().startswith(current_map[0]))
+            if not hits:
+                raise ValueError(f"no world object with model {m!r} to copy")
+        else:
+            hits = [h for h in find.search(archives, name=name)
+                    if (h.get("name") or "").lower() == name.lower()]
+            if not hits:
+                raise ValueError(f"no world object named {name!r} to copy")
+        return hits[0]
+
     def find_source(name):
-        hits = find.search(archives, name=name)
-        hits = [h for h in hits if (h.get("name") or "").lower() == name.lower()]
-        if not hits:
-            raise ValueError(f"no world object named {name!r} to copy")
-        layer = hits[0]["layer"]
+        hit = source_hit(name)
+        layer = hit["layer"]
         if layer not in layers:
             a, r = next((a, r) for a, r in data.records(WORLD) if r.key == name_hash(layer))
             layers[layer] = world.to_json(data.current(a, r))
-        return next(c for c in layers[layer]["chunks"]
-                    if c.get("tag") == "inst" and c.get("template", "").lower() == name.lower())
+        insts = [c for c in layers[layer]["chunks"] if c.get("tag") == "inst"]
+        if name.lower().startswith("model:"):
+            return insts[hit["index"]]
+        return next(c for c in insts if c.get("template", "").lower() == name.lower())
 
     lists = {}
 
     def source_loads(name):
-        layer = find.search(archives, name=name)
-        layer = next(h["layer"] for h in layer if (h.get("name") or "").lower() == name.lower())
+        layer = source_hit(name)["layer"]
         if layer not in lists:
             hit = [(a, r) for a, r in data.records(name_hash("list")) if r.key == name_hash(layer)]
             lists[layer] = encounters.parse_list(data.current(*hit[0]).decode("latin-1")) if hit else {}
@@ -314,6 +333,7 @@ def _apply_encounters(data, folder, result):
         if name_hash(layer) in existing:
             raise ValueError(f"encounters/{f.name}: the game already has a layer named {layer!r}")
         doc = json.loads(f.read_text(encoding="utf-8"))
+        current_map[0] = (doc.get("map") or "").lower()
         records = encounters.build(layer, doc, find_source, source_loads)
         for kind, body in records.items():
             data.new("assets.dsk", name_hash(layer), kind, body)
@@ -787,6 +807,23 @@ def _apply_models(data, folder, result):
         result.warnings += [f"model {name}: {w}" for w in report.warnings]
 
 
+def _apply_collision_flags(data, folder, result):
+    """models/<name>.collision.json: {"shapes": {"0": 7, "1": 9}} sets collision
+    shape flags (see docs/formats/dsk.md); runs after models/ edits."""
+    from . import collision
+    for f in sorted((folder / "models").glob("*.collision.json")) if (folder / "models").is_dir() else []:
+        name = f.name[:-len(".collision.json")]
+        doc = json.loads(f.read_text(encoding="utf-8"))
+        flags = {int(k): int(v) for k, v in (doc.get("shapes") or {}).items()}
+        hits = [(a, r) for a, r in data.records(model.SEGMENTS) if r.key == name_hash(name)]
+        if not hits:
+            raise ValueError(f"models/{f.name}: no model named {name!r}")
+        for a, r in hits:
+            data.set(a, r, collision.set_segments_flags(data.current(a, r), flags))
+        result.changes.append(f"model {name}: collision flags " +
+                              ", ".join(f"shape {k} = {v}" for k, v in sorted(flags.items())))
+
+
 def build(project, data_dir, out_dir) -> Result:
     project, out = Path(project), Path(out_dir)
     if not project.is_dir():
@@ -801,6 +838,7 @@ def build(project, data_dir, out_dir) -> Result:
     _check_new_scripts(data, result)
     _apply_textures(data, project, result)
     _apply_models(data, project, result)
+    _apply_collision_flags(data, project, result)
     _apply_layout(data, project, result)
     _apply_animations(data, project, result)
     _apply_animtables(data, project, result)
