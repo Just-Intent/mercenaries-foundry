@@ -1,0 +1,212 @@
+From a1f33bbc3376a539cb349cce8ca3fd8f136dc40e Mon Sep 17 00:00:00 2001
+From: Just-Intent <346791974+Just-Intent@users.noreply.github.com>
+Date: Sun, 8 Nov 2026 10:12:43 -0600
+Subject: [PATCH] Plugin guest calls: call_guest, guest_scratch, in_gameplay
+
+Let plugins call the game's own functions from on_update (the input
+checkpoint on the guest thread): arguments on a private stack below the
+guest's, ECX for methods, EAX/EDX and the x87 top returned, the whole
+guest CPU context saved and restored. Appended to MercPluginHost so v1
+plugins are unaffected; plugins check MERC_PLUGIN_HOST_HAS.
+---
+ ports/mercenaries/sdk/mercenaries_plugin.h | 26 ++++++++++
+ ports/mercenaries/src/plugin_host.cpp      | 30 ++++++++++--
+ ports/mercenaries/src/plugin_host.h        |  6 +++
+ ports/mercenaries/src/recomp_manual.c      | 56 ++++++++++++++++++++++
+ 4 files changed, 115 insertions(+), 3 deletions(-)
+
+diff --git a/ports/mercenaries/sdk/mercenaries_plugin.h b/ports/mercenaries/sdk/mercenaries_plugin.h
+index c0d8eae..c83cc98 100644
+--- a/ports/mercenaries/sdk/mercenaries_plugin.h
++++ b/ports/mercenaries/sdk/mercenaries_plugin.h
+@@ -14,6 +14,21 @@ typedef struct MercPluginUpdate {
+     uint64_t update_index;
+     double wall_delta_seconds; /* Real time, NOT simulation time; advances while paused. */
+ } MercPluginUpdate;
++/* A call into the game's own (recompiled) code. Fill address, this_ptr,
++ * arg_count and args; the host fills the results. Arguments are 32-bit
++ * stack words in source order (left to right); pass a float by its bit
++ * pattern and a pointer as a guest address. */
++#define MERC_GUEST_CALL_MAX_ARGS 16u
++typedef struct MercGuestCall {
++    uint32_t struct_size;
++    uint32_t address;      /* guest virtual address of the function */
++    uint32_t this_ptr;     /* ECX for __thiscall methods; 0 otherwise */
++    uint32_t arg_count;    /* at most MERC_GUEST_CALL_MAX_ARGS */
++    uint32_t args[MERC_GUEST_CALL_MAX_ARGS];
++    uint32_t eax, edx;     /* out: integer/pointer result */
++    double st0;            /* out: x87 top after the call (float/double results) */
++    char error[96];        /* out: why the call was refused */
++} MercGuestCall;
+ typedef struct MercPluginHost {
+     uint32_t struct_size, api_version;
+     void *context;
+@@ -23,7 +38,18 @@ typedef struct MercPluginHost {
+     void (MERC_PLUGIN_CALL *log)(void *, const char *);
+     int (MERC_PLUGIN_CALL *read_guest)(void *, uint32_t, void *, size_t);
+     int (MERC_PLUGIN_CALL *write_guest)(void *, uint32_t, const void *, size_t);
++    /* Guest calls (appended; check MERC_PLUGIN_HOST_HAS before use). Valid only
++     * inside on_update, on the game's own thread, at its input checkpoint. */
++    int (MERC_PLUGIN_CALL *call_guest)(void *, MercGuestCall *);
++    /* Guest memory free for this update (strings, matrices passed to calls):
++     * returns 1 and an address/size, or 0. Contents don't survive the update. */
++    int (MERC_PLUGIN_CALL *guest_scratch)(void *, uint32_t *, uint32_t *);
++    /* 1 while normal gameplay is running (not menus or loading). */
++    int (MERC_PLUGIN_CALL *in_gameplay)(void *);
+ } MercPluginHost;
++/* True when the host provides a field (older hosts have a smaller struct). */
++#define MERC_PLUGIN_HOST_HAS(host, field) \
++    ((host)->struct_size >= offsetof(MercPluginHost, field) + sizeof((host)->field) && (host)->field)
+ typedef struct MercPlugin {
+     uint32_t struct_size, api_version;
+     void *userdata;
+diff --git a/ports/mercenaries/src/plugin_host.cpp b/ports/mercenaries/src/plugin_host.cpp
+index 046bc85..9e4dc73 100644
+--- a/ports/mercenaries/src/plugin_host.cpp
++++ b/ports/mercenaries/src/plugin_host.cpp
+@@ -73,6 +73,29 @@ int MERC_PLUGIN_CALL write_guest(void *ctx,uint32_t address,const void *data,siz
+     if(!data||!span(ctx,address,bytes,true)||!accessible(const_cast<void*>(data),bytes,false))return 0;
+     memmove(static_cast<unsigned char*>(guest)+address,data,bytes);return 1;
+ }
++bool updating=false;
++void call_error(MercGuestCall *call,const char *message) {
++    snprintf(call->error,sizeof(call->error),"%s",message);
++}
++int MERC_PLUGIN_CALL call_guest(void *ctx,MercGuestCall *call) {
++    if(!call||!accessible(call,sizeof(MercGuestCall),true))return 0;
++    if(call->struct_size<sizeof(MercGuestCall)){call_error(call,"MercGuestCall.struct_size is too small.");return 0;}
++    call->error[0]=0;call->eax=call->edx=0;call->st0=0;
++    if(GetCurrentThreadId()!=owner||!calling||ctx!=calling||!updating) {
++        call_error(call,"Guest calls are only allowed inside on_update.");return 0;
++    }
++    if(call->arg_count>MERC_GUEST_CALL_MAX_ARGS){call_error(call,"Too many arguments.");return 0;}
++    return recomp_plugin_call_guest(call->address,call->this_ptr,call->args,call->arg_count,
++        &call->eax,&call->edx,&call->st0,call->error,sizeof(call->error));
++}
++int MERC_PLUGIN_CALL guest_scratch(void *ctx,uint32_t *address,uint32_t *bytes) {
++    if(GetCurrentThreadId()!=owner||!calling||ctx!=calling||!updating||!address||!bytes)return 0;
++    return recomp_plugin_guest_scratch(address,bytes);
++}
++int MERC_PLUGIN_CALL in_gameplay(void *ctx) {
++    if(GetCurrentThreadId()!=owner||!calling||ctx!=calling)return 0;
++    return recomp_plugin_in_gameplay();
++}
+ void shutdown_all() {
+     for(auto it=loaded.rbegin();it!=loaded.rend();++it) {
+         auto &p=**it;
+@@ -121,7 +144,8 @@ extern "C" int merc_plugins_initialize(void *base,size_t bytes) {
+             p->directory=utf8(m.root.wstring());p->settings=utf8((fs::path(settings)/wide(m.id)).wstring());
+             fs::create_directories(fs::path(wide(p->settings)));
+             p->host={sizeof(MercPluginHost),MERCENARIES_PLUGIN_API_VERSION,p.get(),
+-                p->manifest.id.c_str(),p->directory.c_str(),p->settings.c_str(),plugin_log,read_guest,write_guest};
++                p->manifest.id.c_str(),p->directory.c_str(),p->settings.c_str(),plugin_log,read_guest,write_guest,
++                call_guest,guest_scratch,in_gameplay};
+             p->callbacks.struct_size=sizeof(MercPlugin);p->callbacks.api_version=MERCENARIES_PLUGIN_API_VERSION;
+             auto library=m.root/wide(m.library);
+             // Own directory for dependencies; no working-directory or PATH search.
+@@ -163,9 +187,9 @@ extern "C" int merc_plugins_update(void) {
+             p.active=false;stopped.insert(p.manifest.id);record(p.manifest.name+": updates stopped because a required plugin failed.");continue;
+         }
+         if(!p.callbacks.on_update)continue;
+-        calling=&p;int ok=0;
++        calling=&p;int ok=0;updating=true;
+         try {ok=p.callbacks.on_update(p.callbacks.userdata,&update);}catch(...) {ok=0;}
+-        calling=nullptr;
++        updating=false;calling=nullptr;
+         if(!ok) {
+             p.active=false;stopped.insert(p.manifest.id);
+             if(!failure.empty())failure+="\n";
+diff --git a/ports/mercenaries/src/plugin_host.h b/ports/mercenaries/src/plugin_host.h
+index 8828c60..b250bbb 100644
+--- a/ports/mercenaries/src/plugin_host.h
++++ b/ports/mercenaries/src/plugin_host.h
+@@ -1,6 +1,7 @@
+ #ifndef MERCENARIES_PLUGIN_HOST_H
+ #define MERCENARIES_PLUGIN_HOST_H
+ #include <stddef.h>
++#include <stdint.h>
+ #ifdef __cplusplus
+ extern "C" {
+ #endif
+@@ -9,6 +10,11 @@ int merc_plugins_update(void);
+ void merc_plugins_shutdown(void);
+ const char *merc_plugins_error(void);
+ void merc_plugins_show_error(void);
++/* Guest calls for plugins (recomp_manual.c). */
++int recomp_plugin_call_guest(uint32_t address, uint32_t this_ptr, const uint32_t *args, unsigned count,
++                             uint32_t *eax, uint32_t *edx, double *st0, char *error, size_t error_size);
++int recomp_plugin_guest_scratch(uint32_t *address, uint32_t *bytes);
++int recomp_plugin_in_gameplay(void);
+ #ifdef __cplusplus
+ }
+ #endif
+diff --git a/ports/mercenaries/src/recomp_manual.c b/ports/mercenaries/src/recomp_manual.c
+index cba015a..5703400 100644
+--- a/ports/mercenaries/src/recomp_manual.c
++++ b/ports/mercenaries/src/recomp_manual.c
+@@ -2814,6 +2814,62 @@ static void recomp_guest_push_u32(uint32_t value)
+     *(volatile uint32_t *)guest_ptr(g_esp) = value;
+ }
+ 
++/* ----- Plugin guest calls (Mercenaries Foundry) -----
++ * Plugins call retail functions from on_update, which runs at the input
++ * checkpoint on the guest's own thread (the same place the dev tools call
++ * them). The call gets its own stack 16 KB below the guest's; the space
++ * between is the plugin's scratch memory for that update. The whole guest
++ * CPU context is saved and restored around each call. */
++static int recomp_plugin_stack_ok(void)
++{
++    return g_xbox_mem_offset && g_esp >= 0x20000u && g_esp < 0x4000000u;
++}
++
++int recomp_plugin_guest_scratch(uint32_t *address, uint32_t *bytes)
++{
++    if (!recomp_plugin_stack_ok())
++        return 0;
++    *address = (g_esp - 0x3F00u) & ~15u;
++    *bytes = 0x3000u;
++    return 1;
++}
++
++int recomp_plugin_in_gameplay(void)
++{
++    return g_xbox_mem_offset && guest_u32(0x413F6Cu) == 0x4249D707u &&
++           guest_u32(0x413F68u) == 0xC2CBD863u;
++}
++
++int recomp_plugin_call_guest(uint32_t address, uint32_t this_ptr, const uint32_t *args, unsigned count,
++                             uint32_t *eax, uint32_t *edx, double *st0, char *error, size_t error_size)
++{
++    recomp_saved_guest_cpu_context saved;
++    recomp_func_t fn;
++    unsigned i;
++
++    if (!recomp_plugin_stack_ok()) {
++        snprintf(error, error_size, "The game's stack is not ready.");
++        return 0;
++    }
++    fn = recomp_lookup(address);
++    if (!fn) {
++        snprintf(error, error_size, "No game function at 0x%08X.", address);
++        return 0;
++    }
++    recomp_save_guest_cpu_context(&saved);
++    g_esp = (saved.esp - 0x4000u) & ~15u;
++    for (i = count; i > 0; --i)
++        recomp_guest_push_u32(args[i - 1]);
++    recomp_guest_push_u32(0u); /* return address */
++    g_ecx = this_ptr;
++    fn();
++    *eax = g_eax;
++    *edx = g_edx;
++    *st0 = g_fp_stack[g_fp_top & 7u];
++    recomp_restore_guest_cpu_context(&saved);
++    return 1;
++}
++
+ static void recomp_guard_cancel_owner(uint32_t owner);
+ static void recomp_guard_request(uint32_t vm, uint32_t handle);
+ static void recomp_guard_callback(uint32_t vm);
+-- 
+2.55.0.windows.5
+

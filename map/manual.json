@@ -4,7 +4,7 @@
    "address": "0x001F29F0",
    "name": "HashName",
    "signature": "uint32 __cdecl HashName(const char *name)",
-   "evidence": "retail code: FNV-1a (0x811C9DC5, 0x01000193) with each byte OR 0x20; the same hash names archive records",
+   "evidence": "retail code: FNV-1a (0x811C9DC5, 0x01000193) with each byte OR 0x20; the same hash names archive records; live test (2026-11-08, plugin guest call): HashName(\"player0\") returned 0x660E4490",
    "notes": "Returns 0 for NULL or empty strings."
   },
   {
@@ -125,7 +125,7 @@
    "address": "0x00174480",
    "name": "Spawner_SpawnTemplate",
    "signature": "SpawnResult * __thiscall Spawner_SpawnTemplate(Spawner *this, uint32 templateHash, const char *name, const Matrix *transform, int, int)",
-   "evidence": "retail code: Lua_Mission_Spawn(template, name, x, y, z, yaw) calls it on the object at 0x4031B0 with HashName(template), name, a transform built from the position and yaw (degrees x 0.0174533), 0, 0; the new actor is at result + 8",
+   "evidence": "retail code: Lua_Mission_Spawn(template, name, x, y, z, yaw) calls it on the object at 0x4031B0 with HashName(template), name, a transform built from the position and yaw (degrees x 0.0174533), 0, 0; the new actor is at result + 8; live test (2026-11-08, plugin guest call): on g_Spawner with HashName(\"template_allies_humvee_empty\"), a name, a row-major transform (right, up, forward, position) and 0, 0: a Humvee appeared at the position",
    "notes": "Spawns any object template by name hash: the core of spawning by name."
   },
   {
@@ -236,7 +236,7 @@
    "address": "0x00237066",
    "name": "atof",
    "signature": "double __cdecl atof(const char *s)",
-   "evidence": "inferred: takes a property's text and leaves a float on the FPU stack (Lua_Actor_IsAlive reads hit points through it); in the C runtime library range"
+   "evidence": "inferred: takes a property's text and leaves a float on the FPU stack (Lua_Actor_IsAlive reads hit points through it); in the C runtime library range; live test (2026-11-08, plugin guest call): atof(\"12.5\") left 12.5 on the x87 stack"
   },
   {
    "address": "0x0008C7E0",
@@ -248,13 +248,13 @@
    "address": "0x0008ECE0",
    "name": "World_FindActorByName",
    "signature": "Actor * __cdecl World_FindActorByName(uint32 nameHash)",
-   "evidence": "retail code: World_FindObjectByName(hash), then the object's vtable +0x34; Lua_Player_GetMoney calls it with 0x660E4490 = HashName(\"player0\")"
+   "evidence": "retail code: World_FindObjectByName(hash), then the object's vtable +0x34; Lua_Player_GetMoney calls it with 0x660E4490 = HashName(\"player0\"); live test (2026-11-08, plugin guest call): found the player from HashName(\"player0\")"
   },
   {
    "address": "0x00057F50",
    "name": "Player_SetMoney",
    "signature": "void __thiscall Player_SetMoney(Player *this, float money)",
-   "evidence": "retail code: plays sound 0x19C0F913 when the amount rises, clamps below at 0, stores the float at +0xAC4; Lua_Player_AdjustMoney calls it with the old amount plus its argument"
+   "evidence": "retail code: plays sound 0x19C0F913 when the amount rises, clamps below at 0, stores the float at +0xAC4; Lua_Player_AdjustMoney calls it with the old amount plus its argument; live test (2026-11-08, plugin guest call): called as __thiscall on the player with a float; money read back at +0xAC4 rose by 1,000,000 and the HUD showed it"
   },
   {
    "address": "0x0015FEC0",
@@ -279,6 +279,13 @@
    "name": "Vector3_GetYaw",
    "signature": "float __thiscall Vector3_GetYaw(const float *this)",
    "evidence": "inferred: from x and z of the vector it calls 0x1FA000 and negates the result; used by Actor_SetYaw, Location_GetYaw and the spawn-point commands"
+  },
+  {
+   "address": "0x001ED340",
+   "name": "Template_GetProperty",
+   "signature": "uint32 __cdecl Template_GetProperty(uint32 templateHash, uint32 propertyHash)",
+   "evidence": "live test (2026-11-08, plugin guest call): with property HashName(\"name\") it returned 0 for templates not loaded and non-zero for template_allies_humvee_empty, which then spawned; the port's dev spawner uses it the same way and to read \"geometryfile\"",
+   "notes": "Use it to check a template is loaded before Spawner_SpawnTemplate."
   }
  ],
  "globals": [
@@ -365,7 +372,7 @@
      "offset": "0xB0",
      "name": "transform",
      "type": "Matrix",
-     "notes": "Actor_EnableCollision re-places the physics body from it"
+     "notes": "Actor_EnableCollision re-places the physics body from it; row-major 4x4: right, up, forward, position (live test: the player's read back as unit axes and a map position)"
     },
     {
      "offset": "0x6C1",
@@ -376,7 +383,7 @@
      "offset": "0xAC4",
      "name": "money",
      "type": "float",
-     "notes": "on the player; Lua_Player_GetMoney reads it, Player_SetMoney writes it"
+     "notes": "on the player; Lua_Player_GetMoney reads it, Player_SetMoney writes it (live test)"
     }
    ]
   },

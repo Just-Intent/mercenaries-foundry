@@ -30,3 +30,6 @@ dev-mods/
 # funcmap exports (regenerate any time)
 /ghidra_names.json
 /mercfoundry_functions.h
+
+# plugin build output
+/plugins/out/
