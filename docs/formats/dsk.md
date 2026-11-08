@@ -166,7 +166,38 @@ Joint quaternions are unit length only to about 1e-3; we normalise them before u
 
 `model-import` matches OBJ objects to pieces by the `p<index>` prefix. A matched object replaces that piece's vertices and triangles and keeps its joint, material, level-of-detail mask and vertex format; positions are converted back into the joint's space. Bone indices (skinned pieces), the 8 extra bytes of 28-byte vertices and vertex alpha are copied from the nearest original vertex; colours come from the OBJ when present. Objects without a `p<index>` name become new pieces: joint from the name (`new_<joint>`, otherwise the root), texture from the material name, drawn at every level of detail. Exported pieces missing from the OBJ are removed. Triangles are written as one strip joined by repeated indices, each triangle at an even position so its winding is kept.
 
-If new geometry falls outside the quantization box, the box grows and every piece is re-quantized (untouched vertices move by less than one grid step, e.g. 0.05 mm on a Humvee). Bounds only ever grow. Collision (`cshp`) is not updated. Importing an unedited export returns the original records: checked across every model, level of detail and damage state. Tested in-game (2026-11-08): a stretched gun barrel and an added crate showed on the player's Humvee.
+If new geometry falls outside the quantization box, the box grows and every piece is re-quantized (untouched vertices move by less than one grid step, e.g. 0.05 mm on a Humvee). Bounds only ever grow. Collision for new pieces is generated as boxes (see Collision); collision of edited existing pieces is not changed. Importing an unedited export returns the original records: checked across every model, level of detail and damage state. Tested in-game (2026-11-08): a stretched gun barrel and an added crate showed on the player's Humvee.
+
+#### Collision: `cshp`
+
+1,997 models carry one `cshp` chunk in their segments tree (after the `segm` pieces). All of them decode. Established from retail data.
+
+```
+cshp
+  cinf   u16 shapes, u16 box shapes of kind 2 or 3, u16 shapes with a CMOP tree,
+         u16 total boxes, u16 x3 mesh counts, then (only with trees or meshes)
+         [u16 mesh vertices, u16 mesh triangles,] u32 tree size   (14, 18 or 22 bytes)
+  shap   (one per shape)
+    sinf u32 material, u32 joint name hash, u32 kind | count << 16, u32 1 = mesh / 0 = boxes
+    CBOX count x 64 bytes: u32 material, float[3] half size, float[9] rotation (rows are the
+         box axes), float[3] centre, in the joint's space
+    CMSH u32 flags, u16 vertices, u16 triangles, u16, float[3] per vertex, u16[3] per triangle
+         (149 shapes; 176 use another layout, not decoded)
+    CMOP optional precomputed tree, probably OPCODE-style ("Collision Model OPcode"); not decoded
+```
+
+| Check | Result |
+|---|---|
+| `cinf` shape count | matches in 1,997 of 1,997 |
+| `cinf` kind-2/3 and tree counts | match in all |
+| Box count in `sinf` | matches `CBOX` length in all 2,071 box shapes |
+| Box material = `sinf` material | 28,294 of 28,294 boxes |
+| Box rotations orthonormal | 28,294 of 28,294 |
+| `sinf` joint is one of the model's joints | 2,392 of 2,392 shapes |
+
+Kinds: boxes 0 and 2 (plain), 3 (with `CMOP`); meshes 4 (with `CMOP`), 5 (plain). Box shapes of kind 0 appear on their own and alongside every other kind. Material codes (3, 6, 7, 9, 11, 15, ...) are not yet mapped to surfaces. Vehicles typically use a simplified hull mesh; buildings use rotated boxes.
+
+`model --collision` writes a preview of a model's collision. On import, each new piece gets a plain box (kind 0, no tree) fitted around it in its joint's space, using the model's most common collision material; `cinf` shape and box counts are updated. Objects whose name contains `nocoll` get no collision; `model-import --no-collision` turns it off entirely. Collision of edited existing pieces is not changed.
 
 ### Textures: `Texture` → `tex_`
 
@@ -189,7 +220,8 @@ Re-encoding (`extract --decode --textures`, then `pack`): an edited PNG is encod
 ## Open questions
 
 - The grid-index tail (`0x00FF8040`): no retail archive uses it.
-- Models: the extra 8 bytes of 28-byte vertices, `MTRL` words 0, 2 and 4–6, `cshp` collision, and how skinned bone indices map to joints.
+- Models: the extra 8 bytes of 28-byte vertices, `MTRL` words 0, 2 and 4–6, and how skinned bone indices map to joints.
+- Collision: `CMOP` trees, the second `CMSH` layout, and what the material codes mean.
 - Animation, terrain, path and region formats. Whether DXT2 textures are premultiplied (we treat them as DXT3).
 - `INFO` byte 0 in scripts; `TNAM` and `INFO` in world layers.
 - What `num_components` counts exactly.

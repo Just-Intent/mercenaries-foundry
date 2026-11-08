@@ -334,5 +334,9 @@ def write_modified(archive: Archive, out_path, replace: dict = None, add=()) -> 
             dst.write(data)
         if archive.tail_size:
             _copy_range(src, dst, archive.data_end, archive.tail_size)
-    os.replace(tmp, out)
+    try:
+        os.replace(tmp, out)
+    except PermissionError as err:
+        tmp.unlink(missing_ok=True)
+        raise PermissionError(f"can't replace {out}: it's in use (close the game first)") from err
     return len(rows) + len(add)

@@ -16,7 +16,8 @@
 - Texture re-import: PNG reader, DXT1/DXT3 and swizzled A8R8G8B8 encoders with mip generation, hooked into `extract --decode --textures` and `pack`. Re-encoding the game's own textures is lossless for 97% of a sample. `rebuild` now tracks decoded-file hashes and restores originals when an edit is undone.
 - Model import: `model-import` brings an edited OBJ back (edit, add and remove pieces; positions re-quantized; strips rebuilt; geometry recompressed). Unedited exports re-import byte-identical for every model, level of detail and damage state.
 - `mod new` / `mod build`: a mod is a folder of text JSON, Lua scripts, object property rules, PNG textures and OBJ models; one command builds the changed archives, verifies them and writes a summary. Rebuilding the day's hand-made test mod from a project gave byte-identical assets, locked and streamed archives (english.dsk identical in content). Example project in `examples/faster-humvee`.
-- 81 tests pass.
+- Collision: `cshp` decoded for every model (2,067 box shapes with 28,294 boxes; 149 of 325 mesh shapes). New pieces from `model-import` get box collision (opt out per object with `nocoll` in the name). `model --collision` previews collision.
+- 87 tests pass.
 
 ## Fixed from retail data
 - Text values aren't NUL-terminated. The decoder had assumed they were and found no strings.
@@ -44,7 +45,7 @@
 - Python 3.12.10 alongside 3.13. The port's `.venv` has its pinned CMake 3.31.6, Ninja 1.13.0 and Capstone 5.0.6.
 
 ## Next steps
-1. Collision: decode `cshp` so imported geometry can be solid.
+1. In-game test of generated collision (Humvee fins: left solid, right `nocoll`).
 2. Models: glTF export with the skeleton and skin weights.
 3. Decode the remaining world-layer chunks (`TNAM`, `INFO`) and `path`/`region`/`encounter` records.
 

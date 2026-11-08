@@ -66,6 +66,21 @@ class Model:
     lod_distances: tuple
     joints: list
     pieces: list = field(default_factory=list)
+    collision: list = field(default_factory=list)   # collision.Shape
+
+    def collision_triangles(self):
+        """Collision boxes and meshes as model-space triangles."""
+        from . import collision as coll
+        xforms = joint_transforms(self.joints)
+        out = []
+        for shape in self.collision:
+            rot, pos = xforms.get(shape.joint, ((0.0, 0.0, 0.0, 1.0), (0.0, 0.0, 0.0)))
+            place = lambda p: tuple(a + b for a, b in zip(_qrot(rot, p), pos))
+            for box in shape.boxes:
+                out += [tuple(place(v) for v in t) for t in coll.box_triangles(box)]
+            for a, b, c in shape.triangles:
+                out.append((place(shape.vertices[a]), place(shape.vertices[b]), place(shape.vertices[c])))
+        return out
 
     def lods(self):
         """Level numbers used by any piece (0 = most detailed)."""
@@ -192,6 +207,10 @@ def decode(model_record: bytes, segments_record: bytes) -> Model:
     if not roots or roots[0][0] != b"ucfb":
         raise ValueError("segments record does not hold a ucfb tree")
     for tag, body in ucfb.iter_chunks(roots[0][1]):
+        if tag == b"cshp":
+            from . import collision as coll
+            model.collision += coll.parse(body)
+            continue
         if tag != b"segm":
             continue
         seg = dict(ucfb.iter_chunks(body))
@@ -281,7 +300,7 @@ def to_obj(model: Model, lod=0, texture_name=None, damaged=False) -> tuple:
 
 
 def preview_png(model: Model, lod=0, size=512, yaw=35.0, pitch=-25.0, damaged=False,
-                textures=None) -> bytes:
+                textures=None, collision=False) -> bytes:
     """Shaded preview image, no dependencies.
 
     textures: optional {texture hash: (width, height, RGBA bytes)}; pieces
@@ -289,7 +308,9 @@ def preview_png(model: Model, lod=0, size=512, yaw=35.0, pitch=-25.0, damaged=Fa
     from . import png
     textures = textures or {}
     tris = []
-    for p in model.at_lod(lod, damaged):
+    if collision:
+        tris = [(list(t), [(0, 0)] * 3, None) for t in model.collision_triangles()]
+    for p in ([] if collision else model.at_lod(lod, damaged)):
         tex = textures.get(p.texture)
         for t in p.triangles:
             tris.append(([p.positions[i] for i in t], [p.uvs[i] for i in t], tex))

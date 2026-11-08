@@ -218,6 +218,7 @@ class Report:
     removed: list = field(default_factory=list)
     unchanged: int = 0
     box_grew: bool = False
+    collision_boxes: int = 0
     warnings: list = field(default_factory=list)
 
     @property
@@ -226,7 +227,8 @@ class Report:
 
 
 def import_obj(model_record: bytes, segments_record: bytes, obj_text: str,
-               lod: int = 0, damaged: bool = False, material_hash=None) -> tuple:
+               lod: int = 0, damaged: bool = False, material_hash=None,
+               collision: bool = True) -> tuple:
     """Return (model record, segments record, Report).
 
     material_hash: maps an OBJ material name to a texture hash; default
@@ -446,6 +448,32 @@ def import_obj(model_record: bytes, segments_record: bytes, obj_text: str,
     for body in reversed(added_bodies):
         new_items.insert(last_segm + 1, (b"segm", body))
 
+    # --- collision: one box around each new piece, in its joint's space
+    if collision and any(plan[0] is None for plan in plans):
+        from . import collision as coll
+        by_joint = {}
+        for k, plan in enumerate(plans):
+            if plan[0] is not None or not new_locals[k]:
+                continue
+            if "nocoll" in plan[1].name.lower():
+                continue  # decoration: no collision wanted
+            pts = new_locals[k]
+            lo3 = [min(q[a] for q in pts) for a in range(3)]
+            hi3 = [max(q[a] for q in pts) for a in range(3)]
+            centre3 = tuple((lo3[a] + hi3[a]) / 2 for a in range(3))
+            half3 = tuple(max((hi3[a] - lo3[a]) / 2, 0.01) for a in range(3))
+            by_joint.setdefault(plan[2], []).append((centre3, half3))
+        materials = [sh.material for sh in model.collision]
+        material = max(set(materials), key=materials.count) if materials else 7
+        where = next((k for k, (t, _) in enumerate(new_items) if t == b"cshp"), None)
+        for joint, boxes in by_joint.items():
+            if where is None:
+                new_items.append((b"cshp", coll.new_block(material, joint, boxes)))
+                where = len(new_items) - 1
+            else:
+                new_items[where] = (b"cshp", coll.add_box_shape(new_items[where][1], material, joint, boxes))
+            report.collision_boxes += len(boxes)
+
     new_tree = ucfb.pack_children([(b"ucfb", ucfb.pack_children(new_items, seg_pad_last))], tree_pad)
     packed = script.compress(new_tree)
     new_segments = ucfb.wrap(b"CSEG", struct.pack("<II", len(new_tree), len(packed)) + packed, cseg_pad)
@@ -466,7 +494,8 @@ def import_obj(model_record: bytes, segments_record: bytes, obj_text: str,
     return new_model, new_segments, report
 
 
-def import_into_folders(folders, name, obj_text, lod=0, damaged=False, material_hash=None):
+def import_into_folders(folders, name, obj_text, lod=0, damaged=False, material_hash=None,
+                        collision=True):
     """Apply an edited OBJ to every extracted folder that holds the model.
 
     Each folder is an `extract` output (records/ + manifest.json). The first
@@ -488,7 +517,7 @@ def import_into_folders(folders, name, obj_text, lod=0, damaged=False, material_
         originals = {k: folder / "originals" / f.name for k, f in files.items()}
         base = {k: (originals[k] if originals[k].exists() else f).read_bytes() for k, f in files.items()}
         new_model, new_segments, report = import_obj(base[mdl.MODEL], base[mdl.SEGMENTS], obj_text,
-                                                     lod, damaged, material_hash)
+                                                     lod, damaged, material_hash, collision)
         for k, data in ((mdl.MODEL, new_model), (mdl.SEGMENTS, new_segments)):
             if data != base[k] and not originals[k].exists():
                 originals[k].parent.mkdir(exist_ok=True)

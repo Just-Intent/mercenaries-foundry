@@ -193,6 +193,14 @@ def cmd_model(args):
         png = out / f"{m.name}_preview.png"
         png.write_bytes(model.preview_png(m, lod, damaged=args.damaged, textures=textures))
         print(f"wrote {png}")
+    if args.collision:
+        boxes = sum(len(s.boxes) for s in m.collision)
+        meshes = sum(1 for s in m.collision if s.is_mesh)
+        print(f"collision: {len(m.collision)} shapes ({boxes} boxes, {meshes} meshes)")
+        if m.collision:
+            png = out / f"{m.name}_collision.png"
+            png.write_bytes(model.preview_png(m, lod, collision=True))
+            print(f"wrote {png}")
 
 
 def cmd_model_import(args):
@@ -200,7 +208,8 @@ def cmd_model_import(args):
     text = Path(args.obj).read_text(encoding="utf-8", errors="replace")
     try:
         # Material names are texture names; their hash is the texture key.
-        results = model_import.import_into_folders(args.folders, args.name, text, args.lod, args.damaged)
+        results = model_import.import_into_folders(args.folders, args.name, text, args.lod, args.damaged,
+                                                   collision=not args.no_collision)
     except KeyError as err:
         sys.exit(str(err.args[0]))
     for folder, r in results:
@@ -208,7 +217,8 @@ def cmd_model_import(args):
             print(f"{folder}: no changes ({r.unchanged} pieces unchanged)")
             continue
         print(f"{folder}: {len(r.edited)} pieces edited, {len(r.added)} added, {len(r.removed)} removed, "
-              f"{r.unchanged} unchanged" + ("; quantization box grew" if r.box_grew else ""))
+              f"{r.unchanged} unchanged" + ("; quantization box grew" if r.box_grew else "")
+              + (f"; {r.collision_boxes} collision boxes added" if r.collision_boxes else ""))
         for w in r.warnings:
             print(f"  warning: {w}")
     print("now run pack on each folder")
@@ -224,7 +234,7 @@ def cmd_mod_build(args):
     from . import modbuild, verify as verifier
     try:
         result = modbuild.build(args.folder, args.data, args.out)
-    except (ValueError, KeyError, FileNotFoundError) as err:
+    except (ValueError, KeyError, FileNotFoundError, PermissionError) as err:
         sys.exit(f"build failed: {err}")
     for line in result.changes:
         print(f"  {line}")
@@ -315,6 +325,7 @@ def main(argv=None):
     s.add_argument("--damaged", action="store_true", help="show damaged body panels instead of pristine")
     s.add_argument("--preview", action="store_true", help="also write a shaded PNG preview")
     s.add_argument("--no-textures", action="store_true", help="don't export textures")
+    s.add_argument("--collision", action="store_true", help="also write a preview of the collision shapes")
     names_opt(s)
     s = add("model-import", cmd_model_import, "bring an edited OBJ back into extracted folders")
     s.add_argument("obj", help="edited OBJ (from the model command, edited in Blender etc.)")
@@ -322,6 +333,7 @@ def main(argv=None):
     s.add_argument("folders", nargs="+", help="extract output folders, e.g. work/locked work/streamed")
     s.add_argument("--lod", type=int, default=0, help="level of detail the OBJ was exported at")
     s.add_argument("--damaged", action="store_true", help="the OBJ was exported with --damaged")
+    s.add_argument("--no-collision", action="store_true", help="don't give new pieces collision boxes")
     s = add("mod", None, "create or build a mod project")
     modsub = s.add_subparsers(dest="mod_cmd", required=True)
     m = modsub.add_parser("new", help="create an empty mod project")
