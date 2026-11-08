@@ -36,6 +36,7 @@
 - So the game accepts our compressor's output, rebuilt world layers with edited properties, and added text entries (with `num_components` raised).
 - 2026-11-08, texture: `allies_avehicle_humvee_001` tinted red, re-encoded by our DXT3 encoder with a full mip chain and packed into `streamed.dsk`, showed on the player's Humvee in the opening mission.
 - 2026-11-08, collision: two fins added to the Humvee, one with a generated box and one marked `nocoll`. Kind-0 boxes had no effect on the vehicle; switched to kind 2, the solid fin collided and the `nocoll` fin didn't.
+- 2026-11-08, boundaries: `allies0_killbox` (layer `swn`) replaced with a 60 m square around the start via a mod `layout/` file. With Skip Intro, leaving the square triggered the restricted-area response: fighter jets killed the player with missiles. Edited boundaries are live in-game.
 - 2026-11-08, object positions: in layer `swn`, `loc_drop_start` raised 5 m and a nearby rock copied four times in a ring 9 m around it (each turned differently). With Skip Intro, the Humvee spawned higher and the four new rocks appeared (it landed on one; the rock is wider than the spacing). Moving and adding objects both work.
 - 2026-11-08, collision appended into an existing shape: `allies_veh_cargotruck` (one plain box shape, 8 boxes) got two fins; the solid fin's box went into its existing shape (9 boxes, still one shape). Spawned with the F9 developer menu: the solid fin collided, the `nocoll` fin didn't, and the truck drove and crashed without sinking.
 - 2026-11-08, Humvee sinking, isolated by elimination: not Skip Intro (plain Humvee fine), not the 4x engine, not the enlarged bounds; the generated collision boxes. A single 5 cm box still caused it, so the cause is a third collision shape, not size or mass. No game vehicle has more than two. Importer now appends to an existing plain box shape, adds a shape only below two, and otherwise skips with a warning.
@@ -55,8 +56,7 @@
 ## Next steps
 1. Collision for models whose shapes can't take more boxes (e.g. the Humvee): needs CMOP trees or the second CMSH layout decoded.
 2. glTF import (edit skeleton-aware models in Blender), and animation decoding.
-3. In-game test of an edited boundary (`allies0_killbox` shrunk to 60 m, in `mods/Foundry Killbox Test`).
-4. Path junctions (`JNCT`) and squad types: where `SQD_` names like `nk_hum_ppl_tunnel01` are defined.
+3. Path junctions (`JNCT`) and squad types: where `SQD_` names like `nk_hum_ppl_tunnel01` are defined.
 
 ## Notes
 - Several port tools mention replacing "source-informed" versions. Use only versions re-derived from retail (see PROVENANCE.md).

@@ -221,7 +221,7 @@ Every layer has one record of each kind (most are empty). All 3,329 decode and r
 | `encounter` (646) | `enc_`: `NAME`, `INFO` (`u16`, `u16`, `u16` point sets, `u16` squads), `PSTS` > `PSET` (`NAME` like `A`, `INFO` with point count at byte 4, `PNTS`), `SQDS` > `SQD_` (`NAME` = squad type, `INFO`, `FPNT`/`PPNT` = point-set names) | Squads and the point sets they spawn or form up at. |
 | `list` | plain text | The layer's asset load list (`[animation]`, `load ...`). |
 
-Paths, boundaries and spawn points plotted over the objects follow roads, town grids and compounds. Our readable form recomputes the count fields that matched their contents in the original, so adding points or properties keeps them right; a path's points and rotations must stay equal in number.
+Paths, boundaries and spawn points plotted over the objects follow roads, town grids and compounds. Tested in-game (2026-11-08): shrinking `allies0_killbox` made the game's restricted-area response (air strikes) trigger at the new edge. Our readable form recomputes the count fields that matched their contents in the original, so adding points or properties keeps them right; a path's points and rotations must stay equal in number.
 
 ### Textures: `Texture` → `tex_`
 
