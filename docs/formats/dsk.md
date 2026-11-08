@@ -1,6 +1,6 @@
 # `.dsk` archive format
 
-Status: **checked against the retail US Xbox files** (`assets.dsk`, `english.dsk`, `locked.dsk`, `streamed.dsk`; Redump MD5 `e340535feeadc0ff9b71506c625bf288`). All four rebuild byte-for-byte with our tools, and every script, world layer and text table rebuilds exactly from its decoded form. Everything here comes from the retail game's data and from the open (MIT) Mercenaries Recompiled tools, never from leaked source.
+Status: **checked against the retail US Xbox files, and edits tested in-game** (`assets.dsk`, `english.dsk`, `locked.dsk`, `streamed.dsk`; Redump MD5 `e340535feeadc0ff9b71506c625bf288`). All four rebuild byte-for-byte with our tools, and every script, world layer and text table rebuilds exactly from its decoded form. Everything here comes from the retail game's data and from the open (MIT) Mercenaries Recompiled tools, never from leaked source.
 
 The game's data lives in `DATAxbox/`:
 
@@ -98,7 +98,7 @@ Used by scripts and model geometry. Established by Mercenaries Recompiled from r
 
 Copies may overlap the bytes they produce. The stream must end exactly at the declared size.
 
-Not yet tested in-game: whether the game accepts scripts compressed by our encoder (they decode correctly with the retail algorithm), and whether stored (uncompressed) scripts load.
+Tested in-game (2026-11-08): the game loads scripts compressed by our encoder. Whether stored (uncompressed) scripts load is untested.
 
 ### `world` → `wrld`
 
@@ -121,7 +121,7 @@ BIN_     INFO "name\0<name>\0",  DATA = UTF-16LE text, not NUL-terminated
 
 All 6,905 retail values are text. Keys are dotted scope paths, e.g. `veh.allies_apache` = "YAH-56 Gunship". The top-level groups include `vo` (3,070 subtitle lines), `interface`, `mail`, `tutorial`, `challenge` and `veh`.
 
-`num_components` is close to the number of entries but runs 1–7 higher, so it may be a size hint. When we add entries we raise it by the number added; whether the game needs it exact is untested.
+`num_components` is close to the number of entries but runs 1–7 higher, so it may be a size hint. When we add entries we raise it by the number added; an added key resolved and displayed in-game (2026-11-08).
 
 ### `segments` → `CSEG`
 

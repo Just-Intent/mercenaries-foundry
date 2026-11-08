@@ -17,11 +17,14 @@
 - Text values aren't NUL-terminated. The decoder had assumed they were and found no strings.
 - Text header layout is now known, so new strings can be added.
 
-## Blockers
-- In-game testing has started; scripts and world properties are still untested there.
-
-## In-game tests
+## In-game tests (all passed)
 - 2026-11-08, text: an `english.dsk` rebuilt by our tools, installed as `mods/Foundry Test/`, showed edited "PRESS START" and "NEW GAME" labels. The edited `veh.allies_apache` name isn't shown during play (the player spawns in it), so it's unconfirmed; it may appear in the shop.
+- 2026-11-08, script, object and added text, in the opening mission (`allies0`, after the C-17 briefing):
+  - A recompressed `allies0` script with two new functions ran: its message box text appeared on schedule.
+  - A newly added text key (`foundry.test.scriptmsg`) resolved and displayed.
+  - Raising `physicsenginetorque` from 850 to 3400 on `player_humvee` (in `swn_hq`) and the Humvee templates made the Humvee visibly faster.
+- So the game accepts our compressor's output, rebuilt world layers with edited properties, and added text entries (with `num_components` raised).
+- Lesson: a new game starts in `playable_intro` (C-17 briefing, then `allies0`), not the Ace of Clubs, which is Allied mission 4. Script tests belong there.
 
 ## Port build (2026-11-08)
 - Built Mercenaries Recompiled `f513ae4` from the disc image with `Build-From-Iso.ps1`: about 14,000 functions translated, then compiled with MSVC 19.44 (v143) and SDK 10.0.26100.0. Output: `external/Mercenaries-Recompiled/build/mercenaries/bin/Release/` (`Mercenaries Recompiled.exe` launcher, `mercenaries_recomp.exe` runtime, linker `.map`).
@@ -35,7 +38,7 @@
 ## Next steps
 1. Model decoder: vertex layout in `VBUF`, materials, skeleton; export to a standard format (glTF or OBJ).
 2. Texture decoder; check whether swbf-unmunge's Xbox texture code (MIT) applies.
-3. In-game tests: a recompressed script, an edited object property and an added string (edited strings confirmed).
+3. A `mod` command that builds a mod folder from a list of edits, so tests like these are one step.
 4. Decode the remaining world-layer chunks (`TNAM`, `INFO`) and `path`/`region`/`encounter` records.
 
 ## Notes
