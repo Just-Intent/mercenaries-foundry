@@ -1,11 +1,12 @@
 # Changes to Mercenaries Recompiled
 
-Mercenaries Foundry needs a few additions to the port's runtime. They live here as patches against the port (MIT; see its license) until they're upstreamed. Both were made against port commit `f513ae4` (v1.1.1).
+Mercenaries Foundry needs a few additions to the port's runtime. They live here as patches against the port (MIT; see its license) until they're upstreamed. All were made against port commit `f513ae4` (v1.1.1).
 
 | Patch | What it adds |
 |---|---|
 | `0001-Plugin-guest-calls-...patch` | Plugin guest calls: `call_guest`, `guest_scratch` and `in_gameplay` on `MercPluginHost`. |
 | `0002-Plugin-function-hooks.patch` | Plugin function hooks: `hook_guest`, and the runtime side of the hook wrappers. Also makes `read_guest`/`write_guest` fast enough for hooks on hot functions. |
+| `0003-Plugin-script-commands.patch` | Plugin script commands: `add_lua_command`, trampolines at reserved guest addresses, and registration on every script's Lua state. |
 
 See [docs/PLUGINS.md](../docs/PLUGINS.md) for the API.
 

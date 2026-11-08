@@ -11,13 +11,13 @@
    "address": "0x00112AD0",
    "name": "Lua_ArgString",
    "signature": "const char * __cdecl Lua_ArgString(lua_State *L, int n)",
-   "evidence": "retail code: lua_isstring then lua_tostring; on failure raises \"Could not read string.  Bad argument sent to Lua API function\" (0x2F00A8) and returns NULL"
+   "evidence": "retail code: lua_isstring then lua_tostring; on failure raises \"Could not read string.  Bad argument sent to Lua API function\" (0x2F00A8) and returns NULL; live test (2026-11-08, plugin script commands): returned the text argument of Foundry_Log"
   },
   {
    "address": "0x001129C0",
    "name": "Lua_ArgNumber",
    "signature": "float __cdecl Lua_ArgNumber(lua_State *L, int n)",
-   "evidence": "retail code: lua_isnumber then lua_tonumber; on failure raises \"Could not read Number.  Bad argument sent to Lua API function\" (0x2F0028) and returns 0"
+   "evidence": "retail code: lua_isnumber then lua_tonumber; on failure raises \"Could not read Number.  Bad argument sent to Lua API function\" (0x2F0028) and returns 0; live test (2026-11-08, plugin script commands): read 2 and 3 for Foundry_Add(2, 3), result in st0"
   },
   {
    "address": "0x00112990",
@@ -101,7 +101,7 @@
   {
    "address": "0x001DCF90",
    "name": "lua_pushnumber",
-   "evidence": "retail code: writes a double and type 3 (number) at the stack top and advances it by one 16-byte slot"
+   "evidence": "retail code: writes a double and type 3 (number) at the stack top and advances it by one 16-byte slot; live test (2026-11-08, plugin script commands): pushed (L, double as two words); the script received 5 and 500"
   },
   {
    "address": "0x001DC970",
@@ -286,6 +286,31 @@
    "signature": "uint32 __cdecl Template_GetProperty(uint32 templateHash, uint32 propertyHash)",
    "evidence": "live test (2026-11-08, plugin guest call): with property HashName(\"name\") it returned 0 for templates not loaded and non-zero for template_allies_humvee_empty, which then spawned; the port's dev spawner uses it the same way and to read \"geometryfile\"",
    "notes": "Use it to check a template is loaded before Spawner_SpawnTemplate."
+  },
+  {
+   "address": "0x00112830",
+   "name": "LuaScript_RegisterCommands",
+   "signature": "void __thiscall LuaScript_RegisterCommands(LuaScript *this)",
+   "evidence": "retail code: for every {name, function} in the Lua tables at 0x2ED308 and 0x2EDCA8 (the latter with an \"Actor_\" prefix) on the script's Lua state (this + 0x1C): lua_pushstring(L, name), lua_pushcclosure(L, fn, 0), lua_settable(L, -10001); live test (2026-11-08, plugin script commands): a host hook after it registered three plugin commands on allies0's Lua state with lua_pushstring, lua_pushcclosure and lua_settable(L, -10001); the script then called them",
+   "notes": "Runs for each script's Lua state; plugin commands are added after it (port patch 0003)."
+  },
+  {
+   "address": "0x001DD000",
+   "name": "lua_pushstring",
+   "signature": "void __cdecl lua_pushstring(lua_State *L, const char *s)",
+   "evidence": "retail code: LuaScript_RegisterCommands pushes each command name with it before the function (Lua 5.0 registration sequence); live test (2026-11-08, plugin script commands): used to register plugin command names"
+  },
+  {
+   "address": "0x001DD0D0",
+   "name": "lua_pushcclosure",
+   "signature": "void __cdecl lua_pushcclosure(lua_State *L, lua_CFunction fn, int n)",
+   "evidence": "retail code: LuaScript_RegisterCommands pushes each command's C function with (L, fn, 0); live test (2026-11-08, plugin script commands): used to register plugin command functions"
+  },
+  {
+   "address": "0x001DD380",
+   "name": "lua_settable",
+   "signature": "void __cdecl lua_settable(lua_State *L, int index)",
+   "evidence": "retail code: LuaScript_RegisterCommands stores each name/function pair with (L, -10001), Lua 5.0's LUA_GLOBALSINDEX; live test (2026-11-08, plugin script commands): used to register plugin commands as globals"
   }
  ],
  "globals": [
@@ -410,6 +435,23 @@
      "offset": "0x8C8",
      "name": "riderCount",
      "type": "int8"
+    }
+   ]
+  },
+  {
+   "name": "LuaScript",
+   "evidence": "retail code: LuaScript_RegisterCommands, LuaScript_BeginCommand",
+   "fields": [
+    {
+     "offset": "0x1C",
+     "name": "luaState",
+     "notes": "the script's lua_State"
+    },
+    {
+     "offset": "0x34",
+     "name": "traceFlag",
+     "type": "uint8",
+     "notes": "LuaScript_BeginCommand acts when it is 1"
     }
    ]
   }

@@ -1,10 +1,10 @@
-# Plugins that call the game
+# Plugins that call, hook and extend the game
 
-With the [port patches](../port/README.md), a native plugin for Mercenaries Recompiled can call the game's own functions and hook them, using the addresses and signatures in the [function map](FUNCTION_MAP.md). Tested in game (2026-11-08): a plugin gave the player money through `Player_SetMoney` and spawned a Humvee through `Spawner_SpawnTemplate`; another doubled every money gain (cash pickups included) by hooking `Player_SetMoney`, made `HashName` return its own value for one string, and logged the game's spawns.
+With the [port patches](../port/README.md), a native plugin for Mercenaries Recompiled can call the game's own functions and hook them, using the addresses and signatures in the [function map](FUNCTION_MAP.md). Tested in game (2026-11-08): a plugin gave the player money through `Player_SetMoney` and spawned a Humvee through `Spawner_SpawnTemplate`; another doubled every money gain (cash pickups included) by hooking `Player_SetMoney`, made `HashName` return its own value for one string, and logged the game's spawns; a third added script commands that the opening mission's script called (`Foundry_Add(2, 3)` returned 5).
 
 ## What the host adds
 
-Four functions appended to `MercPluginHost` (older plugins are unaffected; check with `MERC_PLUGIN_HOST_HAS(host, call_guest)`):
+Five functions appended to `MercPluginHost` (older plugins are unaffected; check with `MERC_PLUGIN_HOST_HAS(host, call_guest)`):
 
 | Function | Use |
 |---|---|
@@ -12,6 +12,7 @@ Four functions appended to `MercPluginHost` (older plugins are unaffected; check
 | `guest_scratch(ctx, &address, &bytes)` | 12 KB of game memory for this update: put strings, matrices and output structures there and pass their addresses. |
 | `in_gameplay(ctx)` | 1 while normal gameplay is running (not menus or loading). |
 | `hook_guest(ctx, address, before, after, userdata)` | Run `before` and/or `after` whenever the game calls a function (see Hooks). |
+| `add_lua_command(ctx, name, fn, userdata)` | Add a global script command (see Script commands). |
 
 Rules:
 - Calls only work inside `on_update`. That runs on the game's own thread at its input checkpoint, the same place the port's developer tools call the game.
@@ -74,6 +75,31 @@ host->hook_guest(host->context, MF_FN_Player_SetMoney, double_money, NULL, NULL)
 
 Hooks run only on the game's main thread (calls from other threads run the original untouched), never re-enter themselves, and may use `read_guest`, `write_guest`, `call_guest` and `log`. Each hooked call costs a callback, so keep hooks on very frequent functions (like `HashName`, called constantly while loading) small. An unhooked wrapper costs one check.
 
+## Script commands
+
+`add_lua_command(ctx, "Foundry_Add", fn, userdata)` adds a global command to every script loaded afterwards; call it from `MercenariesPlugin_Init`. Up to 64 commands in all; names are letters, digits and `_`. It needs the hook wrappers (`port-hooks`), because commands are registered by a hook on `LuaScript_RegisterCommands`.
+
+The command is `int fn(void *userdata, uint32_t L)`, where `L` is the script's guest `lua_State`. Read arguments and push results with `call_guest` on the game's own Lua functions, and return the number of results:
+
+| Map name | Use |
+|---|---|
+| `Lua_ArgNumber(L, n)` | number argument n (1-based), returned in `st0` |
+| `Lua_ArgString(L, n)` | string argument n, returned as a guest address in `eax` |
+| `Lua_ArgBool(L, n)`, `Lua_ArgActor(L, n)`, `Lua_ArgVector3(out, L, n)` | booleans, actors, three numbers |
+| `lua_pushnumber(L, double)` | push a number (the double is two argument words, low first) |
+| `Lua_PushBool(L, value)`, `Lua_PushActor(L, handle)`, `lua_pushstring(L, text)` | push other results |
+
+```c
+static int MERC_PLUGIN_CALL cmd_add(void *ud, uint32_t L) {
+    push_number(L, arg_number(L, 1) + arg_number(L, 2));   /* helpers around call_guest */
+    return 1;
+}
+/* in MercenariesPlugin_Init: */
+host->add_lua_command(host->context, "Foundry_Add", cmd_add, NULL);
+```
+
+In Lua: `local sum = Foundry_Add(2, 3)`. Commands run on the game's main thread and may use `call_guest`, `guest_scratch`, `read_guest`, `write_guest` and `log`. Don't raise Lua errors from them (no `luaL_error`); return nothing or nil instead. Check `if Foundry_Add then` in scripts that should also run without the plugin.
+
 ## Building one
 
-`plugins/build.cmd <plugin folder> [mods folder]` generates `mercfoundry_functions.h` from the map, compiles the plugin as an x64 DLL with Build Tools for Visual Studio 2022 and, given a mods folder, installs it with its `mod.ini`. Enable the plugin in the launcher's mod selector; it logs to `plugin-settings/plugins.log`. `plugins/foundry-calls-test` runs five guest-call checks (string argument, actor lookup, money, float result, spawn); `plugins/foundry-hooks-test` hooks money, `HashName` (with a skip) and spawning. Both log each step.
+`plugins/build.cmd <plugin folder> [mods folder]` generates `mercfoundry_functions.h` from the map, compiles the plugin as an x64 DLL with Build Tools for Visual Studio 2022 and, given a mods folder, installs it with its `mod.ini`. Enable the plugin in the launcher's mod selector; it logs to `plugin-settings/plugins.log`. `plugins/foundry-calls-test` runs five guest-call checks (string argument, actor lookup, money, float result, spawn); `plugins/foundry-hooks-test` hooks money, `HashName` (with a skip) and spawning; `plugins/foundry-lua-test` adds `Foundry_Add`, `Foundry_GiveMoney` and `Foundry_Log`. All log each step.
