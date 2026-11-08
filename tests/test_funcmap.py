@@ -49,6 +49,9 @@ class FuncMapTests(unittest.TestCase):
         funcs = [{"start": f"0x{a:08X}", "end": f"0x{a + 0x40:08X}", "section": ".text",
                   "calls_to": [], "called_by": []} for a in (0x11100, 0x11200, 0x11300, 0x11400, 0x11500, 0x11600, 0x11700)]
         funcs[0]["calls_to"] = ["0x00011400"]
+        # Faction_SetRelation's binding calls one unnamed engine function, used nowhere else.
+        funcs[1]["calls_to"] = ["0x00011500"]
+        funcs[4]["called_by"] = ["0x00011200"]
         (d / "functions.json").write_text(json.dumps(funcs))
         strings = [{"address": "0x002EE000", "string": ".\\Source\\RsActor.cpp [582]", "referenced_from": ["0x00011410"]},
                    {"address": "0x002EE020", "string": ".\\Source\\RsActor.cpp [600]", "referenced_from": ["0x00011620"]},
@@ -56,7 +59,9 @@ class FuncMapTests(unittest.TestCase):
         (d / "strings.json").write_text(json.dumps(strings))
         manual = {"functions": [{"address": "0x00011400", "name": "Spawner_SpawnTemplate",
                                  "signature": "void f(void)", "evidence": "test"}],
-                  "globals": [{"address": "0x004031B0", "name": "g_Spawner", "evidence": "test"}]}
+                  "globals": [{"address": "0x004031B0", "name": "g_Spawner", "evidence": "test"}],
+                  "structures": [{"name": "Actor", "evidence": "test",
+                                  "fields": [{"offset": "0xAC4", "name": "money", "type": "float"}]}]}
         (d / "manual.json").write_text(json.dumps(manual))
         self.dir = d
         self.doc = funcmap.build(d / "default.xbe", d, d / "manual.json")
@@ -87,7 +92,16 @@ class FuncMapTests(unittest.TestCase):
         self.assertEqual(funcmap.ghidra_names(self.doc)["0x00011100"], "Lua_Mission_Spawn")
         lines = funcmap.show(self.doc, "Lua_Mission_Spawn", self.dir)
         self.assertTrue(any("0x00011400 Spawner_SpawnTemplate" in ln for ln in lines))
-        self.assertEqual([funcmap.name_of(e) for e in funcmap.find(self.doc, "faction")], ["Lua_Faction_SetRelation"])
+        self.assertEqual([funcmap.name_of(e) for e in funcmap.find(self.doc, "faction")], ["Lua_Faction_SetRelation", "Faction_SetRelation"])
+
+    def test_named_after_command_and_structures(self):
+        e = self.by[0x11500]
+        self.assertEqual(e["names"], ["Faction_SetRelation"])
+        self.assertTrue(e["evidence"][0].startswith("inferred: the only engine call"))
+        self.assertEqual(e["file_evidence"], "between")              # source file kept alongside
+        self.assertNotIn("names", {k for k in self.by[0x11600]})     # not a command's callee
+        self.assertEqual(self.doc["counts"]["derived"], 1)
+        self.assertIn("#define MF_OFF_Actor_money 0xAC4u", funcmap.header(self.doc))
 
     def test_manual_address_must_be_a_function(self):
         bad = {"functions": [{"address": "0x00011404", "name": "X", "evidence": "test"}]}

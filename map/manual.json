@@ -1,52 +1,410 @@
 {
  "functions": [
-  {"address": "0x001F29F0", "name": "HashName", "signature": "uint32 __cdecl HashName(const char *name)",
+  {
+   "address": "0x001F29F0",
+   "name": "HashName",
+   "signature": "uint32 __cdecl HashName(const char *name)",
    "evidence": "retail code: FNV-1a (0x811C9DC5, 0x01000193) with each byte OR 0x20; the same hash names archive records",
-   "notes": "Returns 0 for NULL or empty strings."},
-
-  {"address": "0x00112AD0", "name": "Lua_ArgString", "signature": "const char * __cdecl Lua_ArgString(lua_State *L, int n)",
-   "evidence": "retail code: lua_isstring then lua_tostring; on failure raises \"Could not read string.  Bad argument sent to Lua API function\" (0x2F00A8) and returns NULL"},
-  {"address": "0x001129C0", "name": "Lua_ArgNumber", "signature": "float __cdecl Lua_ArgNumber(lua_State *L, int n)",
-   "evidence": "retail code: lua_isnumber then lua_tonumber; on failure raises \"Could not read Number.  Bad argument sent to Lua API function\" (0x2F0028) and returns 0"},
-  {"address": "0x00112990", "name": "Lua_ArgBool", "signature": "int __cdecl Lua_ArgBool(lua_State *L, int n)",
-   "evidence": "retail code: returns (0x1DCD80(L, n) == 1)"},
-  {"address": "0x00112A10", "name": "Lua_ArgVector3", "signature": "void __cdecl Lua_ArgVector3(float out[3], lua_State *L, int first)",
-   "evidence": "inferred: Lua_Mission_Spawn calls it with (&v, L, 3) for its x, y, z arguments and then reads v as three floats"},
-  {"address": "0x00112B20", "name": "Lua_ArgActor", "signature": "Actor * __cdecl Lua_ArgActor(lua_State *L, int n)",
-   "evidence": "retail code: 0x120E60(L, n) then 0x1EC1D0 on the result; used for the actor argument of the Actor_ commands"},
-  {"address": "0x00120E60", "name": "Lua_ToActorRef", "signature": "void * __cdecl Lua_ToActorRef(lua_State *L, int n)",
-   "evidence": "inferred: first step of Lua_ArgActor; returns NULL when the argument isn't an actor"},
-  {"address": "0x00120E30", "name": "Lua_PushActor", "signature": "void __cdecl Lua_PushActor(lua_State *L, uint32 handle)",
-   "evidence": "inferred: Lua_Mission_Spawn ends by calling it with the spawned actor's handle (actor + 0x28) and returns 1 result"},
-  {"address": "0x001EC1D0", "name": "ActorRef_Resolve", "signature": "Actor * __cdecl ActorRef_Resolve(void *ref)",
-   "evidence": "inferred: second step of Lua_ArgActor"},
-  {"address": "0x00112120", "name": "LuaScript_FromState", "signature": "LuaScript * __cdecl LuaScript_FromState(lua_State *L)",
-   "evidence": "retail code: one-entry cache (state at 0x3717BC, script at 0x3717A0), else a lookup on the script manager at 0x371848"},
-  {"address": "0x00113B60", "name": "LuaScript_BeginCommand", "signature": "void __cdecl LuaScript_BeginCommand(lua_State *L)",
+   "notes": "Returns 0 for NULL or empty strings."
+  },
+  {
+   "address": "0x00112AD0",
+   "name": "Lua_ArgString",
+   "signature": "const char * __cdecl Lua_ArgString(lua_State *L, int n)",
+   "evidence": "retail code: lua_isstring then lua_tostring; on failure raises \"Could not read string.  Bad argument sent to Lua API function\" (0x2F00A8) and returns NULL"
+  },
+  {
+   "address": "0x001129C0",
+   "name": "Lua_ArgNumber",
+   "signature": "float __cdecl Lua_ArgNumber(lua_State *L, int n)",
+   "evidence": "retail code: lua_isnumber then lua_tonumber; on failure raises \"Could not read Number.  Bad argument sent to Lua API function\" (0x2F0028) and returns 0"
+  },
+  {
+   "address": "0x00112990",
+   "name": "Lua_ArgBool",
+   "signature": "int __cdecl Lua_ArgBool(lua_State *L, int n)",
+   "evidence": "retail code: returns (0x1DCD80(L, n) == 1)"
+  },
+  {
+   "address": "0x00112A10",
+   "name": "Lua_ArgVector3",
+   "signature": "void __cdecl Lua_ArgVector3(float out[3], lua_State *L, int first)",
+   "evidence": "inferred: Lua_Mission_Spawn calls it with (&v, L, 3) for its x, y, z arguments and then reads v as three floats"
+  },
+  {
+   "address": "0x00112B20",
+   "name": "Lua_ArgActor",
+   "signature": "Actor * __cdecl Lua_ArgActor(lua_State *L, int n)",
+   "evidence": "retail code: 0x120E60(L, n) then 0x1EC1D0 on the result; used for the actor argument of the Actor_ commands"
+  },
+  {
+   "address": "0x00120E60",
+   "name": "Lua_ToActorRef",
+   "signature": "void * __cdecl Lua_ToActorRef(lua_State *L, int n)",
+   "evidence": "inferred: first step of Lua_ArgActor; returns NULL when the argument isn't an actor"
+  },
+  {
+   "address": "0x00120E30",
+   "name": "Lua_PushActor",
+   "signature": "void __cdecl Lua_PushActor(lua_State *L, uint32 handle)",
+   "evidence": "inferred: Lua_Mission_Spawn ends by calling it with the spawned actor's handle (actor + 0x28) and returns 1 result"
+  },
+  {
+   "address": "0x001EC1D0",
+   "name": "ActorRef_Resolve",
+   "signature": "Actor * __cdecl ActorRef_Resolve(void *ref)",
+   "evidence": "inferred: second step of Lua_ArgActor"
+  },
+  {
+   "address": "0x00112120",
+   "name": "LuaScript_FromState",
+   "signature": "LuaScript * __cdecl LuaScript_FromState(lua_State *L)",
+   "evidence": "retail code: one-entry cache (state at 0x3717BC, script at 0x3717A0), else a lookup on the script manager at 0x371848"
+  },
+  {
+   "address": "0x00113B60",
+   "name": "LuaScript_BeginCommand",
+   "signature": "void __cdecl LuaScript_BeginCommand(lua_State *L)",
    "evidence": "retail code: called first by 323 of the 360 script command bindings; when the owning script's byte +0x34 is 1 it calls 0x204C80(script+0x28, 0) and 0x112930",
-   "notes": "Purpose not confirmed; possibly the Debug_EnableCallStack trace."},
-
-  {"address": "0x001DCC10", "name": "lua_isstring", "evidence": "inferred: the type check Lua_ArgString makes before 0x1DCDC0 (Lua 5.0 C API shape)"},
-  {"address": "0x001DCDC0", "name": "lua_tostring", "evidence": "inferred: returns Lua_ArgString's result (Lua 5.0 C API shape)"},
-  {"address": "0x001DCBC0", "name": "lua_isnumber", "evidence": "inferred: the type check Lua_ArgNumber makes before 0x1DCD30 (Lua 5.0 C API shape)"},
-  {"address": "0x001DCD30", "name": "lua_tonumber", "evidence": "inferred: returns Lua_ArgNumber's result on the FPU stack (Lua 5.0 C API shape)"},
-  {"address": "0x001DCD80", "name": "lua_toboolean", "evidence": "inferred: Lua_ArgBool compares its result with 1"},
-  {"address": "0x001DB8E0", "name": "luaL_error", "evidence": "inferred: called with (L, message) on bad arguments by Lua_ArgString and Lua_ArgNumber"},
-  {"address": "0x001DCF90", "name": "lua_pushnumber", "evidence": "retail code: writes a double and type 3 (number) at the stack top and advances it by one 16-byte slot"},
-  {"address": "0x001DC970", "name": "lua_gettop", "evidence": "retail code: returns (top - base) / 16"},
-
-  {"address": "0x00095C20", "name": "Faction_FromHash", "signature": "int __cdecl Faction_FromHash(uint32 nameHash)",
-   "evidence": "inferred: Lua_Faction_SetRelation passes it HashName of each faction-name argument and passes the results to FactionManager_SetRelation"},
-  {"address": "0x00095DD0", "name": "FactionManager_SetRelation", "signature": "void __thiscall FactionManager_SetRelation(FactionManager *this, int a, int b, float relation)",
+   "notes": "Purpose not confirmed; possibly the Debug_EnableCallStack trace."
+  },
+  {
+   "address": "0x001DCC10",
+   "name": "lua_isstring",
+   "evidence": "inferred: the type check Lua_ArgString makes before 0x1DCDC0 (Lua 5.0 C API shape)"
+  },
+  {
+   "address": "0x001DCDC0",
+   "name": "lua_tostring",
+   "evidence": "inferred: returns Lua_ArgString's result (Lua 5.0 C API shape)"
+  },
+  {
+   "address": "0x001DCBC0",
+   "name": "lua_isnumber",
+   "evidence": "inferred: the type check Lua_ArgNumber makes before 0x1DCD30 (Lua 5.0 C API shape)"
+  },
+  {
+   "address": "0x001DCD30",
+   "name": "lua_tonumber",
+   "evidence": "inferred: returns Lua_ArgNumber's result on the FPU stack (Lua 5.0 C API shape)"
+  },
+  {
+   "address": "0x001DCD80",
+   "name": "lua_toboolean",
+   "evidence": "inferred: Lua_ArgBool compares its result with 1"
+  },
+  {
+   "address": "0x001DB8E0",
+   "name": "luaL_error",
+   "evidence": "inferred: called with (L, message) on bad arguments by Lua_ArgString and Lua_ArgNumber"
+  },
+  {
+   "address": "0x001DCF90",
+   "name": "lua_pushnumber",
+   "evidence": "retail code: writes a double and type 3 (number) at the stack top and advances it by one 16-byte slot"
+  },
+  {
+   "address": "0x001DC970",
+   "name": "lua_gettop",
+   "evidence": "retail code: returns (top - base) / 16"
+  },
+  {
+   "address": "0x00095C20",
+   "name": "Faction_FromHash",
+   "signature": "int __cdecl Faction_FromHash(uint32 nameHash)",
+   "evidence": "inferred: Lua_Faction_SetRelation passes it HashName of each faction-name argument and passes the results to FactionManager_SetRelation"
+  },
+  {
+   "address": "0x00095DD0",
+   "name": "FactionManager_SetRelation",
+   "signature": "void __thiscall FactionManager_SetRelation(FactionManager *this, int a, int b, float relation)",
    "evidence": "retail code: Lua_Faction_SetRelation calls it on the object at 0x323338 with the two factions and its third argument divided by 100.0",
-   "notes": "Scripts pass -100..100; the engine takes -1..1."},
-  {"address": "0x00174480", "name": "Spawner_SpawnTemplate", "signature": "SpawnResult * __thiscall Spawner_SpawnTemplate(Spawner *this, uint32 templateHash, const char *name, const Matrix *transform, int, int)",
+   "notes": "Scripts pass -100..100; the engine takes -1..1."
+  },
+  {
+   "address": "0x00174480",
+   "name": "Spawner_SpawnTemplate",
+   "signature": "SpawnResult * __thiscall Spawner_SpawnTemplate(Spawner *this, uint32 templateHash, const char *name, const Matrix *transform, int, int)",
    "evidence": "retail code: Lua_Mission_Spawn(template, name, x, y, z, yaw) calls it on the object at 0x4031B0 with HashName(template), name, a transform built from the position and yaw (degrees x 0.0174533), 0, 0; the new actor is at result + 8",
-   "notes": "Spawns any object template by name hash: the core of spawning by name."}
+   "notes": "Spawns any object template by name hash: the core of spawning by name."
+  },
+  {
+   "address": "0x001129B0",
+   "name": "Lua_PushBool",
+   "signature": "void __cdecl Lua_PushBool(lua_State *L, int value)",
+   "evidence": "inferred: Lua_Actor_IsAlive ends by passing it (L, alive) and returns 1 result"
+  },
+  {
+   "address": "0x00113BA0",
+   "name": "Lua_ArgHitPointActor",
+   "signature": "Actor * __cdecl Lua_ArgHitPointActor(lua_State *L, int n)",
+   "evidence": "retail code: Lua_ToActorRef, then World_ActorFromHandle, then keeps the result only if its type bits match g_HitPointActorType (0x30C0B4/0x30C0B8)"
+  },
+  {
+   "address": "0x0011D530",
+   "name": "Lua_ArgAi",
+   "signature": "Ai * __cdecl Lua_ArgAi(lua_State *L, int n)",
+   "evidence": "retail code: Lua_ArgHitPointActor(L, n), then that actor's vtable slot +0xBC (its AI); used by the Ai_ commands"
+  },
+  {
+   "address": "0x0011F8A0",
+   "name": "Lua_ArgBoundary",
+   "signature": "Boundary * __cdecl Lua_ArgBoundary(lua_State *L, int n)",
+   "evidence": "retail code: string argument, HashName, then HashTable_Find in the boundary table (keys 0x37A438, mask 0x37A42C - 1, values 0x37A434); raises an error for non-strings"
+  },
+  {
+   "address": "0x001202A0",
+   "name": "Lua_SubmitAiCommand",
+   "signature": "int __cdecl Lua_SubmitAiCommand(lua_State *L, int mode)",
+   "evidence": "retail code: shared by Lua_Ai_Command (mode 0), Lua_Ai_CommandQueue (1) and Lua_Ai_CommandDefault (2): Lua_ArgAi(L, 1), a command built from argument 2 by 0x120210, then Ai_SubmitCommand"
+  },
+  {
+   "address": "0x001180D0",
+   "name": "Ai_SubmitCommand",
+   "signature": "int __cdecl Ai_SubmitCommand(Ai *ai, AiCommand *command, int mode)",
+   "evidence": "retail code: on the AI's command queue (ai + 0x54): mode 0 clears it (0x65F90) then adds, mode 1 adds (0x65DB0), mode 2 sets the default (0x65D10)",
+   "notes": "Mode 0 = Ai_Command (replace), 1 = Ai_CommandQueue (append), 2 = Ai_CommandDefault."
+  },
+  {
+   "address": "0x00065DB0",
+   "name": "AiCommandQueue_Push",
+   "signature": "void __thiscall AiCommandQueue_Push(AiCommandQueue *this, AiCommand *command)",
+   "evidence": "inferred: Ai_SubmitCommand's append step on ai + 0x54"
+  },
+  {
+   "address": "0x00065D10",
+   "name": "AiCommandQueue_SetDefault",
+   "signature": "void __thiscall AiCommandQueue_SetDefault(AiCommandQueue *this, AiCommand *command)",
+   "evidence": "inferred: Ai_SubmitCommand's mode-2 step on ai + 0x54"
+  },
+  {
+   "address": "0x00065F90",
+   "name": "AiCommandQueue_Clear",
+   "signature": "void __thiscall AiCommandQueue_Clear(AiCommandQueue *this)",
+   "evidence": "retail code: Ai_SubmitCommand calls it on ai + 0x54 before replacing; also the only engine call of script command Ai_CommandClearAll"
+  },
+  {
+   "address": "0x001F2A20",
+   "name": "HashTable_Find",
+   "signature": "int __cdecl HashTable_Find(uint32 key, const uint32 *keys, uint32 mask)",
+   "evidence": "retail code: open addressing with linear probing: start at key & mask, step until the key or an empty (0) slot; returns the slot or -1",
+   "notes": "The engine's general lookup: object handles, boundaries, string ids, squads."
+  },
+  {
+   "address": "0x001EC220",
+   "name": "World_ActorFromHandle",
+   "signature": "Actor * __cdecl World_ActorFromHandle(uint32 handle)",
+   "evidence": "retail code: HashTable_Find(handle, 0x624070, 0x3FFF) into the object array at 0x614070; returns the object's +0x24 (its actor) if flag bit 0 (active) is set and bit 2 (removed) is not"
+  },
+  {
+   "address": "0x00015A00",
+   "name": "TypeFilter_Cast",
+   "signature": "void * __thiscall TypeFilter_Cast(TypeFilter *this, void *obj)",
+   "evidence": "retail code: returns obj if (obj->vtable[1]() & this->mask) == this->value, else NULL (mask at +8, value at +4)"
+  },
+  {
+   "address": "0x001EE0E0",
+   "name": "WorldObject_Remove",
+   "signature": "void __thiscall WorldObject_Remove(WorldObject *this)",
+   "evidence": "retail code: unless already removed, releases the object's handle (0x1EC180), sets flag bit 2 (removed), notifies the manager at 0x4434D4 (vtable +0x1C), 0x1ED530, and counts it in 0x30EE78; the engine call behind Actor_Remove, Actor_Kill and Actor_SetDieUponHibernation"
+  },
+  {
+   "address": "0x0004EC40",
+   "name": "Actor_EnableCollision",
+   "signature": "void __thiscall Actor_EnableCollision(Actor *this, bool enable)",
+   "evidence": "retail code: counted (disable count at +0x6C1); on the physics body from vtable slot +0x3BC calls 0x13CB70 to enable (then 0x13F440 with the transform at +0xB0) or 0x13CBB0 to disable; the engine call of Actor_EnableCollision and Actor_EnableCinematicControl"
+  },
+  {
+   "address": "0x00011D80",
+   "name": "Matrix_Copy",
+   "signature": "Matrix * __thiscall Matrix_Copy(Matrix *this, const Matrix *from)",
+   "evidence": "retail code: copies 16 floats from the argument into this; returns this"
+  },
+  {
+   "address": "0x001211B0",
+   "name": "StringTable_GetAscii",
+   "signature": "bool __thiscall StringTable_GetAscii(StringTable *this, uint32 id, char *out, int size)",
+   "evidence": "retail code: HashTable_Find on the table (keys +0x10, mask +4 - 1, values +0xC, default +0x14), then copies the UTF-16 text to a NUL-terminated byte string of at most size - 1 characters; returns false (and writes \" \") when missing"
+  },
+  {
+   "address": "0x001FFA60",
+   "name": "Sound_Play2D",
+   "signature": "void __cdecl Sound_Play2D(int a, uint32 soundHash)",
+   "evidence": "inferred: forwards its two arguments to 0x1FF6E0 with nine zeroed floats (no position); the engine call of Audio_PlaySound, Audio_PlayVoiceover and Audio_PlayVoiceoverCB; Player_SetMoney calls it with (0, 0x19C0F913)"
+  },
+  {
+   "address": "0x00237066",
+   "name": "atof",
+   "signature": "double __cdecl atof(const char *s)",
+   "evidence": "inferred: takes a property's text and leaves a float on the FPU stack (Lua_Actor_IsAlive reads hit points through it); in the C runtime library range"
+  },
+  {
+   "address": "0x0008C7E0",
+   "name": "World_FindObjectByName",
+   "signature": "WorldObject * __cdecl World_FindObjectByName(uint32 nameHash)",
+   "evidence": "inferred: Lua_Player_AdjustMoney calls it with HashName(\"player0\") and uses the result's vtable +0x34 to reach the player"
+  },
+  {
+   "address": "0x0008ECE0",
+   "name": "World_FindActorByName",
+   "signature": "Actor * __cdecl World_FindActorByName(uint32 nameHash)",
+   "evidence": "retail code: World_FindObjectByName(hash), then the object's vtable +0x34; Lua_Player_GetMoney calls it with 0x660E4490 = HashName(\"player0\")"
+  },
+  {
+   "address": "0x00057F50",
+   "name": "Player_SetMoney",
+   "signature": "void __thiscall Player_SetMoney(Player *this, float money)",
+   "evidence": "retail code: plays sound 0x19C0F913 when the amount rises, clamps below at 0, stores the float at +0xAC4; Lua_Player_AdjustMoney calls it with the old amount plus its argument"
+  },
+  {
+   "address": "0x0015FEC0",
+   "name": "Objective_FindOrCreate",
+   "signature": "Objective * __cdecl Objective_FindOrCreate(uint32 id)",
+   "evidence": "retail code: 0x15FDB0(id); if that finds nothing, 0x15FE60 makes one and 0x15FD60 sets it up with the id; used by the Objective_ commands"
+  },
+  {
+   "address": "0x0015FDB0",
+   "name": "Objective_Find",
+   "signature": "Objective * __cdecl Objective_Find(uint32 id)",
+   "evidence": "inferred: Objective_FindOrCreate's lookup step"
+  },
+  {
+   "address": "0x00045160",
+   "name": "Vehicle_GetNumPassengers",
+   "signature": "int __thiscall Vehicle_GetNumPassengers(Vehicle *this)",
+   "evidence": "retail code: rider count (int8 at +0x8C8) less one unless the driver slot (+0x8BC, checked by 0x1624B0) is empty; used by ActorVehicle_GetNumPassengers and ActorVehicle_GetSeatInfo"
+  },
+  {
+   "address": "0x001F8860",
+   "name": "Vector3_GetYaw",
+   "signature": "float __thiscall Vector3_GetYaw(const float *this)",
+   "evidence": "inferred: from x and z of the vector it calls 0x1FA000 and negates the result; used by Actor_SetYaw, Location_GetYaw and the spawn-point commands"
+  }
  ],
  "globals": [
-  {"address": "0x00323338", "name": "g_FactionManager", "evidence": "retail code: this pointer of FactionManager_SetRelation in Lua_Faction_SetRelation"},
-  {"address": "0x004031B0", "name": "g_Spawner", "evidence": "retail code: this pointer of Spawner_SpawnTemplate in Lua_Mission_Spawn"},
-  {"address": "0x00371848", "name": "g_LuaScriptManager", "evidence": "inferred: LuaScript_FromState looks scripts up through it"}
+  {
+   "address": "0x00323338",
+   "name": "g_FactionManager",
+   "evidence": "retail code: this pointer of FactionManager_SetRelation in Lua_Faction_SetRelation"
+  },
+  {
+   "address": "0x004031B0",
+   "name": "g_Spawner",
+   "evidence": "retail code: this pointer of Spawner_SpawnTemplate in Lua_Mission_Spawn"
+  },
+  {
+   "address": "0x00371848",
+   "name": "g_LuaScriptManager",
+   "evidence": "inferred: LuaScript_FromState looks scripts up through it"
+  },
+  {
+   "address": "0x0030C0B0",
+   "name": "g_HitPointActorType",
+   "evidence": "retail code: the TypeFilter Lua_Actor_IsAlive casts with before reading hit points at +0x98; Lua_ArgHitPointActor checks the same value/mask"
+  },
+  {
+   "address": "0x00614070",
+   "name": "g_WorldObjects",
+   "evidence": "retail code: object pointer array indexed by World_ActorFromHandle"
+  },
+  {
+   "address": "0x00624070",
+   "name": "g_WorldObjectHandles",
+   "evidence": "retail code: handle keys World_ActorFromHandle searches (mask 0x3FFF)"
+  },
+  {
+   "address": "0x004434D4",
+   "name": "g_WorldObjectManager",
+   "evidence": "inferred: WorldObject_Remove notifies it (vtable +0x1C)"
+  },
+  {
+   "address": "0x00413FC0",
+   "name": "g_StringTables",
+   "evidence": "inferred: Lua_Player_AdjustMoney passes it to 0x121650 with a hashed table name before StringTable_GetAscii"
+  }
+ ],
+ "structures": [
+  {
+   "name": "WorldObject",
+   "evidence": "retail code: Lua_Actor_IsAlive, World_ActorFromHandle, WorldObject_Remove",
+   "fields": [
+    {
+     "offset": "0x00",
+     "name": "vtable",
+     "notes": "+0x04 type bits (TypeFilter_Cast); +0x0C property text by name hash (\"hitpoints\" = 0x6E99129D); +0x10 property by name hash (\"name\" = 0x8D39BDE6)"
+    },
+    {
+     "offset": "0x24",
+     "name": "actor",
+     "notes": "the game actor (World_ActorFromHandle returns it)"
+    },
+    {
+     "offset": "0x28",
+     "name": "handle",
+     "notes": "what scripts hold (Lua_PushActor)"
+    },
+    {
+     "offset": "0x30",
+     "name": "flags",
+     "type": "uint16",
+     "notes": "bit 0 active, bit 2 removed, bit 3 hit points come from the \"hitpoints\" property, bit 12 released by WorldObject_Remove via 0x1EC420"
+    }
+   ]
+  },
+  {
+   "name": "Actor",
+   "evidence": "retail code: Lua_Actor_IsAlive, Actor_EnableCollision, Lua_ArgAi",
+   "fields": [
+    {
+     "offset": "0x98",
+     "name": "hitPoints",
+     "type": "float",
+     "notes": "read after casting with g_HitPointActorType; alive while > 0"
+    },
+    {
+     "offset": "0xB0",
+     "name": "transform",
+     "type": "Matrix",
+     "notes": "Actor_EnableCollision re-places the physics body from it"
+    },
+    {
+     "offset": "0x6C1",
+     "name": "collisionDisableCount",
+     "type": "int8"
+    },
+    {
+     "offset": "0xAC4",
+     "name": "money",
+     "type": "float",
+     "notes": "on the player; Lua_Player_GetMoney reads it, Player_SetMoney writes it"
+    }
+   ]
+  },
+  {
+   "name": "Ai",
+   "evidence": "retail code: Ai_SubmitCommand",
+   "fields": [
+    {
+     "offset": "0x54",
+     "name": "commandQueue",
+     "type": "AiCommandQueue"
+    }
+   ]
+  },
+  {
+   "name": "Vehicle",
+   "evidence": "retail code: Vehicle_GetNumPassengers",
+   "fields": [
+    {
+     "offset": "0x8BC",
+     "name": "driverSeat"
+    },
+    {
+     "offset": "0x8C8",
+     "name": "riderCount",
+     "type": "int8"
+    }
+   ]
+  }
  ]
 }

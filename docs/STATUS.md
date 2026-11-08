@@ -27,7 +27,8 @@
 - Collision trees (`CMOP`) decoded from the game's own walker and checked on all 1,402; convex hulls decoded; `cinf` totals understood on all 1,997 blocks. New pieces on Humvee-style vehicles get collision by turning the convex hull into boxes.
 - Animation tables decoded (all 95 rebuild exactly; `animtable` exports one). Mods can add clips under new names (`animations/new.json`, built on a template clip and added to its load lists) and repoint handles (`animtables/`).
 - Function map (`map/functions.json`, `funcmap` command): every script command's C function from the executable's Lua registration tables, source files from assert strings (80 files, 1,500 functions), 22 hand-named functions (Lua argument helpers, Lua C API, `HashName`, `Spawner_SpawnTemplate`, faction relations) and 3 globals. Exports a C header and the port's `ghidra_names.json` format.
-- 144 tests pass.
+- Function map, second pass: 573 named functions. 128 command implementations named by rule (a binding's only, unshared engine call); 47 hand-named with evidence (actor lookup by name and handle, money, AI command queue, object removal, collision toggling, objectives, string tables, the engine's hash table); 8 globals; structure fields for world objects, actors, AI and vehicles.
+- 145 tests pass.
 
 ## Fixed from retail data
 - Text values aren't NUL-terminated. The decoder had assumed they were and found no strings.

@@ -435,7 +435,8 @@ def cmd_funcmap(args):
         c = doc["counts"]
         print(f"wrote {out}: {c['named']} named functions ({c['lua_commands']} script commands, "
               f"{c['manual']} hand-curated), {c['with_file']} with a source file "
-              f"({c['file_direct']} direct), {c['globals']} globals")
+              f"({c['file_direct']} direct), {c['derived']} named after their script command, "
+              f"{c['globals']} globals, {c['structures']} structures")
         if doc.get("unclassified_tables"):
             print("  new Lua tables to classify:", ", ".join(doc["unclassified_tables"]))
         return

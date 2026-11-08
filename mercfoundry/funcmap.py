@@ -201,6 +201,8 @@ def build(xbe_path, analysis_dir, manual_path=None):
             if m.get(key):
                 e[key] = m[key]
 
+    derive_from_commands(entries, funcs)
+
     out = []
     for addr in sorted(entries):
         e = entries[addr]
@@ -219,13 +221,64 @@ def build(xbe_path, analysis_dir, manual_path=None):
             "lua_commands": sum(len(e.get("commands", [])) for e in out),
             "manual": len(manual),
             "globals": len(curated.get("globals", [])),
+            "structures": len(curated.get("structures", [])),
+            "derived": sum(1 for e in out if any(ev.startswith("inferred: the only engine call")
+                                                 for ev in e.get("evidence", []))),
         },
         "functions": out,
         "globals": curated.get("globals", []),
+        "structures": curated.get("structures", []),
     }
     if unknown_tables:
         doc["unclassified_tables"] = [f"0x{t:06X}" for t in unknown_tables]
     return doc
+
+
+LUA_CORE = range(0x1D9000, 0x1DF000)   # the embedded Lua 5.0 library
+LIBRARY_START = 0x22F000                # math and runtime library code from here on
+
+
+def derive_from_commands(entries, funcs):
+    """Name a script command's implementation after the command.
+
+    Rule: the function is the binding's only call into engine code (not a
+    named helper, the Lua core or library code), no other command's
+    binding calls it, and at most three places call it at all. Then the
+    binding is a thin wrapper and the function does what the command
+    says. Marked as inferred."""
+    by_start = {int(f["start"], 16): f for f in funcs}
+    named = {a for a, e in entries.items() if e.get("names")}
+    bindings = {a: e for a, e in entries.items() if e.get("commands")}
+
+    def engine_calls(a):
+        out = []
+        for c in by_start.get(a, {}).get("calls_to", []):
+            c = int(c, 16)
+            if c in named or c in LUA_CORE or c >= LIBRARY_START:
+                continue
+            out.append(c)
+        return out
+
+    calls = {a: engine_calls(a) for a in bindings}
+    used_by = {}
+    for a, cs in calls.items():
+        for c in set(cs):
+            used_by.setdefault(c, set()).add(a)
+    # Helpers shared by many bindings are not implementations.
+    for a, cs in calls.items():
+        cs = [c for c in cs if len(used_by[c]) < 8]
+        if len(set(cs)) != 1:
+            continue
+        c = cs[0]
+        if len(used_by[c]) != 1 or len(by_start.get(c, {}).get("called_by", [])) > 3:
+            continue
+        command = bindings[a]["commands"][0]
+        e = entries.setdefault(c, {"address": f"0x{c:08X}", "names": [], "evidence": []})
+        if e["names"]:
+            continue
+        e["names"] = [command]
+        e["evidence"].append(f"inferred: the only engine call of script command {command} "
+                             f"(binding 0x{a:08X}), and called from at most three places")
 
 
 def load(path):
@@ -270,6 +323,11 @@ def header(doc):
     for g in doc.get("globals", []):
         ident = re.sub(r"[^A-Za-z0-9_]", "_", g["name"])
         lines.append(f"#define MF_VAR_{ident} 0x{int(g['address'], 16):08X}u")
+    for st in doc.get("structures", []):
+        lines.append("")
+        for f in st["fields"]:
+            ident = re.sub(r"[^A-Za-z0-9_]", "_", f"{st['name']}_{f['name']}")
+            lines.append(f"#define MF_OFF_{ident} 0x{int(f['offset'], 16):X}u")
     return "\n".join(lines) + "\n"
 
 

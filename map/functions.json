@@ -5,14 +5,26 @@
  },
  "counts": {
   "functions_in_analysis": 13982,
-  "named": 420,
+  "named": 573,
   "with_file": 1500,
   "file_direct": 224,
   "lua_commands": 360,
-  "manual": 22,
-  "globals": 3
+  "manual": 47,
+  "globals": 8,
+  "structures": 4,
+  "derived": 128
  },
  "functions": [
+  {
+   "address": "0x00011D80",
+   "names": [
+    "Matrix_Copy"
+   ],
+   "evidence": [
+    "retail code: copies 16 floats from the argument into this; returns this"
+   ],
+   "signature": "Matrix * __thiscall Matrix_Copy(Matrix *this, const Matrix *from)"
+  },
   {
    "address": "0x00015340",
    "file": "RsActor.cpp",
@@ -20,6 +32,16 @@
    "lines": [
     582
    ]
+  },
+  {
+   "address": "0x00015A00",
+   "names": [
+    "TypeFilter_Cast"
+   ],
+   "evidence": [
+    "retail code: returns obj if (obj->vtable[1]() & this->mask) == this->value, else NULL (mask at +8, value at +4)"
+   ],
+   "signature": "void * __thiscall TypeFilter_Cast(TypeFilter *this, void *obj)"
   },
   {
    "address": "0x00029380",
@@ -36,6 +58,42 @@
    "file_evidence": "direct",
    "lines": [
     286
+   ]
+  },
+  {
+   "address": "0x0002C4F0",
+   "names": [
+    "Building_SiloPrepare"
+   ],
+   "evidence": [
+    "inferred: the only engine call of script command Building_SiloPrepare (binding 0x0011B0B0), and called from at most three places"
+   ]
+  },
+  {
+   "address": "0x0002C560",
+   "names": [
+    "Building_SiloLaunch"
+   ],
+   "evidence": [
+    "inferred: the only engine call of script command Building_SiloLaunch (binding 0x0011B0F0), and called from at most three places"
+   ]
+  },
+  {
+   "address": "0x0002DDB0",
+   "names": [
+    "Building_SpawnerEnable"
+   ],
+   "evidence": [
+    "inferred: the only engine call of script command Building_SpawnerEnable (binding 0x0011AF30), and called from at most three places"
+   ]
+  },
+  {
+   "address": "0x0002DE30",
+   "names": [
+    "Building_SpawnerReset"
+   ],
+   "evidence": [
+    "inferred: the only engine call of script command Building_SpawnerReset (binding 0x0011B070), and called from at most three places"
    ]
   },
   {
@@ -66,11 +124,95 @@
    ]
   },
   {
+   "address": "0x00041E50",
+   "names": [
+    "ActorVehicle_SpawnCargo"
+   ],
+   "evidence": [
+    "inferred: the only engine call of script command ActorVehicle_SpawnCargo (binding 0x00117E80), and called from at most three places"
+   ]
+  },
+  {
+   "address": "0x00045160",
+   "names": [
+    "Vehicle_GetNumPassengers"
+   ],
+   "evidence": [
+    "retail code: rider count (int8 at +0x8C8) less one unless the driver slot (+0x8BC, checked by 0x1624B0) is empty; used by ActorVehicle_GetNumPassengers and ActorVehicle_GetSeatInfo"
+   ],
+   "signature": "int __thiscall Vehicle_GetNumPassengers(Vehicle *this)"
+  },
+  {
+   "address": "0x00049A00",
+   "names": [
+    "ActorVehicle_EnableRotorEffects"
+   ],
+   "evidence": [
+    "inferred: the only engine call of script command ActorVehicle_EnableRotorEffects (binding 0x001175E0), and called from at most three places"
+   ]
+  },
+  {
    "address": "0x0004D670",
    "file": "RsActorVehicleHuman.cpp",
    "file_evidence": "direct",
    "lines": [
     1051
+   ]
+  },
+  {
+   "address": "0x0004EC40",
+   "names": [
+    "Actor_EnableCollision"
+   ],
+   "evidence": [
+    "retail code: counted (disable count at +0x6C1); on the physics body from vtable slot +0x3BC calls 0x13CB70 to enable (then 0x13F440 with the transform at +0xB0) or 0x13CBB0 to disable; the engine call of Actor_EnableCollision and Actor_EnableCinematicControl"
+   ],
+   "signature": "void __thiscall Actor_EnableCollision(Actor *this, bool enable)"
+  },
+  {
+   "address": "0x00052A80",
+   "names": [
+    "Actor_SetCorpseCleanUpAllowed"
+   ],
+   "evidence": [
+    "inferred: the only engine call of script command Actor_SetCorpseCleanUpAllowed (binding 0x00116040), and called from at most three places"
+   ]
+  },
+  {
+   "address": "0x00057F50",
+   "names": [
+    "Player_SetMoney"
+   ],
+   "evidence": [
+    "retail code: plays sound 0x19C0F913 when the amount rises, clamps below at 0, stores the float at +0xAC4; Lua_Player_AdjustMoney calls it with the old amount plus its argument"
+   ],
+   "signature": "void __thiscall Player_SetMoney(Player *this, float money)"
+  },
+  {
+   "address": "0x00059CD0",
+   "names": [
+    "Actor_ShowGrenadeProp"
+   ],
+   "evidence": [
+    "inferred: the only engine call of script command Actor_ShowGrenadeProp (binding 0x001161D0), and called from at most three places"
+   ]
+  },
+  {
+   "address": "0x00059CF0",
+   "names": [
+    "Actor_HideGrenadeProp"
+   ],
+   "evidence": [
+    "inferred: the only engine call of script command Actor_HideGrenadeProp (binding 0x00116190), and called from at most three places"
+   ]
+  },
+  {
+   "address": "0x0005A580",
+   "names": [
+    "Support_ResetToDefault"
+   ],
+   "evidence": [
+    "inferred: the only engine call of script command Support_ResetToDefault (binding 0x00113F70), and called from at most three places"
    ]
   },
   {
@@ -147,6 +289,63 @@
    ]
   },
   {
+   "address": "0x00063FE0",
+   "names": [
+    "Ai_SetFactionFavor"
+   ],
+   "evidence": [
+    "inferred: the only engine call of script command Ai_SetFactionFavor (binding 0x0011E880), and called from at most three places"
+   ]
+  },
+  {
+   "address": "0x00065D10",
+   "names": [
+    "AiCommandQueue_SetDefault"
+   ],
+   "evidence": [
+    "inferred: Ai_SubmitCommand's mode-2 step on ai + 0x54"
+   ],
+   "signature": "void __thiscall AiCommandQueue_SetDefault(AiCommandQueue *this, AiCommand *command)"
+  },
+  {
+   "address": "0x00065DB0",
+   "names": [
+    "AiCommandQueue_Push"
+   ],
+   "evidence": [
+    "inferred: Ai_SubmitCommand's append step on ai + 0x54"
+   ],
+   "signature": "void __thiscall AiCommandQueue_Push(AiCommandQueue *this, AiCommand *command)"
+  },
+  {
+   "address": "0x00065EB0",
+   "names": [
+    "Ai_CommandStatus"
+   ],
+   "evidence": [
+    "inferred: the only engine call of script command Ai_CommandStatus (binding 0x0011E950), and called from at most three places"
+   ]
+  },
+  {
+   "address": "0x00065F90",
+   "names": [
+    "AiCommandQueue_Clear"
+   ],
+   "evidence": [
+    "retail code: Ai_SubmitCommand calls it on ai + 0x54 before replacing; also the only engine call of script command Ai_CommandClearAll"
+   ],
+   "signature": "void __thiscall AiCommandQueue_Clear(AiCommandQueue *this)"
+  },
+  {
+   "address": "0x00067A40",
+   "names": [
+    "Ai_CommandClear"
+   ],
+   "evidence": [
+    "inferred: the only engine call of script command Ai_CommandClear (binding 0x0011E8E0), and called from at most three places"
+   ]
+  },
+  {
    "address": "0x00069550",
    "file": "RsAi.cpp",
    "file_evidence": "direct",
@@ -155,11 +354,49 @@
    ]
   },
   {
+   "address": "0x0007DD10",
+   "names": [
+    "Ai_Deliver"
+   ],
+   "evidence": [
+    "inferred: the only engine call of script command Ai_Deliver (binding 0x0011E190), and called from at most three places"
+   ]
+  },
+  {
+   "address": "0x0008C7E0",
+   "names": [
+    "World_FindObjectByName"
+   ],
+   "evidence": [
+    "inferred: Lua_Player_AdjustMoney calls it with HashName(\"player0\") and uses the result's vtable +0x34 to reach the player"
+   ],
+   "signature": "WorldObject * __cdecl World_FindObjectByName(uint32 nameHash)"
+  },
+  {
    "address": "0x0008E5B0",
    "file": "RsAiPlayer.cpp",
    "file_evidence": "direct",
    "lines": [
     4573
+   ]
+  },
+  {
+   "address": "0x0008ECE0",
+   "names": [
+    "World_FindActorByName"
+   ],
+   "evidence": [
+    "retail code: World_FindObjectByName(hash), then the object's vtable +0x34; Lua_Player_GetMoney calls it with 0x660E4490 = HashName(\"player0\")"
+   ],
+   "signature": "Actor * __cdecl World_FindActorByName(uint32 nameHash)"
+  },
+  {
+   "address": "0x00095BA0",
+   "names": [
+    "Faction_SetMinimumRelation"
+   ],
+   "evidence": [
+    "inferred: the only engine call of script command Faction_SetMinimumRelation (binding 0x001182F0), and called from at most three places"
    ]
   },
   {
@@ -184,6 +421,96 @@
    "signature": "void __thiscall FactionManager_SetRelation(FactionManager *this, int a, int b, float relation)"
   },
   {
+   "address": "0x00097590",
+   "names": [
+    "Camera_SetTurbulenceEnabled"
+   ],
+   "evidence": [
+    "inferred: the only engine call of script command Camera_SetTurbulenceEnabled (binding 0x00115170), and called from at most three places"
+   ]
+  },
+  {
+   "address": "0x00097900",
+   "names": [
+    "Camera_SetInterestActor"
+   ],
+   "evidence": [
+    "inferred: the only engine call of script command Camera_SetInterestActor (binding 0x00114E00), and called from at most three places"
+   ]
+  },
+  {
+   "address": "0x00097910",
+   "names": [
+    "Camera_SetInterestPosition"
+   ],
+   "evidence": [
+    "inferred: the only engine call of script command Camera_SetInterestPosition (binding 0x00114DB0), and called from at most three places"
+   ]
+  },
+  {
+   "address": "0x00097940",
+   "names": [
+    "Camera_MoveToPosition"
+   ],
+   "evidence": [
+    "inferred: the only engine call of script command Camera_MoveToPosition (binding 0x00114E30), and called from at most three places"
+   ]
+  },
+  {
+   "address": "0x00097970",
+   "names": [
+    "Camera_SetOrbit"
+   ],
+   "evidence": [
+    "inferred: the only engine call of script command Camera_SetOrbit (binding 0x00114C50), and called from at most three places"
+   ]
+  },
+  {
+   "address": "0x00097980",
+   "names": [
+    "Camera_SetPan"
+   ],
+   "evidence": [
+    "inferred: the only engine call of script command Camera_SetPan (binding 0x00114CE0), and called from at most three places"
+   ]
+  },
+  {
+   "address": "0x000979B0",
+   "names": [
+    "Camera_SetZoom"
+   ],
+   "evidence": [
+    "inferred: the only engine call of script command Camera_SetZoom (binding 0x00115120), and called from at most three places"
+   ]
+  },
+  {
+   "address": "0x000979E0",
+   "names": [
+    "Camera_ScriptPlayAnimation"
+   ],
+   "evidence": [
+    "inferred: the only engine call of script command Camera_ScriptPlayAnimation (binding 0x001152C0), and called from at most three places"
+   ]
+  },
+  {
+   "address": "0x000979F0",
+   "names": [
+    "Camera_ScriptDriveActor"
+   ],
+   "evidence": [
+    "inferred: the only engine call of script command Camera_ScriptDriveActor (binding 0x00115310), and called from at most three places"
+   ]
+  },
+  {
+   "address": "0x00097A00",
+   "names": [
+    "Camera_StopScriptDriveActor"
+   ],
+   "evidence": [
+    "inferred: the only engine call of script command Camera_StopScriptDriveActor (binding 0x00115360), and called from at most three places"
+   ]
+  },
+  {
    "address": "0x00097B30",
    "file": "RsCamera.cpp",
    "file_evidence": "direct",
@@ -197,6 +524,24 @@
     112,
     113,
     122
+   ]
+  },
+  {
+   "address": "0x000A6B90",
+   "names": [
+    "Effect_SetCloudFlightEffect"
+   ],
+   "evidence": [
+    "inferred: the only engine call of script command Effect_SetCloudFlightEffect (binding 0x00114C10), and called from at most three places"
+   ]
+  },
+  {
+   "address": "0x000A6C20",
+   "names": [
+    "Effect_SetRushingAirEffect"
+   ],
+   "evidence": [
+    "inferred: the only engine call of script command Effect_SetRushingAirEffect (binding 0x00114BD0), and called from at most three places"
    ]
   },
   {
@@ -498,6 +843,15 @@
    "lines": [
     3244,
     3245
+   ]
+  },
+  {
+   "address": "0x000C8B20",
+   "names": [
+    "Shop_SetShopLocked"
+   ],
+   "evidence": [
+    "inferred: the only engine call of script command Shop_SetShopLocked (binding 0x00113DE0), and called from at most three places"
    ]
   },
   {
@@ -825,6 +1179,12 @@
   },
   {
    "address": "0x000CD3C0",
+   "names": [
+    "Mail_Delete"
+   ],
+   "evidence": [
+    "inferred: the only engine call of script command Mail_Delete (binding 0x00113E60), and called from at most three places"
+   ],
    "file": "RsDataPodVM.cpp",
    "file_evidence": "between"
   },
@@ -928,6 +1288,12 @@
   },
   {
    "address": "0x000CE860",
+   "names": [
+    "Mail_Post"
+   ],
+   "evidence": [
+    "inferred: the only engine call of script command Mail_Post (binding 0x00113E30), and called from at most three places"
+   ],
    "file": "RsDataPodVM.cpp",
    "file_evidence": "between"
   },
@@ -977,6 +1343,42 @@
     254,
     255,
     337
+   ]
+  },
+  {
+   "address": "0x000D2DB0",
+   "names": [
+    "Ui_RemoveDisplayMarkerActor"
+   ],
+   "evidence": [
+    "inferred: the only engine call of script command Ui_RemoveDisplayMarkerActor (binding 0x00115780), and called from at most three places"
+   ]
+  },
+  {
+   "address": "0x000D3190",
+   "names": [
+    "Ui_AddChallengeMarkerActor"
+   ],
+   "evidence": [
+    "inferred: the only engine call of script command Ui_AddChallengeMarkerActor (binding 0x001157B0), and called from at most three places"
+   ]
+  },
+  {
+   "address": "0x000D3280",
+   "names": [
+    "Ui_RemoveChallengeMarkerActor"
+   ],
+   "evidence": [
+    "inferred: the only engine call of script command Ui_RemoveChallengeMarkerActor (binding 0x00115880), and called from at most three places"
+   ]
+  },
+  {
+   "address": "0x000D3600",
+   "names": [
+    "Ui_AddDisplayMarkerActor"
+   ],
+   "evidence": [
+    "inferred: the only engine call of script command Ui_AddDisplayMarkerActor (binding 0x001156F0), and called from at most three places"
    ]
   },
   {
@@ -2731,6 +3133,24 @@
    ]
   },
   {
+   "address": "0x000EAB00",
+   "names": [
+    "Briefing_SpecialDisplayRadar"
+   ],
+   "evidence": [
+    "inferred: the only engine call of script command Briefing_SpecialDisplayRadar (binding 0x0011C520), and called from at most three places"
+   ]
+  },
+  {
+   "address": "0x000F02E0",
+   "names": [
+    "Player_ShowMoney"
+   ],
+   "evidence": [
+    "inferred: the only engine call of script command Player_ShowMoney (binding 0x0011AA00), and called from at most three places"
+   ]
+  },
+  {
    "address": "0x000F1970",
    "file": "RsHud.cpp",
    "file_evidence": "direct",
@@ -2745,6 +3165,12 @@
   },
   {
    "address": "0x000F1A40",
+   "names": [
+    "Ui_MessageBoxClear"
+   ],
+   "evidence": [
+    "inferred: the only engine call of script command Ui_MessageBoxClear (binding 0x001155E0), and called from at most three places"
+   ],
    "file": "RsHud.cpp",
    "file_evidence": "between"
   },
@@ -3947,11 +4373,23 @@
   },
   {
    "address": "0x00108740",
+   "names": [
+    "Ui_DisplayLeftVideoPortrait"
+   ],
+   "evidence": [
+    "inferred: the only engine call of script command Ui_DisplayLeftVideoPortrait (binding 0x001158B0), and called from at most three places"
+   ],
    "file": "RsHud.cpp",
    "file_evidence": "between"
   },
   {
    "address": "0x00108760",
+   "names": [
+    "Ui_DisplayRightVideoPortrait"
+   ],
+   "evidence": [
+    "inferred: the only engine call of script command Ui_DisplayRightVideoPortrait (binding 0x00115920), and called from at most three places"
+   ],
    "file": "RsHud.cpp",
    "file_evidence": "between"
   },
@@ -4092,6 +4530,15 @@
    ]
   },
   {
+   "address": "0x0010C1F0",
+   "names": [
+    "Utility_SetNextLoadScreen"
+   ],
+   "evidence": [
+    "inferred: the only engine call of script command Utility_SetNextLoadScreen (binding 0x0011B5F0), and called from at most three places"
+   ]
+  },
+  {
    "address": "0x0010C5F0",
    "file": "RsLoadScreen.cpp",
    "file_evidence": "direct",
@@ -4121,6 +4568,348 @@
    ]
   },
   {
+   "address": "0x0010ED20",
+   "names": [
+    "Event_RelativeTimer"
+   ],
+   "evidence": [
+    "inferred: the only engine call of script command Event_RelativeTimer (binding 0x00119FE0), and called from at most three places"
+   ]
+  },
+  {
+   "address": "0x0010ED30",
+   "names": [
+    "Event_ActorToActorProximity"
+   ],
+   "evidence": [
+    "inferred: the only engine call of script command Event_ActorToActorProximity (binding 0x00119760), and called from at most three places"
+   ]
+  },
+  {
+   "address": "0x0010ED60",
+   "names": [
+    "Event_AiIsFollowing"
+   ],
+   "evidence": [
+    "inferred: the only engine call of script command Event_AiIsFollowing (binding 0x001194B0), and called from at most three places"
+   ]
+  },
+  {
+   "address": "0x0010ED80",
+   "names": [
+    "Event_AiCommandStatus"
+   ],
+   "evidence": [
+    "inferred: the only engine call of script command Event_AiCommandStatus (binding 0x00119610), and called from at most three places"
+   ]
+  },
+  {
+   "address": "0x0010EDB0",
+   "names": [
+    "Event_AiCommandQueueClear"
+   ],
+   "evidence": [
+    "inferred: the only engine call of script command Event_AiCommandQueueClear (binding 0x001196D0), and called from at most three places"
+   ]
+  },
+  {
+   "address": "0x0010EDD0",
+   "names": [
+    "Event_AlarmUsed"
+   ],
+   "evidence": [
+    "inferred: the only engine call of script command Event_AlarmUsed (binding 0x0011A200), and called from at most three places"
+   ]
+  },
+  {
+   "address": "0x0010EE20",
+   "names": [
+    "Event_ActorInBoundary"
+   ],
+   "evidence": [
+    "inferred: the only engine call of script command Event_ActorInBoundary (binding 0x00120820), and called from at most three places"
+   ]
+  },
+  {
+   "address": "0x0010EE50",
+   "names": [
+    "Event_ActorIsDormant"
+   ],
+   "evidence": [
+    "inferred: the only engine call of script command Event_ActorIsDormant (binding 0x00118D90), and called from at most three places"
+   ]
+  },
+  {
+   "address": "0x0010EE70",
+   "names": [
+    "Event_ActorIsWinchingSomething"
+   ],
+   "evidence": [
+    "inferred: the only engine call of script command Event_ActorIsWinchingSomething (binding 0x00118E40), and called from at most three places"
+   ]
+  },
+  {
+   "address": "0x0010EE90",
+   "names": [
+    "Event_ActorSold"
+   ],
+   "evidence": [
+    "inferred: the only engine call of script command Event_ActorSold (binding 0x00118F00), and called from at most three places"
+   ]
+  },
+  {
+   "address": "0x0010EEB0",
+   "names": [
+    "Event_ActorSpottedTrespassing"
+   ],
+   "evidence": [
+    "inferred: the only engine call of script command Event_ActorSpottedTrespassing (binding 0x00118FA0), and called from at most three places"
+   ]
+  },
+  {
+   "address": "0x0010EEE0",
+   "names": [
+    "Event_ExtractionHelicopterDestroyed"
+   ],
+   "evidence": [
+    "inferred: the only engine call of script command Event_ExtractionHelicopterDestroyed (binding 0x0011A340), and called from at most three places"
+   ]
+  },
+  {
+   "address": "0x0010EF00",
+   "names": [
+    "Event_ActorToVectorProximity"
+   ],
+   "evidence": [
+    "inferred: the only engine call of script command Event_ActorToVectorProximity (binding 0x00119080), and called from at most three places"
+   ]
+  },
+  {
+   "address": "0x0010EF40",
+   "names": [
+    "Event_ActorToLocationProximity"
+   ],
+   "evidence": [
+    "inferred: the only engine call of script command Event_ActorToLocationProximity (binding 0x00119180), and called from at most three places"
+   ]
+  },
+  {
+   "address": "0x0010EF70",
+   "names": [
+    "Event_ActorInLoadingZone"
+   ],
+   "evidence": [
+    "inferred: the only engine call of script command Event_ActorInLoadingZone (binding 0x00119270), and called from at most three places"
+   ]
+  },
+  {
+   "address": "0x0010EFA0",
+   "names": [
+    "Event_ActorUsed"
+   ],
+   "evidence": [
+    "inferred: the only engine call of script command Event_ActorUsed (binding 0x0011A0E0), and called from at most three places"
+   ]
+  },
+  {
+   "address": "0x0010EFC0",
+   "names": [
+    "Event_ActorVerified"
+   ],
+   "evidence": [
+    "inferred: the only engine call of script command Event_ActorVerified (binding 0x0011A170), and called from at most three places"
+   ]
+  },
+  {
+   "address": "0x0010EFE0",
+   "names": [
+    "Event_ActorCaptured"
+   ],
+   "evidence": [
+    "inferred: the only engine call of script command Event_ActorCaptured (binding 0x0011A2B0), and called from at most three places"
+   ]
+  },
+  {
+   "address": "0x0010F000",
+   "names": [
+    "Event_ActorInFiremansCarry"
+   ],
+   "evidence": [
+    "inferred: the only engine call of script command Event_ActorInFiremansCarry (binding 0x00118C40), and called from at most three places"
+   ]
+  },
+  {
+   "address": "0x0010F020",
+   "names": [
+    "Event_ActorIsAirborne"
+   ],
+   "evidence": [
+    "inferred: the only engine call of script command Event_ActorIsAirborne (binding 0x00118A20), and called from at most three places"
+   ]
+  },
+  {
+   "address": "0x0010F040",
+   "names": [
+    "Event_ActorInFocus"
+   ],
+   "evidence": [
+    "inferred: the only engine call of script command Event_ActorInFocus (binding 0x00118BA0), and called from at most three places"
+   ]
+  },
+  {
+   "address": "0x0010F060",
+   "names": [
+    "Event_ActorIsHostileToward"
+   ],
+   "evidence": [
+    "inferred: the only engine call of script command Event_ActorIsHostileToward (binding 0x00118AD0), and called from at most three places"
+   ]
+  },
+  {
+   "address": "0x0010F090",
+   "names": [
+    "Event_OdfHitPointsLessThan"
+   ],
+   "evidence": [
+    "inferred: the only engine call of script command Event_OdfHitPointsLessThan (binding 0x00119950), and called from at most three places"
+   ]
+  },
+  {
+   "address": "0x0010F0C0",
+   "names": [
+    "Event_OdfSold"
+   ],
+   "evidence": [
+    "inferred: the only engine call of script command Event_OdfSold (binding 0x00119A20), and called from at most three places"
+   ]
+  },
+  {
+   "address": "0x0010F0E0",
+   "names": [
+    "Event_PlayerEnteredDangerZone"
+   ],
+   "evidence": [
+    "inferred: the only engine call of script command Event_PlayerEnteredDangerZone (binding 0x00119CC0), and called from at most three places"
+   ]
+  },
+  {
+   "address": "0x0010F110",
+   "names": [
+    "Event_PlayerEquipsNamedItem"
+   ],
+   "evidence": [
+    "inferred: the only engine call of script command Event_PlayerEquipsNamedItem (binding 0x00119D50), and called from at most three places"
+   ]
+  },
+  {
+   "address": "0x0010F130",
+   "names": [
+    "Event_PlayerEquipsOdfItem"
+   ],
+   "evidence": [
+    "inferred: the only engine call of script command Event_PlayerEquipsOdfItem (binding 0x00119E00), and called from at most three places"
+   ]
+  },
+  {
+   "address": "0x0010F150",
+   "names": [
+    "Event_PlayerIsBeingFilmed"
+   ],
+   "evidence": [
+    "inferred: the only engine call of script command Event_PlayerIsBeingFilmed (binding 0x00119F50), and called from at most three places"
+   ]
+  },
+  {
+   "address": "0x0010F160",
+   "names": [
+    "Event_SkipCinematic"
+   ],
+   "evidence": [
+    "inferred: the only engine call of script command Event_SkipCinematic (binding 0x0011A070), and called from at most three places"
+   ]
+  },
+  {
+   "address": "0x0010FF00",
+   "names": [
+    "Event_AiInVehicle"
+   ],
+   "evidence": [
+    "inferred: the only engine call of script command Event_AiInVehicle (binding 0x00119340), and called from at most three places"
+   ]
+  },
+  {
+   "address": "0x0010FF20",
+   "names": [
+    "Event_AiIsPassenger"
+   ],
+   "evidence": [
+    "inferred: the only engine call of script command Event_AiIsPassenger (binding 0x00119560), and called from at most three places"
+   ]
+  },
+  {
+   "address": "0x0010FF40",
+   "names": [
+    "Event_FactionAttitudeChange"
+   ],
+   "evidence": [
+    "inferred: the only engine call of script command Event_FactionAttitudeChange (binding 0x00119890), and called from at most three places"
+   ]
+  },
+  {
+   "address": "0x0010FF60",
+   "names": [
+    "Event_ActorIsSubdued"
+   ],
+   "evidence": [
+    "inferred: the only engine call of script command Event_ActorIsSubdued (binding 0x00118CF0), and called from at most three places"
+   ]
+  },
+  {
+   "address": "0x0010FF80",
+   "names": [
+    "Event_OdfToActorProximity"
+   ],
+   "evidence": [
+    "inferred: the only engine call of script command Event_OdfToActorProximity (binding 0x00119AB0), and called from at most three places"
+   ]
+  },
+  {
+   "address": "0x0010FFB0",
+   "names": [
+    "Event_OdfToVectorProximity"
+   ],
+   "evidence": [
+    "inferred: the only engine call of script command Event_OdfToVectorProximity (binding 0x00119BB0), and called from at most three places"
+   ]
+  },
+  {
+   "address": "0x0010FFF0",
+   "names": [
+    "Event_PlayerUsesWeapon"
+   ],
+   "evidence": [
+    "inferred: the only engine call of script command Event_PlayerUsesWeapon (binding 0x00119EC0), and called from at most three places"
+   ]
+  },
+  {
+   "address": "0x00111BD0",
+   "names": [
+    "Event_AiInNamedVehicle"
+   ],
+   "evidence": [
+    "inferred: the only engine call of script command Event_AiInNamedVehicle (binding 0x001193F0), and called from at most three places"
+   ]
+  },
+  {
+   "address": "0x00111C00",
+   "names": [
+    "Event_ActorHitPointsLessThan"
+   ],
+   "evidence": [
+    "inferred: the only engine call of script command Event_ActorHitPointsLessThan (binding 0x00118950), and called from at most three places"
+   ]
+  },
+  {
    "address": "0x00112120",
    "names": [
     "LuaScript_FromState"
@@ -4129,6 +4918,15 @@
     "retail code: one-entry cache (state at 0x3717BC, script at 0x3717A0), else a lookup on the script manager at 0x371848"
    ],
    "signature": "LuaScript * __cdecl LuaScript_FromState(lua_State *L)"
+  },
+  {
+   "address": "0x001121D0",
+   "names": [
+    "Debug_PrintMemoryStatistics"
+   ],
+   "evidence": [
+    "inferred: the only engine call of script command Debug_PrintMemoryStatistics (binding 0x00112E10), and called from at most three places"
+   ]
   },
   {
    "address": "0x001122A0",
@@ -4158,6 +4956,15 @@
    ]
   },
   {
+   "address": "0x001127E0",
+   "names": [
+    "Utility_CloseThisScript"
+   ],
+   "evidence": [
+    "inferred: the only engine call of script command Utility_CloseThisScript (binding 0x0011B1F0), and called from at most three places"
+   ]
+  },
+  {
    "address": "0x00112990",
    "names": [
     "Lua_ArgBool"
@@ -4166,6 +4973,16 @@
     "retail code: returns (0x1DCD80(L, n) == 1)"
    ],
    "signature": "int __cdecl Lua_ArgBool(lua_State *L, int n)"
+  },
+  {
+   "address": "0x001129B0",
+   "names": [
+    "Lua_PushBool"
+   ],
+   "evidence": [
+    "inferred: Lua_Actor_IsAlive ends by passing it (L, alive) and returns 1 result"
+   ],
+   "signature": "void __cdecl Lua_PushBool(lua_State *L, int value)"
   },
   {
    "address": "0x001129C0",
@@ -4355,6 +5172,15 @@
    ]
   },
   {
+   "address": "0x001131E0",
+   "names": [
+    "Utility_StringFormat"
+   ],
+   "evidence": [
+    "inferred: the only engine call of script command Utility_StringFormat (binding 0x001132D0), and called from at most three places"
+   ]
+  },
+  {
    "address": "0x001132D0",
    "names": [
     "Lua_Utility_StringFormat"
@@ -4388,6 +5214,16 @@
    ],
    "notes": "Purpose not confirmed; possibly the Debug_EnableCallStack trace.",
    "signature": "void __cdecl LuaScript_BeginCommand(lua_State *L)"
+  },
+  {
+   "address": "0x00113BA0",
+   "names": [
+    "Lua_ArgHitPointActor"
+   ],
+   "evidence": [
+    "retail code: Lua_ToActorRef, then World_ActorFromHandle, then keeps the result only if its type bits match g_HitPointActorType (0x30C0B4/0x30C0B8)"
+   ],
+   "signature": "Actor * __cdecl Lua_ArgHitPointActor(lua_State *L, int n)"
   },
   {
    "address": "0x00113C40",
@@ -6038,6 +6874,17 @@
    "commands": [
     "Ai_GetFaction"
    ]
+  },
+  {
+   "address": "0x001180D0",
+   "names": [
+    "Ai_SubmitCommand"
+   ],
+   "evidence": [
+    "retail code: on the AI's command queue (ai + 0x54): mode 0 clears it (0x65F90) then adds, mode 1 adds (0x65DB0), mode 2 sets the default (0x65D10)"
+   ],
+   "notes": "Mode 0 = Ai_Command (replace), 1 = Ai_CommandQueue (append), 2 = Ai_CommandDefault.",
+   "signature": "int __cdecl Ai_SubmitCommand(Ai *ai, AiCommand *command, int mode)"
   },
   {
    "address": "0x00118120",
@@ -7852,6 +8699,16 @@
    ]
   },
   {
+   "address": "0x0011D530",
+   "names": [
+    "Lua_ArgAi"
+   ],
+   "evidence": [
+    "retail code: Lua_ArgHitPointActor(L, n), then that actor's vtable slot +0xBC (its AI); used by the Ai_ commands"
+   ],
+   "signature": "Ai * __cdecl Lua_ArgAi(lua_State *L, int n)"
+  },
+  {
    "address": "0x0011D560",
    "names": [
     "Lua_Mission_Spawn"
@@ -8292,6 +9149,26 @@
    ]
   },
   {
+   "address": "0x0011F8A0",
+   "names": [
+    "Lua_ArgBoundary"
+   ],
+   "evidence": [
+    "retail code: string argument, HashName, then HashTable_Find in the boundary table (keys 0x37A438, mask 0x37A42C - 1, values 0x37A434); raises an error for non-strings"
+   ],
+   "signature": "Boundary * __cdecl Lua_ArgBoundary(lua_State *L, int n)"
+  },
+  {
+   "address": "0x001202A0",
+   "names": [
+    "Lua_SubmitAiCommand"
+   ],
+   "evidence": [
+    "retail code: shared by Lua_Ai_Command (mode 0), Lua_Ai_CommandQueue (1) and Lua_Ai_CommandDefault (2): Lua_ArgAi(L, 1), a command built from argument 2 by 0x120210, then Ai_SubmitCommand"
+   ],
+   "signature": "int __cdecl Lua_SubmitAiCommand(lua_State *L, int mode)"
+  },
+  {
    "address": "0x00120430",
    "names": [
     "Lua_Squad_Command"
@@ -8573,8 +9450,15 @@
   },
   {
    "address": "0x001211B0",
+   "names": [
+    "StringTable_GetAscii"
+   ],
+   "evidence": [
+    "retail code: HashTable_Find on the table (keys +0x10, mask +4 - 1, values +0xC, default +0x14), then copies the UTF-16 text to a NUL-terminated byte string of at most size - 1 characters; returns false (and writes \" \") when missing"
+   ],
    "file": "RsRegistry.cpp",
-   "file_evidence": "between"
+   "file_evidence": "between",
+   "signature": "bool __thiscall StringTable_GetAscii(StringTable *this, uint32 id, char *out, int size)"
   },
   {
    "address": "0x00121220",
@@ -8655,6 +9539,15 @@
    "file_evidence": "direct",
    "lines": [
     24
+   ]
+  },
+  {
+   "address": "0x00122650",
+   "names": [
+    "Encounter_ReportStatus"
+   ],
+   "evidence": [
+    "inferred: the only engine call of script command Encounter_ReportStatus (binding 0x001207B0), and called from at most three places"
    ]
   },
   {
@@ -9167,6 +10060,33 @@
    ]
   },
   {
+   "address": "0x00150FB0",
+   "names": [
+    "Audio_SetAmbientCombatLevel"
+   ],
+   "evidence": [
+    "inferred: the only engine call of script command Audio_SetAmbientCombatLevel (binding 0x00118710), and called from at most three places"
+   ]
+  },
+  {
+   "address": "0x00152F90",
+   "names": [
+    "Audio_RemoveStreamPreloadRegion"
+   ],
+   "evidence": [
+    "inferred: the only engine call of script command Audio_RemoveStreamPreloadRegion (binding 0x001186C0), and called from at most three places"
+   ]
+  },
+  {
+   "address": "0x00152FB0",
+   "names": [
+    "Audio_RemoveAllStreamPreloadRegions"
+   ],
+   "evidence": [
+    "inferred: the only engine call of script command Audio_RemoveAllStreamPreloadRegions (binding 0x001186F0), and called from at most three places"
+   ]
+  },
+  {
    "address": "0x00156170",
    "file": "RsTargetSystem.cpp",
    "file_evidence": "direct",
@@ -9244,6 +10164,42 @@
    ]
   },
   {
+   "address": "0x0015B540",
+   "names": [
+    "Challenge_WriteStatHeader"
+   ],
+   "evidence": [
+    "inferred: the only engine call of script command Challenge_WriteStatHeader (binding 0x0011CF30), and called from at most three places"
+   ]
+  },
+  {
+   "address": "0x0015B8A0",
+   "names": [
+    "Challenge_WriteStatInteger"
+   ],
+   "evidence": [
+    "inferred: the only engine call of script command Challenge_WriteStatInteger (binding 0x0011CF70), and called from at most three places"
+   ]
+  },
+  {
+   "address": "0x0015B8D0",
+   "names": [
+    "Challenge_WriteStatFloat"
+   ],
+   "evidence": [
+    "inferred: the only engine call of script command Challenge_WriteStatFloat (binding 0x0011D000), and called from at most three places"
+   ]
+  },
+  {
+   "address": "0x0015B900",
+   "names": [
+    "Challenge_WriteStatTime"
+   ],
+   "evidence": [
+    "inferred: the only engine call of script command Challenge_WriteStatTime (binding 0x0011D080), and called from at most three places"
+   ]
+  },
+  {
    "address": "0x0015B920",
    "file": "RsChallengeStats.cpp",
    "file_evidence": "direct",
@@ -9258,11 +10214,23 @@
   },
   {
    "address": "0x0015BAA0",
+   "names": [
+    "Challenge_ReadStatInteger"
+   ],
+   "evidence": [
+    "inferred: the only engine call of script command Challenge_ReadStatInteger (binding 0x0011D180), and called from at most three places"
+   ],
    "file": "RsChallengeStats.cpp",
    "file_evidence": "between"
   },
   {
    "address": "0x0015BB00",
+   "names": [
+    "Challenge_ReadStatFloat"
+   ],
+   "evidence": [
+    "inferred: the only engine call of script command Challenge_ReadStatFloat (binding 0x0011D0E0), and called from at most three places"
+   ],
    "file": "RsChallengeStats.cpp",
    "file_evidence": "between"
   },
@@ -9300,6 +10268,15 @@
    ]
   },
   {
+   "address": "0x0015F850",
+   "names": [
+    "Utility_SetCurrentMissionData"
+   ],
+   "evidence": [
+    "inferred: the only engine call of script command Utility_SetCurrentMissionData (binding 0x0011BD10), and called from at most three places"
+   ]
+  },
+  {
    "address": "0x0015F8B0",
    "file": "RsMissionDataManager.cpp",
    "file_evidence": "direct",
@@ -9309,11 +10286,211 @@
    ]
   },
   {
+   "address": "0x0015FAD0",
+   "names": [
+    "Objective_SetShortDescription"
+   ],
+   "evidence": [
+    "inferred: the only engine call of script command Objective_SetShortDescription (binding 0x00114600), and called from at most three places"
+   ]
+  },
+  {
+   "address": "0x0015FB10",
+   "names": [
+    "Objective_SetLongDescription"
+   ],
+   "evidence": [
+    "inferred: the only engine call of script command Objective_SetLongDescription (binding 0x00114640), and called from at most three places"
+   ]
+  },
+  {
+   "address": "0x0015FB50",
+   "names": [
+    "Objective_SetNagText"
+   ],
+   "evidence": [
+    "inferred: the only engine call of script command Objective_SetNagText (binding 0x001146F0), and called from at most three places"
+   ]
+  },
+  {
+   "address": "0x0015FDB0",
+   "names": [
+    "Objective_Find"
+   ],
+   "evidence": [
+    "inferred: Objective_FindOrCreate's lookup step"
+   ],
+   "signature": "Objective * __cdecl Objective_Find(uint32 id)"
+  },
+  {
+   "address": "0x0015FEC0",
+   "names": [
+    "Objective_FindOrCreate"
+   ],
+   "evidence": [
+    "retail code: 0x15FDB0(id); if that finds nothing, 0x15FE60 makes one and 0x15FD60 sets it up with the id; used by the Objective_ commands"
+   ],
+   "signature": "Objective * __cdecl Objective_FindOrCreate(uint32 id)"
+  },
+  {
+   "address": "0x00160280",
+   "names": [
+    "Objective_RemoveTarget"
+   ],
+   "evidence": [
+    "inferred: the only engine call of script command Objective_RemoveTarget (binding 0x00114950), and called from at most three places"
+   ]
+  },
+  {
+   "address": "0x001602A0",
+   "names": [
+    "Objective_Remove"
+   ],
+   "evidence": [
+    "inferred: the only engine call of script command Objective_Remove (binding 0x00114990), and called from at most three places"
+   ]
+  },
+  {
+   "address": "0x00165D70",
+   "names": [
+    "ActorVehicle_KickoutPassenger"
+   ],
+   "evidence": [
+    "inferred: the only engine call of script command ActorVehicle_KickoutPassenger (binding 0x00117730), and called from at most three places"
+   ]
+  },
+  {
    "address": "0x00168030",
    "file": "RsRiderManager.cpp",
    "file_evidence": "direct",
    "lines": [
     464
+   ]
+  },
+  {
+   "address": "0x001694E0",
+   "names": [
+    "Traffic_SetZoneEnabled"
+   ],
+   "evidence": [
+    "inferred: the only engine call of script command Traffic_SetZoneEnabled (binding 0x00113FF0), and called from at most three places"
+   ]
+  },
+  {
+   "address": "0x00169500",
+   "names": [
+    "Traffic_ResetZoneSpawners"
+   ],
+   "evidence": [
+    "inferred: the only engine call of script command Traffic_ResetZoneSpawners (binding 0x00114040), and called from at most three places"
+   ]
+  },
+  {
+   "address": "0x00169550",
+   "names": [
+    "Traffic_AddZoneSpawner"
+   ],
+   "evidence": [
+    "inferred: the only engine call of script command Traffic_AddZoneSpawner (binding 0x00114070), and called from at most three places"
+   ]
+  },
+  {
+   "address": "0x001695C0",
+   "names": [
+    "Traffic_SetZoneDensity"
+   ],
+   "evidence": [
+    "inferred: the only engine call of script command Traffic_SetZoneDensity (binding 0x001140F0), and called from at most three places"
+   ]
+  },
+  {
+   "address": "0x001695E0",
+   "names": [
+    "Traffic_SetZoneCivDensity"
+   ],
+   "evidence": [
+    "inferred: the only engine call of script command Traffic_SetZoneCivDensity (binding 0x00114140), and called from at most three places"
+   ]
+  },
+  {
+   "address": "0x00169600",
+   "names": [
+    "Traffic_ResetZoneCivSpawners"
+   ],
+   "evidence": [
+    "inferred: the only engine call of script command Traffic_ResetZoneCivSpawners (binding 0x001141D0), and called from at most three places"
+   ]
+  },
+  {
+   "address": "0x00169650",
+   "names": [
+    "Traffic_AddZoneCivSpawner"
+   ],
+   "evidence": [
+    "inferred: the only engine call of script command Traffic_AddZoneCivSpawner (binding 0x00114190), and called from at most three places"
+   ]
+  },
+  {
+   "address": "0x001696B0",
+   "names": [
+    "Traffic_SetZoneUrgency"
+   ],
+   "evidence": [
+    "inferred: the only engine call of script command Traffic_SetZoneUrgency (binding 0x00114200), and called from at most three places"
+   ]
+  },
+  {
+   "address": "0x001696D0",
+   "names": [
+    "Traffic_SetZoneSpawnerCap"
+   ],
+   "evidence": [
+    "inferred: the only engine call of script command Traffic_SetZoneSpawnerCap (binding 0x00114290), and called from at most three places"
+   ]
+  },
+  {
+   "address": "0x00169710",
+   "names": [
+    "Traffic_SetZoneCoolDownTimer"
+   ],
+   "evidence": [
+    "inferred: the only engine call of script command Traffic_SetZoneCoolDownTimer (binding 0x00114240), and called from at most three places"
+   ]
+  },
+  {
+   "address": "0x00169730",
+   "names": [
+    "Traffic_SetZoneEncounter"
+   ],
+   "evidence": [
+    "inferred: the only engine call of script command Traffic_SetZoneEncounter (binding 0x001142F0), and called from at most three places"
+   ]
+  },
+  {
+   "address": "0x00169750",
+   "names": [
+    "Traffic_SetZoneSquad"
+   ],
+   "evidence": [
+    "inferred: the only engine call of script command Traffic_SetZoneSquad (binding 0x00114330), and called from at most three places"
+   ]
+  },
+  {
+   "address": "0x00169770",
+   "names": [
+    "Traffic_SaveZone"
+   ],
+   "evidence": [
+    "inferred: the only engine call of script command Traffic_SaveZone (binding 0x00114370), and called from at most three places"
+   ]
+  },
+  {
+   "address": "0x00169880",
+   "names": [
+    "Traffic_RestoreZone"
+   ],
+   "evidence": [
+    "inferred: the only engine call of script command Traffic_RestoreZone (binding 0x001143C0), and called from at most three places"
    ]
   },
   {
@@ -9388,6 +10565,12 @@
   },
   {
    "address": "0x0016A4B0",
+   "names": [
+    "Traffic_SetPathEnabled"
+   ],
+   "evidence": [
+    "inferred: the only engine call of script command Traffic_SetPathEnabled (binding 0x00113FA0), and called from at most three places"
+   ],
    "file": "RsTrafficManager.cpp",
    "file_evidence": "between"
   },
@@ -9466,6 +10649,24 @@
    ]
   },
   {
+   "address": "0x0016FB00",
+   "names": [
+    "Mission_EnableAtmosphere"
+   ],
+   "evidence": [
+    "inferred: the only engine call of script command Mission_EnableAtmosphere (binding 0x00113CC0), and called from at most three places"
+   ]
+  },
+  {
+   "address": "0x00170380",
+   "names": [
+    "Mission_EnableGlobalGpsJammer"
+   ],
+   "evidence": [
+    "inferred: the only engine call of script command Mission_EnableGlobalGpsJammer (binding 0x00113D10), and called from at most three places"
+   ]
+  },
+  {
    "address": "0x00174480",
    "names": [
     "Spawner_SpawnTemplate"
@@ -9475,6 +10676,96 @@
    ],
    "notes": "Spawns any object template by name hash: the core of spawning by name.",
    "signature": "SpawnResult * __thiscall Spawner_SpawnTemplate(Spawner *this, uint32 templateHash, const char *name, const Matrix *transform, int, int)"
+  },
+  {
+   "address": "0x00175760",
+   "names": [
+    "Briefing_GetSceneActor"
+   ],
+   "evidence": [
+    "inferred: the only engine call of script command Briefing_GetSceneActor (binding 0x0011C3D0), and called from at most three places"
+   ]
+  },
+  {
+   "address": "0x00175770",
+   "names": [
+    "Briefing_SetAmbientSoundCue"
+   ],
+   "evidence": [
+    "inferred: the only engine call of script command Briefing_SetAmbientSoundCue (binding 0x0011C430), and called from at most three places"
+   ]
+  },
+  {
+   "address": "0x00175790",
+   "names": [
+    "Briefing_SetAdditionalSoundBank"
+   ],
+   "evidence": [
+    "inferred: the only engine call of script command Briefing_SetAdditionalSoundBank (binding 0x0011C490), and called from at most three places"
+   ]
+  },
+  {
+   "address": "0x00175800",
+   "names": [
+    "Briefing_UnloadAdditionalSoundBank"
+   ],
+   "evidence": [
+    "inferred: the only engine call of script command Briefing_UnloadAdditionalSoundBank (binding 0x0011C4C0), and called from at most three places"
+   ]
+  },
+  {
+   "address": "0x001758A0",
+   "names": [
+    "Briefing_RestoreOldLightSettings"
+   ],
+   "evidence": [
+    "inferred: the only engine call of script command Briefing_RestoreOldLightSettings (binding 0x0011C410), and called from at most three places"
+   ]
+  },
+  {
+   "address": "0x001758D0",
+   "names": [
+    "Briefing_Deinit"
+   ],
+   "evidence": [
+    "inferred: the only engine call of script command Briefing_Deinit (binding 0x0011C370), and called from at most three places"
+   ]
+  },
+  {
+   "address": "0x00175B10",
+   "names": [
+    "Briefing_Init"
+   ],
+   "evidence": [
+    "inferred: the only engine call of script command Briefing_Init (binding 0x0011C330), and called from at most three places"
+   ]
+  },
+  {
+   "address": "0x00176190",
+   "names": [
+    "Briefing_AddActor"
+   ],
+   "evidence": [
+    "inferred: the only engine call of script command Briefing_AddActor (binding 0x0011C390), and called from at most three places"
+   ]
+  },
+  {
+   "address": "0x001766D0",
+   "names": [
+    "Cinematic_DeinitSequence"
+   ],
+   "evidence": [
+    "inferred: the only engine call of script command Cinematic_DeinitSequence (binding 0x0011AE30), and called from at most three places"
+   ]
+  },
+  {
+   "address": "0x00176D90",
+   "names": [
+    "Cinematic_BeginSequence"
+   ],
+   "evidence": [
+    "inferred: the only engine call of script command Cinematic_BeginSequence (binding 0x0011ADD0), and called from at most three places"
+   ]
   },
   {
    "address": "0x001783B0",
@@ -9626,6 +10917,12 @@
   },
   {
    "address": "0x0017A6D0",
+   "names": [
+    "Utility_OpenBriefingDataSets"
+   ],
+   "evidence": [
+    "inferred: the only engine call of script command Utility_OpenBriefingDataSets (binding 0x0011BB60), and called from at most three places"
+   ],
    "file": "RsMain.cpp",
    "file_evidence": "between"
   },
@@ -9826,6 +11123,15 @@
    "lines": [
     4630,
     4637
+   ]
+  },
+  {
+   "address": "0x001809F0",
+   "names": [
+    "Utility_CloseBriefingDataSets"
+   ],
+   "evidence": [
+    "inferred: the only engine call of script command Utility_CloseBriefingDataSets (binding 0x0011BB80), and called from at most three places"
    ]
   },
   {
@@ -10619,6 +11925,12 @@
   },
   {
    "address": "0x00189400",
+   "names": [
+    "Utility_SavePlayerData"
+   ],
+   "evidence": [
+    "inferred: the only engine call of script command Utility_SavePlayerData (binding 0x0011C2F0), and called from at most three places"
+   ],
    "file": "RsLoadSaveGame.cpp",
    "file_evidence": "between"
   },
@@ -11701,8 +13013,15 @@
   },
   {
    "address": "0x001EC220",
+   "names": [
+    "World_ActorFromHandle"
+   ],
+   "evidence": [
+    "retail code: HashTable_Find(handle, 0x624070, 0x3FFF) into the object array at 0x614070; returns the object's +0x24 (its actor) if flag bit 0 (active) is set and bit 2 (removed) is not"
+   ],
    "file": "RedWorld.cpp",
-   "file_evidence": "between"
+   "file_evidence": "between",
+   "signature": "Actor * __cdecl World_ActorFromHandle(uint32 handle)"
   },
   {
    "address": "0x001EC270",
@@ -12038,8 +13357,15 @@
   },
   {
    "address": "0x001EE0E0",
+   "names": [
+    "WorldObject_Remove"
+   ],
+   "evidence": [
+    "retail code: unless already removed, releases the object's handle (0x1EC180), sets flag bit 2 (removed), notifies the manager at 0x4434D4 (vtable +0x1C), 0x1ED530, and counts it in 0x30EE78; the engine call behind Actor_Remove, Actor_Kill and Actor_SetDieUponHibernation"
+   ],
    "file": "RedWorld.cpp",
-   "file_evidence": "between"
+   "file_evidence": "between",
+   "signature": "void __thiscall WorldObject_Remove(WorldObject *this)"
   },
   {
    "address": "0x001EE170",
@@ -12236,6 +13562,17 @@
    "signature": "uint32 __cdecl HashName(const char *name)"
   },
   {
+   "address": "0x001F2A20",
+   "names": [
+    "HashTable_Find"
+   ],
+   "evidence": [
+    "retail code: open addressing with linear probing: start at key & mask, step until the key or an empty (0) slot; returns the slot or -1"
+   ],
+   "notes": "The engine's general lookup: object handles, boundaries, string ids, squads.",
+   "signature": "int __cdecl HashTable_Find(uint32 key, const uint32 *keys, uint32 mask)"
+  },
+  {
    "address": "0x001F40D0",
    "file": "RedModel.cpp",
    "file_evidence": "direct",
@@ -12422,6 +13759,16 @@
    ]
   },
   {
+   "address": "0x001F8860",
+   "names": [
+    "Vector3_GetYaw"
+   ],
+   "evidence": [
+    "inferred: from x and z of the vector it calls 0x1FA000 and negates the result; used by Actor_SetYaw, Location_GetYaw and the spawn-point commands"
+   ],
+   "signature": "float __thiscall Vector3_GetYaw(const float *this)"
+  },
+  {
    "address": "0x001FD780",
    "file": "RedEffect.cpp",
    "file_evidence": "direct",
@@ -12438,6 +13785,16 @@
     459,
     460
    ]
+  },
+  {
+   "address": "0x001FFA60",
+   "names": [
+    "Sound_Play2D"
+   ],
+   "evidence": [
+    "inferred: forwards its two arguments to 0x1FF6E0 with nine zeroed floats (no position); the engine call of Audio_PlaySound, Audio_PlayVoiceover and Audio_PlayVoiceoverCB; Player_SetMoney calls it with (0, 0x19C0F913)"
+   ],
+   "signature": "void __cdecl Sound_Play2D(int a, uint32 soundHash)"
   },
   {
    "address": "0x002003F0",
@@ -13283,6 +14640,16 @@
     112,
     113
    ]
+  },
+  {
+   "address": "0x00237066",
+   "names": [
+    "atof"
+   ],
+   "evidence": [
+    "inferred: takes a property's text and leaves a float on the FPU stack (Lua_Actor_IsAlive reads hit points through it); in the C runtime library range"
+   ],
+   "signature": "double __cdecl atof(const char *s)"
   }
  ],
  "globals": [
@@ -13300,6 +14667,115 @@
    "address": "0x00371848",
    "name": "g_LuaScriptManager",
    "evidence": "inferred: LuaScript_FromState looks scripts up through it"
+  },
+  {
+   "address": "0x0030C0B0",
+   "name": "g_HitPointActorType",
+   "evidence": "retail code: the TypeFilter Lua_Actor_IsAlive casts with before reading hit points at +0x98; Lua_ArgHitPointActor checks the same value/mask"
+  },
+  {
+   "address": "0x00614070",
+   "name": "g_WorldObjects",
+   "evidence": "retail code: object pointer array indexed by World_ActorFromHandle"
+  },
+  {
+   "address": "0x00624070",
+   "name": "g_WorldObjectHandles",
+   "evidence": "retail code: handle keys World_ActorFromHandle searches (mask 0x3FFF)"
+  },
+  {
+   "address": "0x004434D4",
+   "name": "g_WorldObjectManager",
+   "evidence": "inferred: WorldObject_Remove notifies it (vtable +0x1C)"
+  },
+  {
+   "address": "0x00413FC0",
+   "name": "g_StringTables",
+   "evidence": "inferred: Lua_Player_AdjustMoney passes it to 0x121650 with a hashed table name before StringTable_GetAscii"
+  }
+ ],
+ "structures": [
+  {
+   "name": "WorldObject",
+   "evidence": "retail code: Lua_Actor_IsAlive, World_ActorFromHandle, WorldObject_Remove",
+   "fields": [
+    {
+     "offset": "0x00",
+     "name": "vtable",
+     "notes": "+0x04 type bits (TypeFilter_Cast); +0x0C property text by name hash (\"hitpoints\" = 0x6E99129D); +0x10 property by name hash (\"name\" = 0x8D39BDE6)"
+    },
+    {
+     "offset": "0x24",
+     "name": "actor",
+     "notes": "the game actor (World_ActorFromHandle returns it)"
+    },
+    {
+     "offset": "0x28",
+     "name": "handle",
+     "notes": "what scripts hold (Lua_PushActor)"
+    },
+    {
+     "offset": "0x30",
+     "name": "flags",
+     "type": "uint16",
+     "notes": "bit 0 active, bit 2 removed, bit 3 hit points come from the \"hitpoints\" property, bit 12 released by WorldObject_Remove via 0x1EC420"
+    }
+   ]
+  },
+  {
+   "name": "Actor",
+   "evidence": "retail code: Lua_Actor_IsAlive, Actor_EnableCollision, Lua_ArgAi",
+   "fields": [
+    {
+     "offset": "0x98",
+     "name": "hitPoints",
+     "type": "float",
+     "notes": "read after casting with g_HitPointActorType; alive while > 0"
+    },
+    {
+     "offset": "0xB0",
+     "name": "transform",
+     "type": "Matrix",
+     "notes": "Actor_EnableCollision re-places the physics body from it"
+    },
+    {
+     "offset": "0x6C1",
+     "name": "collisionDisableCount",
+     "type": "int8"
+    },
+    {
+     "offset": "0xAC4",
+     "name": "money",
+     "type": "float",
+     "notes": "on the player; Lua_Player_GetMoney reads it, Player_SetMoney writes it"
+    }
+   ]
+  },
+  {
+   "name": "Ai",
+   "evidence": "retail code: Ai_SubmitCommand",
+   "fields": [
+    {
+     "offset": "0x54",
+     "name": "commandQueue",
+     "type": "AiCommandQueue"
+    }
+   ]
+  },
+  {
+   "name": "Vehicle",
+   "evidence": "retail code: Vehicle_GetNumPassengers",
+   "fields": [
+    {
+     "offset": "0x8BC",
+     "name": "driverSeat"
+    },
+    {
+     "offset": "0x8C8",
+     "name": "riderCount",
+     "type": "int8"
+    }
+   ]
   }
  ]
 }
