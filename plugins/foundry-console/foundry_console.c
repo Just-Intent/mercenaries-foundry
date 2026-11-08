@@ -814,6 +814,75 @@ static double since_nearby;
 static int f7_down;
 static double since_inspect;
 
+/* In-game panel (F8): the inspector text drawn into the game's own frames
+ * through the host's set_overlay, so it shows in exclusive fullscreen too. */
+#define HUD_W 380
+#define HUD_MAX_H 320
+#define HUD_LINE 15
+static int f8_down, hud_on;
+static HDC hud_dc;
+static HBITMAP hud_bitmap;
+static HFONT hud_font;
+static uint32_t *hud_pixels;
+
+static void hud_hide(void)
+{
+    if (MERC_PLUGIN_HOST_HAS(host, set_overlay))
+        host->set_overlay(host->context, NULL, 0, 0, 0, 0);
+}
+
+static void hud_draw(const char *text)
+{
+    if (!MERC_PLUGIN_HOST_HAS(host, set_overlay)) return;
+    if (!hud_dc) {
+        BITMAPINFO bi = {0};
+        bi.bmiHeader.biSize = sizeof(BITMAPINFOHEADER);
+        bi.bmiHeader.biWidth = HUD_W;
+        bi.bmiHeader.biHeight = -HUD_MAX_H;
+        bi.bmiHeader.biPlanes = 1;
+        bi.bmiHeader.biBitCount = 32;
+        bi.bmiHeader.biCompression = BI_RGB;
+        hud_dc = CreateCompatibleDC(NULL);
+        hud_bitmap = CreateDIBSection(hud_dc, &bi, DIB_RGB_COLORS, (void **)&hud_pixels, NULL, 0);
+        if (!hud_bitmap || !hud_pixels) { hud_on = 0; return; }
+        SelectObject(hud_dc, hud_bitmap);
+        hud_font = CreateFontA(-13, 0, 0, 0, FW_NORMAL, 0, 0, 0, DEFAULT_CHARSET, 0, 0, ANTIALIASED_QUALITY, 0, "Consolas");
+        SelectObject(hud_dc, hud_font);
+        SetBkMode(hud_dc, TRANSPARENT);
+        SetTextColor(hud_dc, RGB(235, 240, 242));
+    }
+    memset(hud_pixels, 0, HUD_W * HUD_MAX_H * 4);
+    int y = 6;
+    TextOutA(hud_dc, 8, y, "Foundry Console  (F8 hides, F7 opens the window)", 48);
+    y += HUD_LINE + 4;
+    const char *p = text;
+    while (*p && y + HUD_LINE <= HUD_MAX_H - 4) {
+        const char *end = strpbrk(p, "\r\n");
+        int len = end ? (int)(end - p) : (int)strlen(p);
+        if (len) TextOutA(hud_dc, 8, y, p, len);
+        y += HUD_LINE;
+        if (!end) break;
+        p = end;
+        if (*p == '\r') p++;
+        if (*p == '\n') p++;
+    }
+    GdiFlush();
+    int h = y + 6;
+    /* GDI writes grey text on black. Make it premultiplied BGRA: a dark,
+     * mostly opaque panel (alpha 170) with the text on top. */
+    for (int i = 0; i < HUD_W * h; i++) {
+        uint32_t c = hud_pixels[i];
+        unsigned t = c & 255, g = (c >> 8) & 255, r = (c >> 16) & 255;
+        if (g > t) t = g;
+        if (r > t) t = r;
+        unsigned a = 170 + t * 85 / 255;
+        unsigned bg = 14 * (255 - t) / 255;          /* premultiplied panel colour */
+        unsigned v = t + bg;
+        hud_pixels[i] = (a << 24) | (v << 16) | (v << 8) | (v + 4 * (255 - t) / 255);
+    }
+    host->set_overlay(host->context, hud_pixels, HUD_W, (uint32_t)h, 12, 150);
+}
+
 static int MERC_PLUGIN_CALL on_update(void *ud, const MercPluginUpdate *u)
 {
     (void)ud;
@@ -824,6 +893,13 @@ static int MERC_PLUGIN_CALL on_update(void *ud, const MercPluginUpdate *u)
     if (down && !f7_down && pid == GetCurrentProcessId() && wnd)
         PostMessageW(wnd, WM_APP_TOGGLE, 0, 0);
     f7_down = down;
+    int f8 = (GetAsyncKeyState(VK_F8) & 0x8000) != 0;
+    if (f8 && !f8_down && pid == GetCurrentProcessId()) {
+        hud_on = !hud_on;
+        since_inspect = 1.0;                 /* draw (or clear) right away */
+        if (!hud_on) hud_hide();
+    }
+    f8_down = f8;
     LONG want = InterlockedCompareExchange(&want_tool, 0, 0);
     if (want != tool_state && MERC_PLUGIN_HOST_HAS(host, set_tool_window)) {
         host->set_tool_window(host->context, want);
@@ -834,6 +910,13 @@ static int MERC_PLUGIN_CALL on_update(void *ud, const MercPluginUpdate *u)
     if (since_inspect >= 0.25) {
         since_inspect = 0;
         inspect();
+        if (hud_on) {
+            char text[1024];
+            EnterCriticalSection(&lock);
+            memcpy(text, info_text, sizeof(text));
+            LeaveCriticalSection(&lock);
+            hud_draw(text);
+        }
     }
     if (!host->in_gameplay(host->context))
         return 1;

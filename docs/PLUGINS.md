@@ -14,6 +14,7 @@ Six functions appended to `MercPluginHost` (older plugins are unaffected; check 
 | `hook_guest(ctx, address, before, after, userdata)` | Run `before` and/or `after` whenever the game calls a function (see Hooks). |
 | `add_lua_command(ctx, name, fn, userdata)` | Add a global script command (see Script commands). |
 | `set_tool_window(ctx, open)` | Say a plugin window is open (1) or closed (0). While any is open the game treats it like the F9 developer panel: it leaves exclusive fullscreen so the window can show, and ignores game input. Call from `on_update`. |
+| `set_overlay(ctx, pixels, width, height, x, y)` | Show an image over the game's own frames: premultiplied BGRA, at most 960 x 540, placed at `x, y` on a 960 x 540 screen scaled to the game's picture. The host keeps a copy and composites it every frame after the F9 overlay, until it is replaced or hidden (`pixels` NULL). It is drawn into the frame, so it shows in exclusive fullscreen with no mode switch. Any thread may call it. Port patch 0005. |
 
 Rules:
 - Calls only work inside `on_update`. That runs on the game's own thread at its input checkpoint, the same place the port's developer tools call the game.

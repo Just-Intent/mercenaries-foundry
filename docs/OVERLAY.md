@@ -1,6 +1,6 @@
 # Foundry Console (developer overlay)
 
-A developer window for Mercenaries Recompiled, built as a plugin on the [plugin API](PLUGINS.md). Press **F7** in game to show or hide it. Tested in game (2026-11-08).
+A developer window for Mercenaries Recompiled, built as a plugin on the [plugin API](PLUGINS.md). Press **F7** in game to show or hide it, and **F8** for the inspector as a panel drawn inside the game. Tested in game (2026-11-08).
 
 | Part | What it does |
 |---|---|
@@ -35,4 +35,6 @@ The Lua console learns the game's Lua states by hooking `LuaScript_RegisterComma
 
 While the console has focus it uses `set_tool_window` (port patch 0004): the game ignores game input, so typing doesn't move the player, and in exclusive fullscreen the game steps out to a desktop-sized borderless window so the console can show (as for the F9 panel), returning when F7 hides it. **DISPLAY: BORDERLESS** in the game's Options is the smoothest mode: no switch at all. In exclusive fullscreen at the native 640 x 480, the borderless picture shows the game's real 4:3 shape; a widescreen resolution and aspect avoid that.
 
-Limits: it is a separate window (it can be dragged anywhere). Spawned objects get no ground check (they appear 1.5 m above the player's height). Lua lines run at the plugin update point, outside the game's own script calls; `print` output doesn't appear in the console (return values instead). Most world props have no name; the list labels them by their `GeometryFile` property (looked up once per object), and only objects without one show a handle.
+**F8** shows the inspector inside the game itself, as a translucent panel at the top left, updated four times a second. The console draws the text with GDI into a premultiplied BGRA image and hands it to `set_overlay` (port patch 0005). The game composites it into every frame after the F9 overlay, so it shows in exclusive fullscreen with no switch and needs no window. Tested in game (2026-11-08).
+
+Limits: spawning, object editing and Lua are in the window (it can be dragged anywhere); the in-game panel only shows the inspector, since typing in game would need keyboard capture. Spawned objects get no ground check (they appear 1.5 m above the player's height). Lua lines run at the plugin update point, outside the game's own script calls; `print` output doesn't appear in the console (return values instead). Most world props have no name; the list labels them by their `GeometryFile` property (looked up once per object), and only objects without one show a handle.

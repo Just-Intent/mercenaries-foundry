@@ -1,0 +1,145 @@
+From 920866de7fce1d841d325504112e766d6b608e3a Mon Sep 17 00:00:00 2001
+From: Just-Intent <346791974+Just-Intent@users.noreply.github.com>
+Date: Sun, 8 Nov 2026 15:13:52 -0600
+Subject: [PATCH] Plugin overlays
+
+set_overlay lets a plugin show a premultiplied BGRA image over the
+game's own frames: the host keeps a copy per plugin (any thread may
+replace it) and composites each one at present, after the F9 overlay,
+on a 960 x 540 screen. Drawn into the frame, it shows in exclusive
+fullscreen without a mode switch.
+---
+ ports/mercenaries/sdk/mercenaries_plugin.h |  8 ++++++
+ ports/mercenaries/src/dev_overlay.c        | 10 ++++++++
+ ports/mercenaries/src/plugin_host.cpp      | 30 +++++++++++++++++++++-
+ ports/mercenaries/src/plugin_host.h        |  3 +++
+ 4 files changed, 50 insertions(+), 1 deletion(-)
+
+diff --git a/ports/mercenaries/sdk/mercenaries_plugin.h b/ports/mercenaries/sdk/mercenaries_plugin.h
+index dbdbfc2..508f4b6 100644
+--- a/ports/mercenaries/sdk/mercenaries_plugin.h
++++ b/ports/mercenaries/sdk/mercenaries_plugin.h
+@@ -84,6 +84,14 @@ typedef struct MercPluginHost {
+      * exclusive fullscreen (so the window can show) and ignores game input.
+      * Call from on_update. */
+     int (MERC_PLUGIN_CALL *set_tool_window)(void *, int);
++    /* Show an image over the game's own frames, in fullscreen too: pixels are
++     * premultiplied BGRA (width * height * 4 bytes, rows top to bottom), placed
++     * at x, y on a 960 x 540 screen (scaled to the game's picture). The host
++     * keeps a copy and draws it every frame, after the F9 overlay, until it is
++     * replaced, or hidden with pixels NULL. One image per plugin, at most
++     * 960 x 540. Any thread may call it. Returns 1, or 0 if refused. */
++    int (MERC_PLUGIN_CALL *set_overlay)(void *, const void *pixels, uint32_t width, uint32_t height,
++                                        uint32_t x, uint32_t y);
+ } MercPluginHost;
+ /* True when the host provides a field (older hosts have a smaller struct). */
+ #define MERC_PLUGIN_HOST_HAS(host, field) \
+diff --git a/ports/mercenaries/src/dev_overlay.c b/ports/mercenaries/src/dev_overlay.c
+index 3592380..58fef68 100644
+--- a/ports/mercenaries/src/dev_overlay.c
++++ b/ports/mercenaries/src/dev_overlay.c
+@@ -4,6 +4,7 @@
+ #include "free_cam.h"
+ #include "d3d8_internal.h"
+ #include "d3d8_frame_timing.h"
++#include "plugin_host.h"
+ #include <stdio.h>
+ #include <string.h>
+ static int enabled;
+@@ -15,7 +16,16 @@ static ULONGLONG updated;
+ #define W 360
+ #define H 128
+ void recomp_dev_overlay_set(int value){enabled=value && recomp_dev_menu_allowed();updated=0;}
++static void paint_dev(void);
++/* Plugin images (MercPluginHost.set_overlay) go over the game and the F9 overlay. */
++static void composite_plugin(const void *pixels,unsigned w,unsigned h,unsigned x,unsigned y){
++    d3d8_CompositeHostOverlay(pixels,w,h,x,y,960,540);
++}
+ static void paint(void){
++    paint_dev();
++    merc_plugins_each_overlay(composite_plugin);
++}
++static void paint_dev(void){
+     if(!enabled)return;
+     if(!dc){
+         BITMAPINFO info={0};info.bmiHeader.biSize=sizeof(BITMAPINFOHEADER);
+diff --git a/ports/mercenaries/src/plugin_host.cpp b/ports/mercenaries/src/plugin_host.cpp
+index 1938db2..35ffa8d 100644
+--- a/ports/mercenaries/src/plugin_host.cpp
++++ b/ports/mercenaries/src/plugin_host.cpp
+@@ -4,6 +4,9 @@
+ #include "plugin_host.h"
+ #include "plugin_manifest.h"
+ #include <memory>
++#include <map>
++#include <mutex>
++#include <vector>
+ #include <cstdio>
+ #include <cstring>
+ 
+@@ -201,7 +204,25 @@ int MERC_PLUGIN_CALL set_tool_window(void *ctx,int open) {
+     set_tool(*calling,open!=0);
+     return 1;
+ }
++/* Plugin overlays: one premultiplied BGRA image per plugin, copied in by any
++ * thread, composited by the render thread at present. */
++struct Overlay {std::vector<uint32_t> pixels;unsigned width=0,height=0,x=0,y=0;};
++std::mutex overlay_lock;
++std::map<const Loaded*,Overlay> overlays;
++int MERC_PLUGIN_CALL set_overlay(void *ctx,const void *pixels,uint32_t width,uint32_t height,uint32_t x,uint32_t y) {
++    bool known=false;
++    for(auto &entry:loaded)if(entry.get()==ctx&&entry->active)known=true;
++    if(!known)return 0;
++    std::lock_guard<std::mutex> guard(overlay_lock);
++    if(!pixels||!width||!height){overlays.erase(static_cast<Loaded*>(ctx));return 1;}
++    if(width>960||height>540||x>=960||y>=540)return 0;
++    auto &o=overlays[static_cast<Loaded*>(ctx)];
++    o.pixels.assign(static_cast<const uint32_t*>(pixels),static_cast<const uint32_t*>(pixels)+size_t(width)*height);
++    o.width=width;o.height=height;o.x=x;o.y=y;
++    return 1;
++}
+ void shutdown_all() {
++    {std::lock_guard<std::mutex> guard(overlay_lock);overlays.clear();}
+     for(auto &entry:loaded)set_tool(*entry,false);
+     for(auto it=loaded.rbegin();it!=loaded.rend();++it) {
+         auto &p=**it;
+@@ -252,7 +273,7 @@ extern "C" int merc_plugins_initialize(void *base,size_t bytes) {
+             fs::create_directories(fs::path(wide(p->settings)));
+             p->host={sizeof(MercPluginHost),MERCENARIES_PLUGIN_API_VERSION,p.get(),
+                 p->manifest.id.c_str(),p->directory.c_str(),p->settings.c_str(),plugin_log,read_guest,write_guest,
+-                call_guest,guest_scratch,in_gameplay,hook_guest,add_lua_command,set_tool_window};
++                call_guest,guest_scratch,in_gameplay,hook_guest,add_lua_command,set_tool_window,set_overlay};
+             p->callbacks.struct_size=sizeof(MercPlugin);p->callbacks.api_version=MERCENARIES_PLUGIN_API_VERSION;
+             auto library=m.root/wide(m.library);
+             // Own directory for dependencies; no working-directory or PATH search.
+@@ -312,6 +333,13 @@ extern "C" int merc_plugins_hook_ready(void) {
+ extern "C" void merc_plugins_hook_before(unsigned index,MercHookContext *call) {run_hooks(index,call,false);}
+ extern "C" void merc_plugins_hook_after(unsigned index,MercHookContext *call) {run_hooks(index,call,true);}
+ extern "C" void merc_plugins_set_tool_display(void (*callback)(int)) {tool_display=callback;}
++extern "C" void merc_plugins_each_overlay(void (*fn)(const void*,unsigned,unsigned,unsigned,unsigned)) {
++    std::lock_guard<std::mutex> guard(overlay_lock);
++    for(auto &entry:overlays) {
++        const Overlay &o=entry.second;
++        if(entry.first->active&&!o.pixels.empty())fn(o.pixels.data(),o.width,o.height,o.x,o.y);
++    }
++}
+ extern "C" unsigned merc_plugins_lua_count(void) {return unsigned(lua_commands.size());}
+ extern "C" int merc_plugins_lua_command(unsigned index,uint32_t L) {
+     if(!initialized||GetCurrentThreadId()!=owner||index>=lua_commands.size())return 0;
+diff --git a/ports/mercenaries/src/plugin_host.h b/ports/mercenaries/src/plugin_host.h
+index ec672ca..9373eb1 100644
+--- a/ports/mercenaries/src/plugin_host.h
++++ b/ports/mercenaries/src/plugin_host.h
+@@ -36,6 +36,9 @@ void merc_plugins_hook_after(unsigned index, MercHookContext *call);
+ /* Plugin tool windows: the host (main.c) gets told when the first opens and
+  * the last closes, and treats that like the F9 panel. */
+ void merc_plugins_set_tool_display(void (*callback)(int open));
++/* Plugin overlays: call fn for each plugin image (render thread, at present). */
++void merc_plugins_each_overlay(void (*fn)(const void *pixels, unsigned width, unsigned height,
++                                          unsigned x, unsigned y));
+ unsigned merc_plugins_lua_count(void);
+ int merc_plugins_lua_command(unsigned index, uint32_t L);
+ #ifdef __cplusplus
+-- 
+2.55.0.windows.5
+
