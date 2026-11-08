@@ -18,6 +18,8 @@ Project layout (every part optional):
                           apply to the copy).
     textures/<name>.png   replaces the texture <name>, or adds it if it's new
     models/<name>.obj     an edited export from the `model` command
+    animations/*.glb|.gltf   clips replace the game animations with the same
+                          names (export them with `model --glb --anim`)
     layout/<layer>.<kind>.json  replaces a layer's path, lineregion, region
                           or encounter data (from `layout` or `extract
                           --decode`); layout/<layer>.list.txt replaces its
@@ -104,7 +106,7 @@ class _Data:
 def new_project(folder, name=None):
     folder = Path(folder)
     name = name or folder.resolve().name
-    for sub in ("text", "scripts", "objects", "textures", "models", "layout"):
+    for sub in ("text", "scripts", "objects", "textures", "models", "layout", "animations"):
         (folder / sub).mkdir(parents=True, exist_ok=True)
     meta = folder / "mod.json"
     if not meta.exists():
@@ -287,6 +289,28 @@ def _apply_textures(data, folder, result):
             result.changes.append(f"texture {name}: added ({w}x{h})")
 
 
+def _apply_animations(data, folder, result):
+    from . import animation, gltf_anim
+    files = sorted(list((folder / "animations").glob("*.glb")) + list((folder / "animations").glob("*.gltf")))
+    for f in files:
+        clips = gltf_anim.clips(f)
+        if not clips:
+            result.warnings.append(f"animations/{f.name}: no animation clips")
+        for name, tracks in clips.items():
+            key = name_hash(name)
+            hit = [(a, r) for a, r in data.records(animation.ANIMATION) if r.key == key]
+            if not hit:
+                result.warnings.append(f"animations/{f.name}: no game animation named {name!r}; skipped")
+                continue
+            for a, r in hit:
+                base_rec = data.archive(a).read(r)
+                base = animation.decode(base_rec)
+                new = gltf_anim.to_animation(tracks, base)
+                data.set(a, r, animation.encode(new, base_rec))
+            touched = sum(1 for t in base.tracks if t.joint.lower() in tracks)
+            result.changes.append(f"animation {name}: {new.frames} frames, {touched} of {len(base.tracks)} joints from the clip")
+
+
 LAYOUT_KINDS = ("path", "lineregion", "region", "encounter", "list")
 
 
@@ -361,6 +385,7 @@ def build(project, data_dir, out_dir) -> Result:
     _apply_textures(data, project, result)
     _apply_models(data, project, result)
     _apply_layout(data, project, result)
+    _apply_animations(data, project, result)
     names = sorted(set(data.replace) | set(data.add))
     names = [n for n in names if data.replace.get(n) or data.add.get(n)]
     out.mkdir(parents=True, exist_ok=True)

@@ -38,6 +38,7 @@ class Track:
     rotations: list                 # per frame (x, y, z, w)
     translations: list = None       # per frame (x, y, z) metres, or None
     translation: tuple = None       # fixed (x, y, z) metres, or None
+    dxlt: float = None              # original per-frame translation scale
 
 
 @dataclass
@@ -117,6 +118,7 @@ def decode(record: bytes) -> Animation:
         track = Track(name, [])
         if b"DXLT" in jd:
             s = struct.unpack("<f", jd[b"DXLT"])[0]
+            track.dxlt = s
             vals = struct.unpack_from(f"<{3 * frames}h", data, o)
             track.translations = [tuple(v * s for v in vals[3 * f:3 * f + 3]) for f in range(frames)]
             o += 6 * frames
@@ -146,3 +148,105 @@ def find(archives, name):
                     f.seek(r.offset)
                     return f.read(r.size)
     raise KeyError(f"animation not found: {name}")
+
+
+# ----------------------------------------------------------------- encoding
+
+HOLD_MIN = 3   # unchanged runs this long or longer use a hold code
+
+
+def encode_channel(values) -> bytes:
+    """values: per-frame int16. Start value, then signed byte changes, holds
+    (0x80 n) for unchanged runs, and 0x81 + int16 for big jumps."""
+    out = bytearray(struct.pack("<h", values[0]))
+    i, n = 1, len(values)
+    while i < n:
+        if values[i] == values[i - 1]:
+            run = 1
+            while i + run < n and values[i + run] == values[i - 1]:
+                run += 1
+            left = run
+            while left >= HOLD_MIN:
+                step = min(left, 255)
+                out += bytes((0x80, step))
+                left -= step
+            out += b"\0" * left  # short runs (and leftovers) stay literal
+            i += run
+            continue
+        d = values[i] - values[i - 1]
+        if -126 <= d <= 127:
+            out += struct.pack("<b", d)
+        else:
+            out += b"\x81" + struct.pack("<h", values[i])
+        i += 1
+    return bytes(out)
+
+
+def _quant_rotations(rotations):
+    """Quantise as given; callers normalise imported rotations first."""
+    chans = [[], [], [], []]
+    for q in rotations:
+        for k in range(4):
+            chans[k].append(max(-32768, min(32767, round(q[k] * QUAT_SCALE))))
+    return chans
+
+
+def encode(anim: Animation, base: bytes = None) -> bytes:
+    """Build an animation record. With `base` (the original record), keep its
+    chunk layout, event chunks and the order of its joints."""
+    if anim.frames < 1:
+        raise ValueError("an animation needs at least one frame")
+    for t in anim.tracks:
+        if len(t.rotations) != anim.frames or (t.translations and len(t.translations) != anim.frames):
+            raise ValueError(f"{anim.name}: joint {t.joint} has the wrong number of frames")
+    scale = anim.scale or 1000.0
+    data = bytearray()
+    jonts = []
+    for t in anim.tracks:
+        parts = [(b"NAME", t.joint.encode("latin-1") + b"\0")]
+        if t.translations:
+            peak = max(abs(v) for p in t.translations for v in p) or 1e-6
+            # Keep the original scale when every value still fits in int16;
+            # otherwise fit a new one.
+            fits = t.dxlt and all(-32768 <= round(v / t.dxlt) <= 32767 for p in t.translations for v in p)
+            s = t.dxlt if fits else peak / 32767
+            for p in t.translations:
+                data += struct.pack("<3h", *(max(-32768, min(32767, round(v / s))) for v in p))
+            parts.append((b"DXLT", struct.pack("<f", s)))
+        else:
+            fixed = t.translation or (0.0, 0.0, 0.0)
+            q = [round(v * scale) for v in fixed]
+            if any(abs(v) > 32767 for v in q):
+                raise ValueError(f"{anim.name}: fixed translation of {t.joint} is too large for the scale")
+            parts.append((b"SXLT", struct.pack("<3h", *q)))
+        chans = [encode_channel(c) for c in _quant_rotations(t.rotations)]
+        data += b"".join(chans)
+        parts.append((b"QROT", struct.pack("<4H", *[len(c) for c in chans])))
+        jonts.append((t.joint.lower(), parts))
+    data = bytes(data)
+    packed = script.compress(data)
+    stored = packed if len(packed) < len(data) else data
+    extra = 0
+    items, pad_last, pad = [], True, (True, True)
+    if base is not None:
+        body, pad = ucfb.unwrap(base, b"anim", with_pad=True)
+        items, pad_last = ucfb.split(body)
+        extra = struct.unpack_from("<H", dict(items)[b"INFO"], 8)[0]
+    info = struct.pack("<HHfHII", anim.frames, len(anim.tracks), scale, extra, len(stored), len(data))
+    if base is None:
+        items = [(b"NAME", anim.name.encode("latin-1") + b"\0"), (b"INFO", b""), (b"CJNT", b"")] +                 [(b"jont", b"")] * len(jonts)
+    out, k = [], 0
+    for tag, body in items:
+        if tag == b"INFO":
+            out.append((tag, info))
+        elif tag == b"CJNT":
+            out.append((tag, stored))
+        elif tag == b"jont":
+            if k < len(jonts):
+                out.append((tag, ucfb.pack_children(jonts[k][1])))
+            k += 1
+        else:
+            out.append((tag, body))
+    for extra_joint in jonts[k:]:
+        out.append((b"jont", ucfb.pack_children(extra_joint[1])))
+    return ucfb.wrap(b"anim", ucfb.pack_children(out, pad_last), pad)

@@ -22,7 +22,8 @@
 - `find`: lists world objects by name, model, layer, property, or distance from a point or named object; `--rule` prints a mod rule that matches exactly that object. Scans all 51,731 objects in under a second.
 - Paths, boundaries, regions, encounters and load lists decoded with exact rebuild (all 3,329 records; counts recomputed). `layout` exports a layer's data, mods replace it via `layout/`, `find --layout` searches it, and `verify` checks it.
 - Animation decoder: all 1,835 animations (keyframe compression, per-frame translation, root motion); `model --glb --anim` exports them as glTF clips, `--in-place` drops root motion. Checked against skeleton rest poses and played back in three.js.
-- 119 tests pass.
+- Animation encoder and glTF clip import: every retail rotation channel re-encodes byte-identical; a glTF export reads back to the same values. Mods replace clips via `animations/`.
+- 126 tests pass.
 
 ## Fixed from retail data
 - Text values aren't NUL-terminated. The decoder had assumed they were and found no strings.
@@ -42,6 +43,7 @@
 - 2026-11-08, collision appended into an existing shape: `allies_veh_cargotruck` (one plain box shape, 8 boxes) got two fins; the solid fin's box went into its existing shape (9 boxes, still one shape). Spawned with the F9 developer menu: the solid fin collided, the `nocoll` fin didn't, and the truck drove and crashed without sinking.
 - 2026-11-08, Humvee sinking, isolated by elimination: not Skip Intro (plain Humvee fine), not the 4x engine, not the enlarged bounds; the generated collision boxes. A single 5 cm box still caused it, so the cause is a third collision shape, not size or mass. No game vehicle has more than two. Importer now appends to an existing plain box shape, adds a shape only below two, and otherwise skips with a warning.
 - 2026-11-08, model: `allies_veh_humvee` exported to OBJ, edited (gun barrel pieces stretched 3x, a new crate piece added with the Humvee texture), re-imported with `model-import` into `locked.dsk` and `streamed.dsk`. Both changes showed on the Humvee driven after the airdrop.
+- 2026-11-08, animation: the three mercenaries' `lb_upright_run_forward` clips exported to glTF, both thighs turned 40° outward, and dropped into a mod's `animations/` folder. The run was bow-legged in game. (The first try turned them inward and gave a cross-legged run, so a thigh's local +x turn is inward on the left leg.)
 - Lesson: the C-17 cargo-hold scene uses a separate model, `c17_humvee`, which shares the Humvee texture. Check model edits on the vehicle you drive.
 - Lesson: a new game starts in `playable_intro` (C-17 briefing, then `allies0`), not the Ace of Clubs, which is Allied mission 4. Script tests belong there.
 
@@ -56,7 +58,7 @@
 
 ## Next steps
 1. Collision for models whose shapes can't take more boxes (e.g. the Humvee): needs CMOP trees or the second CMSH layout decoded.
-2. glTF import (edit skeleton-aware models in Blender); animation encoding (edited or new clips back into the game); `animtable` (which clips a character uses).
+2. glTF model import (edit skeleton-aware models in Blender); new animations under new names, with `animtable` (which clips a character uses).
 3. Path junctions (`JNCT`) and squad types: where `SQD_` names like `nk_hum_ppl_tunnel01` are defined.
 
 ## Notes

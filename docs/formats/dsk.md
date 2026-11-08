@@ -238,6 +238,8 @@ Checks: every joint's rotations stay unit length; `SXLT` ÷ scale matches the sk
 
 Bone names match the model skeletons (`bone_*`, `hp_*`), so `model --glb --anim <pattern>` adds any matching animations as glTF clips (`--in-place` drops root motion). three.js plays them correctly (run, walk, idle).
 
+Re-encoding: holds are used for runs of 3 or more unchanged frames (split into pieces of up to 255), shorter runs stay as zero changes, changes from −126 to 127 are single bytes, and anything else is an `0x81` absolute value. With that rule all 172,612 retail rotation channels re-encode byte-identical; the only data difference is that stray bytes are dropped. Stored quaternions aren't quite unit length, so the encoder doesn't normalise them, and glTF import keeps the stored values for frames left as exported. A glTF export read back and re-encoded gives the same integers for every frame. Tested in-game (2026-11-08): thighs turned 40° outward in the three `lb_upright_run_forward` clips gave a bow-legged run.
+
 ### Textures: `Texture` → `tex_`
 
 All 4,715 retail textures decode. Established from retail data.

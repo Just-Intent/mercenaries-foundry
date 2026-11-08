@@ -85,3 +85,106 @@ class AnimationTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+import base64 as _b64
+import json as _json
+import tempfile as _tempfile
+from pathlib import Path as _Path
+
+from mercfoundry import dsk as _dsk, gltf_anim, modbuild
+from mercfoundry.hashing import name_hash as _nh
+from tests.test_dsk import build as _build
+
+
+def _model():
+    joints = [joint("root", (0, 0, 0, 1), (0, 0, 0), ""), joint("bone_a", (0, 0, 0, 1), (1, 0, 0), "root")]
+    return model.decode(model_record("guy", joints), segments_record([segm(QUAD, [0, 1, 2, 3], "bone_a")]))
+
+
+class EncodeTests(unittest.TestCase):
+    def test_channel_tokens(self):
+        enc = animation.encode_channel
+        self.assertEqual(enc([5]), struct.pack("<h", 5))
+        self.assertEqual(enc([0, 0, 0]), b"\0\0\0\0")                    # short run stays literal
+        self.assertEqual(enc([0, 0, 0, 0]), b"\0\0\x80\x03")            # run of 3 -> hold
+        self.assertEqual(enc([0] * 258), b"\0\0\x80\xff\x00\x00")         # 255 hold + 2 literal
+        self.assertEqual(enc([0, 127, -1]), b"\0\0\x7f\x81\xff\xff")    # +127 fits, -128 doesn't
+        self.assertEqual(enc([0, -126]), b"\0\0\x82")                     # -126 is the lowest delta
+        for vals in ([0, 300, 300, 300, 299, -5000], [2047] * 600, list(range(-200, 200, 7))):
+            got = animation._channel(enc(vals), 0, len(vals))
+            self.assertEqual(got[0], vals)
+
+    def test_encode_decode_same_values(self):
+        for compress in (False, True):
+            rec = anim_record(compress=compress, stray=True)
+            a = animation.decode(rec)
+            b = animation.decode(animation.encode(a, rec))
+            self.assertEqual([t.rotations for t in a.tracks], [t.rotations for t in b.tracks])
+            self.assertEqual(a.tracks[1].translation, b.tracks[1].translation)
+            for p, q in zip(a.tracks[0].translations, b.tracks[0].translations):
+                for x, y in zip(p, q):
+                    self.assertAlmostEqual(x, y, places=6)
+
+    def test_encode_without_base(self):
+        a = animation.decode(anim_record())
+        b = animation.decode(animation.encode(a))
+        self.assertEqual((b.name, b.frames, [t.joint for t in b.tracks]), ("test_anim", 3, ["root", "bone_a"]))
+
+    def test_frame_count_check(self):
+        a = animation.decode(anim_record())
+        a.tracks[0].rotations.pop()
+        with self.assertRaises(ValueError):
+            animation.encode(a)
+
+
+class GltfImportTests(unittest.TestCase):
+    def test_lossless_round_trip(self):
+        rec = anim_record()
+        a = animation.decode(rec)
+        with _tempfile.TemporaryDirectory() as tmp:
+            path = _Path(tmp) / "x.glb"
+            path.write_bytes(gltf.export(_model(), animations=[a]))
+            clips = gltf_anim.clips(path)
+        self.assertEqual(list(clips), ["test_anim"])
+        b = animation.decode(animation.encode(gltf_anim.to_animation(clips["test_anim"], a), rec))
+        self.assertEqual([t.rotations for t in a.tracks], [t.rotations for t in b.tracks])
+
+    def test_names_and_edits(self):
+        self.assertEqual(gltf_anim.clip_name("Armature|walk.001"), "walk")
+        a = animation.decode(anim_record())
+        turned = (0.0, 0.0, 0.7071068, 0.7071068)   # glTF axes
+        tracks = {"bone_a": {"rotation": ([0.0, 2 / 30], [turned, turned], "LINEAR")}}
+        b = gltf_anim.to_animation(tracks, a)
+        self.assertEqual(b.frames, 3)
+        x, y, z, w = b.tracks[1].rotations[1]
+        self.assertAlmostEqual(z, 0.7071068, places=5)      # mirroring Z negates x and y, not z
+        self.assertEqual((x, y), (0.0, 0.0))
+        self.assertEqual(b.tracks[0].rotations, a.tracks[0].rotations)  # untouched joint kept
+
+    def test_mod_animations_folder(self):
+        with _tempfile.TemporaryDirectory() as tmp:
+            d = _Path(tmp)
+            (d / "data").mkdir()
+            _build(d / "data" / "streamed.dsk", [(_nh("test_anim"), animation.ANIMATION, anim_record())])
+            modbuild.new_project(d / "proj")
+            turned = [0.0, 0.0, 0.7071068, 0.7071068]
+            buf = struct.pack("<2f", 0.0, 2 / 30) + struct.pack("<8f", *turned, *turned)
+            doc = {"asset": {"version": "2.0"}, "nodes": [{"name": "bone_a"}],
+                   "buffers": [{"byteLength": len(buf), "uri": "data:application/octet-stream;base64,"
+                                + _b64.b64encode(buf).decode()}],
+                   "bufferViews": [{"buffer": 0, "byteOffset": 0, "byteLength": 8},
+                                   {"buffer": 0, "byteOffset": 8, "byteLength": 32}],
+                   "accessors": [{"bufferView": 0, "componentType": 5126, "count": 2, "type": "SCALAR"},
+                                 {"bufferView": 1, "componentType": 5126, "count": 2, "type": "VEC4"}],
+                   "animations": [{"name": "Armature|test_anim", "samplers": [{"input": 0, "output": 1}],
+                                   "channels": [{"sampler": 0, "target": {"node": 0, "path": "rotation"}}]},
+                                  {"name": "nonexistent", "samplers": [{"input": 0, "output": 1}],
+                                   "channels": [{"sampler": 0, "target": {"node": 0, "path": "rotation"}}]}]}
+            (d / "proj" / "animations" / "edit.gltf").write_text(_json.dumps(doc))
+            result = modbuild.build(d / "proj", d / "data", d / "out")
+            self.assertEqual(result.written, ["streamed.dsk"])
+            self.assertTrue(any("nonexistent" in w for w in result.warnings))
+            arc = _dsk.Archive(d / "out" / "streamed.dsk")
+            got = animation.decode(arc.read(arc.records[0]))
+            self.assertAlmostEqual(got.tracks[1].rotations[2][2], 0.7071, places=3)

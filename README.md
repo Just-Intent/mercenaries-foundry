@@ -10,7 +10,7 @@ No game data is included. You need your own US retail Xbox copy. See [docs/PROVE
 
 1. **Reproducible build** of the port from your disc image. *(done with the port's own build script and the free Build Tools 2022; see docs/STATUS.md)*
 2. **`.dsk` archive tool**: list, extract, repack, compare. *(done; all four retail archives rebuild byte-for-byte)*
-3. **Asset decoders**: scripts, world/ODF properties, localization *(done; checked on retail data, and edited text, scripts and object properties work in-game)*, models, textures and animation *(done: all 2,297 models export to OBJ with their textures, and edited models import back and show in-game; all 4,715 textures export to PNG, and edited textures go back in-game; all 1,835 animations decode and export to glTF)*, then animation.
+3. **Asset decoders**: scripts, world/ODF properties, localization *(done; checked on retail data, and edited text, scripts and object properties work in-game)*, models, textures and animation *(done: all 2,297 models export to OBJ with their textures, and edited models import back and show in-game; all 4,715 textures export to PNG, and edited textures go back in-game; all 1,835 animations decode, export to glTF, and edited clips go back in-game)*.
 4. **Function and data map**: named functions and structures for entities, factions, spawning, Lua bindings and missions.
 5. **Plugin interface v2**: call game functions, hooks, new Lua commands, overlay drawing.
 6. **Developer overlay**: inspector, Lua console, spawning by name.
@@ -32,6 +32,7 @@ python -m mercfoundry mod build my_mod --data game_files/DATAxbox --out "<port>/
 | `objects/*.json`: `{"name": "player_humvee", "set": {"physicsenginetorque": "3400"}}` | Change objects in the world. Match by `name` (or `template`), `model`, and/or `near: [x, y, z]` (with `radius`); `layer` narrows it to one world layer. Actions: `set` properties, `move: [dx, dy, dz]`, `position: [x, y, z]`, `turn` (degrees about the vertical), and `copy: true` with `as: "new_name"` to place a duplicate. |
 | `textures/<name>.png` | Replace the texture `<name>`, or add a new one (power-of-two sizes) |
 | `models/<name>.obj` | Replace a model with an edited export from `model` |
+| `animations/*.glb` or `.gltf` | Replace game animations with clips of the same name (Blender's `Armature\|` prefix and `.001` suffixes are ignored). Export them with `model --glb --anim`, edit, and drop the file here. Joints a clip doesn't animate keep the game's motion. |
 | `layout/<layer>.<kind>.json` | Replace a layer's paths, boundaries, regions or encounters (`kind` = `path`, `lineregion`, `region`, `encounter`), or `layout/<layer>.list.txt` for its load list. Export them with `layout DATAxbox <layer>`. |
 
 ### Finding objects
