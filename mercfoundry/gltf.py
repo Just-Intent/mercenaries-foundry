@@ -85,8 +85,11 @@ class _Writer:
         return len(self.accessors) - 1
 
 
-def export(model, lod=0, damaged=False, textures=None, texture_name=None) -> bytes:
-    """Return .glb bytes. textures: {texture hash: (png bytes, has_alpha)}."""
+def export(model, lod=0, damaged=False, textures=None, texture_name=None, animations=(),
+           in_place=False) -> bytes:
+    """Return .glb bytes. textures: {texture hash: (png bytes, has_alpha)};
+    animations: decoded animation.Animation objects, matched to joints by name;
+    in_place drops root motion (translation of joints without a parent)."""
     textures = textures or {}
     texture_name = texture_name or (lambda h: f"{h:08X}")
     w = _Writer()
@@ -204,6 +207,11 @@ def export(model, lod=0, damaged=False, textures=None, texture_name=None) -> byt
             holder = gl["nodes"][joint_node[owner]] if owner is not None else gl["nodes"][root]
             holder.setdefault("children", []).append(node_index)
 
+    roots = {j.name.lower() for j in model.joints if j.parent.lower() not in by_name}
+    for anim in animations:
+        _add_animation(gl, w, anim, {j.name.lower(): joint_node[i] for i, j in enumerate(model.joints)},
+                       roots if in_place else set())
+
     while len(w.bin) % 4:
         w.bin.append(0)
     gl["buffers"] = [{"byteLength": len(w.bin)}]
@@ -228,3 +236,41 @@ def read(glb: bytes):
     if jtype != 0x4E4F534A or btype != 0x004E4942:
         raise ValueError("bad glTF chunk types")
     return doc, glb[28 + jlen:28 + jlen + blen]
+
+
+def _add_animation(gl, w, anim, nodes, still=frozenset()):
+    """Add one clip: a rotation track per matching joint, plus translation."""
+    from .animation import FPS
+    times = [f / FPS for f in range(anim.frames)]
+    t_all = w.accessor(struct.pack(f"<{len(times)}f", *times), FLOAT, len(times), "SCALAR",
+                       minmax=([times[0]], [times[-1]]))
+    t_one = None
+    samplers, channels, matched = [], [], 0
+    for track in anim.tracks:
+        node = nodes.get(track.joint.lower())
+        if node is None:
+            continue
+        matched += 1
+        quats = [_flip_quat(_normalise(q)) for q in track.rotations]
+        out = w.accessor(struct.pack(f"<{4 * len(quats)}f", *[c for q in quats for c in q]),
+                         FLOAT, len(quats), "VEC4")
+        samplers.append({"input": t_all, "output": out, "interpolation": "LINEAR"})
+        channels.append({"sampler": len(samplers) - 1, "target": {"node": node, "path": "rotation"}})
+        if track.joint.lower() in still:
+            continue  # root motion dropped
+        if track.translations:
+            pts = [_flip_point(t) for t in track.translations]
+            out = w.accessor(struct.pack(f"<{3 * len(pts)}f", *[c for p in pts for c in p]),
+                             FLOAT, len(pts), "VEC3")
+            samplers.append({"input": t_all, "output": out, "interpolation": "LINEAR"})
+        elif track.translation is not None:
+            if t_one is None:
+                t_one = w.accessor(struct.pack("<f", 0.0), FLOAT, 1, "SCALAR", minmax=([0.0], [0.0]))
+            out = w.accessor(struct.pack("<3f", *_flip_point(track.translation)), FLOAT, 1, "VEC3")
+            samplers.append({"input": t_one, "output": out, "interpolation": "STEP"})
+        else:
+            continue
+        channels.append({"sampler": len(samplers) - 1, "target": {"node": node, "path": "translation"}})
+    if channels:
+        gl.setdefault("animations", []).append({"name": anim.name, "samplers": samplers, "channels": channels})
+    return matched

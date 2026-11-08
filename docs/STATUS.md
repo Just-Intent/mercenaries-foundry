@@ -21,7 +21,8 @@
 - Object positions: world-layer `XFRM` decoded (rotation + position in metres) for all 51,731 objects; layer and object `INFO` counts understood and recomputed. Mod object rules can move, place, turn and copy objects, matching by name, model or position.
 - `find`: lists world objects by name, model, layer, property, or distance from a point or named object; `--rule` prints a mod rule that matches exactly that object. Scans all 51,731 objects in under a second.
 - Paths, boundaries, regions, encounters and load lists decoded with exact rebuild (all 3,329 records; counts recomputed). `layout` exports a layer's data, mods replace it via `layout/`, `find --layout` searches it, and `verify` checks it.
-- 115 tests pass.
+- Animation decoder: all 1,835 animations (keyframe compression, per-frame translation, root motion); `model --glb --anim` exports them as glTF clips, `--in-place` drops root motion. Checked against skeleton rest poses and played back in three.js.
+- 119 tests pass.
 
 ## Fixed from retail data
 - Text values aren't NUL-terminated. The decoder had assumed they were and found no strings.
@@ -55,7 +56,7 @@
 
 ## Next steps
 1. Collision for models whose shapes can't take more boxes (e.g. the Humvee): needs CMOP trees or the second CMSH layout decoded.
-2. glTF import (edit skeleton-aware models in Blender), and animation decoding.
+2. glTF import (edit skeleton-aware models in Blender); animation encoding (edited or new clips back into the game); `animtable` (which clips a character uses).
 3. Path junctions (`JNCT`) and squad types: where `SQD_` names like `nk_hum_ppl_tunnel01` are defined.
 
 ## Notes

@@ -223,6 +223,21 @@ Every layer has one record of each kind (most are empty). All 3,329 decode and r
 
 Paths, boundaries and spawn points plotted over the objects follow roads, town grids and compounds. Tested in-game (2026-11-08): shrinking `allies0_killbox` made the game's restricted-area response (air strikes) trigger at the new edge. Our readable form recomputes the count fields that matched their contents in the original, so adding points or properties keeps them right; a path's points and rotations must stay equal in number.
 
+### Animation: `animation` → `anim`
+
+All 1,835 retail animations decode (43,153 joint tracks, 234,640 frames). Established from retail data.
+
+- `NAME`; `INFO` (18 bytes): `u16` frames, `u16` joints, `float` translation scale (units per metre; e.g. 68,264.6), `u16` (often 0; maybe events), `u32` `CJNT` size, `u32` unpacked size
+- `CJNT`: joint data, compressed with the script scheme unless both sizes are equal (622 are stored raw)
+- `jont` per joint: `NAME`, then `SXLT` (`int16[3]` fixed translation ÷ the `INFO` scale = metres) or `DXLT` (`float` scale for per-frame translation), and `QROT` (`u16[4]`: byte length of each rotation channel; right for 99.6% of channels, see below)
+- `XLTC`, `EVNT`: not decoded
+
+`CJNT`, joint by joint: per-frame translation (`frames × int16[3]`, × the joint's `DXLT` = metres) when it has `DXLT`, then four rotation channels: quaternion x, y, z, w on a ±2047 scale. A channel is an `int16` start value then, per frame, a signed byte change, `0x80 n` = hold for n frames, or `0x81` + `int16` = new value. About 1.6% of joints (707) are preceded by one stray byte; the decoder finds it because the four start values must form a unit quaternion.
+
+Checks: every joint's rotations stay unit length; `SXLT` ÷ scale matches the skeleton's rest offsets (e.g. forearm 0.288 m); first-frame rotations of an idle match the rest pose except posed limbs. Rotations are full local rotations. The top joint (`dummyroot`) carries root motion: the run cycle moves 4.8 m over 16 frames. Frame rate assumed 30 fps: that gives a 3.7 steps/s sprint cadence. Names: `fb_` full body, `lb_` lower body.
+
+Bone names match the model skeletons (`bone_*`, `hp_*`), so `model --glb --anim <pattern>` adds any matching animations as glTF clips (`--in-place` drops root motion). three.js plays them correctly (run, walk, idle).
+
 ### Textures: `Texture` → `tex_`
 
 All 4,715 retail textures decode. Established from retail data.

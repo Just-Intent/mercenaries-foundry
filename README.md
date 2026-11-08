@@ -10,7 +10,7 @@ No game data is included. You need your own US retail Xbox copy. See [docs/PROVE
 
 1. **Reproducible build** of the port from your disc image. *(done with the port's own build script and the free Build Tools 2022; see docs/STATUS.md)*
 2. **`.dsk` archive tool**: list, extract, repack, compare. *(done; all four retail archives rebuild byte-for-byte)*
-3. **Asset decoders**: scripts, world/ODF properties, localization *(done; checked on retail data, and edited text, scripts and object properties work in-game)*, models and textures *(done: all 2,297 models export to OBJ with their textures, and edited models import back and show in-game; all 4,715 textures export to PNG, and edited textures go back in-game)*, then animation.
+3. **Asset decoders**: scripts, world/ODF properties, localization *(done; checked on retail data, and edited text, scripts and object properties work in-game)*, models, textures and animation *(done: all 2,297 models export to OBJ with their textures, and edited models import back and show in-game; all 4,715 textures export to PNG, and edited textures go back in-game; all 1,835 animations decode and export to glTF)*, then animation.
 4. **Function and data map**: named functions and structures for entities, factions, spawning, Lua bindings and missions.
 5. **Plugin interface v2**: call game functions, hooks, new Lua commands, overlay drawing.
 6. **Developer overlay**: inspector, Lua console, spawning by name.
@@ -92,7 +92,7 @@ python -m mercfoundry pack work/assets out/assets.dsk
 python -m mercfoundry model DATAxbox allies_veh_humvee -o models --preview --names names.txt
 ```
 
-Writes `allies_veh_humvee.obj` and `.mtl` (opens in Blender and most 3D tools), each texture it uses as a PNG, and with `--preview` a textured preview image. Add `--glb` for a glTF file with the skeleton as bones, each piece parented to its joint, character skinning and embedded textures; it is checked vertex by vertex against the game model before it's written. (`model-import` reads OBJ; edit glTF exports for reference or re-export as OBJ keeping object names.) `--lod N` picks a level of detail; `--damaged` shows a vehicle's damaged body panels. Model names come from `list DATAxbox/streamed.dsk --type Model`.
+Writes `allies_veh_humvee.obj` and `.mtl` (opens in Blender and most 3D tools), each texture it uses as a PNG, and with `--preview` a textured preview image. Add `--anim "all_american_lb_*"` (with `--glb`) to include the game's animations as glTF clips, and `--in-place` to drop root motion. Add `--glb` for a glTF file with the skeleton as bones, each piece parented to its joint, character skinning and embedded textures; it is checked vertex by vertex against the game model before it's written. (`model-import` reads OBJ; edit glTF exports for reference or re-export as OBJ keeping object names.) `--lod N` picks a level of detail; `--damaged` shows a vehicle's damaged body panels. Model names come from `list DATAxbox/streamed.dsk --type Model`.
 
 ```bash
 python -m mercfoundry texture DATAxbox allies_avehicle_humvee_001 -o textures

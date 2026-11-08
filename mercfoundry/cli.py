@@ -193,12 +193,33 @@ def cmd_model(args):
         print(f"wrote {len(textures)} textures" + (f" ({missing} not found)" if missing else ""))
     if args.glb:
         from . import gltf, gltf_check
-        data = gltf.export(m, lod, args.damaged, png_files, tex_name)
+        anims = []
+        if args.anim:
+            import fnmatch
+            from . import animation
+            for arc in arcs:
+                with arc.path.open("rb") as f:
+                    for r in arc.records:
+                        if r.kind != animation.ANIMATION:
+                            continue
+                        f.seek(r.offset)
+                        rec = f.read(r.size)
+                        aname = ucfb.record_name(rec) or f"{r.key:08X}"
+                        if any(fnmatch.fnmatchcase(aname.lower(), pat.lower()) for pat in args.anim):
+                            anims.append(animation.decode(rec))
+            joints = {j.name.lower() for j in m.joints}
+            fitting = [a for a in anims if sum(t.joint.lower() in joints for t in a.tracks) >= len(a.tracks) // 2]
+            if len(fitting) < len(anims):
+                print(f"  skipped {len(anims) - len(fitting)} animations that don't fit this skeleton")
+            anims = fitting
+        data = gltf.export(m, lod, args.damaged, png_files, tex_name, anims, args.in_place)
         gltf_check.check(data, m, lod, args.damaged)
         path = out / f"{m.name}.glb"
         path.write_bytes(data)
         print(f"wrote {path} (glTF with {len(m.joints)} joints"
-              + (", skinned" if any(p.bones for p in pieces) else "") + ", textures embedded)")
+              + (", skinned" if any(p.bones for p in pieces) else "")
+              + (", textures embedded" if png_files else "")
+              + (f", {len(anims)} animations" if anims else "") + ")")
     if args.preview:
         png = out / f"{m.name}_preview.png"
         png.write_bytes(model.preview_png(m, lod, damaged=args.damaged, textures=textures))
@@ -428,6 +449,9 @@ def main(argv=None):
     s.add_argument("--no-textures", action="store_true", help="don't export textures")
     s.add_argument("--collision", action="store_true", help="also write a preview of the collision shapes")
     s.add_argument("--glb", action="store_true", help="also write a glTF (.glb) with joints, skinning and textures")
+    s.add_argument("--anim", action="append", metavar="PATTERN",
+                   help="with --glb, add animations whose names match (wildcards ok); repeatable")
+    s.add_argument("--in-place", action="store_true", help="drop root motion from animations")
     names_opt(s)
     s = add("model-import", cmd_model_import, "bring an edited OBJ back into extracted folders")
     s.add_argument("obj", help="edited OBJ (from the model command, edited in Blender etc.)")
