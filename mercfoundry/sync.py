@@ -123,7 +123,15 @@ def install_hook(game: Path) -> Path:
         # (the embeddable package in python\), else this one.
         bundled = pyz.parent / "python" / "python.exe"
         python = bundled if bundled.exists() else Path(sys.executable)
-        setup, command = "", f"\"{python}\" \"{pyz}\""
+
+        def where(p):
+            # Inside the game folder: relative to the hook, so moving the
+            # game folder keeps it working.
+            try:
+                return "%~dp0" + str(p.resolve().relative_to(game.resolve()))
+            except ValueError:
+                return str(p)
+        setup, command = "", f"\"{where(python)}\" \"{where(pyz)}\""
     else:
         repo = Path(__file__).resolve().parent.parent
         setup, command = f"set PYTHONPATH={repo}\r\n", f"\"{Path(sys.executable)}\" -m mercfoundry"
