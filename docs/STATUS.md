@@ -18,7 +18,10 @@
 - Text header layout is now known, so new strings can be added.
 
 ## Blockers
-- Nothing has been tested in-game yet.
+- In-game testing has started; scripts and world properties are still untested there.
+
+## In-game tests
+- 2026-11-08, text: an `english.dsk` rebuilt by our tools, installed as `mods/Foundry Test/`, showed edited "PRESS START" and "NEW GAME" labels. The edited `veh.allies_apache` name isn't shown during play (the player spawns in it), so it's unconfirmed; it may appear in the shop.
 
 ## Port build (2026-11-08)
 - Built Mercenaries Recompiled `f513ae4` from the disc image with `Build-From-Iso.ps1`: about 14,000 functions translated, then compiled with MSVC 19.44 (v143) and SDK 10.0.26100.0. Output: `external/Mercenaries-Recompiled/build/mercenaries/bin/Release/` (`Mercenaries Recompiled.exe` launcher, `mercenaries_recomp.exe` runtime, linker `.map`).
@@ -33,7 +36,7 @@
 1. Model decoder: vertex layout in `VBUF`, materials, skeleton; export to a standard format (glTF or OBJ).
 2. Texture decoder; check whether swbf-unmunge's Xbox texture code (MIT) applies.
 3. Install the build tools and build the port.
-4. In-game tests: a recompressed script, an edited object property, an edited and an added string.
+4. In-game tests: a recompressed script, an edited object property and an added string (edited strings confirmed).
 5. Decode the remaining world-layer chunks (`TNAM`, `INFO`) and `path`/`region`/`encounter` records.
 
 ## Notes
