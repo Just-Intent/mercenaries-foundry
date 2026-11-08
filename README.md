@@ -44,6 +44,18 @@ python -m mercfoundry mod build my_mod --data game_files/DATAxbox --out "<port>/
 | `animtables/<name>.json` | Replace a character's animation table: which clip plays for each handle the game asks for (e.g. `lb_upright_run_forward`), per weapon or seat set. Export one with `animtable DATAxbox player_american`. |
 | `layout/<layer>.<kind>.json` | Replace a layer's paths, boundaries, regions or encounters (`kind` = `path`, `lineregion`, `region`, `encounter`), or `layout/<layer>.list.txt` for its load list. Export them with `layout DATAxbox <layer>`. |
 
+### Sharing mods
+
+Share a mod as its source folder, not as a build. A build holds complete copies of the game's archives, so it can't be shared, and two built mods that edit the same shared assets (mission arcs, map script lists, the HQ contact script) overwrite each other.
+
+Players put source folders in the game's `mods/` like any mod and turn them on in the launcher. `mod sync` builds every enabled source mod together, in load order, from the player's own game data into `mods/Foundry Mods`:
+
+```bash
+python -m mercfoundry mod sync "<port folder>" --install-hook
+```
+
+`--install-hook` writes `foundry-sync.cmd`, which the launcher runs before each modded launch (port patch `0007`), so changing the selection is enough. Without the hook, run `mod sync <port folder> --enable` after changing it. Mods merge where they can: text, object rules, missions and their HQ contacts, map lists, level configs and terrain (only the samples and pixels each mod changed). Missions are added in the order their arcs need, whatever the load order. When a later mod replaces something an earlier one changed (a script, model, texture, animation or layout), the later one wins and the sync reports the conflict. Two mods adding an asset with the same name is an error. `mod build` takes several folders the same way.
+
 ### Finding objects
 
 ```bash

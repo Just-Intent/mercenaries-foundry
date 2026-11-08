@@ -55,7 +55,8 @@
 - Skeleton edits from glTF: moved joints take their new positions (rotations kept) with pieces, collision and child joints following; new empties under a joint become joints. Tested in game: a raised Humvee turret and a new driver seat joint.
 - Function map, third pass: 626 named functions (33 new, from the terrain, surface, material, vehicle and mission work: the level config reader, terrain loading and lookups, impact effects, physics bodies, vehicle handling getters and setters) and 24 globals (the loaded terrain's buffers and sizes, terrain effect tables). All are hookable.
 - Collision flag bits: traced in the code (shape lookup by flags, static collision layers, moving objects' physics and hull bodies) and tested in game on a row of box-collision props: bit 1 is solid to people and vehicles, bit 2 is hit by bullets. Mods set flags with `models/<name>.collision.json`. Mod layers can copy unnamed scenery by model (`"from": "model:<name>"`).
-- 194 tests pass.
+- Mods shared as source: `mod sync` builds every enabled source mod together from the player's own game data into one generated mod (`mods/Foundry Mods`). Missions, contacts, map lists, text, object rules, level configs and terrain merge; replaced assets are reported as conflicts. Port patch `0007` runs the sync before each modded launch. Tested in game: Skip Intro, Terrain Hill and a second contract mod built together, with both missions and both HQ contacts working.
+- 206 tests pass.
 
 ## Fixed from retail data
 - Text values aren't NUL-terminated. The decoder had assumed they were and found no strings.

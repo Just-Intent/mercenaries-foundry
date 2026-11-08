@@ -130,3 +130,75 @@ class ModBuildTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class SeveralModsTests(ModBuildTests):
+    """Mods built together, in load order."""
+
+    def second(self):
+        p = Path(self.tmp.name) / "proj2"
+        modbuild.new_project(p, "Second")
+        return p
+
+    def test_text_from_both_mods(self):
+        self.write("text/t.json", json.dumps({"veh.jeep": "Buggy"}))
+        p2 = self.second()
+        (p2 / "text" / "t.json").write_text(json.dumps({"veh.boat": "Raft"}), encoding="utf-8")
+        result = modbuild.build([self.project, p2], self.data, self.out, name="Both")
+        strings = registry.Registry(self.records("english.dsk")[(name_hash("english"), REGISTRY)]).strings()
+        self.assertEqual((strings["veh.jeep"], strings["veh.boat"]), ("Buggy", "Raft"))
+        self.assertFalse([w for w in result.warnings if w.startswith("conflict")])
+        meta = json.loads((self.out / "foundry-mod.json").read_text(encoding="utf-8"))
+        self.assertEqual((meta["name"], meta["sources"]), ("Both", ["Test", "Second"]))
+
+    def test_same_script_replaced_is_a_conflict(self):
+        self.write("scripts/mission.lua", "x = 2\n")
+        p2 = self.second()
+        (p2 / "scripts" / "mission.lua").write_text("x = 3\n", encoding="utf-8")
+        result = modbuild.build([self.project, p2], self.data, self.out)
+        rec = self.records("assets.dsk")[(name_hash("mission"), SCRIPT)]
+        self.assertEqual(script.decode(rec).source, "x = 3\n")
+        conflicts = [w for w in result.warnings if w.startswith("conflict")]
+        self.assertEqual(len(conflicts), 1)
+        self.assertIn("Second replaces", conflicts[0])
+        self.assertIn("Test", conflicts[0])
+
+    def test_same_new_script_is_an_error(self):
+        self.write("scripts/brand_new.lua", "y = 1\n")
+        p2 = self.second()
+        (p2 / "scripts" / "brand_new.lua").write_text("y = 2\n", encoding="utf-8")
+        with self.assertRaises(ValueError) as cm:
+            modbuild.build([self.project, p2], self.data, self.out)
+        self.assertIn("both add", str(cm.exception))
+
+
+class SyncTests(unittest.TestCase):
+    def test_read_loader_utf16_and_sources(self):
+        from mercfoundry import sync
+        with tempfile.TemporaryDirectory() as tmp:
+            game = Path(tmp)
+            text = ("[Loader]\r\nCount=3\r\n\r\n[Mod.1]\r\nFolder=\"B\"\r\nEnabled=0\r\n\r\n"
+                    "[Mod.0]\r\nFolder=\"A Mod\"\r\nEnabled=1\r\n\r\n[Mod.2]\r\nFolder=\"Built\"\r\nEnabled=1\r\n")
+            (game / "mod-loader.ini").write_bytes(b"\xff\xfe" + text.encode("utf-16-le"))
+            mods = sync.read_loader(game)
+            self.assertEqual([(m.folder, m.enabled) for m in mods], [("A Mod", True), ("B", False), ("Built", True)])
+            src = game / "mods" / "A Mod"
+            modbuild.new_project(src, "A Mod")
+            built = game / "mods" / "Built"
+            built.mkdir()
+            (built / "assets.dsk").write_bytes(b"")
+            (built / "foundry-mod.json").write_text("{}", encoding="utf-8")
+            self.assertTrue(sync.is_source(src))
+            self.assertFalse(sync.is_source(built))
+
+    def test_set_enabled_keeps_order_and_settings(self):
+        from mercfoundry import sync
+        with tempfile.TemporaryDirectory() as tmp:
+            game = Path(tmp)
+            sync.write_loader(game, [sync.Mod("A", True), sync.Mod("B", False)], separate_saves=False)
+            self.assertTrue(sync.set_enabled(game, sync.OUTPUT, True))
+            self.assertFalse(sync.set_enabled(game, sync.OUTPUT, True))
+            mods = sync.read_loader(game)
+            self.assertEqual([(m.folder, m.enabled) for m in mods], [("A", True), ("B", False), (sync.OUTPUT, True)])
+            self.assertFalse(sync._separate_saves(game))
+            self.assertTrue((game / "mod-loader.ini").read_bytes().startswith(b"\xff\xfe"))

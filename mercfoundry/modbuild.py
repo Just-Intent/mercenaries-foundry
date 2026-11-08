@@ -91,6 +91,16 @@ class _Data:
         self.replace = {}   # archive name -> {(key, kind): bytes}
         self.add = {}       # archive name -> [(key, kind, bytes)]
         self.files = {}     # loose game files, "DATAxbox/SW/SWN.ini" -> bytes
+        # Several mods built together: which mod is applying, which mod last
+        # changed each record, and which records each mod read first. A mod
+        # that changes a record another mod changed without reading it
+        # replaces that change (reported in self.conflicts).
+        self.project = None
+        self.changed_by = {}    # (archive, ident) -> mod name
+        self.added_by = {}      # (key, kind) -> mod name
+        self.reads = set()      # (mod name, archive, ident)
+        self.conflicts = []
+        self._names = None
 
     def archive(self, name):
         if name not in self.archives:
@@ -109,17 +119,49 @@ class _Data:
                         yield name, r
 
     def current(self, name, rec):
+        self.reads.add((self.project, name, rec.ident))
+        pending = self.replace.get(name, {}).get(rec.ident)
+        return pending if pending is not None else self.archive(name).read(rec)
+
+    def peek(self, name, rec):
+        """Like current(), for a step that replaces the record outright (so
+        building on it doesn't count as merging with earlier mods)."""
         pending = self.replace.get(name, {}).get(rec.ident)
         return pending if pending is not None else self.archive(name).read(rec)
 
     def set(self, name, rec, data):
+        prev = self.changed_by.get((name, rec.ident))
+        if prev is not None and prev != self.project and (self.project, name, rec.ident) not in self.reads:
+            self.conflicts.append(f"{self.project} replaces {self.label(rec.key, rec.kind)}, which {prev} "
+                                  f"also changes; {prev}'s change to it is lost")
         if data != self.archive(name).read(rec):
             self.replace.setdefault(name, {})[rec.ident] = data
+            self.changed_by[(name, rec.ident)] = self.project
         else:
             self.replace.get(name, {}).pop(rec.ident, None)
 
     def new(self, name, key, kind, data):
+        prev = self.added_by.get((key, kind))
+        if prev is not None:
+            raise ValueError(f"{prev} and {self.project} both add {self.label(key, kind)}" if prev != self.project
+                             else f"{self.label(key, kind)} is added twice")
+        self.added_by[(key, kind)] = self.project
         self.add.setdefault(name, []).append((key, kind, data))
+
+    def label(self, key, kind):
+        """'<kind> <name>' for messages, naming the record from the archives."""
+        if self._names is None:
+            from .hashing import type_book
+            self._names = type_book()
+            for n in ARCHIVES:
+                if (self.dir / n).exists():
+                    dsk.collect_names(self.archive(n), self._names)
+            for recs in self.add.values():
+                for k, kd, body in recs:
+                    found = dsk.record_name(body)
+                    if found:
+                        self._names.add(found)
+        return f"{dsk.label(self._names, kind)} {dsk.label(self._names, key)}"
 
     def replace_added(self, key, kind, data):
         """Change the body of a record added earlier in this build."""
@@ -217,7 +259,7 @@ def _apply_scripts(data, folder, result):
         hit = [(a, r) for a, r in data.records(SCRIPT) if r.key == key]
         if hit:
             for a, r in hit:
-                old = script.decode(data.current(a, r))
+                old = script.decode(data.peek(a, r))
                 text = source if b"\r\n" in old.text else source.replace("\r\n", "\n")
                 data.set(a, r, script.encode(script.with_source(old, text)))
             result.changes.append(f"script {name}: replaced")
@@ -342,10 +384,40 @@ def _apply_encounters(data, folder, result):
                               f"(load it from a script with Utility_ReadLevelFile('{layer}'))")
 
 
-def _apply_missions(data, folder, result):
+def _mission_order(projects):
+    """(project, mod name, mission file) for every mod's missions, ordered so
+    a mission that goes "after" another mod's mission is added after it."""
+    from . import missions
+    items = []
+    for project, pname in projects:
+        d = project / "missions"
+        for f in sorted(d.glob("*.json")) if d.is_dir() else []:
+            map_, faction, number = missions.parse_id(f.stem.lower())
+            after = json.loads(f.read_text(encoding="utf-8")).get("after")
+            items.append(((map_, faction, number), (map_, faction, after), project, pname, f))
+    provided = {it[0] for it in items}
+    done, ordered = set(), []
+    while len(ordered) < len(items):
+        progress = False
+        for it in items:
+            if it[0] in done:
+                continue
+            if it[1] in provided and it[1] not in done and it[1] != it[0]:
+                continue
+            ordered.append(it)
+            done.add(it[0])
+            progress = True
+        if not progress:
+            raise ValueError("missions go after each other in a loop: " +
+                             ", ".join(it[4].stem for it in items if it[0] not in done))
+    return [(project, pname, f) for _, _, project, pname, f in ordered]
+
+
+def _apply_missions(data, folder, result, files=None):
     """missions/<map>_<faction><n>.json: a new contract in a faction's arc."""
     from . import missions
-    files = sorted((folder / "missions").glob("*.json")) if (folder / "missions").is_dir() else []
+    if files is None:
+        files = sorted((folder / "missions").glob("*.json")) if (folder / "missions").is_dir() else []
     contracts = []
     for f in files:
         asset_id = f.stem.lower()
@@ -414,8 +486,7 @@ def _apply_missions(data, folder, result):
         result.changes.append(f"mission {asset_id}: [{section}] in mission.ini, {extras}script listed in {map_}, "
                               f"{faction} {map_} arc now {arc} "
                               f"(start it with DebugSkipToMission('{faction}', {number}))")
-    if contracts:
-        _apply_contracts(data, contracts, result)
+    return contracts
 
 
 def _apply_contracts(data, contracts, result):
@@ -626,7 +697,7 @@ def _apply_animtables(data, folder, result):
         new = animtable.from_json(doc)
         norm = animtable.to_json(new)
         for a, r in hit:
-            old = animtable.to_json(data.current(a, r))
+            old = animtable.to_json(data.peek(a, r))
             data.set(a, r, new)
         old_map = {(st["name"], e["handle"]): e for st in old["sets"] for e in st["entries"]}
         changed = [f"{st['name']}/{e['handle']}" for st in norm["sets"] for e in st["entries"]
@@ -679,8 +750,22 @@ def _apply_terrain(data, folder, result):
                     raise ValueError(f"terrain/{f.name}: {meta_path.name} is missing (export both with the terrain command)")
                 meta = json.loads(meta_path.read_text(encoding="utf-8"))
                 units = terrain.units_from_png(f.read_bytes(), meta)
-                _, old, _ = terrain.decode_height_units(chunks)
-                changed = sum(1 for z in range(len(units)) for x in range(len(units)) if units[z][x] != old[z][x])
+                # Apply only the samples this mod changed from the game's
+                # heights, so mods built together keep each other's edits.
+                _, base, _ = terrain.decode_height_units(terrain.tern_chunks(data.archive(a).read(r)))
+                _, cur, _ = terrain.decode_height_units(chunks)
+                n = len(units)
+                changed = overlap = 0
+                for z in range(n):
+                    for x in range(n):
+                        if units[z][x] != base[z][x]:
+                            changed += 1
+                            overlap += cur[z][x] != base[z][x] and cur[z][x] != units[z][x]
+                        else:
+                            units[z][x] = cur[z][x]
+                if overlap:
+                    data.conflicts.append(f"{data.project} reshapes {overlap} height samples of terrain {name} "
+                                          f"that an earlier mod also reshaped; {data.project}'s heights win there")
                 replace = terrain.encode_height_units(chunks, units)
                 note = "lighting kept (relight: false)"
                 if meta.get("relight", True):
@@ -697,11 +782,20 @@ def _apply_terrain(data, folder, result):
                         if name_hash(t["texture"]) not in known:
                             result.warnings.append(f"terrain/{job['table'].name}: no game texture named {t['texture']!r}")
                 images = {}
+                if job.get("layers"):
+                    # Only pixels this mod changed from the game's paint
+                    # replace the current paint (other mods' included).
+                    _, base_imgs = terrain_paint.layer_images(terrain.tern_chunks(data.archive(a).read(r)))
+                    _, cur_imgs = terrain_paint.layer_images({**chunks, **replace})
                 for index, f in job.get("layers", {}).items():
                     w, h, rgba = png.decode(f.read_bytes())
                     if w != h:
                         raise ValueError(f"terrain/{f.name}: layer images are square")
-                    images[index] = bytes(rgba[0::4])          # grey (or the red channel)
+                    img = bytes(rgba[0::4])          # grey (or the red channel)
+                    base_img, cur_img = base_imgs.get(index), cur_imgs.get(index)
+                    if base_img is not None and cur_img is not None and len(base_img) == len(img) == len(cur_img):
+                        img = bytes(m if m != b else c for m, b, c in zip(img, base_img, cur_img))
+                    images[index] = img
                 paint, patches = terrain_paint.apply({**chunks, **replace}, images, table)
                 replace.update(paint)
                 if table is not None:
@@ -824,25 +918,60 @@ def _apply_collision_flags(data, folder, result):
                               ", ".join(f"shape {k} = {v}" for k, v in sorted(flags.items())))
 
 
-def build(project, data_dir, out_dir) -> Result:
-    project, out = Path(project), Path(out_dir)
-    if not project.is_dir():
-        raise FileNotFoundError(f"{project} is not a folder")
+def project_name(folder) -> str:
+    folder = Path(folder)
+    meta = folder / "mod.json"
+    if meta.exists():
+        name = json.loads(meta.read_text(encoding="utf-8")).get("name")
+        if name:
+            return str(name)
+    return folder.resolve().name
+
+
+STEPS = (_apply_text, _apply_scripts, _apply_objects, _apply_encounters, _apply_missions,
+         _apply_textures, _apply_models, _apply_collision_flags, _apply_layout, _apply_animations,
+         _apply_animtables, _apply_terrain)
+
+
+def build(projects, data_dir, out_dir, name=None, description=None) -> Result:
+    """Build one mod folder, or several in load order (later ones win where
+    they change the same thing; such conflicts are reported as warnings),
+    into one install-ready folder."""
+    projects = [Path(projects)] if isinstance(projects, (str, Path)) else [Path(p) for p in projects]
+    out = Path(out_dir)
+    for project in projects:
+        if not project.is_dir():
+            raise FileNotFoundError(f"{project} is not a folder")
+    mod_names = [project_name(p) for p in projects]
+    if len(set(mod_names)) != len(mod_names):
+        raise ValueError("two mods have the same name: " + ", ".join(mod_names))
     data = _Data(data_dir)
     result = Result()
-    _apply_text(data, project, result)
-    _apply_scripts(data, project, result)
-    _apply_objects(data, project, result)
-    _apply_encounters(data, project, result)
-    _apply_missions(data, project, result)
-    _check_new_scripts(data, result)
-    _apply_textures(data, project, result)
-    _apply_models(data, project, result)
-    _apply_collision_flags(data, project, result)
-    _apply_layout(data, project, result)
-    _apply_animations(data, project, result)
-    _apply_animtables(data, project, result)
-    _apply_terrain(data, project, result)
+    contracts = []
+    for step in STEPS:
+        if step is _apply_missions:
+            # Across mods, in the order their arcs need (not load order).
+            jobs = [(project, pname, [f]) for project, pname, f in _mission_order(zip(projects, mod_names))]
+        else:
+            jobs = [(project, pname, None) for project, pname in zip(projects, mod_names)]
+        for project, pname, files in jobs:
+            data.project = pname
+            part = Result()
+            try:
+                found = step(data, project, part, files) if files else step(data, project, part)
+            except ValueError as err:
+                raise ValueError(f"{pname}: {err}" if len(projects) > 1 else str(err)) from err
+            if step is _apply_missions and found:
+                contracts += found
+            prefix = f"{pname}: " if len(projects) > 1 else ""
+            result.changes += [prefix + c for c in part.changes]
+            result.warnings += [prefix + w for w in part.warnings]
+        if step is _apply_missions:
+            data.project = "Foundry"
+            if contracts:
+                _apply_contracts(data, contracts, result)
+            _check_new_scripts(data, result)
+    result.warnings += [f"conflict: {c}" for c in data.conflicts]
     names = sorted(set(data.replace) | set(data.add))
     names = [n for n in names if data.replace.get(n) or data.add.get(n)]
     out.mkdir(parents=True, exist_ok=True)
@@ -875,12 +1004,13 @@ def build(project, data_dir, out_dir) -> Result:
         (out / rel).parent.mkdir(parents=True, exist_ok=True)
         (out / rel).write_bytes(body)
     meta = {}
-    if (project / "mod.json").exists():
-        meta = json.loads((project / "mod.json").read_text(encoding="utf-8"))
+    if len(projects) == 1 and (projects[0] / "mod.json").exists():
+        meta = json.loads((projects[0] / "mod.json").read_text(encoding="utf-8"))
     (out / "foundry-mod.json").write_text(json.dumps({
-        "name": meta.get("name", project.resolve().name),
-        "description": meta.get("description", ""),
+        "name": name or meta.get("name", mod_names[0] if len(mod_names) == 1 else "Foundry Mods"),
+        "description": description if description is not None else meta.get("description", ""),
         "built_by": "mercfoundry",
+        "sources": mod_names,
         "archives": result.written,
         "files": sorted(data.files),
         "changes": result.changes,

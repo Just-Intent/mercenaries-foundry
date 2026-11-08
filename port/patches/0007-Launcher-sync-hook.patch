@@ -1,0 +1,62 @@
+From d34758faaf84a0f304b2dbabcaaae28ad561f1fc Mon Sep 17 00:00:00 2001
+From: Just-Intent <346791974+Just-Intent@users.noreply.github.com>
+Date: Sun, 8 Nov 2026 17:03:05 -0600
+Subject: [PATCH] Launcher sync hook
+
+Before a modded launch, run foundry-sync.cmd beside the launcher if it
+exists (it builds enabled source mods into a generated mod), then read
+the mod selection again.
+---
+ ports/mercenaries/src/mod_loader.cpp | 35 +++++++++++++++++++++++++++-
+ 1 file changed, 34 insertions(+), 1 deletion(-)
+
+diff --git a/ports/mercenaries/src/mod_loader.cpp b/ports/mercenaries/src/mod_loader.cpp
+index 8a95265..e68ea33 100644
+--- a/ports/mercenaries/src/mod_loader.cpp
++++ b/ports/mercenaries/src/mod_loader.cpp
+@@ -474,8 +474,41 @@ void save_selection(const fs::path &installation, const Selection &s)
+         fail("Cannot save mod selection.");
+     WritePrivateProfileStringW(nullptr, nullptr, nullptr, path.c_str());
+ }
+-Launch prepare(const fs::path &installation, const fs::path &game, const Selection &s, bool vanilla)
++// Optional pre-launch build step: foundry-sync.cmd beside the launcher builds
++// enabled source mods into a generated mod (and may enable it in
++// mod-loader.ini), so the selection is read again afterwards.
++static bool run_sync_hook(const fs::path &installation)
+ {
++    const auto hook = installation / L"foundry-sync.cmd";
++    if (!fs::exists(hook))
++        return false;
++    wchar_t system[MAX_PATH];
++    if (!GetSystemDirectoryW(system, MAX_PATH))
++        fail("Cannot find cmd.exe for foundry-sync.cmd.");
++    const std::wstring shell = std::wstring(system) + L"\\cmd.exe";
++    std::wstring cmd = L"\"" + shell + L"\" /d /c \"\"" + hook.wstring() + L"\"\"";
++    STARTUPINFOW si{};
++    si.cb = sizeof(si);
++    PROCESS_INFORMATION pi{};
++    if (!CreateProcessW(shell.c_str(), cmd.data(), nullptr, nullptr, FALSE, CREATE_NO_WINDOW, nullptr,
++                        installation.c_str(), &si, &pi))
++        fail("Cannot run foundry-sync.cmd.");
++    WaitForSingleObject(pi.hProcess, INFINITE);
++    DWORD code = 1;
++    GetExitCodeProcess(pi.hProcess, &code);
++    CloseHandle(pi.hThread);
++    CloseHandle(pi.hProcess);
++    if (code != 0)
++        throw std::runtime_error("foundry-sync.cmd failed (exit code " + std::to_string(code) +
++                                 "); see foundry-sync.log beside the launcher.");
++    return true;
++}
++Launch prepare(const fs::path &installation, const fs::path &game, const Selection &selected, bool vanilla)
++{
++    Selection s = selected;
++    if (!vanilla && std::any_of(s.mods.begin(), s.mods.end(), [](const Mod &m) { return m.enabled; }) &&
++        run_sync_hook(installation))
++        s = discover(installation);
+     Launch launch{installation / L"mercenaries_recomp.exe",
+                   installation,
+                   game,
+-- 
+2.55.0.windows.5
+

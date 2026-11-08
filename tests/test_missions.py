@@ -146,6 +146,17 @@ class MissionTests(unittest.TestCase):
         _, strings = missions.contract("nw_sk7", {}, "a", "b")
         self.assertEqual(strings["standardMission.foundry.nw_sk7.tgtCaption"], "South Korean contact")
 
+    def test_contacts_at_one_hq_stand_apart(self):
+        a = missions.contract("sw_allies9", {}, "a", "b")[0]
+        b = missions.contract("sw_allies10", {}, "a", "b")[0]
+        c = missions.contract("sw_allies11", {"contact": {"offset": [0, 0, 4]}}, "a", "b")[0]
+        lua = missions.contracts_script([a, b, c])
+        self.assertIn("id = 'sw_allies9', map = 'sw', faction = 'allies', number = 9, repeatable = FALSE, "
+                      "template = 'template_allies_bouncer', location = 'loc_hq-allies-bouncer', dx = 3,", lua)
+        self.assertIn("number = 10, repeatable = FALSE, template = 'template_allies_bouncer', "
+                      "location = 'loc_hq-allies-bouncer', dx = 5.5,", lua)
+        self.assertIn("dx = 0, dy = 0, dz = 4,", lua)
+
     def test_add_to_list(self):
         lst = "\n[model]\n\nload a\n\n[script]\n\nload global\nload util_misc\n\n[texture]\n\nload t\n"
         out = missions.add_to_list(lst, "script", "sw_allies9")

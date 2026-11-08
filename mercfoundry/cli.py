@@ -265,7 +265,8 @@ def cmd_mod_new(args):
 def cmd_mod_build(args):
     from . import modbuild, verify as verifier
     try:
-        result = modbuild.build(args.folder, args.data, args.out)
+        result = modbuild.build(args.folder, args.data, args.out,
+                                name=None if len(args.folder) == 1 else Path(args.out).name)
     except (ValueError, KeyError, FileNotFoundError, PermissionError) as err:
         sys.exit(f"build failed: {err}")
     for line in result.changes:
@@ -285,6 +286,39 @@ def cmd_mod_build(args):
     print("verified" if not bad else "verification FAILED")
     if bad:
         sys.exit(1)
+
+
+def cmd_mod_sync(args):
+    from . import sync, verify as verifier
+    try:
+        if args.install_hook:
+            print(f"wrote {sync.install_hook(Path(args.game))}")
+        res = sync.sync(args.game, args.data, args.force, args.enable or args.install_hook)
+    except (ValueError, KeyError, FileNotFoundError, PermissionError) as err:
+        sys.exit(f"sync failed: {err}")
+    if not res.sources:
+        print("no enabled source mods" + (f"; removed mods/{sync.OUTPUT}" if res.removed else ""))
+        return
+    print(f"source mods, in load order: {', '.join(res.sources)}")
+    if res.up_to_date:
+        print(f"mods/{sync.OUTPUT} is up to date")
+    else:
+        for line in res.build.changes:
+            print(f"  {line}")
+        for w in res.build.warnings:
+            print(f"  warning: {w}")
+        out = Path(args.game) / "mods" / sync.OUTPUT
+        bad = 0
+        for name in res.build.written:
+            rep = verifier.verify_archive(out / name)
+            bad += not rep.ok
+            for index, label, error in rep.failures:
+                print(f"  verify {name} record {index} ({label}): {error}")
+        print(f"wrote mods/{sync.OUTPUT}" + (" (verified)" if not bad else " (verification FAILED)"))
+        if bad:
+            sys.exit(1)
+    for n in res.notes:
+        print(f"note: {n}")
 
 
 def cmd_texture(args):
@@ -658,9 +692,17 @@ def main(argv=None):
     m.add_argument("folder"); m.add_argument("--name")
     m = modsub.add_parser("build", help="build a mod project into an install-ready folder")
     m.set_defaults(fn=cmd_mod_build)
-    m.add_argument("folder", help="mod project folder")
+    m.add_argument("folder", nargs="+", help="mod project folder (several build together, later ones win)")
     m.add_argument("--data", required=True, help="the game's DATAxbox folder")
     m.add_argument("--out", required=True, help="output folder, e.g. <port>/mods/<YourMod>")
+    m = modsub.add_parser("sync", help="build the launcher's enabled source mods into mods/Foundry Mods")
+    m.set_defaults(fn=cmd_mod_sync)
+    m.add_argument("game", help="the folder holding Mercenaries Recompiled.exe and mods/")
+    m.add_argument("--data", help="the retail DATAxbox folder (default: the game's own game_files)")
+    m.add_argument("--force", action="store_true", help="rebuild even if nothing changed")
+    m.add_argument("--enable", action="store_true", help=f"turn on the built mod in the launcher's mod list")
+    m.add_argument("--install-hook", action="store_true",
+                   help="write foundry-sync.cmd so the launcher syncs before every modded launch")
     s = add("texture", cmd_texture, "export a texture to PNG")
     s.add_argument("data", help="DATAxbox folder or a .dsk file")
     s.add_argument("name", help="texture name or 8-digit key")
