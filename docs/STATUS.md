@@ -18,8 +18,16 @@
 - Text header layout is now known, so new strings can be added.
 
 ## Blockers
-- Visual Studio 2022 (MSVC 14.44, Windows SDK 10.0.26100.0 is installed) and CMake are missing; both are needed to build the port. Python 3.13 is installed; the port asks for 3.12.
-- Nothing has been tested in-game yet; that needs the port built.
+- Nothing has been tested in-game yet.
+
+## Port build (2026-11-08)
+- Built Mercenaries Recompiled `f513ae4` from the disc image with `Build-From-Iso.ps1`: about 14,000 functions translated, then compiled with MSVC 19.44 (v143) and SDK 10.0.26100.0. Output: `external/Mercenaries-Recompiled/build/mercenaries/bin/Release/` (`Mercenaries Recompiled.exe` launcher, `mercenaries_recomp.exe` runtime, linker `.map`).
+- Gotcha: in Windows PowerShell 5.1, don't capture the script's output with `*>&1`. Warnings from Python then become fatal errors. Run it in its own process and redirect there: `cmd /c 'powershell -File ... > log 2>&1'`.
+- The extraction step refuses to unpack over an existing `game_files/mercenaries-retail`; delete it first when rerunning.
+
+## Toolchain (ready)
+- Build Tools for Visual Studio 2022 17.14 (free) at `C:\Program Files (x86)\Microsoft Visual Studio\2022\BuildTools`, with the pinned MSVC 14.44.35207 and Windows SDK 10.0.26100.0. No paid Visual Studio edition is needed.
+- Python 3.12.10 alongside 3.13. The port's `.venv` has its pinned CMake 3.31.6, Ninja 1.13.0 and Capstone 5.0.6.
 
 ## Next steps
 1. Model decoder: vertex layout in `VBUF`, materials, skeleton; export to a standard format (glTF or OBJ).
