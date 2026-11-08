@@ -6,6 +6,9 @@
  *                templates.tsv, written by `python -m mercfoundry templates`),
  *                placed 8 m ahead of the player; "Loaded here only" asks the
  *                game which templates the current area has loaded.
+ *   Nearby     - world objects within 100 m of the player, nearest first,
+ *                named from objectnames.txt; the selected one's position,
+ *                flags and properties as the game reports them.
  *   Lua        - run a line of Lua in a loaded script's state (an
  *                expression shows its values; a statement shows "ok").
  *
@@ -28,6 +31,19 @@
 #define NAME_PROPERTY_HASH 0x8D39BDE6u /* HashName("name") */
 #define MAX_TEMPLATES 4096
 #define SPAWN_DISTANCE 8.0f
+/* World object tables (see the function map): 16,384 object slots with their
+ * handles, and 2,048 named objects (name hash -> handle). */
+#define OBJECTS 0x00614070u
+#define OBJECT_HANDLES 0x00624070u
+#define OBJECT_SLOTS 0x4000u
+#define NAME_HANDLES 0x0063DD70u
+#define NAME_KEYS 0x0063FD70u
+#define NAME_SLOTS 0x800u
+#define WORLDOBJECT_POSITION 0x08u   /* float[3], then a quaternion at 0x14 */
+#define WORLDOBJECT_ROTATION 0x14u
+#define NEARBY_RADIUS 100.0f
+#define MAX_NEARBY 40
+#define MAX_NAMES 8192
 
 typedef struct Template {
     char name[64], layer[40], type[24], faction[16];
@@ -60,10 +76,22 @@ static int pending_lua_serial = -1; /* script serial to run in; 0 = newest; -1 =
 static char lua_output[8192];
 static volatile LONG output_dirty, scripts_dirty;
 
+/* Nearby objects */
+typedef struct Nearby { uint32_t object, handle; float distance, pos[3]; char name[48]; } Nearby;
+static Nearby nearby[MAX_NEARBY];
+static unsigned nearby_count;
+static uint32_t selected_handle;
+static char details_text[1024] = "Select an object.";
+static volatile LONG nearby_dirty, details_dirty;
+typedef struct Name { uint32_t hash; char text[48]; } Name;
+static Name names[MAX_NAMES];
+static unsigned name_count;
+
 /* Window */
 static DWORD window_thread_id;
 static HWND wnd, info_label, search_edit, list_box, loaded_check, spawn_button, money_button, status_label;
 static HWND script_combo, lua_edit, run_button, output_edit;
+static HWND nearby_list, details_label;
 static unsigned combo_serials[MAX_SCRIPTS + 1];
 static int list_map[MAX_TEMPLATES];
 static unsigned list_size;
@@ -77,6 +105,7 @@ static unsigned list_size;
 #define ID_SCRIPT 107
 #define ID_LUA 108
 #define ID_RUN 109
+#define ID_NEARBY 110
 
 static uint32_t hash_name(const char *s)
 {
@@ -139,6 +168,48 @@ static void load_templates(void)
         t->hash = hash_name(t->name);
     }
     fclose(f);
+}
+
+static void add_name(const char *text, size_t n)
+{
+    if (name_count >= MAX_NAMES || !n) return;
+    Name *e = &names[name_count++];
+    field(e->text, sizeof(e->text), text, n);
+    e->hash = hash_name(e->text);
+}
+
+static int name_order(const void *a, const void *b)
+{
+    uint32_t x = ((const Name *)a)->hash, y = ((const Name *)b)->hash;
+    return x < y ? -1 : x > y;
+}
+
+static void load_names(void)
+{
+    char path[MAX_PATH * 3], line[256];
+    wchar_t wpath[MAX_PATH * 2];
+    add_name("player0", 7);
+    snprintf(path, sizeof(path), "%s\\objectnames.txt", host->plugin_directory);
+    if (MultiByteToWideChar(CP_UTF8, 0, path, -1, wpath, MAX_PATH * 2)) {
+        FILE *f = _wfopen(wpath, L"rb");
+        if (f) {
+            while (fgets(line, sizeof(line), f)) add_name(line, strcspn(line, "\r\n"));
+            fclose(f);
+        }
+    }
+    for (unsigned i = 0; i < template_count; i++) add_name(templates[i].name, strlen(templates[i].name));
+    qsort(names, name_count, sizeof(Name), name_order);
+}
+
+static const char *name_for_hash(uint32_t hash)
+{
+    unsigned lo = 0, hi = name_count;
+    while (lo < hi) {
+        unsigned mid = (lo + hi) / 2;
+        if (names[mid].hash < hash) lo = mid + 1;
+        else hi = mid;
+    }
+    return lo < name_count && names[lo].hash == hash ? names[lo].text : NULL;
 }
 
 static const char *template_name(uint32_t hash)
@@ -394,6 +465,120 @@ static void run_lua(int serial, const char *line)
     else append_output("> %s\r\n  ok", line);
 }
 
+static uint32_t slot_objects[OBJECT_SLOTS], slot_handles[OBJECT_SLOTS];
+static uint32_t name_keys[NAME_SLOTS], name_handles[NAME_SLOTS];
+
+static int nearby_order(const void *a, const void *b)
+{
+    float x = ((const Nearby *)a)->distance, y = ((const Nearby *)b)->distance;
+    return x < y ? -1 : x > y;
+}
+
+static void scan_nearby(void)
+{
+    uint32_t player = find_player();
+    float m[16];
+    if (!player) return;
+    host->read_guest(host->context, player + MF_OFF_Actor_transform, m, sizeof(m));
+    if (!host->read_guest(host->context, OBJECTS, slot_objects, sizeof(slot_objects)) ||
+        !host->read_guest(host->context, OBJECT_HANDLES, slot_handles, sizeof(slot_handles)))
+        return;
+    host->read_guest(host->context, NAME_KEYS, name_keys, sizeof(name_keys));
+    host->read_guest(host->context, NAME_HANDLES, name_handles, sizeof(name_handles));
+    static Nearby found[OBJECT_SLOTS];
+    unsigned n = 0;
+    for (unsigned i = 0; i < OBJECT_SLOTS; i++) {
+        uint32_t obj = slot_objects[i];
+        unsigned char head[0x34];
+        if (!obj || !host->read_guest(host->context, obj, head, sizeof(head))) continue;
+        uint16_t flags;
+        float pos[3];
+        memcpy(&flags, head + MF_OFF_WorldObject_flags, 2);
+        if (!(flags & 1) || (flags & 4)) continue; /* active, not removed */
+        memcpy(pos, head + WORLDOBJECT_POSITION, 12);
+        float dx = pos[0] - m[12], dy = pos[1] - m[13], dz = pos[2] - m[14];
+        float d = sqrtf(dx * dx + dy * dy + dz * dz);
+        if (!(d <= NEARBY_RADIUS)) continue;
+        Nearby *e = &found[n++];
+        e->object = obj;
+        memcpy(&e->handle, head + MF_OFF_WorldObject_handle, 4);
+        e->distance = d;
+        memcpy(e->pos, pos, 12);
+        e->name[0] = 0;
+    }
+    qsort(found, n, sizeof(Nearby), nearby_order);
+    if (n > MAX_NEARBY) n = MAX_NEARBY;
+    /* Names: the named-object table maps name hashes to handles. */
+    for (unsigned k = 0; k < n; k++) {
+        for (unsigned j = 0; j < NAME_SLOTS; j++) {
+            if (name_keys[j] && name_handles[j] == found[k].handle) {
+                const char *text = name_for_hash(name_keys[j]);
+                if (text) snprintf(found[k].name, sizeof(found[k].name), "%s", text);
+                else snprintf(found[k].name, sizeof(found[k].name), "name 0x%08X", name_keys[j]);
+                break;
+            }
+        }
+    }
+    EnterCriticalSection(&lock);
+    memcpy(nearby, found, n * sizeof(Nearby));
+    nearby_count = n;
+    LeaveCriticalSection(&lock);
+    InterlockedExchange(&nearby_dirty, 1);
+}
+
+static void describe_selected(void)
+{
+    static const char *props[] = {"objectType", "displayName", "faction", "hitPoints", "GeometryFile",
+                                  "AnimationTable", "path", "squad"};
+    uint32_t handle;
+    Nearby e = {0};
+    EnterCriticalSection(&lock);
+    handle = selected_handle;
+    for (unsigned i = 0; i < nearby_count; i++)
+        if (nearby[i].handle == handle) e = nearby[i];
+    LeaveCriticalSection(&lock);
+    if (!handle) return;
+    char text[1024];
+    int n = 0;
+    if (!e.object) {
+        n = snprintf(text, sizeof(text), "Handle 0x%08X is no longer nearby.", handle);
+    } else {
+        unsigned char head[0x34];
+        float q[4];
+        uint16_t flags = 0;
+        host->read_guest(host->context, e.object, head, sizeof(head));
+        memcpy(&flags, head + MF_OFF_WorldObject_flags, 2);
+        memcpy(q, head + WORLDOBJECT_ROTATION, 16);
+        /* Heading from the quaternion's forward (+z) axis. */
+        float fx = 2.0f * (q[0] * q[2] + q[3] * q[1]), fz = 1.0f - 2.0f * (q[0] * q[0] + q[1] * q[1]);
+        double heading = atan2(fx, fz) * 180.0 / 3.14159265358979;
+        if (heading < 0) heading += 360.0;
+        n += snprintf(text + n, sizeof(text) - n,
+                      "%s\r\nObject 0x%08X  handle 0x%08X  flags 0x%04X\r\n"
+                      "Position %.1f, %.1f, %.1f  (%.1f m away)\r\nHeading %.0f degrees\r\n",
+                      e.name[0] ? e.name : "(unnamed)", e.object, e.handle, flags,
+                      e.pos[0], e.pos[1], e.pos[2], e.distance, heading);
+        /* Properties, from the object's own lookup (vtable +0x0C, by name hash). */
+        uint32_t vtable = 0, getter = 0;
+        host->read_guest(host->context, e.object, &vtable, 4);
+        if (vtable) host->read_guest(host->context, vtable + 0x0C, &getter, 4);
+        for (unsigned i = 0; getter && i < sizeof(props) / sizeof(props[0]); i++) {
+            MercGuestCall c;
+            uint32_t hash = hash_name(props[i]);
+            char value[96];
+            if (!guest(getter, e.object, 1, &hash, &c) || !c.eax) continue;
+            read_text(c.eax, value, sizeof(value));
+            if (value[0]) n += snprintf(text + n, sizeof(text) - n, "%s = %s\r\n", props[i], value);
+        }
+    }
+    EnterCriticalSection(&lock);
+    memcpy(details_text, text, sizeof(details_text));
+    LeaveCriticalSection(&lock);
+    InterlockedExchange(&details_dirty, 1);
+}
+
+static double since_nearby;
+
 static int f7_down;
 static double since_inspect;
 
@@ -415,6 +600,12 @@ static int MERC_PLUGIN_CALL on_update(void *ud, const MercPluginUpdate *u)
     }
     if (!host->in_gameplay(host->context))
         return 1;
+    since_nearby += u->wall_delta_seconds;
+    if (since_nearby >= 0.5 && wnd && IsWindowVisible(wnd)) {
+        since_nearby = 0;
+        scan_nearby();
+        describe_selected();
+    }
 
     int spawn;
     float money;
@@ -482,6 +673,30 @@ static void fill_list(void)
     InvalidateRect(list_box, NULL, TRUE);
 }
 
+static void fill_nearby(void)
+{
+    char row[128];
+    uint32_t keep;
+    int choose = -1;
+    SendMessageW(nearby_list, WM_SETREDRAW, FALSE, 0);
+    LRESULT top = SendMessageW(nearby_list, LB_GETTOPINDEX, 0, 0);
+    SendMessageA(nearby_list, LB_RESETCONTENT, 0, 0);
+    EnterCriticalSection(&lock);
+    keep = selected_handle;
+    for (unsigned i = 0; i < nearby_count; i++) {
+        const Nearby *e = &nearby[i];
+        if (e->name[0]) snprintf(row, sizeof(row), "%5.1f m  %s", e->distance, e->name);
+        else snprintf(row, sizeof(row), "%5.1f m  handle 0x%08X", e->distance, e->handle);
+        SendMessageA(nearby_list, LB_ADDSTRING, 0, (LPARAM)row);
+        if (e->handle == keep) choose = (int)i;
+    }
+    LeaveCriticalSection(&lock);
+    if (choose >= 0) SendMessageW(nearby_list, LB_SETCURSEL, (WPARAM)choose, 0);
+    if (top != LB_ERR) SendMessageW(nearby_list, LB_SETTOPINDEX, (WPARAM)top, 0);
+    SendMessageW(nearby_list, WM_SETREDRAW, TRUE, 0);
+    InvalidateRect(nearby_list, NULL, TRUE);
+}
+
 static void fill_scripts(void)
 {
     char row[96];
@@ -533,6 +748,14 @@ static LRESULT CALLBACK window_proc(HWND h, UINT msg, WPARAM wp, LPARAM lp)
         if (strcmp(old, status)) SetWindowTextA(status_label, status);
         if (InterlockedExchange(&list_dirty, 0)) fill_list();
         if (InterlockedExchange(&scripts_dirty, 0)) fill_scripts();
+        if (InterlockedExchange(&nearby_dirty, 0)) fill_nearby();
+        if (InterlockedExchange(&details_dirty, 0)) {
+            char d[1024];
+            EnterCriticalSection(&lock);
+            memcpy(d, details_text, sizeof(d));
+            LeaveCriticalSection(&lock);
+            SetWindowTextA(details_label, d);
+        }
         if (InterlockedExchange(&output_dirty, 0)) {
             static char out[8192];
             EnterCriticalSection(&lock);
@@ -581,6 +804,14 @@ static LRESULT CALLBACK window_proc(HWND h, UINT msg, WPARAM wp, LPARAM lp)
             SetWindowTextA(lua_edit, "");
             return 0;
         }
+        case ID_NEARBY:
+            if (HIWORD(wp) == LBN_SELCHANGE) {
+                LRESULT sel = SendMessageW(nearby_list, LB_GETCURSEL, 0, 0);
+                EnterCriticalSection(&lock);
+                if (sel != LB_ERR && (unsigned)sel < nearby_count) selected_handle = nearby[sel].handle;
+                LeaveCriticalSection(&lock);
+            }
+            return 0;
         case ID_MONEY:
             EnterCriticalSection(&lock);
             pending_money += 10000.0f;
@@ -603,7 +834,7 @@ static DWORD WINAPI window_thread(void *arg)
     wc.lpszClassName = L"FoundryConsole";
     RegisterClassW(&wc);
     wnd = CreateWindowExW(WS_EX_TOOLWINDOW | WS_EX_TOPMOST, wc.lpszClassName, L"Foundry Console (F7)",
-                          WS_CAPTION | WS_SYSMENU, 40, 40, 520, 900, NULL, NULL, wc.hInstance, NULL);
+                          WS_CAPTION | WS_SYSMENU, 40, 40, 1040, 900, NULL, NULL, wc.hInstance, NULL);
     HFONT font = CreateFontW(-14, 0, 0, 0, FW_NORMAL, 0, 0, 0, DEFAULT_CHARSET, 0, 0, CLEARTYPE_QUALITY, 0, L"Segoe UI");
     HFONT mono = CreateFontW(-13, 0, 0, 0, FW_NORMAL, 0, 0, 0, DEFAULT_CHARSET, 0, 0, CLEARTYPE_QUALITY, 0, L"Consolas");
     control("STATIC", "Inspector", 0, 12, 8, 480, 18, 0, font);
@@ -620,6 +851,9 @@ static DWORD WINAPI window_thread(void *arg)
     lua_edit = control("EDIT", "", ES_AUTOHSCROLL, 12, 626, 400, 24, ID_LUA, mono);
     run_button = control("BUTTON", "Run", 0, 418, 625, 74, 26, ID_RUN, font);
     output_edit = control("EDIT", "", ES_MULTILINE | ES_READONLY | ES_AUTOVSCROLL | WS_VSCROLL, 12, 658, 480, 190, 0, mono);
+    control("STATIC", "Nearby objects (100 m, nearest first)", 0, 520, 8, 480, 18, 0, font);
+    nearby_list = control("LISTBOX", "", LBS_NOTIFY | WS_VSCROLL | LBS_NOINTEGRALHEIGHT, 520, 28, 490, 420, ID_NEARBY, mono);
+    details_label = control("STATIC", "Select an object.", SS_LEFT, 520, 456, 490, 392, 0, mono);
     fill_list();
     fill_scripts();
     SetTimer(wnd, ID_TIMER, 250, NULL);
@@ -653,6 +887,7 @@ MERC_PLUGIN_EXPORT int MERC_PLUGIN_CALL MercenariesPlugin_Init(
     host = h;
     InitializeCriticalSection(&lock);
     load_templates();
+    load_names();
     if (!h->hook_guest(h->context, MF_FN_Spawner_SpawnTemplate, NULL, spawn_after, NULL))
         h->log(h->context, "spawn hook unavailable (run port-hooks); recent spawns won't show");
     if (!h->hook_guest(h->context, MF_FN_LuaScript_RegisterCommands, NULL, script_loaded, NULL))

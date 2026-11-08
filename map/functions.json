@@ -5,12 +5,12 @@
  },
  "counts": {
   "functions_in_analysis": 13982,
-  "named": 588,
+  "named": 591,
   "with_file": 1500,
   "file_direct": 224,
   "lua_commands": 360,
-  "manual": 62,
-  "globals": 9,
+  "manual": 65,
+  "globals": 11,
   "structures": 5,
   "derived": 128
  },
@@ -5031,9 +5031,9 @@
     "Lua_ArgActor"
    ],
    "evidence": [
-    "retail code: 0x120E60(L, n) then 0x1EC1D0 on the result; used for the actor argument of the Actor_ commands"
+    "retail code: Lua_ArgHandle(L, n) then World_ObjectFromHandle on the result; used for the actor argument of the Actor_ commands"
    ],
-   "signature": "Actor * __cdecl Lua_ArgActor(lua_State *L, int n)"
+   "signature": "WorldObject * __cdecl Lua_ArgActor(lua_State *L, int n)"
   },
   {
    "address": "0x00112C90",
@@ -9420,12 +9420,12 @@
   {
    "address": "0x00120E60",
    "names": [
-    "Lua_ToActorRef"
+    "Lua_ArgHandle"
    ],
    "evidence": [
-    "inferred: first step of Lua_ArgActor; returns NULL when the argument isn't an actor"
+    "retail code: a string argument is hashed (HashName) and turned into a handle by World_HandleFromName; a userdata argument (type 7) holds the handle; anything else raises an error"
    ],
-   "signature": "void * __cdecl Lua_ToActorRef(lua_State *L, int n)"
+   "signature": "uint32 __cdecl Lua_ArgHandle(lua_State *L, int n)"
   },
   {
    "address": "0x00120ED0",
@@ -13143,14 +13143,14 @@
   {
    "address": "0x001EC1D0",
    "names": [
-    "ActorRef_Resolve"
+    "World_ObjectFromHandle"
    ],
    "evidence": [
-    "inferred: second step of Lua_ArgActor"
+    "retail code: HashTable_Find(handle, 0x624070, 0x3FFF), then the object at 0x614070 + 4 x slot if its flag bit 0 is set and bit 2 is not"
    ],
    "file": "RedWorld.cpp",
    "file_evidence": "between",
-   "signature": "Actor * __cdecl ActorRef_Resolve(void *ref)"
+   "signature": "WorldObject * __cdecl World_ObjectFromHandle(uint32 handle)"
   },
   {
    "address": "0x001EC220",
@@ -13166,8 +13166,15 @@
   },
   {
    "address": "0x001EC270",
+   "names": [
+    "World_HandleFromName"
+   ],
+   "evidence": [
+    "retail code: HashTable_Find(nameHash, 0x63FD70, 0x7FF), then the handle at 0x63DD70 + 4 x slot (default at 0x63DD6C); Lua_ArgHandle uses it for name arguments; live test (2026-11-08, Foundry Console object inspector): reading that table backwards named nearby objects (loc_hospital, ...)"
+   ],
    "file": "RedWorld.cpp",
-   "file_evidence": "between"
+   "file_evidence": "between",
+   "signature": "uint32 __cdecl World_HandleFromName(uint32 nameHash)"
   },
   {
    "address": "0x001EC2A0",
@@ -13286,8 +13293,15 @@
   },
   {
    "address": "0x001ECA50",
+   "names": [
+    "WorldObject_GetTransform"
+   ],
+   "evidence": [
+    "retail code: builds the matrix from this + 8 (0x205F50: position at +0, quaternion at +0xC) and copies it to out; Lua_Utility_GetDistanceBetweenActors reads both objects' positions from out + 0x30"
+   ],
    "file": "RedWorld.cpp",
-   "file_evidence": "between"
+   "file_evidence": "between",
+   "signature": "Matrix * __thiscall WorldObject_GetTransform(WorldObject *this, Matrix *out)"
   },
   {
    "address": "0x001ECA80",
@@ -14186,6 +14200,16 @@
    ]
   },
   {
+   "address": "0x00205F50",
+   "names": [
+    "Transform_ToMatrix"
+   ],
+   "evidence": [
+    "retail code: a rotation matrix from the quaternion at this + 0xC (x, y, z, w) and the position at this + 0"
+   ],
+   "signature": "Matrix * __thiscall Transform_ToMatrix(const Transform *this, Matrix *out)"
+  },
+  {
    "address": "0x00207300",
    "file": "ZephyrAnim.cpp",
    "file_evidence": "direct",
@@ -14846,6 +14870,16 @@
    "address": "0x003717A0",
    "name": "g_LuaScriptA",
    "evidence": "retail code: the script LuaScript_FromState returns from its one-entry cache; live test (2026-11-08, Foundry Console): LuaScript_RegisterCommands ran twice with this = 0x3717A0 (a new Lua state each time)"
+  },
+  {
+   "address": "0x0063FD70",
+   "name": "g_WorldNameKeys",
+   "evidence": "retail code: name hashes World_HandleFromName searches (mask 0x7FF)"
+  },
+  {
+   "address": "0x0063DD70",
+   "name": "g_WorldNameHandles",
+   "evidence": "retail code: handles World_HandleFromName returns, slot for slot with g_WorldNameKeys"
   }
  ],
  "structures": [
@@ -14856,7 +14890,19 @@
     {
      "offset": "0x00",
      "name": "vtable",
-     "notes": "+0x04 type bits (TypeFilter_Cast); +0x0C property text by name hash (\"hitpoints\" = 0x6E99129D); +0x10 property by name hash (\"name\" = 0x8D39BDE6)"
+     "notes": "+0x04 type bits (TypeFilter_Cast); +0x0C property text by name hash (\"hitpoints\" = 0x6E99129D); +0x10 property by name hash (\"name\" = 0x8D39BDE6); live test (2026-11-08, Foundry Console object inspector): +0x0C answered objectType, hitPoints and GeometryFile for a static rock as well as actors"
+    },
+    {
+     "offset": "0x08",
+     "name": "position",
+     "type": "float[3]",
+     "notes": "WorldObject_GetTransform; live test (2026-11-08, Foundry Console object inspector): positions matched the objects around the player"
+    },
+    {
+     "offset": "0x14",
+     "name": "rotation",
+     "type": "float[4]",
+     "notes": "quaternion x, y, z, w"
     },
     {
      "offset": "0x24",

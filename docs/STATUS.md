@@ -33,7 +33,8 @@
 - Plugin script commands (port patch `0003`): `add_lua_command`; up to 64 commands registered on every script's Lua state. `plugins/foundry-lua-test` passed in game.
 - Developer overlay, first slice: the Foundry Console plugin (F7): inspector (gameplay state, position, heading, money, hit points, recent spawns) and spawn-by-name for any template, with a check for which are loaded here. `templates` command lists the game's 1,611 templates.
 - Lua console in Foundry Console: runs a line in a game Lua state (expression values or ok, errors caught, stack restored). Ten more Lua API functions mapped (luaL_loadbuffer, lua_pcall, lua_settop, ...).
-- 148 tests pass.
+- Object inspector in Foundry Console: nearby objects from the world's object table (position at +0x08, rotation at +0x14), named through the named-object table, with properties from the object's own lookup. `objectnames` command.
+- 149 tests pass.
 
 ## Fixed from retail data
 - Text values aren't NUL-terminated. The decoder had assumed they were and found no strings.
@@ -62,6 +63,7 @@
 - 2026-11-08, plugin script commands: a plugin added `Foundry_Add`, `Foundry_GiveMoney` and `Foundry_Log`; an edited `allies0` script called them after the first objective and showed "2 + 3 = 5, money now 500" on screen, and the log line arrived in plugins.log.
 - 2026-11-08, Foundry Console: F7 opened it in game; the inspector updated, the template search and "Loaded here only" worked, and spawning from the list placed objects ahead of the player.
 - 2026-11-08, Lua console: `2 + 3` in the console returned `= 5` in the game's Lua state. The game registered commands only three times (script objects 0x3717A0, twice, and 0x371848): mission scripts share a few long-lived states.
+- 2026-11-08, object inspector: the nearby list showed objects within 100 m with names where they have one (loc_hospital, c_race_HQm2HQa_01_gate16b); a static rock reported objectType static, hitPoints 1, GeometryFile summer_env_rock01.
 - Lesson: the C-17 cargo-hold scene uses a separate model, `c17_humvee`, which shares the Humvee texture. Check model edits on the vehicle you drive.
 - Lesson: a new game starts in `playable_intro` (C-17 briefing, then `allies0`), not the Ace of Clubs, which is Allied mission 4. Script tests belong there.
 
@@ -75,7 +77,7 @@
 - Python 3.12.10 alongside 3.13. The port's `.venv` has its pinned CMake 3.31.6, Ninja 1.13.0 and Capstone 5.0.6.
 
 ## Next steps
-1. Developer overlay (step 6): an object inspector (what the player is looking at or standing near).
+1. Overlay polish: label unnamed objects by model; edit objects from the inspector (move, remove); draw inside the game window instead of beside it.
 2. Function map: name more engine functions (actors, vehicles, AI commands, missions).
 3. Collision material codes (surface types); collision for edited existing pieces.
 4. Importing skeleton (joint) edits; what animation-table priorities and flags do.

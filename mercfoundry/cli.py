@@ -495,6 +495,15 @@ def cmd_port_hooks(args):
     print("now rebuild the port")
 
 
+def cmd_objectnames(args):
+    from . import templates
+    names = templates.object_names(_data_archives(args.data))
+    out = Path(args.out)
+    out.parent.mkdir(parents=True, exist_ok=True)
+    out.write_text("\n".join(names) + "\n", encoding="utf-8")
+    print(f"wrote {out}: {len(names)} object names")
+
+
 def cmd_templates(args):
     from . import templates
     rows = templates.collect(_data_archives(args.data))
@@ -637,6 +646,9 @@ def main(argv=None):
     s.add_argument("--map", default="map/functions.json")
     s.add_argument("--only", nargs="+", metavar="NAME_OR_ADDRESS", help="just these functions")
     s.add_argument("--remove", action="store_true", help="restore the generated code")
+    s = add("objectnames", cmd_objectnames, "list every world object name (for tools that show objects by name)")
+    s.add_argument("data", help="DATAxbox folder or a .dsk file")
+    s.add_argument("-o", "--out", default="objectnames.txt")
     s = add("templates", cmd_templates, "list the game's object templates (what Spawner_SpawnTemplate spawns) as TSV")
     s.add_argument("data", help="DATAxbox folder or a .dsk file")
     s.add_argument("-o", "--out", default="templates.tsv")

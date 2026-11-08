@@ -30,3 +30,14 @@ def to_tsv(rows):
     for r in rows:
         lines.append("\t".join(str(r[f]).replace("\t", " ") for f in FIELDS))
     return "\n".join(lines) + "\n"
+
+
+def object_names(archives):
+    """Every distinct world object name (templates included), sorted. The
+    game finds named objects by the hash of these names."""
+    names = {}
+    for obj in find.objects(archives):
+        n = obj.get("name")
+        if n:
+            names.setdefault(n.lower(), n)
+    return sorted(names.values(), key=str.lower)
