@@ -195,9 +195,9 @@ cshp
 | Box rotations orthonormal | 28,294 of 28,294 |
 | `sinf` joint is one of the model's joints | 2,392 of 2,392 shapes |
 
-Kinds: boxes 0 and 2 (plain), 3 (with `CMOP`); meshes 4 (with `CMOP`), 5 (plain). Box shapes of kind 0 appear on their own and alongside every other kind. Material codes (3, 6, 7, 9, 11, 15, ...) are not yet mapped to surfaces. Vehicles typically use a simplified hull mesh; buildings use rotated boxes.
+Kinds: boxes 0 and 2 (plain), 3 (with `CMOP`); meshes 4 (with `CMOP`), 5 (plain). Drivable vehicles use kind 2 for boxes (with a kind-4 hull mesh, or alone on cargo trucks); kind 0 appears only on static objects such as train cars and props. In-game, kind-0 boxes added to a vehicle had no effect; kind-2 boxes collided. Material codes (3, 6, 7, 9, 11, 15, ...) are not yet mapped to surfaces. Vehicles typically use a simplified hull mesh; buildings use rotated boxes.
 
-`model --collision` writes a preview of a model's collision. On import, each new piece gets a plain box (kind 0, no tree) fitted around it in its joint's space, using the model's most common collision material; `cinf` shape and box counts are updated. Objects whose name contains `nocoll` get no collision; `model-import --no-collision` turns it off entirely. Collision of edited existing pieces is not changed.
+`model --collision` writes a preview of a model's collision. On import, each new piece gets a plain box (kind 2, no tree; `cinf` kind-2/3 count updated) fitted around it in its joint's space, using the model's most common collision material; `cinf` shape and box counts are updated. Objects whose name contains `nocoll` get no collision; `model-import --no-collision` turns it off entirely. Collision of edited existing pieces is not changed.
 
 ### Textures: `Texture` → `tex_`
 

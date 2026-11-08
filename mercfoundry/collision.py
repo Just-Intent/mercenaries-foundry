@@ -95,21 +95,29 @@ def pack_box(material, centre, half):
     return struct.pack("<I15f", material, *half, 1, 0, 0, 0, 1, 0, 0, 0, 1, *centre)
 
 
-def add_box_shape(cshp_body: bytes, material: int, joint: int, boxes) -> bytes:
-    """Append a plain box shape (kind 0, no tree) and update cinf counts.
+# Generated box shapes use kind 2: the kind drivable vehicles use for boxes
+# (kind 0 appears only on static objects such as train cars), and common on
+# static props too.
+GENERATED_KIND = 2
+
+
+def add_box_shape(cshp_body: bytes, material: int, joint: int, boxes, kind: int = GENERATED_KIND) -> bytes:
+    """Append a box shape without a tree and update cinf counts.
 
     boxes: [(centre, half)] in joint space."""
     items, pad_last = ucfb.split(cshp_body)
     if not items or items[0][0] != b"cinf":
         raise ValueError("collision block has no cinf header")
     cinf = bytearray(items[0][1])
-    shapes, = struct.unpack_from("<H", cinf, 0)
+    shapes, kind23 = struct.unpack_from("<2H", cinf, 0)
     total, = struct.unpack_from("<H", cinf, 6)
     if total + len(boxes) > 0xFFFF:
         raise ValueError("too many collision boxes")
     struct.pack_into("<H", cinf, 0, shapes + 1)
+    if kind in (2, 3):
+        struct.pack_into("<H", cinf, 2, kind23 + 1)
     struct.pack_into("<H", cinf, 6, total + len(boxes))
-    sinf = struct.pack("<4I", material, joint, len(boxes) << 16, 0)
+    sinf = struct.pack("<4I", material, joint, kind | len(boxes) << 16, 0)
     cbox = b"".join(pack_box(material, c, h) for c, h in boxes)
     shap = ucfb.pack_children([(b"sinf", sinf), (b"CBOX", cbox)])
     items[0] = (b"cinf", bytes(cinf))
@@ -117,7 +125,7 @@ def add_box_shape(cshp_body: bytes, material: int, joint: int, boxes) -> bytes:
     return ucfb.pack_children(items, pad_last)
 
 
-def new_block(material: int, joint: int, boxes) -> bytes:
+def new_block(material: int, joint: int, boxes, kind: int = GENERATED_KIND) -> bytes:
     """A collision block for a model that has none."""
     cinf = struct.pack("<3H4H", 0, 0, 0, 0, 0, 0, 0)
-    return add_box_shape(ucfb.pack_children([(b"cinf", cinf)]), material, joint, boxes)
+    return add_box_shape(ucfb.pack_children([(b"cinf", cinf)]), material, joint, boxes, kind)

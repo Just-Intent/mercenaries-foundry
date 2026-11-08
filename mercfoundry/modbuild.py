@@ -278,6 +278,15 @@ def build(project, data_dir, out_dir) -> Result:
     names = sorted(set(data.replace) | set(data.add))
     names = [n for n in names if data.replace.get(n) or data.add.get(n)]
     out.mkdir(parents=True, exist_ok=True)
+    # Fail before writing anything if the game has the files open.
+    for n in names:
+        target = out / n
+        if target.exists():
+            try:
+                with target.open("r+b"):
+                    pass
+            except PermissionError as err:
+                raise PermissionError(f"can't replace {target}: it's in use (close the game first)") from err
     for n in names:
         dsk.write_modified(data.archive(n), out / n, data.replace.get(n, {}), data.add.get(n, ()))
         result.written.append(n)

@@ -38,14 +38,14 @@ class CollisionTests(unittest.TestCase):
         body = list(ucfb.iter_chunks(cshp([box_shape(7, "root", [((0, 0, 0), (1, 1, 1))])], 1)))[0][1]
         body = collision.add_box_shape(body, 9, name_hash("arm"), [((1, 1, 1), (0.5, 0.5, 0.5)), ((2, 2, 2), (1, 1, 1))])
         items = list(ucfb.iter_chunks(body))
-        shapes, _, _, boxes = struct.unpack_from("<4H", items[0][1])
-        self.assertEqual((shapes, boxes), (2, 3))
+        shapes, kind23, _, boxes = struct.unpack_from("<4H", items[0][1])
+        self.assertEqual((shapes, kind23, boxes), (2, 1, 3))
         added = collision.parse(body)[1]
-        self.assertEqual((added.material, added.joint, len(added.boxes)), (9, name_hash("arm"), 2))
+        self.assertEqual((added.material, added.joint, added.kind, len(added.boxes)), (9, name_hash("arm"), 2, 2))
 
     def test_new_block(self):
         body = collision.new_block(7, name_hash("root"), [((0, 0, 0), (1, 1, 1))])
-        self.assertEqual(struct.unpack_from("<4H", list(ucfb.iter_chunks(body))[0][1]), (1, 0, 0, 1))
+        self.assertEqual(struct.unpack_from("<4H", list(ucfb.iter_chunks(body))[0][1]), (1, 1, 0, 1))
         self.assertEqual(len(collision.parse(body)[0].boxes), 1)
 
 

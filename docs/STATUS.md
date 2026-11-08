@@ -31,6 +31,8 @@
   - Raising `physicsenginetorque` from 850 to 3400 on `player_humvee` (in `swn_hq`) and the Humvee templates made the Humvee visibly faster.
 - So the game accepts our compressor's output, rebuilt world layers with edited properties, and added text entries (with `num_components` raised).
 - 2026-11-08, texture: `allies_avehicle_humvee_001` tinted red, re-encoded by our DXT3 encoder with a full mip chain and packed into `streamed.dsk`, showed on the player's Humvee in the opening mission.
+- 2026-11-08, collision: two fins added to the Humvee, one with a generated box and one marked `nocoll`. Kind-0 boxes had no effect on the vehicle; switched to kind 2, the solid fin collided and the `nocoll` fin didn't.
+- 2026-11-08, open issue: twice the modded Humvee (4x engine, edited model, Skip Intro start) sank half into the ground, once after a hard impact. Not yet isolated; the port warns its physics isn't proven frame-rate independent.
 - 2026-11-08, model: `allies_veh_humvee` exported to OBJ, edited (gun barrel pieces stretched 3x, a new crate piece added with the Humvee texture), re-imported with `model-import` into `locked.dsk` and `streamed.dsk`. Both changes showed on the Humvee driven after the airdrop.
 - Lesson: the C-17 cargo-hold scene uses a separate model, `c17_humvee`, which shares the Humvee texture. Check model edits on the vehicle you drive.
 - Lesson: a new game starts in `playable_intro` (C-17 briefing, then `allies0`), not the Ace of Clubs, which is Allied mission 4. Script tests belong there.
@@ -45,7 +47,7 @@
 - Python 3.12.10 alongside 3.13. The port's `.venv` has its pinned CMake 3.31.6, Ninja 1.13.0 and Capstone 5.0.6.
 
 ## Next steps
-1. In-game test of generated collision (Humvee fins: left solid, right `nocoll`).
+1. Isolate the Humvee sinking: Skip Intro alone, then add the engine edit and the model edit.
 2. Models: glTF export with the skeleton and skin weights.
 3. Decode the remaining world-layer chunks (`TNAM`, `INFO`) and `path`/`region`/`encounter` records.
 
