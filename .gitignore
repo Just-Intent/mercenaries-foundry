@@ -33,3 +33,5 @@ dev-mods/
 
 # plugin build output
 /plugins/out/
+/templates.tsv
+/objectnames.txt

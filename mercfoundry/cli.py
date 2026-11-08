@@ -513,6 +513,34 @@ def cmd_templates(args):
     print(f"wrote {out}: {len(rows)} templates")
 
 
+def cmd_vehicles(args):
+    import json as _json
+    from . import vehicles
+    found = vehicles.collect(_data_archives(args.data))
+    if not args.model:
+        print(f"{'type':<11} {'model':<34} {'objects':>7}  display name / templates")
+        for model, e in found.items():
+            if e["handling"]:
+                print(f"{e['type']:<11} {model:<34} {e['objects']:>7}  {e['display']}  "
+                      f"({', '.join(e['templates'][:3])}{' ...' if len(e['templates']) > 3 else ''})")
+        print("export one as a mod rule: vehicles DATAxbox <model> -o objects/<model>.json")
+        return
+    e = found.get(args.model) or next((v for k, v in found.items() if k.lower() == args.model.lower()), None)
+    if not e or not e["handling"]:
+        sys.exit(f"no vehicle model {args.model!r} with handling values (list them with: vehicles DATAxbox)")
+    model = next(k for k, v in found.items() if v is e)
+    text = _json.dumps(vehicles.rule(model, e), indent=1) + "\n"
+    if args.out:
+        Path(args.out).parent.mkdir(parents=True, exist_ok=True)
+        Path(args.out).write_text(text, encoding="utf-8")
+        print(f"wrote {args.out}: {len(e['handling'])} handling values for {e['objects']} {model} objects")
+    else:
+        print(text, end="")
+    if e["varies"]:
+        print(f"note: copies of {model} differ in {', '.join(e['varies'])}; the rule sets them all to these values",
+              file=sys.stderr)
+
+
 def cmd_terrain(args):
     import json as _json
     from . import terrain
@@ -701,6 +729,10 @@ def main(argv=None):
     s = add("templates", cmd_templates, "list the game's object templates (what Spawner_SpawnTemplate spawns) as TSV")
     s.add_argument("data", help="DATAxbox folder or a .dsk file")
     s.add_argument("-o", "--out", default="templates.tsv")
+    s = add("vehicles", cmd_vehicles, "list vehicle models, or export one's handling (physics*) as a mod object rule")
+    s.add_argument("data", help="DATAxbox folder or a .dsk file")
+    s.add_argument("model", nargs="?", help="vehicle model, e.g. allies_veh_humvee")
+    s.add_argument("-o", "--out", help="write the rule here (e.g. a mod's objects/humvee.json)")
     s = add("terrain", cmd_terrain, "export a terrain's heightmap (16-bit PNG) and ground layers (greyscale PNGs) for a mod's terrain/ folder")
     s.add_argument("data", help="DATAxbox folder or assets.dsk")
     s.add_argument("name", help="terrain name, e.g. sw (the southern province) or nw")

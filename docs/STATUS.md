@@ -41,7 +41,8 @@
 - Ground painting: `terrain` exports each texture layer as a greyscale image; mods repaint layers and edit the layer table. Draw flags follow the game's patch builder.
 - Terrain decals: `terrain` exports them (all 14 maps rebuild exactly); mods replace them or lay roads from world points. Tested in game.
 - Terrain surface types: per-texture surface, dust, debris and effect from the level config; `terrain` exports them and mods change them (the build writes the loose config file). Tested in game; Foundry Console shows the surface underfoot.
-- 171 tests pass.
+- Vehicle handling ([VEHICLES.md](VEHICLES.md)): every `physics…` property is read by the game (grouped by the code that reads it); `vehicles` lists the 92 vehicle models and exports one's handling as a mod rule. Tested in game: triple engine torque made the Humvee much faster.
+- 173 tests pass.
 
 ## Fixed from retail data
 - Text values aren't NUL-terminated. The decoder had assumed they were and found no strings.
