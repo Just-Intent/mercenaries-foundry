@@ -199,7 +199,7 @@ Kinds: boxes 0 and 2 (plain), 3 (with `CMOP`); meshes 4 (with `CMOP`), 5 (plain)
 
 `model --collision` writes a preview of a model's collision. Shape limits: no vehicle in the game has more than two collision shapes, and giving the Humvee a third (even a 5 cm box) made it sink into the ground after impacts (tested in-game). On vehicles the hull mesh uses material 6 and the second shape 9.
 
-On import, each new piece gets a box fitted around it. The boxes go into the model's existing plain box shape (no tree) when it has one, re-expressed in that shape's joint space with a rotation; otherwise a new plain box shape (kind 2, material 9 on vehicles) is added only if the model has fewer than two shapes; otherwise collision is skipped with a warning. `cinf` box, shape and kind-2/3 counts are kept in step. Objects whose name contains `nocoll` get no collision; `model-import --no-collision` turns it off entirely. Collision of edited existing pieces is not changed.
+On import, each new piece gets a box fitted around it. The boxes go into the model's existing plain box shape (no tree) when it has one, re-expressed in that shape's joint space with a rotation; otherwise a new plain box shape (kind 2, material 9 on vehicles) is added only if the model has fewer than two shapes; otherwise collision is skipped with a warning. `cinf` box, shape and kind-2/3 counts are kept in step. Tested in-game (2026-11-08): a box appended to the cargo truck's existing shape collided, and the truck drove normally. Objects whose name contains `nocoll` get no collision; `model-import --no-collision` turns it off entirely. Collision of edited existing pieces is not changed.
 
 ### Textures: `Texture` → `tex_`
 
