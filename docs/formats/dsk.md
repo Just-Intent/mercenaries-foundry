@@ -304,11 +304,30 @@ A split recurses into its left child, then continues with the right. Checks: a P
 
 How vehicles use the shapes: each has a material-6 triangle hull mesh plus a material-9 shape that is a convex hull (Humvee, cars, trucks) or boxes (tanks, helicopters). In-game, boxes added as triangles to the Humvee's hull mesh did not collide with the world; boxes in a box shape do. So on import a convex hull is replaced by a box shape of slices approximating it (for the Humvee: 10 boxes, 98.9% of its volume, at most 11.5 cm proud), and new boxes join it. Tested in-game (2026-11-08): a plate on the Humvee's front stopped it at walls, a `nocoll` plate on the back passed through, and the Humvee drove and crashed without sinking.
 
+### Terrain: `Terrain` → `tern`
+
+Re-derived from the retail loader (`sub_001F07A0`, RedTerrain.cpp) and its height lookups (`sub_001F03C0`, `sub_00146A10`). 14 maps in `assets.dsk`; the opening level `LV_SWN` loads `swn` (levels.ini), not `sw`.
+
+| Chunk | Contents |
+|---|---|
+| `INFO` | f32 spacing (8 m), height step (0.35 m), min, max; i16 size (512), patch (8), block (16), layer count, decal-texture count, decal count; optionally 3 more f32 |
+| `HEXP` | per 16×16 block: i16 shift, base, min, max (height units) |
+| `HGT8` | PackBits RLE (control < 0x80: c+1 literals; else repeat next byte c−0x7F times) into a size² byte buffer, block-major |
+| `PTCH` | per 8×8 patch: u16 layer mask, u16 decal count |
+| `COLR` | per patch an LZ blob of 81 X1R5G5B5 vertex colours (baked lighting) |
+| `ALPH` | 4-bit blend weights for patches with two or more layers |
+| `DCAL` | decals, 24 bytes each |
+| `LTEX`, `DTEX` | layer and decal texture names; `SCAL`, `AXIS` per-layer scale and projection axis |
+
+Height of sample (x, z) = ((byte << shift) + base) × step. The grid has no extra edge row: lookups wrap with size−1. In the game a world position maps to cell col = (x + 2048) / 8, row = (z + 2040) / 8. Terrain far from the player is streamed and not in memory.
+
+`terrain DATAxbox swn` exports the heights as a 16-bit PNG (16 levels per step, so every height round-trips) plus a JSON of the numbers to read it back. Mods replace heights via `terrain/<name>.heights.png`: changed 16×16 blocks get a new shift and base, unchanged ones keep their bytes, and an unchanged map rebuilds byte-identical (all 14). The layer, lighting, blend and decal chunks decode and rebuild exactly too (`terrain_layers`), but mods can't edit them yet. Tested in-game (2026-11-08): a 30 m hill added next to the start of the first level appeared, and the game's own height buffer read 28.7 m at its peak. Baked lighting is not recomputed, so an edited slope keeps its old shading.
+
 ## Open questions
 
 - The grid-index tail (`0x00FF8040`): no retail archive uses it.
 - Models: the extra 8 bytes of 28-byte vertices, and `MTRL` words 0, 2 and 4–6.
 - Collision: what the material codes mean; what the walker's carried value (`60`-`68`) is for; 2 of 176 convex hulls have a point up to 13 cm outside one plane.
-- Terrain; what animation-table `PRIO` and `FLGS` values mean. Whether DXT2 textures are premultiplied (we treat them as DXT3).
+- Terrain: how to recompute baked lighting (`COLR`) after a height edit; the meaning of `INFO`'s 3 trailing floats and of `ROTN`. What animation-table `PRIO` and `FLGS` values mean. Whether DXT2 textures are premultiplied (we treat them as DXT3).
 - `INFO` byte 0 in scripts; `TNAM` and `INFO` in world layers.
 - What `num_components` counts exactly.

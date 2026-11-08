@@ -4,7 +4,7 @@ A developer window for Mercenaries Recompiled, built as a plugin on the [plugin 
 
 | Part | What it does |
 |---|---|
-| Inspector | Gameplay state, the player's position, heading, money and hit points, and the game's last five spawns by template name (a hook on `Spawner_SpawnTemplate`). Updates four times a second. |
+| Inspector | Gameplay state, the player's position, heading, money and hit points, the terrain height under the player (read from the game's loaded heightfield), and the game's last five spawns by template name (a hook on `Spawner_SpawnTemplate`). Updates four times a second. |
 | Spawn | Search the game's 1,611 object templates by name, type or faction. **Loaded here only** asks the game which ones the current area has loaded (`Template_GetProperty`); only those spawn. **Spawn** (or double-click) places the selected one 8 m ahead of the player. |
 | +$10,000 | Adds money through `Player_SetMoney`. |
 | Nearby | World objects within 100 m, nearest first (every half second while the window is open), named where the game has a name for them, otherwise labelled by model in brackets (e.g. `[global_militaryboxstack]`). Selecting one shows its handle, flags, position, distance, heading and its properties as the game reports them (objectType, displayName, faction, hitPoints, GeometryFile, ...). Buttons below edit it: **Bring here** (3 m in front of you), **Up / Down 1 m**, **Turn -45 / +45** and **Remove**. |

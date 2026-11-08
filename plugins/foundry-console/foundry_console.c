@@ -49,6 +49,17 @@
 #define WORLDOBJECT_POSITION 0x08u   /* float[3], then a quaternion at 0x14 */
 #define WORLDOBJECT_ROTATION 0x14u
 #define NEARBY_RADIUS 100.0f
+/* The loaded terrain (RedTerrain globals, from the loader at 0x1F07A0):
+ * unpacked height bytes, per-16x16-block {shift, base} entries, size, block
+ * size, height step and the world-origin offsets. */
+#define TERRAIN_HEIGHTS 0x0064326Cu
+#define TERRAIN_BLOCKS 0x00643274u
+#define TERRAIN_SIZE 0x00643310u
+#define TERRAIN_BLOCK 0x00643300u
+#define TERRAIN_STEP 0x00643290u
+#define TERRAIN_SPACING 0x00643284u
+#define TERRAIN_ORIGIN_X 0x0064327Cu
+#define TERRAIN_ORIGIN_Z 0x00643278u
 #define MAX_NEARBY 40
 #define MAX_NAMES 8192
 /* Editing (from Lua_Actor_SetPosition / SetYaw / Remove): objects with flag
@@ -317,6 +328,48 @@ static void do_money(float amount)
     set_status("Added $%.0f.", amount);
 }
 
+/* Height of the loaded terrain at grid cell (col, row), from the game's own
+ * buffers (the formula of its height lookup at 0x146A10). */
+static int terrain_units(int col, int row, float *out)
+{
+    uint32_t heights = 0, blocks = 0;
+    int16_t size = 0, block = 0;
+    float step = 0;
+    host->read_guest(host->context, TERRAIN_HEIGHTS, &heights, 4);
+    host->read_guest(host->context, TERRAIN_BLOCKS, &blocks, 4);
+    host->read_guest(host->context, TERRAIN_SIZE, &size, 2);
+    host->read_guest(host->context, TERRAIN_BLOCK, &block, 2);
+    host->read_guest(host->context, TERRAIN_STEP, &step, 4);
+    if (!heights || !blocks || size <= 0 || block <= 0) return 0;
+    col &= size - 1;
+    row &= size - 1;
+    int bpr = size / block, blk = (row / block) * bpr + col / block;
+    uint8_t byte = 0, shift = 0;
+    int16_t base = 0;
+    host->read_guest(host->context, heights + (uint32_t)(blk * block * block + (row % block) * block + col % block), &byte, 1);
+    host->read_guest(host->context, blocks + (uint32_t)blk * 4, &shift, 1);
+    host->read_guest(host->context, blocks + (uint32_t)blk * 4 + 2, &base, 2);
+    *out = (float)(((int)byte << (shift & 31)) + base) * step;
+    return 1;
+}
+
+static void terrain_check_once(void)
+{
+    static int done;
+    float ox = 0, oz = 0, spacing = 0;
+    int16_t size = 0;
+    if (done) return;
+    done = 1;
+    host->read_guest(host->context, TERRAIN_ORIGIN_X, &ox, 4);
+    host->read_guest(host->context, TERRAIN_ORIGIN_Z, &oz, 4);
+    host->read_guest(host->context, TERRAIN_SPACING, &spacing, 4);
+    host->read_guest(host->context, TERRAIN_SIZE, &size, 2);
+    char text[160];
+    snprintf(text, sizeof(text), "terrain loaded: %d x %d cells of %.1f m; world x + %.1f and z + %.1f give the grid position",
+             size, size, spacing, ox, oz);
+    host->log(host->context, text);
+}
+
 static void inspect(void)
 {
     char text[1024];
@@ -335,6 +388,16 @@ static void inspect(void)
                       "Player: 0x%08X\r\nPosition: %.1f, %.1f, %.1f\r\nHeading: %.0f degrees\r\n"
                       "Money: $%.0f\r\nHit points: %.0f\r\n",
                       player, m[12], m[13], m[14], heading, money, hp);
+        float spacing = 0, ox = 0, oz = 0, ground;
+        host->read_guest(host->context, TERRAIN_SPACING, &spacing, 4);
+        host->read_guest(host->context, TERRAIN_ORIGIN_X, &ox, 4);
+        host->read_guest(host->context, TERRAIN_ORIGIN_Z, &oz, 4);
+        if (spacing > 0) {
+            int col = (int)floorf((m[12] + ox) / spacing + 0.5f), row = (int)floorf((m[14] + oz) / spacing + 0.5f);
+            if (terrain_units(col, row, &ground))
+                n += snprintf(text + n, sizeof(text) - n, "Ground (terrain cell %d, %d): %.1f m\r\n", col, row, ground);
+        }
+        terrain_check_once();
     }
     EnterCriticalSection(&lock);
     n += snprintf(text + n, sizeof(text) - n, "Recent spawns:");

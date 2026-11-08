@@ -30,13 +30,37 @@ def _paeth(a, b, c):
     return b if pb <= pc else c
 
 
-def decode(data: bytes) -> tuple:
-    """Read a PNG. Returns (width, height, RGBA bytes).
+def encode_grey16(width: int, height: int, values) -> bytes:
+    """A 16-bit greyscale PNG; values: rows top to bottom, 0..65535."""
+    if len(values) != width * height:
+        raise ValueError("pixel data does not match the image size")
+    raw = bytearray()
+    for y in range(height):
+        raw.append(0)
+        raw += struct.pack(f">{width}H", *values[y * width:(y + 1) * width])
+    return (SIGNATURE
+            + _chunk(b"IHDR", struct.pack(">IIBBBBB", width, height, 16, 0, 0, 0, 0))
+            + _chunk(b"IDAT", zlib.compress(bytes(raw), 6))
+            + _chunk(b"IEND", b""))
 
-    Handles greyscale, RGB, palette, grey+alpha and RGBA at 8 or 16 bits
-    (16-bit is reduced to 8), and palette/grey/RGB transparency. Interlaced
-    images and bit depths below 8 are rejected with a clear error.
-    """
+
+def decode_grey16(data: bytes) -> tuple:
+    """Read a greyscale PNG at full precision: (width, height, values 0..65535).
+    16-bit greyscale keeps every value; 8-bit greyscale is scaled up (x 257)."""
+    width, height, depth, ctype, _, _, rows = _read(data)
+    if ctype != 0:
+        raise ValueError("expected a greyscale PNG (save the heightmap as 16-bit greyscale)")
+    values = []
+    for line in rows:
+        if depth == 16:
+            values += struct.unpack(f">{width}H", bytes(line))
+        else:
+            values += [v * 257 for v in line]
+    return width, height, values
+
+
+def _read(data: bytes) -> tuple:
+    """Parse and unfilter: (width, height, depth, colour type, palette, tRNS, rows)."""
     if not data.startswith(SIGNATURE):
         raise ValueError("not a PNG file")
     pos = len(SIGNATURE)
@@ -95,6 +119,17 @@ def decode(data: bytes) -> tuple:
             raise ValueError(f"bad PNG filter {f}")
         rows.append(line)
         prev = line
+    return width, height, depth, ctype, palette, trns, rows
+
+
+def decode(data: bytes) -> tuple:
+    """Read a PNG. Returns (width, height, RGBA bytes).
+
+    Handles greyscale, RGB, palette, grey+alpha and RGBA at 8 or 16 bits
+    (16-bit is reduced to 8), and palette/grey/RGB transparency. Interlaced
+    images and bit depths below 8 are rejected with a clear error.
+    """
+    width, height, depth, ctype, palette, trns, rows = _read(data)
     out = bytearray(width * height * 4)
     key = None
     if trns and ctype in (0, 2):

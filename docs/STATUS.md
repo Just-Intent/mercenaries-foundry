@@ -36,7 +36,8 @@
 - Object inspector in Foundry Console: nearby objects from the world's object table (position at +0x08, rotation at +0x14), named through the named-object table, with properties from the object's own lookup. `objectnames` command.
 - Object editing in Foundry Console: bring here, up/down, turn and remove, through the engine calls behind Actor_SetPosition, Actor_SetYaw and Actor_Remove.
 - Plugin tool windows (port patch `0004`): Foundry Console works in exclusive fullscreen by stepping the game out of it while the console has focus, and the game ignores input then.
-- 149 tests pass.
+- Terrain decoded: heights (`HEXP`/`HGT8`), layers, baked lighting, blend weights and decals, all 14 maps rebuilding exactly. `terrain` exports heights as a 16-bit PNG; mods reshape ground via `terrain/`. Tested in game: a 30 m hill appeared in the first level (map `swn`). Lighting isn't recomputed yet. Foundry Console shows the terrain height under the player.
+- 157 tests pass.
 
 ## Fixed from retail data
 - Text values aren't NUL-terminated. The decoder had assumed they were and found no strings.

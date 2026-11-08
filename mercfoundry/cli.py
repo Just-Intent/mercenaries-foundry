@@ -513,6 +513,28 @@ def cmd_templates(args):
     print(f"wrote {out}: {len(rows)} templates")
 
 
+def cmd_terrain(args):
+    import json as _json
+    from . import terrain
+    key = name_hash(args.name)
+    for arc in _data_archives(args.data):
+        for r in arc.records:
+            if r.key == key and r.kind == name_hash("Terrain"):
+                chunks = terrain.tern_chunks(arc.read(r))
+                image, meta = terrain.heightmap_png(chunks)
+                meta["terrain"] = args.name
+                out = Path(args.out)
+                out.mkdir(parents=True, exist_ok=True)
+                (out / f"{args.name}.heights.png").write_bytes(image)
+                (out / f"{args.name}.heights.json").write_text(_json.dumps(meta, indent=1) + "\n", encoding="utf-8")
+                info = terrain.parse_info(chunks[b"INFO"])
+                print(f"wrote {out / (args.name + '.heights.png')} ({meta['size']} x {meta['size']}, "
+                      f"{meta['size'] * info['spacing']:.0f} m across, heights {info['min']:.1f} to {info['max']:.1f} m) "
+                      f"and {args.name}.heights.json")
+                return
+    sys.exit(f"no terrain named {args.name!r} (list them with list --type Terrain)")
+
+
 def cmd_hash(args):
     for s in args.names:
         print(f"{name_hash(s):08X}  {s}")
@@ -652,6 +674,10 @@ def main(argv=None):
     s = add("templates", cmd_templates, "list the game's object templates (what Spawner_SpawnTemplate spawns) as TSV")
     s.add_argument("data", help="DATAxbox folder or a .dsk file")
     s.add_argument("-o", "--out", default="templates.tsv")
+    s = add("terrain", cmd_terrain, "export a terrain's heightmap as a 16-bit PNG (edit it, then put it in a mod's terrain/ folder)")
+    s.add_argument("data", help="DATAxbox folder or assets.dsk")
+    s.add_argument("name", help="terrain name, e.g. sw (the southern province) or nw")
+    s.add_argument("-o", "--out", default="terrain")
     s = add("hash", cmd_hash, "hash names the way the game does"); s.add_argument("names", nargs="+")
 
     args = p.parse_args(argv)

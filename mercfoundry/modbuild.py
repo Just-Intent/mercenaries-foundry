@@ -23,6 +23,8 @@ Project layout (every part optional):
     animations/new.json   {"new clip": "template clip"}: clips with these
                           names are added as new animations, built on the
                           template's skeleton and loaded wherever it is
+    terrain/<name>.heights.png  replaces a terrain's heights (from the
+                          `terrain` command; keep the .heights.json beside it)
     animtables/<name>.json   replaces a character's animation table (from
                           the `animtable` command): point handles at clips
     layout/<layer>.<kind>.json  replaces a layer's path, lineregion, region
@@ -115,7 +117,7 @@ class _Data:
 def new_project(folder, name=None):
     folder = Path(folder)
     name = name or folder.resolve().name
-    for sub in ("text", "scripts", "objects", "textures", "models", "layout", "animations", "animtables"):
+    for sub in ("text", "scripts", "objects", "textures", "models", "layout", "animations", "animtables", "terrain"):
         (folder / sub).mkdir(parents=True, exist_ok=True)
     meta = folder / "mod.json"
     if not meta.exists():
@@ -398,6 +400,28 @@ def _apply_animtables(data, folder, result):
             result.warnings.append(f"animtables/{f.name}: clips not in the game or this mod: {', '.join(missing[:6])}")
 
 
+def _apply_terrain(data, folder, result):
+    from . import terrain
+    for f in sorted((folder / "terrain").glob("*.heights.png")):
+        name = f.name[:-len(".heights.png")]
+        meta_path = f.with_name(name + ".heights.json")
+        if not meta_path.exists():
+            raise ValueError(f"terrain/{f.name}: {meta_path.name} is missing (export both with the terrain command)")
+        meta = json.loads(meta_path.read_text(encoding="utf-8"))
+        key = name_hash(name)
+        hit = [(a, r) for a, r in data.records(name_hash("Terrain")) if r.key == key]
+        if not hit:
+            raise ValueError(f"terrain/{f.name}: no terrain named {name!r}")
+        for a, r in hit:
+            record = data.current(a, r)
+            chunks = terrain.tern_chunks(record)
+            units = terrain.units_from_png(f.read_bytes(), meta)
+            _, old, _ = terrain.decode_height_units(chunks)
+            changed = sum(1 for z in range(len(units)) for x in range(len(units)) if units[z][x] != old[z][x])
+            data.set(a, r, terrain.rebuild(record, terrain.encode_height_units(chunks, units)))
+        result.changes.append(f"terrain {name}: {changed} height samples changed")
+
+
 LAYOUT_KINDS = ("path", "lineregion", "region", "encounter", "list")
 
 
@@ -480,6 +504,7 @@ def build(project, data_dir, out_dir) -> Result:
     _apply_layout(data, project, result)
     _apply_animations(data, project, result)
     _apply_animtables(data, project, result)
+    _apply_terrain(data, project, result)
     names = sorted(set(data.replace) | set(data.add))
     names = [n for n in names if data.replace.get(n) or data.add.get(n)]
     out.mkdir(parents=True, exist_ok=True)
