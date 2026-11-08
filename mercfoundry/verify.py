@@ -50,7 +50,12 @@ def _check_record(kind, payload):
         doc = json.loads(json.dumps(world.to_json(payload)))
         return "world", None if world.from_json(doc) == payload else "rebuilt bytes differ"
     if kind == REGISTRY:
-        return "text", None if registry.Registry(payload).to_bytes() == payload else "rebuilt bytes differ"
+        if registry.Registry(payload).to_bytes() != payload:
+            return "text", "rebuilt bytes differ"
+        doc = json.loads(json.dumps(registry.to_json(payload)))
+        if not doc["strings"]:
+            return "text", "no text values decoded"
+        return "text", None if registry.from_json(doc, payload) == payload else "rebuilt from text differs"
     if kind == SCRIPT:
         s = script.decode(payload)
         if not s.compressed:

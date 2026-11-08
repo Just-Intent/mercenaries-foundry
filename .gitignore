@@ -17,3 +17,6 @@ out/
 __pycache__/
 *.pyc
 .venv/
+
+# Notes shipped with downloaded images
+Vimm's Lair.txt

@@ -135,6 +135,12 @@ def cmd_names(args):
     print(f"wrote {args.out}; use it with --names")
 
 
+def cmd_unpack_iso(args):
+    from . import xiso
+    n = xiso.extract(args.image, args.out)
+    print(f"extracted {n} files to {args.out}")
+
+
 def cmd_hash(args):
     for s in args.names:
         print(f"{name_hash(s):08X}  {s}")
@@ -172,6 +178,8 @@ def main(argv=None):
     s.add_argument("sources", nargs="+", help="files to scan: default.xbe, .dsk archives, anything")
     s.add_argument("--match", action="append", help="keep only names whose hash appears in this archive")
     s.add_argument("-o", "--out", default="names.txt")
+    s = add("unpack-iso", cmd_unpack_iso, "extract an Xbox disc image (.iso or .xiso)")
+    s.add_argument("image"); s.add_argument("out")
     s = add("hash", cmd_hash, "hash names the way the game does"); s.add_argument("names", nargs="+")
 
     args = p.parse_args(argv)

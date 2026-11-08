@@ -50,8 +50,16 @@ class NameBook:
         return self._names.items()
 
 
-# Type names confirmed by hash. Extend as more are identified.
-KNOWN_TYPES = ["script", "world", "registry"]
+# Type names confirmed by hash. All but the first three were found by
+# harvesting strings from the retail executable and data whose hash matches
+# a real type ID; "segments" by a guess whose hash matched, with contents
+# (CSEG -> segm chunks) to back it. Spelling follows the game where it has one.
+KNOWN_TYPES = [
+    "script", "world", "registry",
+    "Model", "Texture", "animation", "segments", "Terrain", "path", "list",
+    "encounter", "region", "lineregion", "animtable", "soundEffect", "font",
+    "icon", "sprite", "effects", "effectstable", "TGA", "TXT",
+]
 
 
 def type_book() -> NameBook:

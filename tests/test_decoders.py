@@ -35,11 +35,12 @@ def text_entry(tag, name, data, tail=b"\0"):
 
 
 def text_record():
-    jeep = text_entry(b"BIN_", "jeep", "Jeep\0".encode("utf-16-le"))
-    tank = text_entry(b"BIN_", "tank", "Tank\0".encode("utf-16-le"))
-    blob = text_entry(b"BIN_", "flags", b"\x01\x02\x03")
-    veh = text_entry(b"SCPE", "veh", jeep + tank + blob)
-    return wrap(b"reg_", veh)
+    # Retail layout: no terminators, header INFO with num_components.
+    jeep = text_entry(b"BIN_", "jeep", "Jeep".encode("utf-16-le"), tail=b"")
+    tank = text_entry(b"BIN_", "tank", "Tank\0".encode("utf-16-le"), tail=b"")  # terminated variant
+    blob = text_entry(b"BIN_", "flags", b"\x01\x02\x03", tail=b"")
+    veh = text_entry(b"SCPE", "veh", jeep + tank + blob, tail=b"")
+    return wrap(b"reg_", chunk(b"INFO", b"name\0english\0num_components\x005\0") + veh)
 
 
 class CompressionTests(unittest.TestCase):
@@ -139,9 +140,21 @@ class TextTests(unittest.TestCase):
         self.assertEqual(registry.to_json(out)["strings"]["veh.jeep"], "Jeep (modded) é")
         self.assertIn(b"\x01\x02\x03", out)  # non-text value untouched
 
-    def test_unknown_key(self):
-        with self.assertRaises(KeyError):
-            registry.from_json({"format": registry.FORMAT, "strings": {"veh.nope": "x"}}, text_record())
+    def test_terminator_kept_as_found(self):
+        reg = registry.Registry(text_record())
+        reg.apply({"veh.jeep": "Jeep 2", "veh.tank": "Tank 2"})
+        nodes = dict(reg.walk())
+        self.assertEqual(nodes["veh.jeep"].field(b"DATA"), "Jeep 2".encode("utf-16-le"))
+        self.assertEqual(nodes["veh.tank"].field(b"DATA"), "Tank 2\0".encode("utf-16-le"))
+
+    def test_add_strings_and_scopes(self):
+        reg = registry.Registry(text_record())
+        changed, added = reg.apply({"veh.boat": "Boat", "mod.new.hello": "Hi"})
+        self.assertEqual((changed, added), (0, 4))  # 2 values + 2 new scopes
+        again = registry.Registry(reg.to_bytes())
+        self.assertEqual(again.strings()["veh.boat"], "Boat")
+        self.assertEqual(again.strings()["mod.new.hello"], "Hi")
+        self.assertIn(b"num_components\x009\x00", again.to_bytes())
 
 
 class PaddingTests(unittest.TestCase):
