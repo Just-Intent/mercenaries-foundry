@@ -42,7 +42,8 @@
 - Terrain decals: `terrain` exports them (all 14 maps rebuild exactly); mods replace them or lay roads from world points. Tested in game.
 - Terrain surface types: per-texture surface, dust, debris and effect from the level config; `terrain` exports them and mods change them (the build writes the loose config file). Tested in game; Foundry Console shows the surface underfoot.
 - Vehicle handling ([VEHICLES.md](VEHICLES.md)): every `physics…` property is read by the game (grouped by the code that reads it); `vehicles` lists the 92 vehicle models and exports one's handling as a mod rule. Tested in game: triple engine torque made the Humvee much faster.
-- 173 tests pass.
+- Object hit materials: `obstaclematerialtype` decoded (13 names, how hits pick their effect from it); the `sinf` "material" word is collision flags. Mods set materials with object rules; tested in game (concrete set to metal sparks when shot).
+- 174 tests pass.
 
 ## Fixed from retail data
 - Text values aren't NUL-terminated. The decoder had assumed they were and found no strings.

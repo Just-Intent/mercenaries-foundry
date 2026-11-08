@@ -36,5 +36,15 @@ class VehicleTests(unittest.TestCase):
                          {"model": "heli", "set": {"physicsclimbspeed": "20"}})
 
 
+class MaterialTests(unittest.TestCase):
+    def test_unknown_material_warns(self):
+        from mercfoundry import modbuild
+        rules = [("m.json", {"model": "tree", "set": {"obstaclematerialtype": "SolidMetal"}}),
+                 ("m.json", {"model": "rock", "set": {"ObstacleMaterialType": "marble", "hitpoints": "5"}})]
+        warned = modbuild._material_warnings(rules)
+        self.assertEqual(len(warned), 1)
+        self.assertIn("'marble'", warned[0])
+
+
 if __name__ == "__main__":
     unittest.main()

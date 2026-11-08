@@ -241,10 +241,26 @@ def _apply_rule(inst, rule):
         inst["rotation"] = _turn(inst["rotation"], float(rule["turn"]))
 
 
+# obstaclematerialtype values the game knows (0x12B5F0); anything else is 0 ("none")
+MATERIALS = ("wood", "solidmetal", "sheetmetal", "vehicle", "dirt", "concrete", "rock", "plant",
+             "snow", "glass", "rubber", "chain", "none")
+
+
+def _material_warnings(rules):
+    out = []
+    for fname, rule in rules:
+        for prop, value in rule.get("set", {}).items():
+            if prop.lower() == "obstaclematerialtype" and str(value).lower() not in MATERIALS:
+                out.append(f"objects/{fname}: obstaclematerialtype {value!r} isn't a material the game "
+                           f"knows ({', '.join(MATERIALS)}); it will act as none")
+    return out
+
+
 def _apply_objects(data, folder, result):
     rules = list(_rules(folder))
     if not rules:
         return
+    result.warnings += _material_warnings(rules)
     hits = [0] * len(rules)
     for a, r in data.records(WORLD):
         doc = None
