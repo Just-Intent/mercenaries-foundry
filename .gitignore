@@ -20,3 +20,6 @@ __pycache__/
 
 # Notes shipped with downloaded images
 Vimm's Lair.txt
+
+# Local mod projects (may contain game-derived scripts or assets)
+dev-mods/
