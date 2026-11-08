@@ -465,6 +465,36 @@ def cmd_funcmap(args):
         print(f"wrote {args.out} ({len(funcmap.ghidra_names(doc))} names, the port's ghidra_names.json format)")
 
 
+PORT_GEN = "external/Mercenaries-Recompiled/ports/mercenaries/src/recomp/gen"
+
+
+def cmd_port_hooks(args):
+    from . import funcmap, porthooks
+    doc = funcmap.load(args.map)
+    names = {funcmap.name_of(e): int(e["address"], 16) for e in doc["functions"] if funcmap.name_of(e)}
+    if args.only:
+        addresses = []
+        for item in args.only:
+            if item in names:
+                addresses.append(names[item])
+            else:
+                try:
+                    addresses.append(int(item, 16))
+                except ValueError:
+                    sys.exit(f"{item!r} is neither a mapped function name nor an address")
+    else:
+        addresses = porthooks.map_addresses(doc)
+    hooked, missing = porthooks.apply(args.gen, addresses, remove=args.remove)
+    if args.remove:
+        print("removed all hook wrappers; generated code restored")
+        return
+    print(f"{len(hooked)} functions hookable (wrappers in {Path(args.gen) / porthooks.HOOK_FILE})")
+    if missing:
+        print(f"  {len(missing)} have no generated definition (the port implements them by hand): "
+              + ", ".join(f"0x{a:08X}" for a in missing[:8]) + (" ..." if len(missing) > 8 else ""))
+    print("now rebuild the port")
+
+
 def cmd_hash(args):
     for s in args.names:
         print(f"{name_hash(s):08X}  {s}")
@@ -593,6 +623,11 @@ def main(argv=None):
     f.add_argument("-o", "--out", default="ghidra_names.json")
     f.add_argument("--map", default="map/functions.json")
     f.set_defaults(fn=cmd_funcmap)
+    s = add("port-hooks", cmd_port_hooks, "make the map's named functions hookable by plugins in the port's generated code")
+    s.add_argument("--gen", default=PORT_GEN, help="the port's src/recomp/gen folder")
+    s.add_argument("--map", default="map/functions.json")
+    s.add_argument("--only", nargs="+", metavar="NAME_OR_ADDRESS", help="just these functions")
+    s.add_argument("--remove", action="store_true", help="restore the generated code")
     s = add("hash", cmd_hash, "hash names the way the game does"); s.add_argument("names", nargs="+")
 
     args = p.parse_args(argv)

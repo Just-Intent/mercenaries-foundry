@@ -1,19 +1,36 @@
 # Changes to Mercenaries Recompiled
 
-Mercenaries Foundry needs a few additions to the port's runtime. They live here as patches against the port (MIT; see its license) until they're upstreamed.
+Mercenaries Foundry needs a few additions to the port's runtime. They live here as patches against the port (MIT; see its license) until they're upstreamed. Both were made against port commit `f513ae4` (v1.1.1).
 
 | Patch | What it adds |
 |---|---|
-| `0001-Plugin-guest-calls-...patch` | Plugin guest calls: `call_guest`, `guest_scratch` and `in_gameplay` on `MercPluginHost`. See [docs/PLUGINS.md](../docs/PLUGINS.md). Made against port commit `f513ae4` (v1.1.1). |
+| `0001-Plugin-guest-calls-...patch` | Plugin guest calls: `call_guest`, `guest_scratch` and `in_gameplay` on `MercPluginHost`. |
+| `0002-Plugin-function-hooks.patch` | Plugin function hooks: `hook_guest`, and the runtime side of the hook wrappers. Also makes `read_guest`/`write_guest` fast enough for hooks on hot functions. |
 
-Apply and rebuild (Git Bash, from this repository's root, with the port checked out and built once in `external/Mercenaries-Recompiled`):
+See [docs/PLUGINS.md](../docs/PLUGINS.md) for the API.
+
+## Apply and build
+
+From this repository's root in Git Bash, with the port checked out and built once in `external/Mercenaries-Recompiled`:
 
 ```bash
 git -C external/Mercenaries-Recompiled am ../../port/patches/*.patch
+```
+
+Make the function map's named functions hookable. This rewrites the port's generated code (`src/recomp/gen`), so run it again whenever the port regenerates that code:
+
+```bash
+python -m mercfoundry port-hooks
+```
+
+Re-run CMake's configure step once so it sees the new `foundry_hooks.c`, then build the runtime:
+
+```bash
+external/Mercenaries-Recompiled/.venv/Scripts/cmake.exe external/Mercenaries-Recompiled/build/mercenaries
 ```
 
 ```bash
 external/Mercenaries-Recompiled/.venv/Scripts/cmake.exe --build external/Mercenaries-Recompiled/build/mercenaries --config Release --target mercenaries_recomp -- -m -v:minimal
 ```
 
-Only the runtime (`mercenaries_recomp.exe`) changes; the launcher and generated code don't. Close the game before rebuilding.
+Only the runtime (`mercenaries_recomp.exe`) changes. Close the game before building. `python -m mercfoundry port-hooks --remove` restores the generated code.

@@ -29,7 +29,8 @@
 - Function map (`map/functions.json`, `funcmap` command): every script command's C function from the executable's Lua registration tables, source files from assert strings (80 files, 1,500 functions), 22 hand-named functions (Lua argument helpers, Lua C API, `HashName`, `Spawner_SpawnTemplate`, faction relations) and 3 globals. Exports a C header and the port's `ghidra_names.json` format.
 - Function map, second pass: 573 named functions. 128 command implementations named by rule (a binding's only, unshared engine call); 47 hand-named with evidence (actor lookup by name and handle, money, AI command queue, object removal, collision toggling, objectives, string tables, the engine's hash table); 8 globals; structure fields for world objects, actors, AI and vehicles.
 - Plugin guest calls (port patch `port/patches/0001`): `call_guest`, `guest_scratch`, `in_gameplay`. The test plugin `plugins/foundry-calls-test` passed all five checks in game. Five map entries now carry live-test evidence, plus `Template_GetProperty`.
-- 145 tests pass.
+- Plugin function hooks (port patch `0002` plus `port-hooks`): all 574 mapped functions hookable; before/after callbacks, argument changes, skip with a result. `plugins/foundry-hooks-test` passed in game.
+- 147 tests pass.
 
 ## Fixed from retail data
 - Text values aren't NUL-terminated. The decoder had assumed they were and found no strings.
@@ -54,6 +55,7 @@
 - 2026-11-08, Humvee collision: boxes added as triangles to the hull mesh (tree rebuilt) didn't collide; the triangle hull isn't used against the world. Replacing the convex hull with 10 boxes plus the new one worked: the front plate stopped the Humvee at walls, the `nocoll` rear plate passed through, and it didn't sink.
 - 2026-11-08, new animations: cross-legged copies of each mercenary's run added as new clips and pointed to by their animation tables; the run played cross-legged while the original clip was unchanged.
 - 2026-11-08, plugin guest calls: from a native plugin, `HashName("player0")` matched, `World_FindActorByName` found the player, `Player_SetMoney` added $1,000,000 (shown on the HUD), `atof("12.5")` returned 12.5 on the x87 stack, and `Spawner_SpawnTemplate` spawned `template_allies_humvee_empty` 10 m ahead. Guessed template names (`player_humvee`) weren't loaded; vehicle templates are `template_<faction>_<vehicle>`.
+- 2026-11-08, plugin hooks: hooking `Player_SetMoney` doubled the calls test's +$1,000,000 to $2,000,000 and each $2,000 cash pickup to $4,000; a `HashName` hook skipped the original for "foundry_skip_test" (returned 0x12345678) while "player0" still hashed normally; a `Spawner_SpawnTemplate` hook logged the game's spawns. Loading slowed down with the `HashName` hook until `read_guest` stopped calling VirtualQuery on every access.
 - Lesson: the C-17 cargo-hold scene uses a separate model, `c17_humvee`, which shares the Humvee texture. Check model edits on the vehicle you drive.
 - Lesson: a new game starts in `playable_intro` (C-17 briefing, then `allies0`), not the Ace of Clubs, which is Allied mission 4. Script tests belong there.
 
@@ -67,7 +69,7 @@
 - Python 3.12.10 alongside 3.13. The port's `.venv` has its pinned CMake 3.31.6, Ninja 1.13.0 and Capstone 5.0.6.
 
 ## Next steps
-1. Plugin interface: hooks (run plugin code when a game function is called) and new Lua commands from plugins; then the developer overlay (step 6) on top.
+1. Plugin interface: new Lua commands from plugins; then the developer overlay (step 6) on top.
 2. Function map: name more engine functions (actors, vehicles, AI commands, missions).
 3. Collision material codes (surface types); collision for edited existing pieces.
 4. Importing skeleton (joint) edits; what animation-table priorities and flags do.

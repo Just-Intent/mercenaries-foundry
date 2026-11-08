@@ -1,0 +1,292 @@
+From 4c190ec16c2a9ffc5739603a7580ec9d44013bb4 Mon Sep 17 00:00:00 2001
+From: Just-Intent <346791974+Just-Intent@users.noreply.github.com>
+Date: Sun, 8 Nov 2026 10:25:02 -0600
+Subject: [PATCH] Plugin function hooks
+
+hook_guest lets plugins run before/after callbacks when the game calls a
+function. Wrappers come from recomp/gen/foundry_hooks.c (written by
+Mercenaries Foundry's port-hooks command, which renames hooked generated
+definitions to sub_XXXXXXXX_body); without it the hook table is empty.
+Before callbacks can change ECX and arguments or skip the original with
+a result; after callbacks can change EAX/EDX. Main thread only, no
+re-entry, guest calls allowed inside hooks, hooks cleared before plugins
+unload. read_guest/write_guest check guest RAM once and cache checked
+plugin buffers, so hooks on hot functions stay fast.
+---
+ ports/mercenaries/sdk/mercenaries_plugin.h | 23 ++++++++
+ ports/mercenaries/src/plugin_host.cpp      | 53 +++++++++++++++--
+ ports/mercenaries/src/plugin_host.h        |  8 +++
+ ports/mercenaries/src/recomp_manual.c      | 67 ++++++++++++++++++++++
+ 4 files changed, 146 insertions(+), 5 deletions(-)
+
+diff --git a/ports/mercenaries/sdk/mercenaries_plugin.h b/ports/mercenaries/sdk/mercenaries_plugin.h
+index c83cc98..bc6f565 100644
+--- a/ports/mercenaries/sdk/mercenaries_plugin.h
++++ b/ports/mercenaries/sdk/mercenaries_plugin.h
+@@ -29,6 +29,23 @@ typedef struct MercGuestCall {
+     double st0;            /* out: x87 top after the call (float/double results) */
+     char error[96];        /* out: why the call was refused */
+ } MercGuestCall;
++/* A hooked call of a game function. In `before`: address, ecx (this, may be
++ * changed) and esp ([esp] = return address, [esp + 4] = first argument; change
++ * arguments with write_guest). Set skip = 1 to not run the original; then set
++ * eax/edx and pop_bytes (bytes of arguments the original pops itself: 4 x
++ * argument count for __stdcall/__thiscall, 0 for __cdecl). In `after`: eax,
++ * edx (may be changed) and st0 (the x87 top: float results, read only). */
++typedef struct MercHookContext {
++    uint32_t struct_size;
++    uint32_t address;
++    uint32_t ecx;
++    uint32_t esp;
++    uint32_t eax, edx;
++    double st0;
++    int32_t skip;
++    uint32_t pop_bytes;
++} MercHookContext;
++typedef void (MERC_PLUGIN_CALL *MercHookFn)(void *userdata, MercHookContext *call);
+ typedef struct MercPluginHost {
+     uint32_t struct_size, api_version;
+     void *context;
+@@ -46,6 +63,12 @@ typedef struct MercPluginHost {
+     int (MERC_PLUGIN_CALL *guest_scratch)(void *, uint32_t *, uint32_t *);
+     /* 1 while normal gameplay is running (not menus or loading). */
+     int (MERC_PLUGIN_CALL *in_gameplay)(void *);
++    /* Run before/after (either may be NULL) whenever the game calls the
++     * function at address, on the game's main thread. Only functions built
++     * as hookable (named in the Foundry function map) can be hooked; returns
++     * 0 otherwise. Register from init or on_update; hooks last until shutdown.
++     * Callbacks may use read_guest, write_guest, call_guest and log. */
++    int (MERC_PLUGIN_CALL *hook_guest)(void *, uint32_t, MercHookFn, MercHookFn, void *);
+ } MercPluginHost;
+ /* True when the host provides a field (older hosts have a smaller struct). */
+ #define MERC_PLUGIN_HOST_HAS(host, field) \
+diff --git a/ports/mercenaries/src/plugin_host.cpp b/ports/mercenaries/src/plugin_host.cpp
+index 9e4dc73..24306e7 100644
+--- a/ports/mercenaries/src/plugin_host.cpp
++++ b/ports/mercenaries/src/plugin_host.cpp
+@@ -43,9 +43,17 @@ void MERC_PLUGIN_CALL plugin_log(void *ctx,const char *message) {
+     if(GetCurrentThreadId()!=owner||!calling||ctx!=calling||!message)return;
+     record(calling->manifest.id+": "+std::string(message));
+ }
++/* Regions already found accessible. Plugins call read/write_guest from hooks
++ * on hot functions, where a VirtualQuery per call is too slow. */
++struct Region {uintptr_t base,end;bool writable;};
++Region region_cache[8];
++unsigned region_next=0;
++bool guest_ok=false; /* guest RAM is one read-write mapping; checked once */
+ bool accessible(void *address,size_t bytes,bool write) {
+     auto p=reinterpret_cast<uintptr_t>(address),end=p+bytes;
+     if(end<p)return false;
++    for(const auto &r:region_cache)
++        if(r.end&&p>=r.base&&end<=r.end&&(r.writable||!write))return true;
+     while(p<end) {
+         MEMORY_BASIC_INFORMATION mbi{};
+         if(!VirtualQuery(reinterpret_cast<void*>(p),&mbi,sizeof(mbi))||mbi.State!=MEM_COMMIT||
+@@ -57,13 +65,14 @@ bool accessible(void *address,size_t bytes,bool write) {
+                       protection==PAGE_EXECUTE_READWRITE||protection==PAGE_EXECUTE_WRITECOPY;
+         if(!readable||(write&&!writable))return false;
+         auto next=reinterpret_cast<uintptr_t>(mbi.BaseAddress)+mbi.RegionSize;
++        region_cache[region_next++%8]={reinterpret_cast<uintptr_t>(mbi.BaseAddress),next,writable};
+         if(next<=p)return false;p=next;
+     }return true;
+ }
+ bool span(void *ctx,uint32_t address,size_t bytes,bool write) {
+     return GetCurrentThreadId()==owner&&calling&&ctx==calling&&guest&&bytes&&
+         address>=0x10000u&&address<guest_size&&bytes<=guest_size-address&&
+-        accessible(static_cast<unsigned char*>(guest)+address,bytes,write);
++        (guest_ok||accessible(static_cast<unsigned char*>(guest)+address,bytes,write));
+ }
+ int MERC_PLUGIN_CALL read_guest(void *ctx,uint32_t address,void *out,size_t bytes) {
+     if(!out||!span(ctx,address,bytes,false)||!accessible(out,bytes,true))return 0;
+@@ -74,6 +83,9 @@ int MERC_PLUGIN_CALL write_guest(void *ctx,uint32_t address,const void *data,siz
+     memmove(static_cast<unsigned char*>(guest)+address,data,bytes);return 1;
+ }
+ bool updating=false;
++int hooking=0;
++struct Hook {Loaded *plugin;MercHookFn before,after;void *userdata;};
++std::map<unsigned,std::vector<Hook>> hooks;
+ void call_error(MercGuestCall *call,const char *message) {
+     snprintf(call->error,sizeof(call->error),"%s",message);
+ }
+@@ -81,8 +93,8 @@ int MERC_PLUGIN_CALL call_guest(void *ctx,MercGuestCall *call) {
+     if(!call||!accessible(call,sizeof(MercGuestCall),true))return 0;
+     if(call->struct_size<sizeof(MercGuestCall)){call_error(call,"MercGuestCall.struct_size is too small.");return 0;}
+     call->error[0]=0;call->eax=call->edx=0;call->st0=0;
+-    if(GetCurrentThreadId()!=owner||!calling||ctx!=calling||!updating) {
+-        call_error(call,"Guest calls are only allowed inside on_update.");return 0;
++    if(GetCurrentThreadId()!=owner||!calling||ctx!=calling||!(updating||hooking)) {
++        call_error(call,"Guest calls are only allowed inside on_update or a hook.");return 0;
+     }
+     if(call->arg_count>MERC_GUEST_CALL_MAX_ARGS){call_error(call,"Too many arguments.");return 0;}
+     return recomp_plugin_call_guest(call->address,call->this_ptr,call->args,call->arg_count,
+@@ -96,6 +108,30 @@ int MERC_PLUGIN_CALL in_gameplay(void *ctx) {
+     if(GetCurrentThreadId()!=owner||!calling||ctx!=calling)return 0;
+     return recomp_plugin_in_gameplay();
+ }
++int MERC_PLUGIN_CALL hook_guest(void *ctx,uint32_t address,MercHookFn before,MercHookFn after,void *userdata) {
++    if(GetCurrentThreadId()!=owner||!calling||ctx!=calling||hooking||(!before&&!after))return 0;
++    int index=recomp_foundry_hook_index(address);
++    if(index<0)return 0;
++    hooks[unsigned(index)].push_back({calling,before,after,userdata});
++    recomp_foundry_hook_enable(unsigned(index));
++    char text[96];snprintf(text,sizeof(text),"hooked 0x%08X",address);
++    record(calling->manifest.id+": "+text);
++    return 1;
++}
++void run_hooks(unsigned index,MercHookContext *call,bool after) {
++    auto it=hooks.find(index);
++    if(it==hooks.end())return;
++    Loaded *previous=calling;
++    for(auto &h:it->second) {
++        MercHookFn fn=after?h.after:h.before;
++        if(!fn||!h.plugin->active)continue;
++        calling=h.plugin;++hooking;
++        try {fn(h.userdata,call);}
++        catch(...) {h.plugin->active=false;record(h.plugin->manifest.name+": a hook threw; the plugin is stopped.");}
++        --hooking;
++    }
++    calling=previous;
++}
+ void shutdown_all() {
+     for(auto it=loaded.rbegin();it!=loaded.rend();++it) {
+         auto &p=**it;
+@@ -107,7 +143,7 @@ void shutdown_all() {
+         }
+         if(p.module)FreeLibrary(p.module);
+     }
+-    loaded.clear();guest=nullptr;guest_size=0;initialized=false;dispatching=false;
++    loaded.clear();guest=nullptr;guest_size=0;guest_ok=false;initialized=false;dispatching=false;
+     if(log_file)log_file.close();
+ }
+ }
+@@ -139,13 +175,14 @@ extern "C" int merc_plugins_initialize(void *base,size_t bytes) {
+         }
+         validate(manifests);
+         if(!base||guest_size<=0x10000)throw std::runtime_error("Guest RAM is not ready for plugins.");
++        guest_ok=accessible(static_cast<unsigned char*>(guest)+0x10000,guest_size-0x10000,true);
+         for(auto &m:manifests) {
+             auto p=std::make_unique<Loaded>();p->manifest=m;
+             p->directory=utf8(m.root.wstring());p->settings=utf8((fs::path(settings)/wide(m.id)).wstring());
+             fs::create_directories(fs::path(wide(p->settings)));
+             p->host={sizeof(MercPluginHost),MERCENARIES_PLUGIN_API_VERSION,p.get(),
+                 p->manifest.id.c_str(),p->directory.c_str(),p->settings.c_str(),plugin_log,read_guest,write_guest,
+-                call_guest,guest_scratch,in_gameplay};
++                call_guest,guest_scratch,in_gameplay,hook_guest};
+             p->callbacks.struct_size=sizeof(MercPlugin);p->callbacks.api_version=MERCENARIES_PLUGIN_API_VERSION;
+             auto library=m.root/wide(m.library);
+             // Own directory for dependencies; no working-directory or PATH search.
+@@ -199,8 +236,14 @@ extern "C" int merc_plugins_update(void) {
+     }
+     dispatching=false;return failure.empty()?1:0;
+ }
++extern "C" int merc_plugins_hook_ready(void) {
++    return initialized&&GetCurrentThreadId()==owner;
++}
++extern "C" void merc_plugins_hook_before(unsigned index,MercHookContext *call) {run_hooks(index,call,false);}
++extern "C" void merc_plugins_hook_after(unsigned index,MercHookContext *call) {run_hooks(index,call,true);}
+ extern "C" void merc_plugins_shutdown(void) {
+     if(GetCurrentThreadId()!=owner||dispatching)return;
++    hooks.clear(); /* before any plugin DLL is unloaded */
+     dispatching=true;shutdown_all();
+ }
+ 
+diff --git a/ports/mercenaries/src/plugin_host.h b/ports/mercenaries/src/plugin_host.h
+index b250bbb..e8c5b4f 100644
+--- a/ports/mercenaries/src/plugin_host.h
++++ b/ports/mercenaries/src/plugin_host.h
+@@ -15,6 +15,14 @@ int recomp_plugin_call_guest(uint32_t address, uint32_t this_ptr, const uint32_t
+                              uint32_t *eax, uint32_t *edx, double *st0, char *error, size_t error_size);
+ int recomp_plugin_guest_scratch(uint32_t *address, uint32_t *bytes);
+ int recomp_plugin_in_gameplay(void);
++/* Function hooks: wrappers in recomp/gen/foundry_hooks.c (written by
++ * Mercenaries Foundry's port-hooks command) call recomp_foundry_hook_call. */
++#include "../sdk/mercenaries_plugin.h"
++int recomp_foundry_hook_index(uint32_t address);   /* -1 if not hookable */
++void recomp_foundry_hook_enable(unsigned index);
++int merc_plugins_hook_ready(void);                 /* on the owner thread, initialized */
++void merc_plugins_hook_before(unsigned index, MercHookContext *call);
++void merc_plugins_hook_after(unsigned index, MercHookContext *call);
+ #ifdef __cplusplus
+ }
+ #endif
+diff --git a/ports/mercenaries/src/recomp_manual.c b/ports/mercenaries/src/recomp_manual.c
+index 5703400..78b96c9 100644
+--- a/ports/mercenaries/src/recomp_manual.c
++++ b/ports/mercenaries/src/recomp_manual.c
+@@ -2870,6 +2870,73 @@ int recomp_plugin_call_guest(uint32_t address, uint32_t this_ptr, const uint32_t
+     return 1;
+ }
+ 
++/* ----- Function hooks (Mercenaries Foundry) -----
++ * `python -m mercfoundry port-hooks` renames chosen generated functions to
++ * sub_XXXXXXXX_body and writes recomp/gen/foundry_hooks.c, whose wrappers
++ * keep the original names (so direct calls, the dispatch table and indirect
++ * calls all reach them) and call recomp_foundry_hook_call when a plugin has
++ * hooked the function. Without that file the table below is empty. */
++#define FOUNDRY_HOOK_MAX 4096u
++volatile uint8_t g_foundry_hook_on[FOUNDRY_HOOK_MAX];
++static uint8_t g_foundry_hook_busy[FOUNDRY_HOOK_MAX];
++
++const uint32_t *foundry_hook_table(unsigned *count);
++const uint32_t *foundry_hook_table_none(unsigned *count)
++{
++    *count = 0;
++    return NULL;
++}
++#pragma comment(linker, "/alternatename:foundry_hook_table=foundry_hook_table_none")
++
++int recomp_foundry_hook_index(uint32_t address)
++{
++    unsigned count, i;
++    const uint32_t *table = foundry_hook_table(&count);
++    for (i = 0; table && i < count && i < FOUNDRY_HOOK_MAX; i++)
++        if (table[i] == address)
++            return (int)i;
++    return -1;
++}
++
++void recomp_foundry_hook_enable(unsigned index)
++{
++    if (index < FOUNDRY_HOOK_MAX)
++        g_foundry_hook_on[index] = 1;
++}
++
++void recomp_foundry_hook_call(unsigned index, uint32_t address, recomp_func_t body)
++{
++    MercHookContext call;
++
++    /* Main thread only, and no re-entry into the same hook. */
++    if (index >= FOUNDRY_HOOK_MAX || g_foundry_hook_busy[index] || !merc_plugins_hook_ready()) {
++        body();
++        return;
++    }
++    g_foundry_hook_busy[index] = 1;
++    memset(&call, 0, sizeof(call));
++    call.struct_size = sizeof(call);
++    call.address = address;
++    call.ecx = g_ecx;
++    call.esp = g_esp;
++    merc_plugins_hook_before(index, &call);
++    g_ecx = call.ecx;
++    if (call.skip) {
++        g_esp += 4u + call.pop_bytes; /* the original's ret N */
++        g_eax = call.eax;
++        g_edx = call.edx;
++    } else {
++        body();
++        call.eax = g_eax;
++        call.edx = g_edx;
++        call.st0 = g_fp_stack[g_fp_top & 7u];
++        merc_plugins_hook_after(index, &call);
++        g_eax = call.eax;
++        g_edx = call.edx;
++    }
++    g_foundry_hook_busy[index] = 0;
++}
++
+ static void recomp_guard_cancel_owner(uint32_t owner);
+ static void recomp_guard_request(uint32_t vm, uint32_t handle);
+ static void recomp_guard_callback(uint32_t vm);
+-- 
+2.55.0.windows.5
+
