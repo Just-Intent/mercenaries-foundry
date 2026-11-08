@@ -17,7 +17,7 @@ Project layout (every part optional):
                           name, to place a duplicate (other actions then
                           apply to the copy).
     textures/<name>.png   replaces the texture <name>, or adds it if it's new
-    models/<name>.obj     an edited export from the `model` command
+    models/<name>.obj|.glb|.gltf  an edited export from the `model` command
     animations/*.glb|.gltf   clips replace the game animations with the same
                           names (export them with `model --glb --anim`)
     layout/<layer>.<kind>.json  replaces a layer's path, lineregion, region
@@ -51,7 +51,7 @@ Edit the files in this folder, then build:
 - scripts/<name>.lua: replaces or adds the script <name>.
 - objects/*.json: {{"template": "player_humvee", "set": {{"physicsenginetorque": "3400"}}}}
 - textures/<name>.png: replaces or adds the texture <name> (power-of-two sizes).
-- models/<name>.obj: an edited export from `python -m mercfoundry model`.
+- models/<name>.obj (or .glb/.gltf): an edited export from `python -m mercfoundry model`.
 
 Get the originals to edit with `extract --decode`, `texture` and `model`.
 """
@@ -346,10 +346,12 @@ def _obj_settings(text):
 
 
 def _apply_models(data, folder, result):
-    for f in sorted((folder / "models").glob("*.obj")):
+    files = sorted(f for f in (folder / "models").glob("*") if f.suffix.lower() in (".obj", ".glb", ".gltf"))
+    for f in files:
         name = f.stem
-        text = f.read_text(encoding="utf-8", errors="replace")
-        lod, damaged = _obj_settings(text)
+        is_gltf = f.suffix.lower() != ".obj"
+        text = None if is_gltf else f.read_text(encoding="utf-8", errors="replace")
+        lod, damaged = (None, None) if is_gltf else _obj_settings(text)
         key = name_hash(name)
         found = {}
         for a in ARCHIVES:
@@ -364,7 +366,11 @@ def _apply_models(data, folder, result):
         for a, recs in found.items():
             mr = data.archive(a).read(recs[model.MODEL])
             sr = data.archive(a).read(recs[model.SEGMENTS])
-            nm, ns, report = model_import.import_obj(mr, sr, text, lod, damaged)
+            if is_gltf:
+                from . import gltf_model
+                nm, ns, report = gltf_model.import_gltf(mr, sr, f, lod, damaged)
+            else:
+                nm, ns, report = model_import.import_obj(mr, sr, text, lod, damaged)
             data.set(a, recs[model.MODEL], nm)
             data.set(a, recs[model.SEGMENTS], ns)
         result.changes.append(f"model {name}: {len(report.edited)} pieces edited, {len(report.added)} added, "

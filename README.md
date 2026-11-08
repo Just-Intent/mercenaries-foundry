@@ -31,7 +31,7 @@ python -m mercfoundry mod build my_mod --data game_files/DATAxbox --out "<port>/
 | `scripts/<name>.lua` | Replace the Lua script `<name>`, or add a new one |
 | `objects/*.json`: `{"name": "player_humvee", "set": {"physicsenginetorque": "3400"}}` | Change objects in the world. Match by `name` (or `template`), `model`, and/or `near: [x, y, z]` (with `radius`); `layer` narrows it to one world layer. Actions: `set` properties, `move: [dx, dy, dz]`, `position: [x, y, z]`, `turn` (degrees about the vertical), and `copy: true` with `as: "new_name"` to place a duplicate. |
 | `textures/<name>.png` | Replace the texture `<name>`, or add a new one (power-of-two sizes) |
-| `models/<name>.obj` | Replace a model with an edited export from `model` |
+| `models/<name>.obj` or `.glb`/`.gltf` | Replace a model with an edited export from `model` |
 | `animations/*.glb` or `.gltf` | Replace game animations with clips of the same name (Blender's `Armature\|` prefix and `.001` suffixes are ignored). Export them with `model --glb --anim`, edit, and drop the file here. Joints a clip doesn't animate keep the game's motion. |
 | `layout/<layer>.<kind>.json` | Replace a layer's paths, boundaries, regions or encounters (`kind` = `path`, `lineregion`, `region`, `encounter`), or `layout/<layer>.list.txt` for its load list. Export them with `layout DATAxbox <layer>`. |
 
@@ -93,7 +93,7 @@ python -m mercfoundry pack work/assets out/assets.dsk
 python -m mercfoundry model DATAxbox allies_veh_humvee -o models --preview --names names.txt
 ```
 
-Writes `allies_veh_humvee.obj` and `.mtl` (opens in Blender and most 3D tools), each texture it uses as a PNG, and with `--preview` a textured preview image. Add `--anim "all_american_lb_*"` (with `--glb`) to include the game's animations as glTF clips, and `--in-place` to drop root motion. Add `--glb` for a glTF file with the skeleton as bones, each piece parented to its joint, character skinning and embedded textures; it is checked vertex by vertex against the game model before it's written. (`model-import` reads OBJ; edit glTF exports for reference or re-export as OBJ keeping object names.) `--lod N` picks a level of detail; `--damaged` shows a vehicle's damaged body panels. Model names come from `list DATAxbox/streamed.dsk --type Model`.
+Writes `allies_veh_humvee.obj` and `.mtl` (opens in Blender and most 3D tools), each texture it uses as a PNG, and with `--preview` a textured preview image. Add `--anim "all_american_lb_*"` (with `--glb`) to include the game's animations as glTF clips, and `--in-place` to drop root motion. Add `--glb` for a glTF file with the skeleton as bones, each piece parented to its joint, character skinning and embedded textures; it is checked vertex by vertex against the game model before it's written. `model-import` reads both OBJ and glTF. `--lod N` picks a level of detail; `--damaged` shows a vehicle's damaged body panels. Model names come from `list DATAxbox/streamed.dsk --type Model`.
 
 ```bash
 python -m mercfoundry texture DATAxbox allies_avehicle_humvee_001 -o textures
@@ -114,6 +114,8 @@ python -m mercfoundry pack work/streamed out/streamed.dsk
 ```
 
 Each object in the export is one piece, named `p<index>_<joint>`; keep those names so edits go back to the right piece. Delete an object to remove a piece. Add an object to add a piece: name it `new_<joint>` to attach it to a joint (for example `new_turret_a` turns with the turret), and give it a material named after a game texture. Many models are in both `locked.dsk` and `streamed.dsk`; pass every folder and `model-import` updates each copy. Use `--lod`/`--damaged` if you exported with them. New pieces get a collision box automatically where the model can take one (vehicles with two mesh collision shapes, like the Humvee, can't: adding a shape breaks their physics, so you get a warning instead); put `nocoll` in an object's name to skip it (decoration), or pass `--no-collision`. Collision of existing pieces isn't changed. `model --collision` previews a model's collision shapes.
+
+glTF works the same way (`model-import allies_veh_humvee.glb ...`, or a `.glb` in a mod's `models/` folder), with more kept from Blender: each piece goes back where it sits in the file, a new object belongs to the bone it is parented to (no `new_<joint>` name needed), and skinned meshes keep each vertex's strongest bone, so reweighting works and new skinned pieces can be added. The export records its level of detail and damage state, so `--lod`/`--damaged` aren't needed. Bones themselves aren't imported; moving one gives a warning.
 
 Format details: [docs/formats/dsk.md](docs/formats/dsk.md). Related Battlefront tools and docs: [docs/RESOURCES.md](docs/RESOURCES.md).
 

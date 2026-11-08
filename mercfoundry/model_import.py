@@ -1,4 +1,4 @@
-"""Bring an edited OBJ back into a model's records.
+"""Bring an edited OBJ (or glTF, via gltf_model) back into a model's records.
 
 The OBJ is matched to the model by object name: objects named p<index>...
 (as written by `model`) replace that piece's geometry and keep its joint,
@@ -31,6 +31,8 @@ class ObjPiece:
     normals: list = field(default_factory=list)      # None entries when missing
     colors: list = field(default_factory=list)       # None entries when missing
     triangles: list = field(default_factory=list)
+    bones: list = None     # per-vertex skin palette index (None entries: unknown)
+    joint: int = None      # joint name hash for a new piece (else taken from its name)
 
 
 def parse_obj(text: str) -> list:
@@ -233,13 +235,20 @@ def import_obj(model_record: bytes, segments_record: bytes, obj_text: str,
 
     material_hash: maps an OBJ material name to a texture hash; default
     accepts 8-digit hex or hashes the name."""
+    return import_pieces(model_record, segments_record, parse_obj(obj_text), lod, damaged,
+                         material_hash, collision)
+
+
+def import_pieces(model_record: bytes, segments_record: bytes, objs: list,
+                  lod: int = 0, damaged: bool = False, material_hash=None,
+                  collision: bool = True, report=None) -> tuple:
+    """Like import_obj, from already-read pieces (ObjPiece, in model space)."""
     def default_hash(n):
         n = re.sub(r"\.\d{3}$", "", n)  # Blender's duplicate suffix
         return int(n, 16) if re.fullmatch(r"[0-9A-Fa-f]{8}", n) else name_hash(n)
     material_hash = material_hash or default_hash
     model = mdl.decode(model_record, segments_record)
-    objs = parse_obj(obj_text)
-    report = Report()
+    report = report or Report()
 
     # --- raw structure of the model record (needed to compare edits)
     modl_body, modl_pad = ucfb.unwrap(model_record, b"modl", with_pad=True)
@@ -256,20 +265,26 @@ def import_obj(model_record: bytes, segments_record: bytes, obj_text: str,
         rot, pos = xforms.get(joint, ((0.0, 0.0, 0.0, 1.0), (0.0, 0.0, 0.0)))
         return mdl._qrot(_conj(rot), tuple(p[k] - pos[k] for k in range(3)))
 
-    def signature(joint, positions, uvs, triangles):
+    def signature(joint, positions, uvs, triangles, bones=None):
         """Mesh summary on the game's own grid, independent of vertex order."""
         keys = []
-        for p, uv in zip(positions, uvs):
+        for v, (p, uv) in enumerate(zip(positions, uvs)):
             loc = to_local(joint, p)
             keys.append(tuple(round((loc[a] - old_centre[a]) / old_half[a] * 32767)
                               if old_half[a] > 1e-9 else round(loc[a] - old_centre[a], 6) for a in range(3))
-                        + (round(uv[0] * 2048), round(uv[1] * 2048)))
+                        + (round(uv[0] * 2048), round(uv[1] * 2048))
+                        + ((bones[v] if bones[v] is not None else -1,) if bones else ()))
         return sorted(tuple(sorted(keys[i] for i in t)) for t in triangles)
 
     def unchanged(piece, obj):
+        # Bones count only when both sides have them and the file knows them all.
+        use_bones = (piece.bones is not None and obj.bones is not None
+                     and all(b is not None for b in obj.bones))
         return (len(piece.triangles) == len(obj.triangles)
-                and signature(piece.joint, piece.positions, piece.uvs, piece.triangles)
-                == signature(piece.joint, obj.positions, obj.uvs, obj.triangles))
+                and signature(piece.joint, piece.positions, piece.uvs, piece.triangles,
+                              piece.bones if use_bones else None)
+                == signature(piece.joint, obj.positions, obj.uvs, obj.triangles,
+                             obj.bones if use_bones else None))
 
     chosen = {id(p) for p in model.at_lod(lod, damaged)}
     exported = {i for i, p in enumerate(model.pieces) if id(p) in chosen}
@@ -284,6 +299,8 @@ def import_obj(model_record: bytes, segments_record: bytes, obj_text: str,
                 base.uvs += o.uvs
                 base.normals += o.normals
                 base.colors += o.colors
+                if base.bones is not None or o.bones is not None:
+                    base.bones = (base.bones or [None] * n) + (o.bones or [None] * len(o.positions))
                 base.triangles += [(a + n, b + n, c + n) for a, b, c in o.triangles]
             else:
                 by_index[i] = o
@@ -339,10 +356,26 @@ def import_obj(model_record: bytes, segments_record: bytes, obj_text: str,
         seg = dict(ucfb.iter_chunks(seg_items[segm_positions[i]][1]))
         stride_word = struct.unpack_from("<I", seg[b"INFO"], 8)[0]
         plans.append((i, o, p.joint, p.texture, p.lod_mask, stride_word, list(p.material)))
+    skinned_pieces = [k for k, p in enumerate(model.pieces) if p.bones is not None]
     for o in new_objs:
         m = re.match(r"(?:new_)?(.+?)(?:\.\d+)?$", o.name)
         joint = joint_names.get(m.group(1).lower(), root_hash) if m else root_hash
+        if o.joint is not None:
+            joint = o.joint
         texture = material_hash(o.material) if o.material else (model.pieces[0].texture if model.pieces else 0)
+        if o.bones is not None and any(b is not None for b in o.bones) and skinned_pieces:
+            # A new skinned piece: copy a skinned piece's vertex format and joint.
+            k = next((k for k in skinned_pieces if model.pieces[k].texture == texture), skinned_pieces[0])
+            t = model.pieces[k]
+            seg = dict(ucfb.iter_chunks(seg_items[segm_positions[k]][1]))
+            stride_word = struct.unpack_from("<I", seg[b"INFO"], 8)[0]
+            words = list(t.material)
+            if len(words) > 3:
+                words[3] = texture
+            plans.append((None, o, t.joint, texture, all_lods or 1, stride_word, words))
+            continue
+        if o.bones is not None and any(b is not None for b in o.bones):
+            report.warnings.append(f"{o.name}: skin weights ignored (this model has no skinned pieces)")
         t = template_for(texture)
         words = list(t.material) if t else [0, 0, 0, 0, 0, 0x100, 0]
         words[1] = joint
@@ -408,6 +441,8 @@ def import_obj(model_record: bytes, segments_record: bytes, obj_text: str,
                 extra = raw[20:stride]
                 b_, g_, r_, a_ = raw[12:16]
                 colour = (r_, g_, b_, a_)
+            if skinned and o.bones is not None and o.bones[v] is not None:
+                bone = o.bones[v]
             if o.colors[v] is not None:
                 r_, g_, b_ = (max(0, min(255, round(c * 255))) for c in o.colors[v])
                 colour = (r_, g_, b_, colour[3])
@@ -532,9 +567,10 @@ def import_obj(model_record: bytes, segments_record: bytes, obj_text: str,
     return new_model, new_segments, report
 
 
-def import_into_folders(folders, name, obj_text, lod=0, damaged=False, material_hash=None,
+def import_into_folders(folders, name, obj_text, lod=None, damaged=None, material_hash=None,
                         collision=True):
-    """Apply an edited OBJ to every extracted folder that holds the model.
+    """Apply an edited OBJ (text) or glTF (a Path to .glb/.gltf) to every
+    extracted folder that holds the model.
 
     Each folder is an `extract` output (records/ + manifest.json). The first
     replacement of a record keeps its original in originals/. Returns a list
@@ -554,8 +590,13 @@ def import_into_folders(folders, name, obj_text, lod=0, damaged=False, material_
             continue
         originals = {k: folder / "originals" / f.name for k, f in files.items()}
         base = {k: (originals[k] if originals[k].exists() else f).read_bytes() for k, f in files.items()}
-        new_model, new_segments, report = import_obj(base[mdl.MODEL], base[mdl.SEGMENTS], obj_text,
-                                                     lod, damaged, material_hash, collision)
+        if isinstance(obj_text, _P):
+            from . import gltf_model
+            new_model, new_segments, report = gltf_model.import_gltf(
+                base[mdl.MODEL], base[mdl.SEGMENTS], obj_text, lod, damaged, material_hash, collision)
+        else:
+            new_model, new_segments, report = import_obj(base[mdl.MODEL], base[mdl.SEGMENTS], obj_text,
+                                                         lod or 0, bool(damaged), material_hash, collision)
         for k, data in ((mdl.MODEL, new_model), (mdl.SEGMENTS, new_segments)):
             if data != base[k] and not originals[k].exists():
                 originals[k].parent.mkdir(exist_ok=True)

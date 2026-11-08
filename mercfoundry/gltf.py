@@ -93,7 +93,9 @@ def export(model, lod=0, damaged=False, textures=None, texture_name=None, animat
     textures = textures or {}
     texture_name = texture_name or (lambda h: f"{h:08X}")
     w = _Writer()
-    gl = {"asset": {"version": "2.0", "generator": "mercfoundry"}, "scene": 0,
+    gl = {"asset": {"version": "2.0", "generator": "mercfoundry",
+                    "extras": {"mercfoundry": {"model": model.name, "lod": lod, "damaged": bool(damaged)}}},
+          "scene": 0,
           "scenes": [{"name": model.name, "nodes": []}], "nodes": [], "meshes": [],
           "materials": [], "accessors": w.accessors, "bufferViews": w.views, "buffers": []}
     root = len(gl["nodes"])

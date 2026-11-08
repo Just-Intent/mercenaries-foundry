@@ -18,7 +18,7 @@ from . import animation, gltf
 
 COMPONENT = {5126: ("f", 4), 5123: ("H", 2), 5125: ("I", 4), 5121: ("B", 1), 5122: ("h", 2), 5120: ("b", 1)}
 NORMALISE = {5121: 255.0, 5123: 65535.0, 5120: 127.0, 5122: 32767.0}
-SIZES = {"SCALAR": 1, "VEC2": 2, "VEC3": 3, "VEC4": 4}
+SIZES = {"SCALAR": 1, "VEC2": 2, "VEC3": 3, "VEC4": 4, "MAT4": 16}
 
 
 def load(path):

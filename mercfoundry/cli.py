@@ -236,7 +236,8 @@ def cmd_model(args):
 
 def cmd_model_import(args):
     from . import model_import
-    text = Path(args.obj).read_text(encoding="utf-8", errors="replace")
+    src = Path(args.obj)
+    text = src if src.suffix.lower() in (".glb", ".gltf") else src.read_text(encoding="utf-8", errors="replace")
     try:
         # Material names are texture names; their hash is the texture key.
         results = model_import.import_into_folders(args.folders, args.name, text, args.lod, args.damaged,
@@ -453,12 +454,13 @@ def main(argv=None):
                    help="with --glb, add animations whose names match (wildcards ok); repeatable")
     s.add_argument("--in-place", action="store_true", help="drop root motion from animations")
     names_opt(s)
-    s = add("model-import", cmd_model_import, "bring an edited OBJ back into extracted folders")
-    s.add_argument("obj", help="edited OBJ (from the model command, edited in Blender etc.)")
+    s = add("model-import", cmd_model_import, "bring an edited OBJ or glTF back into extracted folders")
+    s.add_argument("obj", help="edited .obj, .glb or .gltf (from the model command, edited in Blender etc.)")
     s.add_argument("name", help="model name or 8-digit key")
     s.add_argument("folders", nargs="+", help="extract output folders, e.g. work/locked work/streamed")
-    s.add_argument("--lod", type=int, default=0, help="level of detail the OBJ was exported at")
-    s.add_argument("--damaged", action="store_true", help="the OBJ was exported with --damaged")
+    s.add_argument("--lod", type=int, default=None,
+                   help="level of detail the file was exported at (OBJ default 0; glTF records it)")
+    s.add_argument("--damaged", action="store_true", default=None, help="the file was exported with --damaged")
     s.add_argument("--no-collision", action="store_true", help="don't give new pieces collision boxes")
     s = add("mod", None, "create or build a mod project")
     modsub = s.add_subparsers(dest="mod_cmd", required=True)

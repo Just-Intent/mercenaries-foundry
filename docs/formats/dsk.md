@@ -162,6 +162,8 @@ Placement: positions are local to the piece's joint. Applying the joint chain (r
 
 Skinned pieces (stride bit 16): each vertex's bone index refers to the model's joints whose names start with `bone`, in skeleton order (e.g. `DummyRoot` is skipped). Inferred from retail data: it fits all 97 skinned models, beats "joint list" and "joint list + 1" where they differ, and posing the exported skeleton in a glTF viewer moves the expected body parts (head, arm with its hand, leg). One bone per vertex.
 
+glTF import (`gltf_model`) evaluates the file's node transforms (and skins, for skinned meshes) to put every vertex back in model space, so it doesn't depend on how a tool re-orients bones or re-nests nodes. All 2,297 models (2,330 exports, counting damaged views) read back to their original positions and bones and re-import byte-identical. Files restructured the way Blender does (bones re-oriented with compensated children and skins, matrices, reversed vertex order, extra root node) also re-import unchanged. Tested in-game (2026-11-08): a top hat added in glTF under `bone_head` on the three `prokat_hum_*` mercenaries followed the head.
+
 Handedness: the game's axes are left-handed. Exports negate Z (and quaternion x, y) and reverse triangle winding; checked with a road sign's Korean lettering, which reads correctly on the exported sign's front face.
 
 Vehicles carry two copies of breakable body panels, on joints named `segment_pristine_*` and `segment_damage_*`. Exports show the pristine set by default.
