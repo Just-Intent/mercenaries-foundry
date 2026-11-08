@@ -166,7 +166,7 @@ Joint quaternions are unit length only to about 1e-3; we normalise them before u
 
 `model-import` matches OBJ objects to pieces by the `p<index>` prefix. A matched object replaces that piece's vertices and triangles and keeps its joint, material, level-of-detail mask and vertex format; positions are converted back into the joint's space. Bone indices (skinned pieces), the 8 extra bytes of 28-byte vertices and vertex alpha are copied from the nearest original vertex; colours come from the OBJ when present. Objects without a `p<index>` name become new pieces: joint from the name (`new_<joint>`, otherwise the root), texture from the material name, drawn at every level of detail. Exported pieces missing from the OBJ are removed. Triangles are written as one strip joined by repeated indices, each triangle at an even position so its winding is kept.
 
-If new geometry falls outside the quantization box, the box grows and every piece is re-quantized (untouched vertices move by less than one grid step, e.g. 0.05 mm on a Humvee). Bounds only ever grow. Collision (`cshp`) is not updated. Importing an unedited export returns the original records: checked across every model, level of detail and damage state.
+If new geometry falls outside the quantization box, the box grows and every piece is re-quantized (untouched vertices move by less than one grid step, e.g. 0.05 mm on a Humvee). Bounds only ever grow. Collision (`cshp`) is not updated. Importing an unedited export returns the original records: checked across every model, level of detail and damage state. Tested in-game (2026-11-08): a stretched gun barrel and an added crate showed on the player's Humvee.
 
 ### Textures: `Texture` → `tex_`
 
