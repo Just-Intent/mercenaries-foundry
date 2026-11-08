@@ -1,0 +1,19 @@
+# Upstream port checkout (kept separately)
+external/
+
+# Game data and anything extracted from it: never commit
+*.iso
+*.xiso
+*.xbe
+*.dsk
+*.xmv
+game_files/
+DATAxbox/
+extracted/
+out/
+*.dmp
+
+# Python
+__pycache__/
+*.pyc
+.venv/
