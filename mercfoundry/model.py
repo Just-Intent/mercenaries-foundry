@@ -152,7 +152,10 @@ def joint_transforms(joints) -> dict:
         if key in done:
             return done[key]
         j = by_name[key]
-        rot, pos = j.rotation, j.translation
+        # Stored quaternions are unit length only to ~1e-3; normalise so the
+        # transform is a pure rotation (and exactly invertible on import).
+        norm = math.sqrt(sum(c * c for c in j.rotation)) or 1.0
+        rot, pos = tuple(c / norm for c in j.rotation), j.translation
         parent = j.parent.lower()
         if parent and parent in by_name and parent != key and depth < 64:
             prot, ppos = resolve(parent, depth + 1)
@@ -240,21 +243,35 @@ def find(archives, name):
     return found[MODEL], found[SEGMENTS]
 
 
+def piece_object_name(model: Model, index: int) -> str:
+    """OBJ object name for a piece: p<index>_<joint>. model-import matches
+    edited objects back to pieces by the index."""
+    names = {name_hash(j.name): j.name for j in model.joints}
+    joint = names.get(model.pieces[index].joint, "")
+    return f"p{index:03d}_{joint}" if joint else f"p{index:03d}"
+
+
 def to_obj(model: Model, lod=0, texture_name=None, damaged=False) -> tuple:
-    """Return (obj text, mtl text). Z is negated for OBJ's right-handed axes."""
+    """Return (obj text, mtl text). Z is negated for OBJ's right-handed axes.
+    Vertex colours are written as `v x y z r g b`."""
     texture_name = texture_name or (lambda h: f"{h:08X}")
-    obj = [f"# {model.name}, level of detail {lod}", f"mtllib {model.name}.mtl"]
+    obj = [f"# {model.name}, level of detail {lod}" + (", damaged" if damaged else ""),
+           f"mtllib {model.name}.mtl"]
     mtl, seen = [], set()
     base = 1
-    for n, p in enumerate(model.at_lod(lod, damaged)):
+    chosen = {id(p) for p in model.at_lod(lod, damaged)}
+    for index, p in enumerate(model.pieces):
+        if id(p) not in chosen:
+            continue
         tex = texture_name(p.texture)
         if tex not in seen:
             seen.add(tex)
             mtl += [f"newmtl {tex}", "Kd 1 1 1", f"map_Kd {tex}.png", ""]
-        obj.append(f"o piece{n:03d}")
+        obj.append(f"o {piece_object_name(model, index)}")
         obj.append(f"usemtl {tex}")
-        obj += [f"v {x:.5f} {y:.5f} {-z:.5f}" for x, y, z in p.positions]
-        obj += [f"vt {u:.5f} {1 - v:.5f}" for u, v in p.uvs]
+        obj += [f"v {x:.8f} {y:.8f} {-z:.8f} {c[0] / 255:.4f} {c[1] / 255:.4f} {c[2] / 255:.4f}"
+                for (x, y, z), c in zip(p.positions, p.colors)]
+        obj += [f"vt {u:.6f} {1 - v:.6f}" for u, v in p.uvs]
         obj += [f"vn {x:.4f} {y:.4f} {-z:.4f}" for x, y, z in p.normals]
         for a, b, c in p.triangles:
             a, b, c = a + base, c + base, b + base  # z flip reverses winding

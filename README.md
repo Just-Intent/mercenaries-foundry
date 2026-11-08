@@ -10,7 +10,7 @@ No game data is included. You need your own US retail Xbox copy. See [docs/PROVE
 
 1. **Reproducible build** of the port from your disc image. *(done with the port's own build script and the free Build Tools 2022; see docs/STATUS.md)*
 2. **`.dsk` archive tool**: list, extract, repack, compare. *(done; all four retail archives rebuild byte-for-byte)*
-3. **Asset decoders**: scripts, world/ODF properties, localization *(done; checked on retail data, and edited text, scripts and object properties work in-game)*, models and textures *(done: all 2,297 models export to OBJ with their textures; all 4,715 textures export to PNG, and edited textures go back in-game)*, then animation.
+3. **Asset decoders**: scripts, world/ODF properties, localization *(done; checked on retail data, and edited text, scripts and object properties work in-game)*, models and textures *(done: all 2,297 models export to OBJ with their textures, and edited models import back; all 4,715 textures export to PNG, and edited textures go back in-game)*, then animation.
 4. **Function and data map**: named functions and structures for entities, factions, spawning, Lua bindings and missions.
 5. **Plugin interface v2**: call game functions, hooks, new Lua commands, overlay drawing.
 6. **Developer overlay**: inspector, Lua console, spawning by name.
@@ -66,6 +66,20 @@ python -m mercfoundry texture DATAxbox allies_avehicle_humvee_001 -o textures
 ```
 
 Exports one texture as PNG (all six faces for cube maps; `--mip N` for smaller levels).
+
+### Editing models
+
+```bash
+python -m mercfoundry extract DATAxbox/locked.dsk work/locked
+python -m mercfoundry extract DATAxbox/streamed.dsk work/streamed
+python -m mercfoundry model DATAxbox allies_veh_humvee -o models
+# edit models/allies_veh_humvee.obj in Blender, export OBJ (keep object names)
+python -m mercfoundry model-import models/allies_veh_humvee.obj allies_veh_humvee work/locked work/streamed
+python -m mercfoundry pack work/locked out/locked.dsk
+python -m mercfoundry pack work/streamed out/streamed.dsk
+```
+
+Each object in the export is one piece, named `p<index>_<joint>`; keep those names so edits go back to the right piece. Delete an object to remove a piece. Add an object to add a piece: name it `new_<joint>` to attach it to a joint (for example `new_turret_a` turns with the turret), and give it a material named after a game texture. Many models are in both `locked.dsk` and `streamed.dsk`; pass every folder and `model-import` updates each copy. Use `--lod`/`--damaged` if you exported with them. Collision shapes aren't updated yet.
 
 Format details: [docs/formats/dsk.md](docs/formats/dsk.md). Related Battlefront tools and docs: [docs/RESOURCES.md](docs/RESOURCES.md).
 

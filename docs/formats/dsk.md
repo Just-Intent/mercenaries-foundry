@@ -158,7 +158,15 @@ Placement: positions are local to the piece's joint. Applying the joint chain (r
 
 Vehicles carry two copies of breakable body panels, on joints named `segment_pristine_*` and `segment_damage_*`. Exports show the pristine set by default.
 
-The `model` command exports a model to OBJ with a material file that names its textures, and can write a shaded preview image. Exported OBJ files negate Z (the game's axes are left-handed).
+The `model` command exports a model to OBJ with a material file that names its textures, and can write a shaded preview image. Exported OBJ files negate Z (the game's axes are left-handed) and flip V. Each object is named `p<index>_<joint>` after the piece it came from; vertex colours are written as `v x y z r g b`.
+
+Joint quaternions are unit length only to about 1e-3; we normalise them before use so joint transforms are pure rotations and exactly invertible.
+
+#### Importing edited models
+
+`model-import` matches OBJ objects to pieces by the `p<index>` prefix. A matched object replaces that piece's vertices and triangles and keeps its joint, material, level-of-detail mask and vertex format; positions are converted back into the joint's space. Bone indices (skinned pieces), the 8 extra bytes of 28-byte vertices and vertex alpha are copied from the nearest original vertex; colours come from the OBJ when present. Objects without a `p<index>` name become new pieces: joint from the name (`new_<joint>`, otherwise the root), texture from the material name, drawn at every level of detail. Exported pieces missing from the OBJ are removed. Triangles are written as one strip joined by repeated indices, each triangle at an even position so its winding is kept.
+
+If new geometry falls outside the quantization box, the box grows and every piece is re-quantized (untouched vertices move by less than one grid step, e.g. 0.05 mm on a Humvee). Bounds only ever grow. Collision (`cshp`) is not updated. Importing an unedited export returns the original records: checked across every model, level of detail and damage state.
 
 ### Textures: `Texture` → `tex_`
 

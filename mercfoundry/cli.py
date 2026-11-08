@@ -195,6 +195,25 @@ def cmd_model(args):
         print(f"wrote {png}")
 
 
+def cmd_model_import(args):
+    from . import model_import
+    text = Path(args.obj).read_text(encoding="utf-8", errors="replace")
+    try:
+        # Material names are texture names; their hash is the texture key.
+        results = model_import.import_into_folders(args.folders, args.name, text, args.lod, args.damaged)
+    except KeyError as err:
+        sys.exit(str(err.args[0]))
+    for folder, r in results:
+        if not r.changed:
+            print(f"{folder}: no changes ({r.unchanged} pieces unchanged)")
+            continue
+        print(f"{folder}: {len(r.edited)} pieces edited, {len(r.added)} added, {len(r.removed)} removed, "
+              f"{r.unchanged} unchanged" + ("; quantization box grew" if r.box_grew else ""))
+        for w in r.warnings:
+            print(f"  warning: {w}")
+    print("now run pack on each folder")
+
+
 def cmd_texture(args):
     from . import texture
     arcs = _data_archives(args.data)
@@ -266,6 +285,12 @@ def main(argv=None):
     s.add_argument("--preview", action="store_true", help="also write a shaded PNG preview")
     s.add_argument("--no-textures", action="store_true", help="don't export textures")
     names_opt(s)
+    s = add("model-import", cmd_model_import, "bring an edited OBJ back into extracted folders")
+    s.add_argument("obj", help="edited OBJ (from the model command, edited in Blender etc.)")
+    s.add_argument("name", help="model name or 8-digit key")
+    s.add_argument("folders", nargs="+", help="extract output folders, e.g. work/locked work/streamed")
+    s.add_argument("--lod", type=int, default=0, help="level of detail the OBJ was exported at")
+    s.add_argument("--damaged", action="store_true", help="the OBJ was exported with --damaged")
     s = add("texture", cmd_texture, "export a texture to PNG")
     s.add_argument("data", help="DATAxbox folder or a .dsk file")
     s.add_argument("name", help="texture name or 8-digit key")
