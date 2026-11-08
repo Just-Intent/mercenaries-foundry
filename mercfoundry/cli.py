@@ -214,6 +214,37 @@ def cmd_model_import(args):
     print("now run pack on each folder")
 
 
+def cmd_mod_new(args):
+    from . import modbuild
+    folder = modbuild.new_project(args.folder, args.name)
+    print(f"created mod project {folder}; see its README.md")
+
+
+def cmd_mod_build(args):
+    from . import modbuild, verify as verifier
+    try:
+        result = modbuild.build(args.folder, args.data, args.out)
+    except (ValueError, KeyError, FileNotFoundError) as err:
+        sys.exit(f"build failed: {err}")
+    for line in result.changes:
+        print(f"  {line}")
+    for w in result.warnings:
+        print(f"  warning: {w}")
+    if not result.written:
+        print("nothing to build: no edits change the game")
+        return
+    print(f"wrote {', '.join(result.written)} to {args.out}")
+    bad = 0
+    for name in result.written:
+        rep = verifier.verify_archive(Path(args.out) / name)
+        bad += not rep.ok
+        for index, label, error in rep.failures:
+            print(f"  verify {name} record {index} ({label}): {error}")
+    print("verified" if not bad else "verification FAILED")
+    if bad:
+        sys.exit(1)
+
+
 def cmd_texture(args):
     from . import texture
     arcs = _data_archives(args.data)
@@ -291,6 +322,16 @@ def main(argv=None):
     s.add_argument("folders", nargs="+", help="extract output folders, e.g. work/locked work/streamed")
     s.add_argument("--lod", type=int, default=0, help="level of detail the OBJ was exported at")
     s.add_argument("--damaged", action="store_true", help="the OBJ was exported with --damaged")
+    s = add("mod", None, "create or build a mod project")
+    modsub = s.add_subparsers(dest="mod_cmd", required=True)
+    m = modsub.add_parser("new", help="create an empty mod project")
+    m.set_defaults(fn=cmd_mod_new)
+    m.add_argument("folder"); m.add_argument("--name")
+    m = modsub.add_parser("build", help="build a mod project into an install-ready folder")
+    m.set_defaults(fn=cmd_mod_build)
+    m.add_argument("folder", help="mod project folder")
+    m.add_argument("--data", required=True, help="the game's DATAxbox folder")
+    m.add_argument("--out", required=True, help="output folder, e.g. <port>/mods/<YourMod>")
     s = add("texture", cmd_texture, "export a texture to PNG")
     s.add_argument("data", help="DATAxbox folder or a .dsk file")
     s.add_argument("name", help="texture name or 8-digit key")

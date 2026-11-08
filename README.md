@@ -15,6 +15,26 @@ No game data is included. You need your own US retail Xbox copy. See [docs/PROVE
 5. **Plugin interface v2**: call game functions, hooks, new Lua commands, overlay drawing.
 6. **Developer overlay**: inspector, Lua console, spawning by name.
 
+## Making a mod
+
+A mod is a folder of readable files. One command turns it into a folder you drop into Mercenaries Recompiled's `mods/`.
+
+```bash
+python -m mercfoundry mod new my_mod
+# add your edits (see below), then:
+python -m mercfoundry mod build my_mod --data game_files/DATAxbox --out "<port>/mods/My Mod"
+```
+
+| Put this in your mod folder | To |
+|---|---|
+| `text/*.json`: `{"interface.shell.newgame": "NEW GAME"}` | Change text. New keys are added. |
+| `scripts/<name>.lua` | Replace the Lua script `<name>`, or add a new one |
+| `objects/*.json`: `{"template": "player_humvee", "set": {"physicsenginetorque": "3400"}}` | Change object properties. Match by `template` and/or `model`; `layer` narrows it to one world layer. |
+| `textures/<name>.png` | Replace the texture `<name>`, or add a new one (power-of-two sizes) |
+| `models/<name>.obj` | Replace a model with an edited export from `model` |
+
+`mod build` writes only the archives your edits change, checks them, and records what changed in `foundry-mod.json`. Get originals to start from with `extract --decode`, `texture` and `model`. See [examples/faster-humvee](examples/faster-humvee) for a small working mod.
+
 ## Archive tool
 
 Requires Python 3.10+. No other dependencies.

@@ -400,3 +400,14 @@ def encode(tex: Texture) -> bytes:
             body = tex.body
         items.append((tag, body))
     return ucfb.wrap(b"tex_", ucfb.pack_children(items, pad_last), pad)
+
+
+def new(name: str, width: int, height: int, rgba: bytes) -> Texture:
+    """A brand-new texture: DXT3 if the image has any transparency, else
+    DXT1, with a full mip chain."""
+    has_alpha = any(rgba[i] < 255 for i in range(3, len(rgba), 4))
+    fmt = DXT3 if has_alpha else DXT1
+    mips = max(width, height).bit_length()
+    info = struct.pack("<6H3I", width, height, 1, mips, 1, 1, fmt, 0, 0)
+    blank = Texture(name, width, height, mips, fmt, info, b"", 1, ())
+    return replace_image(blank, width, height, rgba)

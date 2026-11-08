@@ -15,7 +15,8 @@
 - Texture decoder: all 4,715 textures (DXT1, DXT2/3, swizzled A8R8G8B8, 4 cube maps). `texture` exports PNG; `model` now exports textures with the OBJ and draws them in its preview, which confirms the texture coordinates.
 - Texture re-import: PNG reader, DXT1/DXT3 and swizzled A8R8G8B8 encoders with mip generation, hooked into `extract --decode --textures` and `pack`. Re-encoding the game's own textures is lossless for 97% of a sample. `rebuild` now tracks decoded-file hashes and restores originals when an edit is undone.
 - Model import: `model-import` brings an edited OBJ back (edit, add and remove pieces; positions re-quantized; strips rebuilt; geometry recompressed). Unedited exports re-import byte-identical for every model, level of detail and damage state.
-- 75 tests pass.
+- `mod new` / `mod build`: a mod is a folder of text JSON, Lua scripts, object property rules, PNG textures and OBJ models; one command builds the changed archives, verifies them and writes a summary. Rebuilding the day's hand-made test mod from a project gave byte-identical assets, locked and streamed archives (english.dsk identical in content). Example project in `examples/faster-humvee`.
+- 81 tests pass.
 
 ## Fixed from retail data
 - Text values aren't NUL-terminated. The decoder had assumed they were and found no strings.
@@ -45,8 +46,7 @@
 ## Next steps
 1. Collision: decode `cshp` so imported geometry can be solid.
 2. Models: glTF export with the skeleton and skin weights.
-3. A `mod` command that builds a mod folder from a list of edits, so tests like these are one step.
-4. Decode the remaining world-layer chunks (`TNAM`, `INFO`) and `path`/`region`/`encounter` records.
+3. Decode the remaining world-layer chunks (`TNAM`, `INFO`) and `path`/`region`/`encounter` records.
 
 ## Notes
 - Several port tools mention replacing "source-informed" versions. Use only versions re-derived from retail (see PROVENANCE.md).

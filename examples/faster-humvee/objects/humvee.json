@@ -1,0 +1,23 @@
+[
+ {
+  "layer": "swn_hq",
+  "template": "player_humvee",
+  "set": {
+   "physicsenginetorque": "3400"
+  }
+ },
+ {
+  "layer": "template_vehicles",
+  "template": "template_allies_humvee",
+  "set": {
+   "physicsenginetorque": "3400"
+  }
+ },
+ {
+  "layer": "template_vehicles",
+  "template": "template_allies_humvee_empty",
+  "set": {
+   "physicsenginetorque": "3400"
+  }
+ }
+]

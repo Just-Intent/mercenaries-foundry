@@ -298,3 +298,41 @@ def collect_names(archive: Archive, book: NameBook) -> int:
             if found:
                 book.add(found)
     return len(book) - before
+
+
+def write_modified(archive: Archive, out_path, replace: dict = None, add=()) -> int:
+    """Copy an archive, swapping in new bytes for some records.
+
+    replace: {(key, kind): bytes}; add: [(key, kind, bytes)] appended at the
+    end. Unchanged records are copied straight from the source file. The
+    extra word and tail are kept. Returns the record count."""
+    replace = replace or {}
+    missing = set(replace) - {r.ident for r in archive.records}
+    if missing:
+        raise KeyError(f"records to replace aren't in {archive.path.name}: {len(missing)}")
+    known = {r.ident for r in archive.records}
+    for key, kind, _ in add:
+        if (key, kind) in known:
+            raise ValueError(f"record {key:08X}/{kind:08X} already exists in {archive.path.name}")
+        known.add((key, kind))
+    rows = [(replace.get(r.ident), r) for r in archive.records]
+    out = Path(out_path)
+    out.parent.mkdir(parents=True, exist_ok=True)
+    tmp = out.with_name(out.name + ".tmp")
+    with archive.path.open("rb") as src, tmp.open("wb") as dst:
+        dst.write(HEADER.pack(len(rows) + len(add), archive.extra))
+        for data, r in rows:
+            dst.write(ENTRY.pack(len(data) if data is not None else r.size, r.key, r.kind))
+        for key, kind, data in add:
+            dst.write(ENTRY.pack(len(data), key, kind))
+        for data, r in rows:
+            if data is None:
+                _copy_range(src, dst, r.offset, r.size)
+            else:
+                dst.write(data)
+        for _, _, data in add:
+            dst.write(data)
+        if archive.tail_size:
+            _copy_range(src, dst, archive.data_end, archive.tail_size)
+    os.replace(tmp, out)
+    return len(rows) + len(add)
