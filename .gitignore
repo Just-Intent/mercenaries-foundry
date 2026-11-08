@@ -26,3 +26,7 @@ dev-mods/
 
 # Local editor/agent settings
 .claude/
+
+# funcmap exports (regenerate any time)
+/ghidra_names.json
+/mercfoundry_functions.h

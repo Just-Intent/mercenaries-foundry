@@ -26,7 +26,8 @@
 - glTF model import: `model-import` and mod `models/` take `.glb`/`.gltf`. Pieces are placed by the file's node and skin transforms, new pieces take the joint they're parented to, and skinned vertices keep their bone. Every model round-trips unchanged, including Blender-style restructured files.
 - Collision trees (`CMOP`) decoded from the game's own walker and checked on all 1,402; convex hulls decoded; `cinf` totals understood on all 1,997 blocks. New pieces on Humvee-style vehicles get collision by turning the convex hull into boxes.
 - Animation tables decoded (all 95 rebuild exactly; `animtable` exports one). Mods can add clips under new names (`animations/new.json`, built on a template clip and added to its load lists) and repoint handles (`animtables/`).
-- 140 tests pass.
+- Function map (`map/functions.json`, `funcmap` command): every script command's C function from the executable's Lua registration tables, source files from assert strings (80 files, 1,500 functions), 22 hand-named functions (Lua argument helpers, Lua C API, `HashName`, `Spawner_SpawnTemplate`, faction relations) and 3 globals. Exports a C header and the port's `ghidra_names.json` format.
+- 144 tests pass.
 
 ## Fixed from retail data
 - Text values aren't NUL-terminated. The decoder had assumed they were and found no strings.
@@ -63,9 +64,10 @@
 - Python 3.12.10 alongside 3.13. The port's `.venv` has its pinned CMake 3.31.6, Ninja 1.13.0 and Capstone 5.0.6.
 
 ## Next steps
-1. Collision material codes (surface types); collision for edited existing pieces.
-2. Importing skeleton (joint) edits; what animation-table priorities and flags do.
-3. Path junctions (`JNCT`) and squad types: where `SQD_` names like `nk_hum_ppl_tunnel01` are defined.
+1. Function map: name more engine functions (actors, vehicles, AI commands, missions); check names in game once plugins can call functions (step 5).
+2. Collision material codes (surface types); collision for edited existing pieces.
+3. Importing skeleton (joint) edits; what animation-table priorities and flags do.
+4. Path junctions (`JNCT`) and squad types: where `SQD_` names like `nk_hum_ppl_tunnel01` are defined.
 
 ## Notes
 - Several port tools mention replacing "source-informed" versions. Use only versions re-derived from retail (see PROVENANCE.md).

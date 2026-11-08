@@ -421,6 +421,49 @@ def cmd_unpack_iso(args):
     print(f"extracted {n} files to {args.out}")
 
 
+PORT_ANALYSIS = "external/Mercenaries-Recompiled/ports/mercenaries/analysis/disasm"
+
+
+def cmd_funcmap(args):
+    import json as _json
+    from . import funcmap
+    if args.map_cmd == "build":
+        doc = funcmap.build(args.xbe, args.analysis, args.manual)
+        out = Path(args.out)
+        out.parent.mkdir(parents=True, exist_ok=True)
+        out.write_text(_json.dumps(doc, indent=1) + "\n", encoding="utf-8")
+        c = doc["counts"]
+        print(f"wrote {out}: {c['named']} named functions ({c['lua_commands']} script commands, "
+              f"{c['manual']} hand-curated), {c['with_file']} with a source file "
+              f"({c['file_direct']} direct), {c['globals']} globals")
+        if doc.get("unclassified_tables"):
+            print("  new Lua tables to classify:", ", ".join(doc["unclassified_tables"]))
+        return
+    if not Path(args.map).exists():
+        sys.exit(f"{args.map} not found; run `funcmap build` first")
+    doc = funcmap.load(args.map)
+    if args.map_cmd == "find":
+        hits = funcmap.find(doc, args.text)
+        for e in hits[:args.limit]:
+            extra = f"  [{e['file']}]" if e.get("file") else ""
+            print(f"{e['address']}  {' / '.join(e.get('names', [])) or '(unnamed)'}{extra}")
+        if len(hits) > args.limit:
+            print(f"... {len(hits) - args.limit} more (use --limit)")
+        if not hits:
+            print("no matches")
+    elif args.map_cmd == "show":
+        lines = funcmap.show(doc, args.what, args.analysis if Path(args.analysis).exists() else None)
+        if not lines:
+            sys.exit(f"no function named {args.what!r}")
+        print("\n".join(lines))
+    elif args.map_cmd == "header":
+        Path(args.out).write_text(funcmap.header(doc), encoding="utf-8")
+        print(f"wrote {args.out}")
+    elif args.map_cmd == "names":
+        Path(args.out).write_text(_json.dumps(funcmap.ghidra_names(doc), indent=1) + "\n", encoding="utf-8")
+        print(f"wrote {args.out} ({len(funcmap.ghidra_names(doc))} names, the port's ghidra_names.json format)")
+
+
 def cmd_hash(args):
     for s in args.names:
         print(f"{name_hash(s):08X}  {s}")
@@ -523,6 +566,32 @@ def main(argv=None):
     s.add_argument("-o", "--out", default="layout")
     s = add("unpack-iso", cmd_unpack_iso, "extract an Xbox disc image (.iso or .xiso)")
     s.add_argument("image"); s.add_argument("out")
+    s = add("funcmap", None, "the function map: build it, search it, export it")
+    fsub = s.add_subparsers(dest="map_cmd", required=True)
+    f = fsub.add_parser("build", help="build map/functions.json from your default.xbe and the port's analysis")
+    f.add_argument("--xbe", default="game_files/default.xbe")
+    f.add_argument("--analysis", default=PORT_ANALYSIS, help="the port's analysis/disasm folder")
+    f.add_argument("--manual", default="map/manual.json")
+    f.add_argument("-o", "--out", default="map/functions.json")
+    f.set_defaults(fn=cmd_funcmap)
+    f = fsub.add_parser("find", help="search names, script commands, source files and notes")
+    f.add_argument("text")
+    f.add_argument("--limit", type=int, default=40)
+    f.add_argument("--map", default="map/functions.json")
+    f.set_defaults(fn=cmd_funcmap)
+    f = fsub.add_parser("show", help="one function: evidence, source file, callers and callees")
+    f.add_argument("what", help="name (e.g. Lua_Mission_Spawn) or address")
+    f.add_argument("--map", default="map/functions.json")
+    f.add_argument("--analysis", default=PORT_ANALYSIS)
+    f.set_defaults(fn=cmd_funcmap)
+    f = fsub.add_parser("header", help="C header with an address constant per named function")
+    f.add_argument("-o", "--out", default="mercfoundry_functions.h")
+    f.add_argument("--map", default="map/functions.json")
+    f.set_defaults(fn=cmd_funcmap)
+    f = fsub.add_parser("names", help="{address: name} JSON for the port's recompiler (ghidra_names.json format)")
+    f.add_argument("-o", "--out", default="ghidra_names.json")
+    f.add_argument("--map", default="map/functions.json")
+    f.set_defaults(fn=cmd_funcmap)
     s = add("hash", cmd_hash, "hash names the way the game does"); s.add_argument("names", nargs="+")
 
     args = p.parse_args(argv)

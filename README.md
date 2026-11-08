@@ -11,7 +11,7 @@ No game data is included. You need your own US retail Xbox copy. See [docs/PROVE
 1. **Reproducible build** of the port from your disc image. *(done with the port's own build script and the free Build Tools 2022; see docs/STATUS.md)*
 2. **`.dsk` archive tool**: list, extract, repack, compare. *(done; all four retail archives rebuild byte-for-byte)*
 3. **Asset decoders**: scripts, world/ODF properties, localization *(done; checked on retail data, and edited text, scripts and object properties work in-game)*, models, textures and animation *(done: all 2,297 models export to OBJ with their textures, and edited models import back and show in-game; all 4,715 textures export to PNG, and edited textures go back in-game; all 1,835 animations decode, export to glTF, and edited clips go back in-game)*.
-4. **Function and data map**: named functions and structures for entities, factions, spawning, Lua bindings and missions.
+4. **Function and data map**: named functions and structures for entities, factions, spawning, Lua bindings and missions. *(started: all 360 script commands mapped to their C functions, source files for 1,500 functions, and hand-named engine functions such as the template spawner; see [docs/FUNCTION_MAP.md](docs/FUNCTION_MAP.md))*
 5. **Plugin interface v2**: call game functions, hooks, new Lua commands, overlay drawing.
 6. **Developer overlay**: inspector, Lua console, spawning by name.
 

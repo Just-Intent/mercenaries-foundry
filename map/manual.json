@@ -1,0 +1,52 @@
+{
+ "functions": [
+  {"address": "0x001F29F0", "name": "HashName", "signature": "uint32 __cdecl HashName(const char *name)",
+   "evidence": "retail code: FNV-1a (0x811C9DC5, 0x01000193) with each byte OR 0x20; the same hash names archive records",
+   "notes": "Returns 0 for NULL or empty strings."},
+
+  {"address": "0x00112AD0", "name": "Lua_ArgString", "signature": "const char * __cdecl Lua_ArgString(lua_State *L, int n)",
+   "evidence": "retail code: lua_isstring then lua_tostring; on failure raises \"Could not read string.  Bad argument sent to Lua API function\" (0x2F00A8) and returns NULL"},
+  {"address": "0x001129C0", "name": "Lua_ArgNumber", "signature": "float __cdecl Lua_ArgNumber(lua_State *L, int n)",
+   "evidence": "retail code: lua_isnumber then lua_tonumber; on failure raises \"Could not read Number.  Bad argument sent to Lua API function\" (0x2F0028) and returns 0"},
+  {"address": "0x00112990", "name": "Lua_ArgBool", "signature": "int __cdecl Lua_ArgBool(lua_State *L, int n)",
+   "evidence": "retail code: returns (0x1DCD80(L, n) == 1)"},
+  {"address": "0x00112A10", "name": "Lua_ArgVector3", "signature": "void __cdecl Lua_ArgVector3(float out[3], lua_State *L, int first)",
+   "evidence": "inferred: Lua_Mission_Spawn calls it with (&v, L, 3) for its x, y, z arguments and then reads v as three floats"},
+  {"address": "0x00112B20", "name": "Lua_ArgActor", "signature": "Actor * __cdecl Lua_ArgActor(lua_State *L, int n)",
+   "evidence": "retail code: 0x120E60(L, n) then 0x1EC1D0 on the result; used for the actor argument of the Actor_ commands"},
+  {"address": "0x00120E60", "name": "Lua_ToActorRef", "signature": "void * __cdecl Lua_ToActorRef(lua_State *L, int n)",
+   "evidence": "inferred: first step of Lua_ArgActor; returns NULL when the argument isn't an actor"},
+  {"address": "0x00120E30", "name": "Lua_PushActor", "signature": "void __cdecl Lua_PushActor(lua_State *L, uint32 handle)",
+   "evidence": "inferred: Lua_Mission_Spawn ends by calling it with the spawned actor's handle (actor + 0x28) and returns 1 result"},
+  {"address": "0x001EC1D0", "name": "ActorRef_Resolve", "signature": "Actor * __cdecl ActorRef_Resolve(void *ref)",
+   "evidence": "inferred: second step of Lua_ArgActor"},
+  {"address": "0x00112120", "name": "LuaScript_FromState", "signature": "LuaScript * __cdecl LuaScript_FromState(lua_State *L)",
+   "evidence": "retail code: one-entry cache (state at 0x3717BC, script at 0x3717A0), else a lookup on the script manager at 0x371848"},
+  {"address": "0x00113B60", "name": "LuaScript_BeginCommand", "signature": "void __cdecl LuaScript_BeginCommand(lua_State *L)",
+   "evidence": "retail code: called first by 323 of the 360 script command bindings; when the owning script's byte +0x34 is 1 it calls 0x204C80(script+0x28, 0) and 0x112930",
+   "notes": "Purpose not confirmed; possibly the Debug_EnableCallStack trace."},
+
+  {"address": "0x001DCC10", "name": "lua_isstring", "evidence": "inferred: the type check Lua_ArgString makes before 0x1DCDC0 (Lua 5.0 C API shape)"},
+  {"address": "0x001DCDC0", "name": "lua_tostring", "evidence": "inferred: returns Lua_ArgString's result (Lua 5.0 C API shape)"},
+  {"address": "0x001DCBC0", "name": "lua_isnumber", "evidence": "inferred: the type check Lua_ArgNumber makes before 0x1DCD30 (Lua 5.0 C API shape)"},
+  {"address": "0x001DCD30", "name": "lua_tonumber", "evidence": "inferred: returns Lua_ArgNumber's result on the FPU stack (Lua 5.0 C API shape)"},
+  {"address": "0x001DCD80", "name": "lua_toboolean", "evidence": "inferred: Lua_ArgBool compares its result with 1"},
+  {"address": "0x001DB8E0", "name": "luaL_error", "evidence": "inferred: called with (L, message) on bad arguments by Lua_ArgString and Lua_ArgNumber"},
+  {"address": "0x001DCF90", "name": "lua_pushnumber", "evidence": "retail code: writes a double and type 3 (number) at the stack top and advances it by one 16-byte slot"},
+  {"address": "0x001DC970", "name": "lua_gettop", "evidence": "retail code: returns (top - base) / 16"},
+
+  {"address": "0x00095C20", "name": "Faction_FromHash", "signature": "int __cdecl Faction_FromHash(uint32 nameHash)",
+   "evidence": "inferred: Lua_Faction_SetRelation passes it HashName of each faction-name argument and passes the results to FactionManager_SetRelation"},
+  {"address": "0x00095DD0", "name": "FactionManager_SetRelation", "signature": "void __thiscall FactionManager_SetRelation(FactionManager *this, int a, int b, float relation)",
+   "evidence": "retail code: Lua_Faction_SetRelation calls it on the object at 0x323338 with the two factions and its third argument divided by 100.0",
+   "notes": "Scripts pass -100..100; the engine takes -1..1."},
+  {"address": "0x00174480", "name": "Spawner_SpawnTemplate", "signature": "SpawnResult * __thiscall Spawner_SpawnTemplate(Spawner *this, uint32 templateHash, const char *name, const Matrix *transform, int, int)",
+   "evidence": "retail code: Lua_Mission_Spawn(template, name, x, y, z, yaw) calls it on the object at 0x4031B0 with HashName(template), name, a transform built from the position and yaw (degrees x 0.0174533), 0, 0; the new actor is at result + 8",
+   "notes": "Spawns any object template by name hash: the core of spawning by name."}
+ ],
+ "globals": [
+  {"address": "0x00323338", "name": "g_FactionManager", "evidence": "retail code: this pointer of FactionManager_SetRelation in Lua_Faction_SetRelation"},
+  {"address": "0x004031B0", "name": "g_Spawner", "evidence": "retail code: this pointer of Spawner_SpawnTemplate in Lua_Mission_Spawn"},
+  {"address": "0x00371848", "name": "g_LuaScriptManager", "evidence": "inferred: LuaScript_FromState looks scripts up through it"}
+ ]
+}
