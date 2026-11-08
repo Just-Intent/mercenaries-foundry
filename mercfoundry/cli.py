@@ -495,6 +495,15 @@ def cmd_port_hooks(args):
     print("now rebuild the port")
 
 
+def cmd_templates(args):
+    from . import templates
+    rows = templates.collect(_data_archives(args.data))
+    out = Path(args.out)
+    out.parent.mkdir(parents=True, exist_ok=True)
+    out.write_text(templates.to_tsv(rows), encoding="utf-8")
+    print(f"wrote {out}: {len(rows)} templates")
+
+
 def cmd_hash(args):
     for s in args.names:
         print(f"{name_hash(s):08X}  {s}")
@@ -628,6 +637,9 @@ def main(argv=None):
     s.add_argument("--map", default="map/functions.json")
     s.add_argument("--only", nargs="+", metavar="NAME_OR_ADDRESS", help="just these functions")
     s.add_argument("--remove", action="store_true", help="restore the generated code")
+    s = add("templates", cmd_templates, "list the game's object templates (what Spawner_SpawnTemplate spawns) as TSV")
+    s.add_argument("data", help="DATAxbox folder or a .dsk file")
+    s.add_argument("-o", "--out", default="templates.tsv")
     s = add("hash", cmd_hash, "hash names the way the game does"); s.add_argument("names", nargs="+")
 
     args = p.parse_args(argv)
