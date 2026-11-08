@@ -33,6 +33,16 @@ python -m mercfoundry mod build my_mod --data game_files/DATAxbox --out "<port>/
 | `textures/<name>.png` | Replace the texture `<name>`, or add a new one (power-of-two sizes) |
 | `models/<name>.obj` | Replace a model with an edited export from `model` |
 
+### Finding objects
+
+```bash
+python -m mercfoundry find game_files/DATAxbox --near-name loc_drop_start --layer swn --radius 25
+python -m mercfoundry find game_files/DATAxbox --model "*rock*" --layer swn --limit 20
+python -m mercfoundry find game_files/DATAxbox --property Faction=China --model "*veh*"
+```
+
+Lists matching objects with their layer, model, name, position and heading (and distance with `--near`/`--near-name`). Patterns match part of a name, or the whole name when they contain `*` or `?`; case is ignored. `--rule` prints a mod rule for each match, ready to paste into `objects/` and edit (it targets that one object by name, or by position if it has none). `--json` prints full details. Pass a mod's `assets.dsk` instead of `DATAxbox` to search a built mod.
+
 `mod build` writes only the archives your edits change, checks them, and records what changed in `foundry-mod.json`. Get originals to start from with `extract --decode`, `texture` and `model`. See [examples/faster-humvee](examples/faster-humvee) for a small working mod.
 
 ## Archive tool

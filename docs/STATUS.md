@@ -19,7 +19,8 @@
 - Collision: `cshp` decoded for every model (2,067 box shapes with 28,294 boxes; 149 of 325 mesh shapes). New pieces from `model-import` get box collision (opt out per object with `nocoll` in the name). `model --collision` previews collision.
 - glTF export (`model --glb`): joints as a node tree, rigid pieces parented to joints, skinned pieces with a skin (bone palette = joints named `bone*`), embedded textures with alpha masking. All 2,297 models export and pass a vertex-by-vertex check; three.js loads and renders them, posing bones moves the right parts, and sign lettering confirms the handedness conversion.
 - Object positions: world-layer `XFRM` decoded (rotation + position in metres) for all 51,731 objects; layer and object `INFO` counts understood and recomputed. Mod object rules can move, place, turn and copy objects, matching by name, model or position.
-- 103 tests pass.
+- `find`: lists world objects by name, model, layer, property, or distance from a point or named object; `--rule` prints a mod rule that matches exactly that object. Scans all 51,731 objects in under a second.
+- 109 tests pass.
 
 ## Fixed from retail data
 - Text values aren't NUL-terminated. The decoder had assumed they were and found no strings.
@@ -53,8 +54,7 @@
 ## Next steps
 1. Collision for models whose shapes can't take more boxes (e.g. the Humvee): needs CMOP trees or the second CMSH layout decoded.
 2. glTF import (edit skeleton-aware models in Blender), and animation decoding.
-3. A `find` command to list objects by name, model or distance from a point (today done with ad-hoc scripts).
-4. Decode `path`, `region`, `encounter` and `lineregion` records (AI routes, zones, spawns).
+3. Decode `path`, `region`, `encounter` and `lineregion` records (AI routes, zones, spawns).
 
 ## Notes
 - Several port tools mention replacing "source-informed" versions. Use only versions re-derived from retail (see PROVENANCE.md).

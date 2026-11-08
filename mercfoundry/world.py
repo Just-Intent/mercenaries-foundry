@@ -203,3 +203,46 @@ def from_json(doc: dict) -> bytes:
         built = [(t, info if b is _LAYER_INFO else b) for t, b in built]
     pad = tuple(doc.get("record_pad", (True, True)))
     return ucfb.wrap(b"wrld", ucfb.pack_children(built, doc.get("pad_last", True)), pad)
+
+
+def iter_objects(record: bytes):
+    """Yield every object in a world layer quickly, without building JSON.
+
+    Each item: dict(layer, index, model, name, position, rotation, properties)
+    where properties is a list of (key, value) pairs. Objects without a
+    transform have position None."""
+    body = ucfb.unwrap(record, b"wrld")
+    layer, table = "", None
+    insts = []
+    for tag, chunk_body in ucfb.iter_chunks(body):
+        if tag == b"NAME":
+            layer = chunk_body.split(b"\0", 1)[0].decode("ascii", "replace")
+        elif tag == b"TABL":
+            table = {name_hash(s): s for s in read_table(chunk_body)}
+        elif tag == b"inst":
+            insts.append(chunk_body)
+    table = table or {}
+
+    def word(v):
+        return "" if v == 0 else table.get(v, f"#{v:08X}")
+
+    for index, body in enumerate(insts):
+        parts = dict(ucfb.iter_chunks(body))
+        prop = parts.get(b"PROP", b"")
+        words = struct.unpack(f"<{len(prop) // 4}I", prop[:len(prop) // 4 * 4])
+        if len(words) < 2:
+            continue
+        position = rotation = None
+        x = parts.get(b"XFRM")
+        if x and len(x) == 48:
+            f = struct.unpack("<12f", x)
+            rotation, position = f[0:9], f[9:12]
+        yield {
+            "layer": layer,
+            "index": index,
+            "model": word(words[0]),
+            "name": word(words[1]),
+            "position": position,
+            "rotation": rotation,
+            "properties": [(word(words[k]), word(words[k + 1])) for k in range(2, len(words) - 1, 2)],
+        }

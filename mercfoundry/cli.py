@@ -282,6 +282,48 @@ def cmd_texture(args):
     print(f"{base}: {t.width}x{t.height} {t.format_name}, {t.mips} mip levels" + (", cube map" if t.faces == 6 else ""))
 
 
+def cmd_find(args):
+    import json as _json
+    from . import find
+    arcs = _data_archives(args.data)
+    near = args.near
+    if args.near_name:
+        spots = find.locate(arcs, args.near_name, args.layer if args.layer and "*" not in args.layer else None)
+        if not spots:
+            sys.exit(f"no object named {args.near_name!r}")
+        layer, near = spots[0]
+        if len(spots) > 1:
+            others = ", ".join(l for l, _ in spots[1:])
+            print(f"note: {args.near_name} is in several layers; using {layer} (also in {others}; pick with --layer)")
+    props = []
+    for p in args.property or []:
+        key, _, value = p.partition("=")
+        props.append((key, value if "=" in p else None))
+    radius = args.radius if args.radius is not None else (50.0 if near is not None else None)
+    hits = find.search(arcs, args.name, args.model, args.layer, near, radius, props, args.limit)
+    if args.json or args.rule:
+        out = []
+        for h in hits:
+            if args.rule:
+                out.append(find.rule_for(h))
+            else:
+                h = dict(h)
+                h["yaw"] = find.yaw(h["rotation"])
+                out.append(h)
+        if args.rule:
+            print("[\n" + ",\n".join(" " + _json.dumps(r) for r in out) + "\n]")
+        else:
+            print(_json.dumps(out, indent=1))
+        return
+    for h in hits:
+        pos = " ".join(f"{v:9.2f}" for v in h["position"]) if h["position"] else " " * 29 + "-"
+        yaw = find.yaw(h["rotation"])
+        dist = f"{h['distance']:7.1f}m " if "distance" in h else ""
+        print(f"{dist}{h['layer']:<28} {h['model']:<34} {h['name'] or '-':<28} {pos}"
+              + (f"  yaw {yaw:6.1f}" if yaw is not None else ""))
+    print(f"{len(hits)} objects" + (" (limit reached)" if args.limit and len(hits) == args.limit else ""))
+
+
 def cmd_unpack_iso(args):
     from . import xiso
     n = xiso.extract(args.image, args.out)
@@ -360,6 +402,19 @@ def main(argv=None):
     s.add_argument("name", help="texture name or 8-digit key")
     s.add_argument("-o", "--out", default="textures")
     s.add_argument("--mip", type=int, default=0, help="mip level (0 = full size)")
+    s = add("find", cmd_find, "find objects in the world by name, model, place or property")
+    s.add_argument("data", help="DATAxbox folder or a .dsk file (e.g. a mod's assets.dsk)")
+    s.add_argument("--name", help="object name (part, or wildcard pattern)")
+    s.add_argument("--model", help="model name (part, or wildcard pattern)")
+    s.add_argument("--layer", help="world layer (part, or wildcard pattern)")
+    s.add_argument("--near", type=float, nargs=3, metavar=("X", "Y", "Z"), help="sort by distance from a point")
+    s.add_argument("--near-name", help="sort by distance from a named object, e.g. loc_drop_start")
+    s.add_argument("--radius", type=float, help="only within this many metres (default 50 with --near)")
+    s.add_argument("--property", action="append", metavar="KEY[=VALUE]",
+                   help="has this property (optionally with a matching value); repeatable")
+    s.add_argument("--limit", type=int, default=200, help="most results to show (default 200, 0 = all)")
+    s.add_argument("--json", action="store_true", help="print matches as JSON")
+    s.add_argument("--rule", action="store_true", help="print a mod rule for each match, ready to edit")
     s = add("unpack-iso", cmd_unpack_iso, "extract an Xbox disc image (.iso or .xiso)")
     s.add_argument("image"); s.add_argument("out")
     s = add("hash", cmd_hash, "hash names the way the game does"); s.add_argument("names", nargs="+")
