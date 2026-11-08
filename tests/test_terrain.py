@@ -6,7 +6,7 @@ from pathlib import Path
 
 import math
 
-from mercfoundry import dsk, modbuild, png, terrain, terrain_layers, terrain_light, terrain_paint, ucfb
+from mercfoundry import dsk, modbuild, png, terrain, terrain_decals, terrain_layers, terrain_light, terrain_paint, ucfb
 from mercfoundry.hashing import name_hash
 from tests.test_dsk import build as build_dsk
 
@@ -226,3 +226,70 @@ class TerrainTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+def decal_chunks():
+    """16 patches; patch 5 has two decals (one stored just outside it), and
+    DTEX lists 'road' twice, as some retail maps do."""
+    tl = terrain_layers
+    decals = [tl.Decal(3, 4, 0, terrain_decals.EXTRA, [(0, 0), (512, 0), (0, 512), (512, 512)]),
+              tl.Decal(255, 2, 2, terrain_decals.EXTRA, [(-300, 32700), (300, -32700), (0, 0), (1, 1)])]
+    patches = [tl.Patch(1, 2 if n == 5 else 0) for n in range(16)]
+    info = struct.pack("<4f6h", 8.0, STEP, 0, 1, SIZE, 8, BLOCK, 1, 3, 2) + struct.pack("<3f", 0, 0, 0)
+    return {b"INFO": info, b"DTEX": b"road\0cross\0road\0", b"PTCH": terrain_layers.encode_ptch(patches),
+            b"DCAL": terrain_layers.encode_dcal(decals)}
+
+
+class DecalTests(unittest.TestCase):
+    def test_export(self):
+        doc = terrain_decals.export(decal_chunks())
+        self.assertEqual(doc["textures"], ["road", "cross", "road"])
+        self.assertEqual(doc["decals"][0], {"cell": [11, 12], "texture": 0, "uv": [[0, 0], [512, 0], [0, 512], [512, 512]]})
+        self.assertEqual(doc["decals"][1]["cell"], [7, 10])
+        self.assertEqual(doc["decals"][1]["patch"], [1, 1])
+
+    def test_round_trip(self):
+        chunks = decal_chunks()
+        doc = json.loads(json.dumps(terrain_decals.export(chunks)))
+        self.assertEqual(terrain_decals.apply(chunks, doc), ({}, 2))
+
+    def test_replace(self):
+        chunks = decal_chunks()
+        doc = {"textures": ["road"], "decals": [{"cell": [30, 1], "texture": "cross", "uv": [[0, 0]] * 4}]}
+        replace, n = terrain_decals.apply(chunks, doc)
+        new = {**chunks, **replace}
+        self.assertEqual(n, 1)
+        self.assertEqual(terrain_decals.export(new),
+                         {"textures": ["road", "cross"], "decals": [{"cell": [30, 1], "texture": "cross", "uv": [[0, 0]] * 4}]})
+        patches = terrain_layers.decode_ptch(new[b"PTCH"])
+        self.assertEqual([p.decal_count for p in patches].index(1), 3)
+
+    def test_road(self):
+        road = {"texture": "asphalt", "points": [[-100, 0], [100, 0]], "span": 24}
+        cells = terrain_decals.road_decals(road, 512, 8.0)
+        by_cell = {tuple(e["cell"]): e["uv"] for e in cells}
+        row = (0 + 2040) // 8                      # z = 0 lies in row 255 (z + 2040)
+        self.assertIn((256, row), by_cell)
+        # along the road, neighbouring cells share their edge (modulo one texture repeat)
+        a, b = by_cell[(256, row)], by_cell[(257, row)]
+        # stored corners: (x, z+1), (x+1, z+1), (x, z), (x+1, z)
+        self.assertEqual(a[3][0], b[2][0])
+        self.assertEqual((a[3][1] - b[2][1]) % 2048, 0)
+        self.assertEqual(a[1][0], b[0][0])
+        self.assertEqual(round((a[3][1] - a[2][1]) % 2048), round(8 / 24 * 2048))
+        # nothing past the ends, and u stays on the texture
+        xs = [c for c, _ in by_cell]
+        self.assertGreaterEqual(min(xs), (-100 + 2048) // 8 - 1)
+        self.assertLessEqual(max(xs), (100 + 2048) // 8)
+        self.assertTrue(all(0 <= u <= 2048 for uv in by_cell.values() for u, _ in uv))
+
+    def test_roads_keep_existing_decals(self):
+        chunks = decal_chunks()
+        doc = {"roads": [{"texture": "asphalt", "points": [[-100, 0], [-60, 0]]}]}
+        replace, n = terrain_decals.apply(chunks, doc)
+        new = terrain_decals.export({**chunks, **replace})
+        self.assertGreater(n, 2)
+        self.assertIn("asphalt", new["textures"])
+        cells = [d["cell"] for d in new["decals"]]
+        self.assertIn([11, 12], cells)       # the map's own decals are still there
+        self.assertIn([7, 10], cells)

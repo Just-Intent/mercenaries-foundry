@@ -36,6 +36,7 @@ python -m mercfoundry mod build my_mod --data game_files/DATAxbox --out "<port>/
 | `animations/new.json`: `{"my_run": "all_american_lb_upright_run_forward"}` | Add the clips named here (from the `.glb` files beside it) as new animations, built on the template clip's skeleton and loaded wherever it is. |
 | `terrain/<name>.heights.png` | Reshape a map's ground. Export with `terrain DATAxbox swn` (the first level's map), edit the 16-bit PNG in any image editor, and keep the `.heights.json` beside it. The build relights changed slopes and the shadows they cast. |
 | `terrain/<name>.layerNN.*.png` | Repaint the ground: each greyscale image is one texture layer's opacity (from the same `terrain` export; ship only the layers you change). `<name>.layers.json` changes a layer's texture, scale or projection, or adds layers (16 at most). |
+| `terrain/<name>.decals.json` | Replace a map's decals (roads, concrete, parking; exported by `terrain`), or lay roads from a few world points: `{"roads": [{"texture": "sw_decal_road_straight", "points": [[x, z], ...]}]}`. Roads keep the map's own decals. |
 | `animtables/<name>.json` | Replace a character's animation table: which clip plays for each handle the game asks for (e.g. `lb_upright_run_forward`), per weapon or seat set. Export one with `animtable DATAxbox player_american`. |
 | `layout/<layer>.<kind>.json` | Replace a layer's paths, boundaries, regions or encounters (`kind` = `path`, `lineregion`, `region`, `encounter`), or `layout/<layer>.list.txt` for its load list. Export them with `layout DATAxbox <layer>`. |
 

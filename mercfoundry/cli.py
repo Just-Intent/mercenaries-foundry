@@ -538,6 +538,11 @@ def cmd_terrain(args):
                 w, images = terrain_paint.layer_images(chunks)
                 for k, t in enumerate(table):
                     (out / terrain_paint.layer_file(args.name, k, t["texture"])).write_bytes(png.encode(w, w, images[k], 1))
+                from . import terrain_decals
+                decals = terrain_decals.export(chunks)
+                (out / f"{args.name}.decals.json").write_text(_json.dumps(decals, indent=None, separators=(",", ":"))
+                                                             .replace('{"cell"', '\n{"cell"') + "\n", encoding="utf-8")
+                print(f"wrote {args.name}.decals.json ({len(decals['decals'])} decals)")
                 print(f"wrote {args.name}.layers.json and {len(table)} ground layer images ({w} x {w}, "
                       f"{args.name}.layer00.*.png ...); a mod needs only the ones you change")
                 return

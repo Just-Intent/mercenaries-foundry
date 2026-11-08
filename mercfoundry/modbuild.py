@@ -26,7 +26,8 @@ Project layout (every part optional):
     terrain/<name>.heights.png  replaces a terrain's heights (from the
                           `terrain` command; keep the .heights.json beside it)
     terrain/<name>.layerNN.*.png  repaints ground layer NN (from `terrain`);
-                          <name>.layers.json changes or adds layer textures
+                          <name>.layers.json changes or adds layer textures;
+                          <name>.decals.json replaces decals or lays roads
     animtables/<name>.json   replaces a character's animation table (from
                           the `animtable` command): point handles at clips
     layout/<layer>.<kind>.json  replaces a layer's path, lineregion, region
@@ -403,7 +404,7 @@ def _apply_animtables(data, folder, result):
 
 
 def _apply_terrain(data, folder, result):
-    from . import png, terrain, terrain_light, terrain_paint
+    from . import png, terrain, terrain_decals, terrain_light, terrain_paint
     tdir = folder / "terrain"
     work = {}       # terrain name -> {"heights": path, "table": path, "layers": {index: path}}
     for f in sorted(tdir.glob("*.png")):
@@ -419,6 +420,8 @@ def _apply_terrain(data, folder, result):
             result.warnings.append(f"terrain/{f.name}: not a heights or layer image (name.heights.png, name.layerNN.png)")
     for f in sorted(tdir.glob("*.layers.json")):
         work.setdefault(f.name[:-len(".layers.json")], {})["table"] = f
+    for f in sorted(tdir.glob("*.decals.json")):
+        work.setdefault(f.name[:-len(".decals.json")], {})["decals"] = f
     for name, job in work.items():
         key = name_hash(name)
         hit = [(a, r) for a, r in data.records(name_hash("Terrain")) if r.key == key]
@@ -466,6 +469,16 @@ def _apply_terrain(data, folder, result):
                     notes.append(f"{len(table)} layers in the table")
                 if images:
                     notes.append(f"{patches} patches repainted")
+            if "decals" in job:
+                doc = json.loads(job["decals"].read_text(encoding="utf-8"))
+                decal_replace, count = terrain_decals.apply({**chunks, **replace}, doc)
+                replace.update(decal_replace)
+                known = {rec.key for _, rec in data.records(name_hash("Texture"))}
+                for t in terrain_decals.export({**chunks, **replace})["textures"]:
+                    if t and name_hash(t) not in known:
+                        result.warnings.append(f"terrain/{job['decals'].name}: no game texture named {t!r}")
+                roads = len(doc.get("roads", []))
+                notes.append(f"{count} decals" + (f" ({roads} road{'s' if roads != 1 else ''} laid)" if roads else ""))
             data.set(a, r, terrain.rebuild(record, replace))
         result.changes.append(f"terrain {name}: " + "; ".join(notes))
 

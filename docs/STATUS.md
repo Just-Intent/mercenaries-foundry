@@ -39,7 +39,8 @@
 - Terrain decoded: heights (`HEXP`/`HGT8`), layers, baked lighting, blend weights and decals, all 14 maps rebuilding exactly. `terrain` exports heights as a 16-bit PNG; mods reshape ground via `terrain/`. Tested in game: a 30 m hill appeared in the first level (map `swn`). Foundry Console shows the terrain height under the player.
 - Terrain relighting: mod builds fit each map's baked sun and reshade edited slopes and their shadows, keeping painted tint.
 - Ground painting: `terrain` exports each texture layer as a greyscale image; mods repaint layers and edit the layer table. Draw flags follow the game's patch builder.
-- 162 tests pass.
+- Terrain decals: `terrain` exports them (all 14 maps rebuild exactly); mods replace them or lay roads from world points. Tested in game.
+- 167 tests pass.
 
 ## Fixed from retail data
 - Text values aren't NUL-terminated. The decoder had assumed they were and found no strings.
