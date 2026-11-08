@@ -77,7 +77,7 @@ static char lua_output[8192];
 static volatile LONG output_dirty, scripts_dirty;
 
 /* Nearby objects */
-typedef struct Nearby { uint32_t object, handle; float distance, pos[3]; char name[48]; } Nearby;
+typedef struct Nearby { uint32_t object, handle; float distance, pos[3]; char name[48], model[48]; } Nearby;
 static Nearby nearby[MAX_NEARBY];
 static unsigned nearby_count;
 static uint32_t selected_handle;
@@ -468,6 +468,30 @@ static void run_lua(int serial, const char *line)
 static uint32_t slot_objects[OBJECT_SLOTS], slot_handles[OBJECT_SLOTS];
 static uint32_t name_keys[NAME_SLOTS], name_handles[NAME_SLOTS];
 
+/* Model names for unnamed objects, from the object's own property lookup
+ * (vtable +0x0C, "GeometryFile"), cached by handle. */
+#define MODEL_CACHE 512
+static struct { uint32_t handle, object; char model[48]; } model_cache[MODEL_CACHE];
+
+static void object_model(uint32_t object, uint32_t handle, char *out, size_t size)
+{
+    unsigned slot = (handle * 2654435761u) % MODEL_CACHE;
+    if (model_cache[slot].handle == handle && model_cache[slot].object == object) {
+        snprintf(out, size, "%s", model_cache[slot].model);
+        return;
+    }
+    out[0] = 0;
+    uint32_t vtable = 0, getter = 0, hash = hash_name("GeometryFile");
+    MercGuestCall c;
+    if (host->read_guest(host->context, object, &vtable, 4) && vtable &&
+        host->read_guest(host->context, vtable + 0x0C, &getter, 4) && getter &&
+        guest(getter, object, 1, &hash, &c) && c.eax)
+        read_text(c.eax, out, size);
+    model_cache[slot].handle = handle;
+    model_cache[slot].object = object;
+    snprintf(model_cache[slot].model, sizeof(model_cache[slot].model), "%s", out);
+}
+
 static int nearby_order(const void *a, const void *b)
 {
     float x = ((const Nearby *)a)->distance, y = ((const Nearby *)b)->distance;
@@ -505,6 +529,7 @@ static void scan_nearby(void)
         e->distance = d;
         memcpy(e->pos, pos, 12);
         e->name[0] = 0;
+        e->model[0] = 0;
     }
     qsort(found, n, sizeof(Nearby), nearby_order);
     if (n > MAX_NEARBY) n = MAX_NEARBY;
@@ -518,6 +543,7 @@ static void scan_nearby(void)
                 break;
             }
         }
+        if (!found[k].name[0]) object_model(found[k].object, found[k].handle, found[k].model, sizeof(found[k].model));
     }
     EnterCriticalSection(&lock);
     memcpy(nearby, found, n * sizeof(Nearby));
@@ -556,7 +582,7 @@ static void describe_selected(void)
         n += snprintf(text + n, sizeof(text) - n,
                       "%s\r\nObject 0x%08X  handle 0x%08X  flags 0x%04X\r\n"
                       "Position %.1f, %.1f, %.1f  (%.1f m away)\r\nHeading %.0f degrees\r\n",
-                      e.name[0] ? e.name : "(unnamed)", e.object, e.handle, flags,
+                      e.name[0] ? e.name : e.model[0] ? e.model : "(unnamed)", e.object, e.handle, flags,
                       e.pos[0], e.pos[1], e.pos[2], e.distance, heading);
         /* Properties, from the object's own lookup (vtable +0x0C, by name hash). */
         uint32_t vtable = 0, getter = 0;
@@ -686,6 +712,7 @@ static void fill_nearby(void)
     for (unsigned i = 0; i < nearby_count; i++) {
         const Nearby *e = &nearby[i];
         if (e->name[0]) snprintf(row, sizeof(row), "%5.1f m  %s", e->distance, e->name);
+        else if (e->model[0]) snprintf(row, sizeof(row), "%5.1f m  [%s]", e->distance, e->model);
         else snprintf(row, sizeof(row), "%5.1f m  handle 0x%08X", e->distance, e->handle);
         SendMessageA(nearby_list, LB_ADDSTRING, 0, (LPARAM)row);
         if (e->handle == keep) choose = (int)i;
