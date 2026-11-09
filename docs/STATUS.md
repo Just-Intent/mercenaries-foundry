@@ -67,6 +67,7 @@
 - Editor live spawning: new squad members and copies of named objects spawn in the running game (Spawner_SpawnTemplate) and then move and delete live by name; the squad picker lists the templates the game has loaded where the player is first. Tested in game: a squad of a loaded template spawned; the picker listed the loaded templates first.
 - Editor objects are recognisable: models load from each object's GeometryFile (fixing 208 objects on the opening map, such as soldiers, lampposts and location markers, whose own model names don't exist), far-away stand-ins are sized to their model's bounds and coloured by kind, and hovering names an object.
 - Editor buildings look right: glTF exports use alpha cut-outs only where the game alpha-tests (material flag 0x10, as on leaves; building walls keep other data in their alpha and were cut full of holes), and the editor draws surfaces from both sides (roofs vanished from above). The game's spawn points are smaller and fainter, hovering names spawn points, squad members, paths and zones, and the panel has a colour key.
+- Editor ground textures: the terrain shows its texture layers blended by their paint and lit by the baked lighting (a shader with the layers in one texture array and the paint in another), from the terrain as the enabled mods leave it. The server's single lock became three, so the other-mods build no longer holds up models and the ground.
 - 228 tests pass.
 
 ## Fixed from retail data
@@ -112,7 +113,7 @@
 - Python 3.12.10 alongside 3.13. The port's `.venv` has its pinned CMake 3.31.6, Ninja 1.13.0 and Capstone 5.0.6.
 
 ## Next steps
-1. Editor: live copies of unnamed scenery, path pauses and links, editing the game's own encounters, placing objects from templates.
+1. Editor: road decals on the ground, live copies of unnamed scenery, path pauses and links, editing the game's own encounters, placing objects from templates.
 2. Collision flags: what bit 4 does; why bullets pass through pines and some rock meshes; collision for edited existing pieces.
 3. Missions: regions (boxes) in mod layers, radio voice-overs, traffic zones, path animation events (`EVNT`).
 4. Moving skin bones on characters (animations override bone translations); what animation-table priorities and flags do.

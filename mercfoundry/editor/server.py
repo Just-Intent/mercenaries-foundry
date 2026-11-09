@@ -5,9 +5,14 @@ GET  /vendor/...               three.js (vendor/)
 GET  /api/info                 {"mod": name, "maps": [...]}
 GET  /api/terrain/<map>.json   terrain size, spacing and origin
 GET  /api/terrain/<map>.bin    float32 heights, row by row
+GET  /api/look/<map>.json      the ground's texture layers (texture, scale, axis)
+GET  /api/look/<map>.paint     each layer's opacity, layer after layer (bytes)
+GET  /api/look/<map>.light     baked lighting, RGB per height sample
+GET  /api/texture/<name>.png   a game texture
 GET  /api/objects/<map>        the map's objects, with the mod's editor edits
 GET  /api/model/<name>.glb     a model with its textures
 GET  /api/bounds/<map>         each drawn model's bounds, for far-away stand-ins
+GET  /api/context-bounds/<map> the same for other mods' objects
 GET  /api/layout/<map>         paths and zones: the game's (with the mod's layout
                                changes) and the mod's own (encounters/*.json)
 POST /api/layout/save          {"map", "game": [...], "mod": {file: {...}}}
@@ -49,7 +54,10 @@ def _static(path):
 
 
 def make_handler(scene: Scene, mod_name: str, live: Live = None):
-    lock = threading.Lock()
+    # One lock per kind of work, so a slow job (other mods' objects take ~20 s
+    # the first time) doesn't hold up models, the ground or saving. Models and
+    # textures need none: at worst one is built twice.
+    objects_lock, terrain_lock, context_lock = threading.RLock(), threading.RLock(), threading.RLock()
     live = live or Live()
 
     class Handler(BaseHTTPRequestHandler):
@@ -83,40 +91,52 @@ def make_handler(scene: Scene, mod_name: str, live: Live = None):
                     ext = "." + path.rsplit(".", 1)[-1] if "." in path else ""
                     return self.send(200, data, TYPES.get(ext) or mimetypes.guess_type(path)[0] or "application/octet-stream")
                 if path == "/api/info":
-                    with lock:
+                    with objects_lock:
                         return self.send(200, {"mod": mod_name, "maps": scene.maps()})
+                if path.startswith("/api/look/"):          # ground textures: layers, paint, light
+                    name, _, part = path[len("/api/look/"):].partition(".")
+                    with terrain_lock:
+                        meta, paint, light = scene.terrain_look(name)
+                    if part == "json":
+                        return self.send(200, meta)
+                    return self.send(200, paint if part == "paint" else light, "application/octet-stream")
+                if path.startswith("/api/texture/") and path.endswith(".png"):
+                    data = scene.texture_png(path[len("/api/texture/"):-4])
+                    return self.send(200, data, "image/png")
                 if path.startswith("/api/terrain/"):
                     name = path[len("/api/terrain/"):]
-                    with lock:
+                    with terrain_lock:
                         meta, heights = scene.terrain(name.rsplit(".", 1)[0])
                     if name.endswith(".json"):
                         return self.send(200, meta)
                     return self.send(200, heights, "application/octet-stream")
                 if path.startswith("/api/objects/"):
-                    with lock:
+                    with objects_lock:
                         objs = scene.objects(path[len("/api/objects/"):])
                         edits = scene.load_edits()
                     return self.send(200, {"objects": objs, "edits": edits})
                 if path.startswith("/api/bounds/"):
-                    with lock:
+                    with objects_lock:
                         return self.send(200, scene.bounds(path[len("/api/bounds/"):]))
+                if path.startswith("/api/context-bounds/"):
+                    with context_lock:
+                        return self.send(200, scene.bounds(path[len("/api/context-bounds/"):], context=True))
                 if path == "/api/live/state":
                     return self.send(200, live.state())
                 if path.startswith("/api/context/"):
-                    with lock:
+                    with context_lock:
                         return self.send(200, scene.context_objects(path[len("/api/context/"):]))
                 if path.startswith("/api/encounters/"):
-                    with lock:
+                    with objects_lock:
                         return self.send(200, scene.encounters(path[len("/api/encounters/"):]))
                 if path == "/api/templates":
-                    with lock:
+                    with objects_lock:
                         return self.send(200, scene.templates())
                 if path.startswith("/api/layout/"):
-                    with lock:
+                    with objects_lock:
                         return self.send(200, scene.layout(path[len("/api/layout/"):]))
                 if path.startswith("/api/model/") and path.endswith(".glb"):
-                    with lock:
-                        data = scene.model_glb(path[len("/api/model/"):-4])
+                    data = scene.model_glb(path[len("/api/model/"):-4])
                     return self.send(200, data, TYPES[".glb"])
                 return self.fail(404, "not found")
             except KeyError as err:
@@ -137,14 +157,14 @@ def make_handler(scene: Scene, mod_name: str, live: Live = None):
                 if path == "/api/live/send":
                     return self.send(200, {"queued": live.send(doc.get("commands", []))})
                 if path == "/api/save":
-                    with lock:
+                    with objects_lock:
                         n = scene.save_edits(doc.get("moved", {}), doc.get("copies", []), doc.get("removed", []))
                     return self.send(200, {"rules": n, "file": f"objects/{scene.rules_path().name}"})
                 if path == "/api/encounters/save":
-                    with lock:
+                    with objects_lock:
                         return self.send(200, scene.save_encounters(doc["map"], doc.get("files", {})))
                 if path == "/api/layout/save":
-                    with lock:
+                    with objects_lock:
                         done = scene.save_layout(doc["map"], doc.get("game", []), doc.get("mod", {}))
                     return self.send(200, done)
                 return self.fail(404, "not found")

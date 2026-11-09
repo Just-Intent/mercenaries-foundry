@@ -26,6 +26,11 @@ toolkit bundle run it the same way: `foundry\python\python.exe foundry\mercfound
   faint cones (a map has hundreds). Textures use alpha cut-outs only where the
   game does (leaves, fences), and surfaces show from both sides, so buildings
   look as they do in game.
+- The ground is drawn as the game draws it: its texture layers (up to 16), each
+  tiled at its scale (top-down, or from the side for cliff layers with
+  projection 4 and 5), blended by their painted opacity and multiplied by the
+  map's baked lighting (so the opening map is dark: it's night). Plain shading
+  shows until the textures arrive. Road decals aren't drawn yet.
 - The terrain is what the game will have: when the mod sits in the game's `mods`
   folder, the editor applies the terrain edits of every enabled source mod, in
   load order, as `mod sync` does. Elsewhere it applies the mod's own.
@@ -113,13 +118,17 @@ toolkit bundle run it the same way: `foundry\python\python.exe foundry\mercfound
 (`vendor/three/`, MIT, with its LICENSE) and a small JSON API:
 `/api/info`, `/api/terrain/<map>.json` and `.bin` (float32 heights),
 `/api/objects/<map>` (objects plus the editor's saved edits),
-`/api/model/<name>.glb`, `/api/bounds/<map>` (model sizes, from each model's
+`/api/model/<name>.glb`, `/api/look/<map>.json`, `.paint` and `.light` (the
+ground's layers, paint and baked lighting), `/api/texture/<name>.png`,
+`/api/bounds/<map>` (model sizes, from each model's
 header), `/api/layout/<map>` (paths and zones),
 `/api/encounters/<map>`, `/api/templates`, `/api/context/<map>` (other mods'
 objects), the live link (`/api/live/poll` for the plugin, `/api/live/state` and
 `/api/live/send` for the page; the line protocol is in `live.py`), and `POST /api/save`,
 `/api/layout/save` and `/api/encounters/save`. Saving refuses requests from
-other web origins.
+other web origins. Requests take one of three locks (objects, terrain, other
+mods), so a slow first build of one doesn't hold up the others; models and
+textures take none.
 
 The 3D view uses three.js axes, which are the game's with Z flipped, as in the
 glTF export. `scene.py` converts rotations (`to_three`, `from_three`) and turns

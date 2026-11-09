@@ -10,6 +10,7 @@ import {GLTFLoader} from 'three/addons/loaders/GLTFLoader.js';
 import {createLayout} from './layout.js';
 import {createEncounters} from './encounters.js';
 import {createLive} from './live.js';
+import {applyGround} from './ground.js';
 
 const $ = (id) => document.getElementById(id);
 const NEAR_RADIUS = 220;      // metres around the view centre that show real models
@@ -276,6 +277,9 @@ async function loadMap(name) {
   state.terrain = {meta, heights: new Float32Array(buf)};
   terrainMesh = buildTerrain(meta, state.terrain.heights);
   scene.add(terrainMesh);
+  // The game's ground textures, in the background (plain shading until then).
+  const ground = terrainMesh;
+  applyGround(ground, name, scene.fog).catch((err) => console.warn('ground textures:', err));
 
   const capacity = objs.objects.length + 4096;     // room for copies and other mods' objects
   // See-through, so big stand-ins (a forest model can cover a hillside) show
@@ -334,7 +338,7 @@ async function loadContext(name, summary) {
     dropNode(rec, true);
     placeBox(rec);
   }
-  try { Object.assign(bounds, await getJSON(`/api/bounds/${name}`)); } catch { /* boxes stay markers */ }
+  try { Object.assign(bounds, await getJSON(`/api/context-bounds/${name}`)); } catch { /* boxes stay markers */ }
   for (const o of ctx.added) {
     addRecord({...o, context: true, original: {position: o.position, rotation: o.rotation}});
   }

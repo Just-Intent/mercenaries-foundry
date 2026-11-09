@@ -128,6 +128,52 @@ class Scene:
                 "x0": -size * sp / 2, "z0": -(size * sp / 2 - sp)}
         return meta, struct.pack(f"<{size * size}f", *(h for row in heights for h in row))
 
+    def terrain_look(self, name):
+        """How the ground is drawn, as the context mods leave it: (meta, paint
+        bytes, light bytes). meta has the layer table (texture, scale, axis) and
+        the paint size; paint is each layer's opacity (0-255), layer by layer,
+        size x size; light is the baked lighting (RGB per height sample)."""
+        if not hasattr(self, "_looks"):
+            self._looks = {}
+        if name not in self._looks:
+            from .. import terrain_layers as tl, terrain_light, terrain_paint
+            data = self._modded_terrain()
+            rec = next(((a, r) for a, r in data.records(name_hash("Terrain")) if r.key == name_hash(name)), None)
+            if rec is None:
+                raise KeyError(name)
+            chunks = terrain.tern_chunks(data.current(*rec))
+            table = terrain_paint.layer_table(chunks)
+            w, images = terrain_paint.layer_images(chunks)
+            paint = b"".join(images.get(i, bytes(w * w)) for i in range(len(table)))
+            info = terrain.parse_info(chunks[b"INFO"])
+            size = info["size"]
+            light = bytearray(size * size * 3)
+            if b"COLR" in chunks:
+                side = size // tl.PATCH
+                rgb = terrain_light.vertex_rgb(tl.decode_colr(chunks[b"COLR"], side * side), size)
+                i = 0
+                for row in rgb:
+                    for c in row:
+                        light[i:i + 3] = bytes(c) if c else b"\x80\x80\x80"
+                        i += 3
+            meta = {"layers": table, "paint_size": w, "size": size, "lit": b"COLR" in chunks}
+            self._looks[name] = (meta, paint, bytes(light))
+        return self._looks[name]
+
+    def texture_png(self, name):
+        """A game texture as PNG (its full-size image), cached."""
+        if not hasattr(self, "_pngs"):
+            self._pngs = {}
+        if name not in self._pngs:
+            from .. import png
+            rec = next(((a, r) for a in self.archives for r in a.records
+                        if r.kind == texture.TEXTURE and r.key == name_hash(name)), None)
+            if rec is None:
+                raise KeyError(name)
+            w, h, px = texture.decode(rec[0].read(rec[1])).rgba()
+            self._pngs[name] = png.encode(w, h, px, 4)
+        return self._pngs[name]
+
     # ------------------------------------------------------------ objects
     def all_objects(self):
         if self._objects is None:
@@ -147,15 +193,17 @@ class Scene:
                         "position": list(o["position"]), "rotation": to_three(rows)})
         return out
 
-    def bounds(self, map_name):
+    def bounds(self, map_name, context=False):
         """{model: [min x, y, z, max x, y, z]} for the models this map's objects
         draw (from each model's header), for sizing far-away stand-ins."""
         import struct
         from .. import ucfb
         if not hasattr(self, "_bounds"):
             self._bounds = {}
-        want = {o["geometry"] for o in self.objects(map_name)}
-        want |= {a["geometry"] for a in self.context_objects(map_name)["added"]} if getattr(self, "_ctx_world", None) else set()
+        if context:          # the models other mods' objects draw
+            want = {a["geometry"] for a in self.context_objects(map_name)["added"]}
+        else:
+            want = {o["geometry"] for o in self.objects(map_name)}
         out = {}
         for g in sorted(want):
             if g not in self._bounds:
