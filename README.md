@@ -44,6 +44,14 @@ python -m mercfoundry mod build my_mod --data game_files/DATAxbox --out "<port>/
 | `animtables/<name>.json` | Replace a character's animation table: which clip plays for each handle the game asks for (e.g. `lb_upright_run_forward`), per weapon or seat set. Export one with `animtable DATAxbox player_american`. |
 | `layout/<layer>.<kind>.json` | Replace a layer's paths, boundaries, regions or encounters (`kind` = `path`, `lineregion`, `region`, `encounter`), or `layout/<layer>.list.txt` for its load list. Export them with `layout DATAxbox <layer>`. |
 
+### Editor
+
+```bash
+python -m mercfoundry edit my_mod --data game_files/DATAxbox
+```
+
+Opens the Foundry editor in your browser (a local web app; nothing leaves your PC): a 3D view of a map's terrain and objects where you move, turn and copy objects. Edits are saved as object rules in `objects/editor.json`. See [docs/EDITOR.md](docs/EDITOR.md).
+
 ### Sharing mods
 
 Share a mod as its source folder, packed first:

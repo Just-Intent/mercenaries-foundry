@@ -58,7 +58,8 @@
 - Mods shared as source: `mod sync` builds every enabled source mod together from the player's own game data into one generated mod (`mods/Foundry Mods`). Missions, contacts, map lists, text, object rules, level configs and terrain merge; replaced assets are reported as conflicts. Port patch `0007` runs the sync before each modded launch. Tested in game: Skip Intro, Terrain Hill and a second contract mod built together, with both missions and both HQ contacts working.
 - Mods shareable without game content: `mod pack` rewrites game-derived files as changes (script and load-list diffs, changed height samples and paint pixels, changed texture pixels, models as edited and new pieces only, animation channels that differ, animation-table entries and layout items that differ), and the build applies them to the player's data. Every test mod packs and builds byte-identical archives (`--check`), alone and built together. The toolkit ships as one file, `mercfoundry.pyz`; an unsigned `.exe` is blocked by Windows application control. Port patches: [port/UPSTREAM.md](../port/UPSTREAM.md) plans the upstream pull requests.
 - Player toolkit bundle: `packaging/build.py --bundle` makes a `foundry` folder (toolkit, python.org's embeddable Python 3.13.17, `install.cmd`) that players copy into the game folder; the launch hook uses the bundled Python with paths relative to the game folder. Tested here: install.cmd set up the hook, and the bundled Python built the three packed test mods from the game's own retail data.
-- 219 tests pass.
+- Foundry editor, first version ([EDITOR.md](EDITOR.md)): `edit` serves a local web app (standard-library server, three.js 0.187.0 kept in the repo) showing a map's terrain, as the enabled source mods leave it, and its objects with their models. Objects can be moved, turned, dropped to the ground and copied; saving writes object rules. Tested: edits reload, build to the exact position and heading, and showed in game (a moved and turned guard post and a copy).
+- 223 tests pass.
 
 ## Fixed from retail data
 - Text values aren't NUL-terminated. The decoder had assumed they were and found no strings.
@@ -103,11 +104,12 @@
 - Python 3.12.10 alongside 3.13. The port's `.venv` has its pinned CMake 3.31.6, Ninja 1.13.0 and Capstone 5.0.6.
 
 ## Next steps
-1. Collision flags: what bit 4 does; why bullets pass through pines and some rock meshes; collision for edited existing pieces.
-2. Missions: regions (boxes) in mod layers, radio voice-overs, traffic zones, path animation events (`EVNT`).
-3. Moving skin bones on characters (animations override bone translations); what animation-table priorities and flags do.
-4. Function map: name more engine functions (actors, AI commands, missions); find the path from a vehicle actor to its drivetrain, so plugins can change handling live with the setters.
-5. Overlay: spawning and object editing from the in-game panel (now only in the window).
+1. Editor: remove objects (a remove rule), show other mods' objects, edit paths, zones and encounters, place objects from templates, a live link to the running game.
+2. Collision flags: what bit 4 does; why bullets pass through pines and some rock meshes; collision for edited existing pieces.
+3. Missions: regions (boxes) in mod layers, radio voice-overs, traffic zones, path animation events (`EVNT`).
+4. Moving skin bones on characters (animations override bone translations); what animation-table priorities and flags do.
+5. Function map: name more engine functions (actors, AI commands, missions); find the path from a vehicle actor to its drivetrain, so plugins can change handling live with the setters.
+6. Overlay: spawning and object editing from the in-game panel (now only in the window).
 
 ## Notes
 - Several port tools mention replacing "source-informed" versions. Use only versions re-derived from retail (see PROVENANCE.md).

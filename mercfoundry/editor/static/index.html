@@ -1,0 +1,57 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Mercenaries Foundry editor</title>
+<link rel="stylesheet" href="/static/editor.css">
+<script type="importmap">
+{"imports": {"three": "/vendor/three/build/three.module.js",
+             "three/addons/": "/vendor/three/examples/jsm/"}}
+</script>
+</head>
+<body>
+<header>
+  <strong>Foundry editor</strong>
+  <span id="mod"></span>
+  <label>Map <select id="map"></select></label>
+  <input id="search" type="search" placeholder="Find object by name or model" list="names">
+  <datalist id="names"></datalist>
+  <span class="spacer"></span>
+  <span id="status">Loading...</span>
+  <button id="save" disabled>Save</button>
+</header>
+<main>
+  <div id="view"></div>
+  <aside id="panel">
+    <p class="hint" id="hint">Click an object to select it. Drag to orbit, right-drag to pan, scroll to zoom.
+      Double-click the ground to look there.</p>
+    <div id="selected" hidden>
+      <h2 id="sel-title"></h2>
+      <label id="copy-name-row" class="field" hidden>New object's name
+        <input id="copy-name" type="text" spellcheck="false"></label>
+      <dl>
+        <dt>Model</dt><dd id="sel-model"></dd>
+        <dt>Layer</dt><dd id="sel-layer"></dd>
+      </dl>
+      <div class="xyz">
+        <label>X <input id="px" type="number" step="0.1"></label>
+        <label>Y <input id="py" type="number" step="0.1"></label>
+        <label>Z <input id="pz" type="number" step="0.1"></label>
+        <label>Heading <input id="ph" type="number" step="1"></label>
+      </div>
+      <div class="buttons">
+        <button id="mode-move" class="on" title="W">Move</button>
+        <button id="mode-turn" title="E">Turn</button>
+        <button id="ground" title="G">Drop to ground</button>
+        <button id="copy" title="C">Copy</button>
+        <button id="revert">Undo changes</button>
+      </div>
+      <p id="sel-note" class="hint"></p>
+    </div>
+    <h3>Changes <span id="count"></span></h3>
+    <ul id="changes"></ul>
+  </aside>
+</main>
+<script type="module" src="/static/editor.js"></script>
+</body>
+</html>

@@ -341,6 +341,13 @@ def cmd_mod_sync(args):
         print(f"note: {n}")
 
 
+def cmd_edit(args):
+    from .editor import server
+    if not Path(args.folder).is_dir():
+        sys.exit(f"{args.folder} is not a folder (make one with: mod new {args.folder})")
+    server.serve(args.folder, args.data, args.port, not args.no_browser)
+
+
 def cmd_texture(args):
     from . import texture
     arcs = _data_archives(args.data)
@@ -729,6 +736,11 @@ def main(argv=None):
     m.add_argument("--enable", action="store_true", help=f"turn on the built mod in the launcher's mod list")
     m.add_argument("--install-hook", action="store_true",
                    help="write foundry-sync.cmd so the launcher syncs before every modded launch")
+    s = add("edit", cmd_edit, "open the editor (a local web app) for a mod project")
+    s.add_argument("folder", help="mod project folder")
+    s.add_argument("--data", required=True, help="the game's DATAxbox folder")
+    s.add_argument("--port", type=int, default=8740, help="local port (default 8740)")
+    s.add_argument("--no-browser", action="store_true", help="don't open a browser tab")
     s = add("texture", cmd_texture, "export a texture to PNG")
     s.add_argument("data", help="DATAxbox folder or a .dsk file")
     s.add_argument("name", help="texture name or 8-digit key")
