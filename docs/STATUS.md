@@ -108,7 +108,7 @@
 - Python 3.12.10 alongside 3.13. The port's `.venv` has its pinned CMake 3.31.6, Ninja 1.13.0 and Capstone 5.0.6.
 
 ## Next steps
-1. Editor: a live link to the running game, path pauses and links, editing the game's own encounters, place objects from templates, a live link to the running game.
+1. Editor: a live link to the running game, path pauses and links, editing the game's own encounters, placing objects from templates.
 2. Collision flags: what bit 4 does; why bullets pass through pines and some rock meshes; collision for edited existing pieces.
 3. Missions: regions (boxes) in mod layers, radio voice-overs, traffic zones, path animation events (`EVNT`).
 4. Moving skin bones on characters (animations override bone translations); what animation-table priorities and flags do.
