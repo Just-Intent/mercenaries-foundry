@@ -16,6 +16,11 @@
   <label>Map <select id="map"></select></label>
   <input id="search" type="search" placeholder="Find object by name or model" list="names">
   <datalist id="names"></datalist>
+  <label class="check"><input id="show-objects" type="checkbox" checked> Objects</label>
+  <label class="check"><input id="show-paths" type="checkbox" checked> Paths</label>
+  <label class="check"><input id="show-zones" type="checkbox" checked> Zones</label>
+  <button id="new-path">New path</button>
+  <button id="new-zone">New zone</button>
   <span class="spacer"></span>
   <span id="status">Loading...</span>
   <button id="save" disabled>Save</button>
@@ -49,8 +54,46 @@
       </div>
       <p id="sel-note" class="hint"></p>
     </div>
+    <div id="draw" hidden>
+      <h2 id="draw-title"></h2>
+      <p class="hint">Click the ground to add points (<span id="draw-count">0 points</span>). Enter finishes, Esc cancels.</p>
+      <label class="field">Name <input id="draw-name" type="text" spellcheck="false"></label>
+      <label class="field">Layer file (in encounters/) <select id="draw-file"></select></label>
+      <label class="field" id="draw-type-row">Zone type
+        <select id="draw-type">
+          <option value="">Trigger zone (scripts watch it)</option>
+          <option value="killbox">Killbox (restricted area)</option>
+          <option value="radiation">Radiation</option>
+          <option value="water">Water</option>
+        </select></label>
+      <div class="buttons"><button id="draw-finish">Finish</button><button id="draw-cancel">Cancel</button></div>
+    </div>
+    <div id="item" hidden>
+      <h2 id="item-title"></h2>
+      <dl>
+        <dt>Kind</dt><dd id="item-kind"></dd>
+        <dt>Layer</dt><dd id="item-layer"></dd>
+        <dt>Props</dt><dd id="item-props"></dd>
+      </dl>
+      <div id="point-xyz" hidden>
+        <p id="point-label" class="hint"></p>
+        <div class="xyz">
+          <label>X <input id="qx" type="number" step="0.1"></label>
+          <label>Y <input id="qy" type="number" step="0.1"></label>
+          <label>Z <input id="qz" type="number" step="0.1"></label>
+        </div>
+      </div>
+      <div class="buttons">
+        <button id="item-add" title="Insert">Add point</button>
+        <button id="item-del-point">Delete point</button>
+        <button id="item-delete">Delete</button>
+        <button id="item-revert">Undo changes</button>
+      </div>
+      <p id="item-note" class="hint"></p>
+    </div>
     <h3>Changes <span id="count"></span></h3>
     <ul id="changes"></ul>
+    <ul id="layout-changes"></ul>
   </aside>
 </main>
 <script type="module" src="/static/editor.js"></script>

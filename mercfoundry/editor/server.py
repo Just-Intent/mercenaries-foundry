@@ -7,6 +7,9 @@ GET  /api/terrain/<map>.json   terrain size, spacing and origin
 GET  /api/terrain/<map>.bin    float32 heights, row by row
 GET  /api/objects/<map>        the map's objects, with the mod's editor edits
 GET  /api/model/<name>.glb     a model with its textures
+GET  /api/layout/<map>         paths and zones: the game's (with the mod's layout
+                               changes) and the mod's own (encounters/*.json)
+POST /api/layout/save          {"map", "game": [...], "mod": {file: {...}}}
 POST /api/save                 {"moved": {...}, "copies": [...], "removed": [...]}
                                -> objects/editor.json
 """
@@ -84,6 +87,9 @@ def make_handler(scene: Scene, mod_name: str):
                         objs = scene.objects(path[len("/api/objects/"):])
                         edits = scene.load_edits()
                     return self.send(200, {"objects": objs, "edits": edits})
+                if path.startswith("/api/layout/"):
+                    with lock:
+                        return self.send(200, scene.layout(path[len("/api/layout/"):]))
                 if path.startswith("/api/model/") and path.endswith(".glb"):
                     with lock:
                         data = scene.model_glb(path[len("/api/model/"):-4])
@@ -105,6 +111,10 @@ def make_handler(scene: Scene, mod_name: str):
                     with lock:
                         n = scene.save_edits(doc.get("moved", {}), doc.get("copies", []), doc.get("removed", []))
                     return self.send(200, {"rules": n, "file": f"objects/{scene.rules_path().name}"})
+                if path == "/api/layout/save":
+                    with lock:
+                        done = scene.save_layout(doc["map"], doc.get("game", []), doc.get("mod", {}))
+                    return self.send(200, done)
                 return self.fail(404, "not found")
             except (ValueError, KeyError) as err:
                 return self.fail(400, str(err))

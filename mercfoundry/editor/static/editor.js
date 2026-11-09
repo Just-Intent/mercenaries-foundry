@@ -7,6 +7,7 @@ import * as THREE from 'three';
 import {OrbitControls} from 'three/addons/controls/OrbitControls.js';
 import {TransformControls} from 'three/addons/controls/TransformControls.js';
 import {GLTFLoader} from 'three/addons/loaders/GLTFLoader.js';
+import {createLayout} from './layout.js';
 
 const $ = (id) => document.getElementById(id);
 const NEAR_RADIUS = 220;      // metres around the view centre that show real models
@@ -32,7 +33,10 @@ controls.maxPolarAngle = Math.PI * 0.495;
 const gizmo = new TransformControls(camera, renderer.domElement);
 scene.add(gizmo.getHelper());
 gizmo.addEventListener('dragging-changed', (e) => { controls.enabled = !e.value; });
-gizmo.addEventListener('objectChange', () => { if (state.selected) fromNode(state.selected); });
+gizmo.addEventListener('objectChange', () => {
+  if (gizmo.object && gizmo.object.userData.handle) layout.handleMoved(gizmo.object);
+  else if (state.selected) fromNode(state.selected);
+});
 
 function resize() {
   const w = view.clientWidth, h = view.clientHeight;
@@ -271,9 +275,10 @@ async function loadMap(name) {
   $('names').innerHTML = names.map((n) => `<option value="${n}">`).join('');
   const start = state.records.find((r) => /playerstart|drop_start/i.test(r.name)) || state.records[0];
   if (start) lookAt(start.position, 60);
+  const items = await layout.load(name);
   refreshChanges();
   setDirty(false);
-  status(`${state.records.length} objects`);
+  status(`${state.records.length} objects, ${items} paths and zones`);
 }
 
 function lookAt(p, distance = 40) {
@@ -289,6 +294,7 @@ function lookAt(p, distance = 40) {
 
 // ------------------------------------------------------------------ selection and edits
 function select(rec) {
+  if (rec && layout.hasSelection()) layout.select(null);
   state.selected = rec;
   gizmo.detach();
   $('selected').hidden = !rec;
@@ -467,12 +473,26 @@ async function save() {
   };
   status('Saving...');
   try {
-    const r = await fetch('/api/save', {method: 'POST', headers: {'Content-Type': 'application/json'},
-                                       body: JSON.stringify(body)});
-    const doc = await r.json();
-    if (!r.ok) throw new Error(doc.error || r.statusText);
+    const post = async (url, data) => {
+      const r = await fetch(url, {method: 'POST', headers: {'Content-Type': 'application/json'},
+                                  body: JSON.stringify(data)});
+      const doc = await r.json();
+      if (!r.ok) throw new Error(doc.error || r.statusText);
+      return doc;
+    };
+    const lay = layout.saveBody();
+    let note = '';
+    if (lay) {
+      const done = await post('/api/layout/save', lay);
+      layout.saved();
+      const parts = [];
+      if (done.game) parts.push(`${done.game} game paths/zones to layout/`);
+      if (done.files.length) parts.push(done.files.join(', '));
+      note = parts.length ? `; ${parts.join('; ')}` : '';
+    }
+    const doc = await post('/api/save', body);
     setDirty(false);
-    status(`Saved ${doc.rules} rules to ${doc.file}`);
+    status(`Saved ${doc.rules} object rules to ${doc.file}${note}`);
   } catch (e) {
     status(`Not saved: ${e.message}`, true);
   }
@@ -501,19 +521,27 @@ renderer.domElement.addEventListener('pointerup', (e) => {
   if (!downAt || Math.hypot(e.clientX - downAt[0], e.clientY - downAt[1]) > 4 || e.button !== 0) return;
   if (gizmo.dragging || gizmo.axis) return;
   pick(e);
-  const targets = [boxes, ...[...state.nodes].map((r) => r.node)];
-  const hits = ray.intersectObjects(targets, true);
-  for (const h of hits) {
-    if (h.object === boxes) {
-      const rec = state.records.find((r) => r.slot === h.instanceId);
-      if (rec && !rec.node && !rec.removed) return select(rec);
-      continue;
+  if (layout.isDrawing()) { layout.drawClick(ray); return; }
+  // The nearest of an object or a path/zone (point handles win).
+  let objectHit = null;
+  if (boxes.visible) {
+    const targets = [boxes, ...[...state.nodes].map((r) => r.node)];
+    for (const h of ray.intersectObjects(targets, true)) {
+      if (h.object === boxes) {
+        const rec = state.records.find((r) => r.slot === h.instanceId);
+        if (rec && !rec.node && !rec.removed) { objectHit = {distance: h.distance, rec}; break; }
+        continue;
+      }
+      let o = h.object;
+      while (o && !o.userData.rec) o = o.parent;
+      if (o) { objectHit = {distance: h.distance, rec: o.userData.rec}; break; }
     }
-    let o = h.object;
-    while (o && !o.userData.rec) o = o.parent;
-    if (o) return select(o.userData.rec);
   }
+  const itemHit = layout.pick(ray);
+  if (itemHit && (!objectHit || itemHit.distance < objectHit.distance)) return itemHit.apply();
+  if (objectHit) return select(objectHit.rec);
   select(null);
+  layout.select(null);
 });
 renderer.domElement.addEventListener('dblclick', (e) => {
   pick(e);
@@ -559,7 +587,10 @@ $('search').addEventListener('change', () => {
   const live = state.records.filter((r) => !r.removed);
   const rec = live.find((r) => (r.copyName || r.name || '').toLowerCase() === q)
     || live.find((r) => (r.name || '').toLowerCase().includes(q) || r.model.toLowerCase().includes(q));
-  if (rec) { lookAt(rec.position, 30); select(rec); status(''); } else status(`No object matches "${q}"`, true);
+  if (rec) { lookAt(rec.position, 30); select(rec); status(''); return; }
+  const item = layout.find(q);
+  if (item) { lookAt(item.points[0], 80); select(null); layout.select(item); status(''); return; }
+  status(`Nothing matches "${q}"`, true);
 });
 window.addEventListener('keydown', (e) => {
   if (e.target.tagName === 'INPUT') return;
@@ -568,14 +599,31 @@ window.addEventListener('keydown', (e) => {
   else if (k === 'e') setMode('rotate');
   else if (k === 'g') $('ground').click();
   else if (k === 'c') copySelected();
-  else if (k === 'delete') deleteSelected();
-  else if (k === 'escape') select(null);
+  else if (k === 'enter' && layout.isDrawing()) layout.finishDraw();
+  else if (k === 'insert' && layout.hasSelection()) layout.addPoint();
+  else if (k === 'delete') { if (layout.hasSelection()) layout.deletePoint(); else deleteSelected(); }
+  else if (k === 'escape') { if (layout.isDrawing()) { layout.cancelDraw(); status(''); } else { select(null); layout.select(null); } }
   else if (k === 's' && (e.ctrlKey || e.metaKey)) { e.preventDefault(); if (state.dirty) save(); }
 });
 window.addEventListener('beforeunload', (e) => { if (state.dirty) { e.preventDefault(); e.returnValue = ''; } });
 $('map').addEventListener('change', async () => {
   if (state.dirty && !confirm('Discard unsaved changes?')) { $('map').value = state.map; return; }
   try { await loadMap($('map').value); } catch (err) { status(err.message, true); }
+});
+
+// ------------------------------------------------------------------ paths and zones
+let modName = '';
+const layout = createLayout({
+  scene, gizmo, heightAt, threePos, gamePos, status, $, setDirty, lookAt,
+  deselectObject: () => select(null),
+  modName: () => modName,
+  terrain: () => terrainMesh,
+});
+$('show-objects').addEventListener('change', (e) => {
+  const on = e.target.checked;
+  if (boxes) boxes.visible = on;
+  for (const rec of state.nodes) if (rec.node) rec.node.visible = on;
+  if (!on) select(null);
 });
 
 // ------------------------------------------------------------------ start
@@ -593,6 +641,7 @@ async function start() {
   try {
     const info = await getJSON('/api/info');
     $('mod').textContent = info.mod;
+    modName = info.mod;
     const maps = info.maps.filter((m) => ['swn', 'sw', 'nw'].includes(m)).concat(
       info.maps.filter((m) => !['swn', 'sw', 'nw'].includes(m)));
     $('map').innerHTML = maps.map((m) => `<option>${m}</option>`).join('');
