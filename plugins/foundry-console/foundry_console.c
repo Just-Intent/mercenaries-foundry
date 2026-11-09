@@ -951,6 +951,7 @@ static void hud_draw(const char *text)
 }
 
 static void live_update(double dt);
+static void live_report_loaded(void);
 
 static int MERC_PLUGIN_CALL on_update(void *ud, const MercPluginUpdate *u)
 {
@@ -1044,6 +1045,7 @@ static int MERC_PLUGIN_CALL on_update(void *ud, const MercPluginUpdate *u)
         scan_next = end;
         LeaveCriticalSection(&lock);
         if (end == template_count) {
+            live_report_loaded();
             for (unsigned i = 0; i < template_count; i++) loaded += templates[i].loaded == 1;
             set_status("%u of %u templates are loaded here.", loaded, template_count);
         }
@@ -1315,7 +1317,7 @@ static DWORD WINAPI window_thread(void *arg)
 static char live_cmds[LIVE_LINES][LIVE_LINE];
 static unsigned live_cmd_count;
 static char live_state[256];          /* player and gameplay lines, from the game thread */
-static char live_results[2048];       /* result lines for the next poll */
+static char live_results[32768];      /* result lines for the next poll */
 static volatile LONG live_stop, live_connected;
 static double since_live;
 
@@ -1329,7 +1331,7 @@ static DWORD WINAPI live_thread(void *arg)
     WinHttpSetTimeouts(session, 500, 500, 1000, 1000);
     HINTERNET conn = WinHttpConnect(session, L"127.0.0.1", LIVE_PORT, 0);
     while (!InterlockedCompareExchange(&live_stop, 0, 0)) {
-        char body[2560];
+        static char body[33280];
         EnterCriticalSection(&lock);
         int n = snprintf(body, sizeof(body), "%s%s", live_state, live_results);
         live_results[0] = 0;
@@ -1372,6 +1374,9 @@ static void live_result(const char *fmt, ...)
     size_t len = strlen(live_results);
     snprintf(live_results + len, sizeof(live_results) - len, "result %s\n", text);
     LeaveCriticalSection(&lock);
+    char logged[300];
+    snprintf(logged, sizeof(logged), "live: %s", text);
+    host->log(host->context, logged);       /* plugin-settings/plugins.log */
 }
 
 /* The object a live command means: by name, else the nearest with the model
@@ -1453,6 +1458,34 @@ static int live_apply(uint32_t obj, const float *pos, float yaw, int remove)
     return ok;
 }
 
+/* "loaded": which templates this area has loaded, for the editor's squad
+ * picker. The console's own template scan (a few frames) answers it. */
+static int live_want_loaded;
+
+static void live_raw(const char *line)
+{
+    EnterCriticalSection(&lock);
+    size_t len = strlen(live_results);
+    snprintf(live_results + len, sizeof(live_results) - len, "%s\n", line);
+    LeaveCriticalSection(&lock);
+}
+
+static void live_report_loaded(void)
+{
+    if (!live_want_loaded) return;
+    live_want_loaded = 0;
+    char line[600] = "loaded";
+    live_raw("loaded-begin");
+    for (unsigned i = 0; i < template_count; i++) {
+        if (templates[i].loaded != 1) continue;
+        if (strlen(line) + strlen(templates[i].name) + 2 > sizeof(line)) { live_raw(line); strcpy_s(line, sizeof(line), "loaded"); }
+        strcat_s(line, sizeof(line), " ");
+        strcat_s(line, sizeof(line), templates[i].name);
+    }
+    if (strcmp(line, "loaded")) live_raw(line);
+    live_raw("loaded-end");
+}
+
 static float teleport_to[3];
 static double teleport_check;        /* seconds until checking a teleport stuck */
 
@@ -1496,6 +1529,36 @@ static void live_run(char *line)
         /* In a vehicle the game puts the player back with it: check shortly. */
         memcpy(teleport_to, p, sizeof(teleport_to));
         teleport_check = 0.5;
+        return;
+    }
+    if (!strcmp(op, "loaded")) {
+        live_want_loaded = 1;
+        EnterCriticalSection(&lock);
+        scan_next = 0;                    /* the console's template scan reports when done */
+        LeaveCriticalSection(&lock);
+        return;
+    }
+    if (!strcmp(op, "spawn")) {
+        /* spawn <template> <name> <x> <y> <z> <heading>: as Mission_Spawn does. */
+        char *tmpl = strtok_s(NULL, " ", &next), *name = strtok_s(NULL, " ", &next);
+        float v[4] = {0};
+        for (int i = 0; i < 4; i++) { char *t = strtok_s(NULL, " ", &next); v[i] = t ? (float)atof(t) : 0; }
+        if (!tmpl || !name) return;
+        uint32_t hash = hash_name(tmpl), scratch, size;
+        MercGuestCall c;
+        if (!template_loaded(hash)) {
+            live_result("%s: %s can't be spawned here (not a template loaded in this area); it appears after a rebuild",
+                        name, tmpl);
+            return;
+        }
+        if (!host->guest_scratch(host->context, &scratch, &size) || size < 256) return;
+        float yaw = v[3] * 3.14159265f / 180.0f;
+        float m[16] = {cosf(yaw), 0, -sinf(yaw), 0, 0, 1, 0, 0, sinf(yaw), 0, cosf(yaw), 0, v[0], v[1], v[2], 1};
+        host->write_guest(host->context, scratch, m, sizeof(m));
+        host->write_guest(host->context, scratch + 64, name, strlen(name) + 1);
+        uint32_t args[5] = {hash, scratch + 64, scratch, 0, 0};
+        int ok = guest(MF_FN_Spawner_SpawnTemplate, MF_VAR_g_Spawner, 5, args, &c) && c.eax;
+        live_result(ok ? "%s spawned (%s)" : "%s: spawning %s failed", name, tmpl);
         return;
     }
     int remove = !strcmp(op, "remove");

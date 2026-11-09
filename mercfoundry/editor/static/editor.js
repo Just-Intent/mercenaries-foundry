@@ -394,6 +394,7 @@ function recordEdit(rec) {
   if (rec.copyName) {
     const c = state.copies.find((x) => x.rec === rec);
     c.position = rec.position; c.rotation = rec.rotation;
+    live.objectMoved(rec);
   } else {
     state.moved[rec.id] = {position: rec.position, rotation: rec.rotation};
     live.objectMoved(rec);
@@ -404,6 +405,7 @@ function recordEdit(rec) {
 
 function revert(rec) {
   if (rec.copyName) {
+    live.objectRemoved(rec);
     state.copies = state.copies.filter((x) => x.rec !== rec);
     select(null);
     scene.remove(rec.node); rec.node = null; state.nodes.delete(rec);
@@ -442,7 +444,11 @@ function addCopy(src, name, position, rotation, select_ = true) {
   addRecord(rec);
   boxes.count = state.records.length;
   state.copies.push({rec, source: src.id, as: name, position, rotation});
-  if (select_) { ensureNode(rec); select(rec); setDirty(true); refreshChanges(); }
+  if (select_) {
+    ensureNode(rec); select(rec); setDirty(true); refreshChanges();
+    // Copies of named objects can spawn in the running game (the game spawns by name).
+    if (src.name) live.spawn(src.name, name, position, heading(rotation));
+  }
   return rec;
 }
 
@@ -470,6 +476,10 @@ function renameCopy(rec, name) {
   name = name.trim();
   if (!/^[A-Za-z0-9_\-]+$/.test(name)) return status('Names use letters, digits, _ and - only', true);
   if (takenNames(rec).has(name.toLowerCase())) return status(`Another object is already named ${name}`, true);
+  if (live.isOn() && rec.name) {      // the game knows it by its old name: spawn it again
+    live.removeNamed(rec.copyName);
+    live.spawn(rec.name, name, rec.position, heading(rec.rotation));
+  }
   rec.copyName = name;
   state.copies.find((c) => c.rec === rec).as = name;
   status('');
@@ -681,6 +691,7 @@ const layout = createLayout({
 });
 const encs = createEncounters({
   scene, gizmo, heightAt, threePos, gamePos, status, $, setDirty, camera, slug,
+  live: () => live,
   deselectOthers: () => { select(null); layout.select(null); },
   modName: () => modName,
   terrain: () => terrainMesh,
@@ -690,6 +701,7 @@ const encs = createEncounters({
 });
 const live = createLive({
   scene, threePos, heightAt, status, $, lookAt, heading,
+  onLoaded: (names) => encs.setLoaded(names),
   target: () => gamePos(controls.target),
 });
 $('show-objects').addEventListener('change', (e) => {

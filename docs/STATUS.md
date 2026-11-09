@@ -64,6 +64,7 @@
 - Editor squads and spawn points: encounters' spawn point sets and squad members show on the map (the game's read only, from their encounter records and members' encounter/squad properties); the mod's can be moved, added to and deleted, and new squads are placed by clicking the ground (members copy a template or named object). Tested: a three-member squad with a spawn point saved and built into the layer with the right positions and headings.
 - Editor shows other mods: objects other enabled source mods add, move or remove (from their object rules and encounter layers, applied in load order as a build would) appear read only, labelled with the mod. Tested on the installed mods: Terrain Hill's patroller and collision-test props on the opening map, and both contract mods' soldiers in free roam.
 - Editor live link: Foundry Console polls the editor (WinHTTP, its own thread) with the player's position and runs its live edits on the game thread: object moves, turns and removals, and teleporting the player. Tested in game: the player marker follows the player, objects moved in the editor move in game, and teleporting works on foot (in a vehicle the game puts the player back, and the console says so).
+- Editor live spawning: new squad members and copies of named objects spawn in the running game (Spawner_SpawnTemplate) and then move and delete live by name; the squad picker lists the templates the game has loaded where the player is first. Tested in game: a squad of a loaded template spawned; the picker listed the loaded templates first.
 - 228 tests pass.
 
 ## Fixed from retail data
@@ -109,7 +110,7 @@
 - Python 3.12.10 alongside 3.13. The port's `.venv` has its pinned CMake 3.31.6, Ninja 1.13.0 and Capstone 5.0.6.
 
 ## Next steps
-1. Editor: live spawning of copies and squads, path pauses and links, editing the game's own encounters, placing objects from templates.
+1. Editor: live copies of unnamed scenery, path pauses and links, editing the game's own encounters, placing objects from templates.
 2. Collision flags: what bit 4 does; why bullets pass through pines and some rock meshes; collision for edited existing pieces.
 3. Missions: regions (boxes) in mod layers, radio voice-overs, traffic zones, path animation events (`EVNT`).
 4. Moving skin bones on characters (animations override bone translations); what animation-table priorities and flags do.

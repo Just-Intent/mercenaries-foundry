@@ -25,7 +25,19 @@ export function createLive(ctx) {
       const s = await r.json();
       st.connected = s.connected;
       st.player = s.player;
-      for (const res of s.results || []) status(`Game: ${res}`);
+      if (s.loaded && JSON.stringify(s.loaded) !== JSON.stringify(st.loaded)) {
+        st.loaded = s.loaded;
+        ctx.onLoaded && ctx.onLoaded(s.loaded);
+      }
+      for (const res of s.results || []) {
+        status(`Game: ${res}`);
+        // A short log of the game's replies that later messages don't hide.
+        const li = document.createElement('li');
+        li.textContent = res;
+        $('game-log').prepend(li);
+        while ($('game-log').children.length > 12) $('game-log').lastChild.remove();
+        $('game-log-title').hidden = false;
+      }
     } catch {
       st.connected = false;
     }
@@ -65,21 +77,39 @@ export function createLive(ctx) {
   // last sent.
   const places = (rec) => [rec.original.position, rec.loadedAt, rec.liveAt].filter(Boolean).slice(0, 4);
 
+  // Drags send once, when they settle (key: what is being dragged).
+  function later(key, fn) {
+    clearTimeout(st.pending.get(key));
+    st.pending.set(key, setTimeout(() => { st.pending.delete(key); fn(); }, 250));
+  }
+
   function objectMoved(rec) {
-    if (rec.copyName || rec.context) return;
-    // Drags send once, when they settle.
-    clearTimeout(st.pending.get(rec));
-    st.pending.set(rec, setTimeout(() => {
-      st.pending.delete(rec);
+    if (rec.context) return;
+    if (rec.copyName) return moveNamed(rec, rec.copyName, rec.position, ctx.heading(rec.rotation));
+    later(rec, () => {
       send([{op: 'move', name: rec.name, model: rec.model, from: places(rec),
              position: rec.position, heading: ctx.heading(rec.rotation)}]);
       if (st.on && st.connected) rec.liveAt = rec.position;
-    }, 250));
+    });
   }
 
   function objectRemoved(rec) {
-    if (rec.copyName || rec.context) return;
+    if (rec.context) return;
+    if (rec.copyName) return removeNamed(rec.copyName);
     send([{op: 'remove', name: rec.name, model: rec.model, from: places(rec)}]);
+  }
+
+  // Things the game can spawn by name (squad members, copies of named
+  // objects): spawned live, then moved and removed by their new names.
+  function spawn(template, name, position, heading) {
+    if (!template || !name || /\s/.test(template + name)) return;
+    send([{op: 'spawn', template, name, position, heading: heading || 0}]);
+  }
+  function moveNamed(key, name, position, heading) {
+    later(key, () => send([{op: 'move', name, model: '', from: [], position, heading: heading || 0}]));
+  }
+  function removeNamed(name) {
+    send([{op: 'remove', name, model: '', from: []}]);
   }
 
   $('live').onclick = () => {
@@ -100,5 +130,14 @@ export function createLive(ctx) {
 
   st.timer = setInterval(poll, 500);
   poll();
-  return {objectMoved, objectRemoved, isOn: () => st.on && st.connected};
+  // Ask the game which templates are loaded where the player is (for the
+  // squad picker); the answer arrives through poll() a moment later.
+  function askLoaded() {
+    if (!st.connected) return;
+    fetch('/api/live/send', {method: 'POST', headers: {'Content-Type': 'application/json'},
+                             body: JSON.stringify({commands: [{op: 'loaded'}]})});
+  }
+
+  return {objectMoved, objectRemoved, spawn, moveNamed, removeNamed, askLoaded,
+          loaded: () => st.loaded || null, isOn: () => st.on && st.connected};
 }

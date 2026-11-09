@@ -57,5 +57,9 @@ class LiveLinkTests(unittest.TestCase):
         self.assertEqual(state["player"]["position"], [1.0, 2.0, 3.0])
         self.assertEqual(state["results"], ["dmz_bld_skpost moved"])
         self.assertEqual(live.poll(""), "")      # commands go once
+        live.send([{"op": "loaded"}])
+        self.assertEqual(live.poll(""), "loaded\n")
+        live.poll("loaded-begin\nloaded b_soldier a_tank\nloaded c_jeep\nloaded-end\n")
+        self.assertEqual(live.state()["loaded"], ["a_tank", "b_soldier", "c_jeep"])
         with self.assertRaises(ValueError):
             live.send([{"op": "explode"}])

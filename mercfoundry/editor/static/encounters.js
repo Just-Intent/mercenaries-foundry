@@ -21,6 +21,20 @@ export function createEncounters(ctx) {
   const mat = (key) => (mats[key] ||= new THREE.MeshLambertMaterial({color: COLOURS[key]}));
   const st = {map: null, game: [], mod: [], templates: [], selected: null, dirty: new Set(), place: null, show: true};
 
+  // The squad picker: templates the running game has loaded here first (the
+  // game can spawn those live), then the rest.
+  function fillTemplates() {
+    const loaded = new Set((st.loaded || []).map((n) => n.toLowerCase()));
+    const label = (x) => `${loaded.has(x.name.toLowerCase()) ? 'loaded here, ' : ''}${x.type}${x.faction ? ', ' + x.faction : ''} (${x.model})`;
+    const list = [...st.templates].sort((a, b) => loaded.has(b.name.toLowerCase()) - loaded.has(a.name.toLowerCase()));
+    $('templates').innerHTML = list.map((x) => `<option value="${x.name}">${label(x)}</option>`).join('');
+  }
+  function setLoaded(names) {
+    st.loaded = names;
+    fillTemplates();
+    status(`The game has ${names.length} templates loaded here; they're first in the squad list.`);
+  }
+
   // ---------------------------------------------------------------- data access
   // A selection: {source, file, enc, squad?, member?, set?, index?}.
   function all() {
@@ -78,8 +92,7 @@ export function createEncounters(ctx) {
     if (!r.ok) throw new Error(doc.error || r.statusText);
     if (t) {
       st.templates = await t.json();
-      $('templates').innerHTML = st.templates.map((x) =>
-        `<option value="${x.name}">${x.type}${x.faction ? ', ' + x.faction : ''} (${x.model})</option>`).join('');
+      fillTemplates();
     }
     st.map = map;
     st.game = doc.game;
@@ -109,8 +122,12 @@ export function createEncounters(ctx) {
     const sel = st.selected;
     if (!sel || sel.source !== 'mod') return;
     const p = gamePos(node.position);
-    if (sel.member) sel.member.position = p;
-    else sel.enc.points[sel.set][sel.index] = p;
+    if (sel.member) {
+      sel.member.position = p;
+      ctx.live().moveNamed(sel.member, sel.member.name, p, sel.member.yaw);
+    } else {
+      sel.enc.points[sel.set][sel.index] = p;
+    }
     edited(sel.file);
     showPanel();
   }
@@ -160,6 +177,7 @@ export function createEncounters(ctx) {
       sel.member.position = p;
       const h = +$('eh').value;
       if (Number.isFinite(h)) sel.member.yaw = Math.round(h * 10) / 10;
+      ctx.live().moveNamed(sel.member, sel.member.name, p, sel.member.yaw);
     } else {
       sel.enc.points[sel.set][sel.index] = p;
     }
@@ -187,6 +205,7 @@ export function createEncounters(ctx) {
                name: freshName(`${sel.enc.name}_${sel.squad.name}_`)};
     m.position[1] = Math.round(heightAt(m.position[0], m.position[2]) * 1000) / 1000;
     sel.squad.members.push(m);
+    ctx.live().spawn(m.from, m.name, m.position, m.yaw);
     edited(sel.file);
     select({...sel, member: m});
   }
@@ -196,6 +215,7 @@ export function createEncounters(ctx) {
     if (!sel || sel.source !== 'mod') return;
     if (sel.member) {
       sel.squad.members = sel.squad.members.filter((m) => m !== sel.member);
+      ctx.live().removeNamed(sel.member.name);
     } else {
       const pts = sel.enc.points[sel.set];
       pts.splice(sel.index, 1);
@@ -213,6 +233,7 @@ export function createEncounters(ctx) {
     if (!sel || sel.source !== 'mod' || !sel.squad) return;
     if (!confirm(`Delete squad ${sel.squad.name} and its ${sel.squad.members.length} members?`)) return;
     sel.enc.squads = sel.enc.squads.filter((s) => s !== sel.squad);
+    for (const m of sel.squad.members) ctx.live().removeNamed(m.name);
     edited(sel.file);
     select(null);
   }
@@ -223,6 +244,7 @@ export function createEncounters(ctx) {
     if (!confirm(`Delete encounter ${sel.enc.name}, its squads and spawn points?`)) return;
     const f = st.mod.find((x) => x.file === sel.file);
     f.encounters = f.encounters.filter((e) => e !== sel.enc);
+    for (const sq of sel.enc.squads || []) for (const m of sq.members || []) ctx.live().removeNamed(m.name);
     edited(sel.file);
     select(null);
   }
@@ -248,6 +270,7 @@ export function createEncounters(ctx) {
     $('sq-count').value = 3;
     if (!$('sq-template').value) $('sq-template').value = 'template_A6_NK_Soldier';
     $('squad-form').hidden = false;
+    ctx.live().askLoaded();
   }
 
   function fillEncounters() {
@@ -263,7 +286,9 @@ export function createEncounters(ctx) {
     if (!st.templates.some((t) => t.name.toLowerCase() === template.toLowerCase()) && !ctx.objectNames().has(template.toLowerCase())) {
       return status(`No template or named object called ${template}`, true);
     }
-    const count = Math.max(1, Math.min(12, +$('sq-count').value || 1));
+    const notLoaded = st.loaded && ctx.live().isOn() &&
+      !st.loaded.some((n) => n.toLowerCase() === template.toLowerCase());
+    const count = Math.max(1, Math.min(40, +$('sq-count').value || 1));
     const encName = $('sq-enc').value || $('sq-enc-new').value.trim();
     const squadName = $('sq-name').value.trim();
     if (!/^[A-Za-z0-9_]+$/.test(encName) || !/^[A-Za-z0-9_]+$/.test(squadName)) {
@@ -271,7 +296,8 @@ export function createEncounters(ctx) {
     }
     st.place = {kind: 'squad', file: $('sq-file').value, encName, squadName, template, count};
     $('squad-form').hidden = true;
-    status(`Click the ground to place ${count} member${count > 1 ? 's' : ''} of ${squadName}; Esc cancels.`);
+    status(`Click the ground to place ${count} member${count > 1 ? 's' : ''} of ${squadName}; Esc cancels.` +
+           (notLoaded ? ` (${template} isn't loaded here: it shows in the game after a rebuild.)` : ''));
   }
 
   function placeClick(ray) {
@@ -305,15 +331,21 @@ export function createEncounters(ctx) {
     const toCam = Math.atan2(cam.x - hit.point.x, cam.z - hit.point.z);       // three.js angle to the camera
     const yaw = Math.round(THREE.MathUtils.radToDeg(Math.PI - toCam) * 10) / 10;
     const side = new THREE.Vector3(Math.cos(toCam), 0, -Math.sin(toCam));
+    const back = new THREE.Vector3(-Math.sin(toCam), 0, -Math.cos(toCam));    // away from the camera
     const squad = {name: pl.squadName, points: Object.keys(enc.points).slice(0, 1), members: []};
     enc.squads.push(squad);
+    // Rows of up to 8, 2.5 m apart, the first row where you clicked.
+    const perRow = Math.min(pl.count, 8);
     for (let i = 0; i < pl.count; i++) {
-      const p = hit.point.clone().addScaledVector(side, (i - (pl.count - 1) / 2) * 2.5);
+      const row = Math.floor(i / perRow), col = i % perRow;
+      const inRow = Math.min(perRow, pl.count - row * perRow);
+      const p = hit.point.clone().addScaledVector(side, (col - (inRow - 1) / 2) * 2.5).addScaledVector(back, row * 2.5);
       const g = gamePos(p);
       g[1] = Math.round(heightAt(g[0], g[2]) * 1000) / 1000;
       // Each name is fresh against the members already added.
       squad.members.push({from: pl.template, name: freshName(`${pl.encName}_${pl.squadName}_`), position: g, yaw});
     }
+    for (const m of squad.members) ctx.live().spawn(m.from, m.name, m.position, m.yaw);
     edited(pl.file);
     select({source: 'mod', file: f.file, layer: f.layer, enc, squad, member: squad.members[0]});
     status(`${pl.squadName} placed with ${pl.count} members`);
@@ -371,7 +403,7 @@ export function createEncounters(ctx) {
   $('show-squads').addEventListener('change', (e) => { st.show = e.target.checked; if (!st.show) select(null); rebuild(); });
 
   return {
-    load, pick, select, moved, placeClick, cancelPlace, saveBody, saved, find, deleteSelected,
+    load, pick, select, moved, placeClick, cancelPlace, saveBody, saved, find, deleteSelected, setLoaded,
     isPlacing: () => !!st.place,
     files: () => st.mod.map((f) => f.file),
     hasSelection: () => !!st.selected,

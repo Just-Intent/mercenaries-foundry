@@ -69,8 +69,9 @@ toolkit bundle run it the same way: `foundry\python\python.exe foundry\mercfound
     spawn point set A 10 m north of the squad), the squad's name, what its
     members copy (a template such as `template_A6_NK_Soldier`, or a named object
     such as `RoadblockRunner`; the list offers the game's 1,696 templates,
-    characters first) and how many. Then click the ground: the members stand in
-    a row there, facing you, with fresh names (`<encounter>_<squad>_<n>`).
+    characters first) and how many (up to 40). Then click the ground: the members
+    stand in rows of up to 8 there, facing you, with fresh names
+    (`<encounter>_<squad>_<n>`).
   - A script loads the layer (`Utility_ReadLevelFile('<layer>')`) and commands
     its squads (`Squad_Command`); see [ENCOUNTERS.md](ENCOUNTERS.md).
 - **Live link**: with the game running and Foundry Console on, the console finds
@@ -79,8 +80,14 @@ toolkit bundle run it the same way: `foundry\python\python.exe foundry\mercfound
   teleports the player (on foot) to the middle of the view. With Live on, moving,
   turning, undoing or removing a game object also does it in the running game
   (drags send when they settle); the status line shows the game's replies. The
-  saved mod files still decide what the game has when it next starts. Copies,
-  new squads and other mods' objects need a rebuild.
+  saved mod files still decide what the game has when it next starts.
+  - Live spawning: new squad members and copies of named objects spawn in the
+    game too (the game spawns by name, from templates loaded where the player
+    is), and are then moved and removed live by their names. Opening **New
+    squad** asks the game which templates are loaded there and lists them first
+    ("loaded here"); others appear after a rebuild. Copies of unnamed scenery and
+    other mods' objects need a rebuild. The panel's **Game replies** list keeps
+    the game's last answers.
 - **Save** (Ctrl+S) writes `objects/editor.json`: one rule per moved object
   (matched by name, or by model and original position), one `copy` rule per
   copy and one `remove` rule per removed object. The build applies them like any object rule, and the editor reads them
