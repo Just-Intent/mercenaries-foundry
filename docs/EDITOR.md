@@ -49,6 +49,22 @@ toolkit bundle run it the same way: `foundry\python\python.exe foundry\mercfound
     Finish. A script loads the layer with `Utility_ReadLevelFile('<layer>')`;
     then `Event_ActorInBoundary` watches zones and `Ai_Command(..., 'Patrol',
     '<path>', ...)` follows paths (see [ENCOUNTERS.md](ENCOUNTERS.md)).
+- Squads and spawn points: each encounter's spawn point sets show as cones
+  (the game's yellow, the mod's orange) and squad members as figures (the
+  game's blue, the mod's pink), with a nose showing their heading. The game's
+  encounters are read only (most of their squads are spawned by mission scripts
+  at those points). The mod's, in its `encounters/*.json` layers, can be edited:
+  drag members and spawn points, type positions and headings, add a member (a
+  copy beside the selected one), add spawn points (click the ground), and delete
+  members, points, squads or whole encounters.
+  - **New squad**: pick the layer file, an encounter (or a new one, which gets
+    spawn point set A 10 m north of the squad), the squad's name, what its
+    members copy (a template such as `template_A6_NK_Soldier`, or a named object
+    such as `RoadblockRunner`; the list offers the game's 1,696 templates,
+    characters first) and how many. Then click the ground: the members stand in
+    a row there, facing you, with fresh names (`<encounter>_<squad>_<n>`).
+  - A script loads the layer (`Utility_ReadLevelFile('<layer>')`) and commands
+    its squads (`Squad_Command`); see [ENCOUNTERS.md](ENCOUNTERS.md).
 - **Save** (Ctrl+S) writes `objects/editor.json`: one rule per moved object
   (matched by name, or by model and original position), one `copy` rule per
   copy and one `remove` rule per removed object. The build applies them like any object rule, and the editor reads them
@@ -66,8 +82,9 @@ toolkit bundle run it the same way: `foundry\python\python.exe foundry\mercfound
 (`vendor/three/`, MIT, with its LICENSE) and a small JSON API:
 `/api/info`, `/api/terrain/<map>.json` and `.bin` (float32 heights),
 `/api/objects/<map>` (objects plus the editor's saved edits),
-`/api/model/<name>.glb`, `/api/layout/<map>` (paths and zones) and
-`POST /api/save` and `/api/layout/save`. Saving refuses requests from
+`/api/model/<name>.glb`, `/api/layout/<map>` (paths and zones),
+`/api/encounters/<map>` and `/api/templates`, and `POST /api/save`,
+`/api/layout/save` and `/api/encounters/save`. Saving refuses requests from
 other web origins.
 
 The 3D view uses three.js axes, which are the game's with Z flipped, as in the

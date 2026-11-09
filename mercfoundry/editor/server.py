@@ -10,6 +10,9 @@ GET  /api/model/<name>.glb     a model with its textures
 GET  /api/layout/<map>         paths and zones: the game's (with the mod's layout
                                changes) and the mod's own (encounters/*.json)
 POST /api/layout/save          {"map", "game": [...], "mod": {file: {...}}}
+GET  /api/encounters/<map>     encounters: the game's (read only) and the mod's
+GET  /api/templates            objects a squad member can copy (template_*)
+POST /api/encounters/save      {"map", "files": {file: [encounter, ...]}}
 POST /api/save                 {"moved": {...}, "copies": [...], "removed": [...]}
                                -> objects/editor.json
 """
@@ -87,6 +90,12 @@ def make_handler(scene: Scene, mod_name: str):
                         objs = scene.objects(path[len("/api/objects/"):])
                         edits = scene.load_edits()
                     return self.send(200, {"objects": objs, "edits": edits})
+                if path.startswith("/api/encounters/"):
+                    with lock:
+                        return self.send(200, scene.encounters(path[len("/api/encounters/"):]))
+                if path == "/api/templates":
+                    with lock:
+                        return self.send(200, scene.templates())
                 if path.startswith("/api/layout/"):
                     with lock:
                         return self.send(200, scene.layout(path[len("/api/layout/"):]))
@@ -111,6 +120,9 @@ def make_handler(scene: Scene, mod_name: str):
                     with lock:
                         n = scene.save_edits(doc.get("moved", {}), doc.get("copies", []), doc.get("removed", []))
                     return self.send(200, {"rules": n, "file": f"objects/{scene.rules_path().name}"})
+                if path == "/api/encounters/save":
+                    with lock:
+                        return self.send(200, scene.save_encounters(doc["map"], doc.get("files", {})))
                 if path == "/api/layout/save":
                     with lock:
                         done = scene.save_layout(doc["map"], doc.get("game", []), doc.get("mod", {}))

@@ -8,6 +8,7 @@ import {OrbitControls} from 'three/addons/controls/OrbitControls.js';
 import {TransformControls} from 'three/addons/controls/TransformControls.js';
 import {GLTFLoader} from 'three/addons/loaders/GLTFLoader.js';
 import {createLayout} from './layout.js';
+import {createEncounters} from './encounters.js';
 
 const $ = (id) => document.getElementById(id);
 const NEAR_RADIUS = 220;      // metres around the view centre that show real models
@@ -35,6 +36,7 @@ scene.add(gizmo.getHelper());
 gizmo.addEventListener('dragging-changed', (e) => { controls.enabled = !e.value; });
 gizmo.addEventListener('objectChange', () => {
   if (gizmo.object && gizmo.object.userData.handle) layout.handleMoved(gizmo.object);
+  else if (gizmo.object && gizmo.object.userData.pick) encs.moved(gizmo.object);
   else if (state.selected) fromNode(state.selected);
 });
 
@@ -275,10 +277,10 @@ async function loadMap(name) {
   $('names').innerHTML = names.map((n) => `<option value="${n}">`).join('');
   const start = state.records.find((r) => /playerstart|drop_start/i.test(r.name)) || state.records[0];
   if (start) lookAt(start.position, 60);
-  const items = await layout.load(name);
+  const [items, encounters] = await Promise.all([layout.load(name), encs.load(name)]);
   refreshChanges();
   setDirty(false);
-  status(`${state.records.length} objects, ${items} paths and zones`);
+  status(`${state.records.length} objects, ${items} paths and zones, ${encounters} encounters`);
 }
 
 function lookAt(p, distance = 40) {
@@ -295,6 +297,7 @@ function lookAt(p, distance = 40) {
 // ------------------------------------------------------------------ selection and edits
 function select(rec) {
   if (rec && layout.hasSelection()) layout.select(null);
+  if (rec && encs.hasSelection()) encs.select(null);
   state.selected = rec;
   gizmo.detach();
   $('selected').hidden = !rec;
@@ -482,13 +485,19 @@ async function save() {
     };
     const lay = layout.saveBody();
     let note = '';
+    const encBody = encs.saveBody();
+    if (encBody) {
+      const done = await post('/api/encounters/save', encBody);
+      encs.saved();
+      note += `; squads in ${done.files.join(', ')}`;
+    }
     if (lay) {
       const done = await post('/api/layout/save', lay);
       layout.saved();
       const parts = [];
       if (done.game) parts.push(`${done.game} game paths/zones to layout/`);
       if (done.files.length) parts.push(done.files.join(', '));
-      note = parts.length ? `; ${parts.join('; ')}` : '';
+      note += parts.length ? `; ${parts.join('; ')}` : '';
     }
     const doc = await post('/api/save', body);
     setDirty(false);
@@ -522,6 +531,7 @@ renderer.domElement.addEventListener('pointerup', (e) => {
   if (gizmo.dragging || gizmo.axis) return;
   pick(e);
   if (layout.isDrawing()) { layout.drawClick(ray); return; }
+  if (encs.isPlacing()) { encs.placeClick(ray); return; }
   // The nearest of an object or a path/zone (point handles win).
   let objectHit = null;
   if (boxes.visible) {
@@ -537,11 +547,13 @@ renderer.domElement.addEventListener('pointerup', (e) => {
       if (o) { objectHit = {distance: h.distance, rec: o.userData.rec}; break; }
     }
   }
-  const itemHit = layout.pick(ray);
-  if (itemHit && (!objectHit || itemHit.distance < objectHit.distance)) return itemHit.apply();
-  if (objectHit) return select(objectHit.rec);
+  const candidates = [layout.pick(ray), encs.pick(ray)].filter(Boolean);
+  if (objectHit) candidates.push({distance: objectHit.distance, apply: () => select(objectHit.rec)});
+  candidates.sort((a, b) => a.distance - b.distance);
+  if (candidates.length) return candidates[0].apply();
   select(null);
   layout.select(null);
+  encs.select(null);
 });
 renderer.domElement.addEventListener('dblclick', (e) => {
   pick(e);
@@ -590,6 +602,8 @@ $('search').addEventListener('change', () => {
   if (rec) { lookAt(rec.position, 30); select(rec); status(''); return; }
   const item = layout.find(q);
   if (item) { lookAt(item.points[0], 80); select(null); layout.select(item); status(''); return; }
+  const found = encs.find(q);
+  if (found) { lookAt(found.at, 30); select(null); layout.select(null); encs.select(found); status(''); return; }
   status(`Nothing matches "${q}"`, true);
 });
 window.addEventListener('keydown', (e) => {
@@ -601,8 +615,15 @@ window.addEventListener('keydown', (e) => {
   else if (k === 'c') copySelected();
   else if (k === 'enter' && layout.isDrawing()) layout.finishDraw();
   else if (k === 'insert' && layout.hasSelection()) layout.addPoint();
-  else if (k === 'delete') { if (layout.hasSelection()) layout.deletePoint(); else deleteSelected(); }
-  else if (k === 'escape') { if (layout.isDrawing()) { layout.cancelDraw(); status(''); } else { select(null); layout.select(null); } }
+  else if (k === 'delete') {
+    if (layout.hasSelection()) layout.deletePoint();
+    else if (encs.hasSelection()) encs.deleteSelected();
+    else deleteSelected();
+  } else if (k === 'escape') {
+    if (layout.isDrawing()) { layout.cancelDraw(); status(''); }
+    else if (encs.isPlacing()) { encs.cancelPlace(); status(''); }
+    else { select(null); layout.select(null); encs.select(null); }
+  }
   else if (k === 's' && (e.ctrlKey || e.metaKey)) { e.preventDefault(); if (state.dirty) save(); }
 });
 window.addEventListener('beforeunload', (e) => { if (state.dirty) { e.preventDefault(); e.returnValue = ''; } });
@@ -613,11 +634,22 @@ $('map').addEventListener('change', async () => {
 
 // ------------------------------------------------------------------ paths and zones
 let modName = '';
+const slug = (s) => s.toLowerCase().replace(/[^a-z0-9]+/g, '_').replace(/^_|_$/g, '') || 'mod';
 const layout = createLayout({
   scene, gizmo, heightAt, threePos, gamePos, status, $, setDirty, lookAt,
-  deselectObject: () => select(null),
+  deselectObject: () => { select(null); encs.select(null); },
   modName: () => modName,
   terrain: () => terrainMesh,
+  encounterFiles: () => encs.files(),
+});
+const encs = createEncounters({
+  scene, gizmo, heightAt, threePos, gamePos, status, $, setDirty, camera, slug,
+  deselectOthers: () => { select(null); layout.select(null); },
+  modName: () => modName,
+  terrain: () => terrainMesh,
+  layoutFiles: () => layout.files(),
+  objectNames: () => new Set(state.records.filter((r) => !r.removed)
+    .map((r) => (r.copyName || r.name || '').toLowerCase()).filter(Boolean)),
 });
 $('show-objects').addEventListener('change', (e) => {
   const on = e.target.checked;

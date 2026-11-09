@@ -19,8 +19,11 @@
   <label class="check"><input id="show-objects" type="checkbox" checked> Objects</label>
   <label class="check"><input id="show-paths" type="checkbox" checked> Paths</label>
   <label class="check"><input id="show-zones" type="checkbox" checked> Zones</label>
+  <label class="check"><input id="show-squads" type="checkbox" checked> Squads</label>
   <button id="new-path">New path</button>
   <button id="new-zone">New zone</button>
+  <button id="new-squad">New squad</button>
+  <datalist id="templates"></datalist>
   <span class="spacer"></span>
   <span id="status">Loading...</span>
   <button id="save" disabled>Save</button>
@@ -90,6 +93,41 @@
         <button id="item-revert">Undo changes</button>
       </div>
       <p id="item-note" class="hint"></p>
+    </div>
+    <div id="squad-form" hidden>
+      <h2>New squad</h2>
+      <label class="field">Layer file (in encounters/) <select id="sq-file"></select></label>
+      <label class="field">Encounter <select id="sq-enc"></select></label>
+      <label class="field" id="sq-enc-new-row">New encounter's name <input id="sq-enc-new" type="text" spellcheck="false"></label>
+      <label class="field">Squad name <input id="sq-name" type="text" spellcheck="false"></label>
+      <label class="field">Members copy <input id="sq-template" type="text" list="templates" spellcheck="false"></label>
+      <label class="field">Members <input id="sq-count" type="number" min="1" max="12"></label>
+      <p class="hint">Then click the ground: members stand in a row there, facing you. A new encounter gets spawn point set A 10 m north.</p>
+      <div class="buttons"><button id="sq-place">Place</button><button id="sq-cancel">Cancel</button></div>
+    </div>
+    <div id="enc" hidden>
+      <h2 id="enc-title"></h2>
+      <dl>
+        <dt>What</dt><dd id="enc-what"></dd>
+        <dt>Copy of</dt><dd id="enc-from"></dd>
+        <dt>Encounter</dt><dd id="enc-name"></dd>
+        <dt>Squad</dt><dd id="enc-squad"></dd>
+        <dt>Layer</dt><dd id="enc-layer"></dd>
+      </dl>
+      <div class="xyz">
+        <label>X <input id="ex" type="number" step="0.1"></label>
+        <label>Y <input id="ey" type="number" step="0.1"></label>
+        <label>Z <input id="ez" type="number" step="0.1"></label>
+        <label id="eh-row">Heading <input id="eh" type="number" step="5"></label>
+      </div>
+      <div class="buttons">
+        <button id="enc-add-member">Add member</button>
+        <button id="enc-add-point">Add spawn point</button>
+        <button id="enc-delete">Delete</button>
+        <button id="enc-delete-squad">Delete squad</button>
+        <button id="enc-delete-enc">Delete encounter</button>
+      </div>
+      <p id="enc-note" class="hint"></p>
     </div>
     <h3>Changes <span id="count"></span></h3>
     <ul id="changes"></ul>

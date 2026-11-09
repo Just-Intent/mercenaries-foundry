@@ -371,6 +371,111 @@ class Scene:
             done["files"].append(f"encounters/{fname}")
         return done
 
+    # ------------------------------------------------------------ encounters
+    # An encounter has named spawn point sets and squads; a squad's members
+    # are objects (copies of a template or placed character in a mod layer;
+    # in the game, objects whose "encounter" and "squad" properties name it).
+
+    def encounters(self, map_name):
+        from .. import aidata
+        m = map_name.lower()
+        members = {}
+        for o in self.all_objects():
+            if not self._in_map(o["layer"], m):
+                continue
+            props = {k.lower(): v for k, v in o["properties"]}
+            enc, sq = props.get("encounter", "none"), props.get("squad", "none")
+            if enc.lower() == "none":
+                continue
+            rows = [list(o["rotation"][0:3]), list(o["rotation"][3:6]), list(o["rotation"][6:9])]
+            members.setdefault((enc.lower(), sq.lower()), []).append(
+                {"name": o["name"], "model": o["model"], "position": list(o["position"]),
+                 "yaw": round(heading(rows), 2)})
+        game = []
+        for a in self.archives:
+            for r in a.records:
+                if aidata.KINDS.get(r.kind) != "encounter":
+                    continue
+                layer = self.names().get(r.key)
+                if not layer or not self._in_map(layer, m):
+                    continue
+                for tag, name, node in aidata.items(aidata.to_json(a.read(r), "encounter")):
+                    if tag != "enc_" or not name:
+                        continue
+                    sets, squads = {}, []
+                    for n in aidata._walk(node["children"]):
+                        if n.get("tag") == "PSET":
+                            nm = next((c.get("text") for c in n["children"] if c["tag"] == "NAME"), "")
+                            sets[nm] = next((c["points"] for c in n["children"] if c["tag"] == "PNTS"), [])
+                        elif n.get("tag") == "SQD_":
+                            nm = next((c.get("text") for c in n["children"] if c["tag"] == "NAME"), "")
+                            fp = next((c.get("sets", []) for c in n["children"] if c["tag"] == "FPNT"), [])
+                            squads.append({"name": nm, "points": fp,
+                                           "members": members.get((name.lower(), nm.lower()), [])})
+                    game.append({"name": name, "layer": layer, "points": sets, "squads": squads})
+        mod = []
+        edir = self.mod / "encounters"
+        for f in sorted(edir.glob("*.json")) if edir.is_dir() else []:
+            doc = json.loads(f.read_text(encoding="utf-8"))
+            if (doc.get("map") or "").lower() == m:
+                mod.append({"file": f.name, "layer": f.stem, "encounters": doc.get("encounters", [])})
+        return {"game": game, "mod": mod}
+
+    def templates(self):
+        """Objects a squad member can copy: templates (template_*), with
+        their kind, faction and model."""
+        out = []
+        for o in self.all_objects():
+            if not o["name"].lower().startswith("template_"):
+                continue
+            props = {k.lower(): v for k, v in o["properties"]}
+            out.append({"name": o["name"], "type": props.get("objecttype", ""),
+                        "faction": props.get("faction", ""), "model": o["model"], "layer": o["layer"]})
+        out.sort(key=lambda t: (t["type"] != "human", t["name"].lower()))
+        return out
+
+    def save_encounters(self, map_name, files):
+        """files: {layer file name: [encounter, ...]}, replacing the
+        encounters of those mod layer files (new files are made for map_name)."""
+        import re
+        taken = {o["name"].lower() for o in self.all_objects() if o["name"]}
+        world_layers = {(self.names().get(r.key) or "").lower() for a in self.archives for r in a.records
+                        if r.kind == name_hash("world")}
+        seen = set()
+        for fname, encs in files.items():
+            if not re.fullmatch(r"[A-Za-z0-9_]+\.json", fname):
+                raise ValueError(f"layer file names use letters, digits and _ only: {fname!r}")
+            for enc in encs:
+                sets = enc.get("points", {})
+                for sq in enc.get("squads", []):
+                    for s in sq.get("points", []):
+                        if s not in sets:
+                            raise ValueError(f"squad {sq['name']} uses spawn points {s!r}, which encounter "
+                                             f"{enc['name']} doesn't have")
+                    for mem in sq.get("members", []):
+                        n = mem["name"].lower()
+                        if n in taken or n in seen:
+                            raise ValueError(f"the name {mem['name']!r} is already used; members need new names")
+                        seen.add(n)
+                        mem["position"] = [round(float(v), 3) for v in mem["position"]]
+                for k in list(sets):
+                    sets[k] = [[round(float(v), 3) for v in p] for p in sets[k]]
+        for fname, encs in files.items():
+            p = self.mod / "encounters" / fname
+            if p.exists():
+                doc = json.loads(p.read_text(encoding="utf-8"))
+            else:
+                if p.stem.lower() in world_layers:
+                    raise ValueError(f"the game already has a layer named {p.stem!r}")
+                doc = {"map": map_name.upper()}
+            if encs:
+                doc["encounters"] = encs
+            else:
+                doc.pop("encounters", None)
+            p.parent.mkdir(parents=True, exist_ok=True)
+            p.write_text(json.dumps(doc, indent=1) + "\n", encoding="utf-8")
+        return {"files": [f"encounters/{f}" for f in files]}
+
     def _require(self, version):
         """Raise mod.json "requires" to at least version."""
         from ..modbuild import _version

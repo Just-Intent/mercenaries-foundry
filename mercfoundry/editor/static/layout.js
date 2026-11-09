@@ -236,6 +236,7 @@ export function createLayout(ctx) {
     st.draw = {kind, points: [], line: null};
     $('draw-name').value = `${base}${k}`;
     const fresh = `${slug(ctx.modName())}_${st.map}.json`;
+    for (const f of ctx.encounterFiles()) if (!st.files.includes(f)) st.files.push(f);
     const files = [...new Set([...st.files, fresh])];
     $('draw-file').innerHTML = files.map((f) => `<option>${f}</option>`).join('');
     $('draw-file').value = st.files[0] || fresh;
@@ -392,6 +393,7 @@ export function createLayout(ctx) {
   return {
     load, pick, select, handleMoved, drawClick, finishDraw, cancelDraw, saveBody, saved, find,
     isDrawing: () => !!st.draw,
+    files: () => [...st.files],
     hasSelection: () => !!st.selected,
     deletePoint, addPoint,
   };
