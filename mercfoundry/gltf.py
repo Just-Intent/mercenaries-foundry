@@ -6,8 +6,11 @@
 - Skinned pieces get a skin. Their bone indices refer to the model's joints
   whose names start with "bone", in skeleton order (inferred from retail
   data: it fits all 97 skinned models). One bone per vertex, weight 1.
-- Textures are embedded as PNG; textures with transparency use alpha
-  masking.
+- Textures are embedded as PNG. Alpha masking (cut-outs) is used where the
+  game uses it: the piece's material flags (MTRL word 5) have bit 0x10, as on
+  leaves and fences (0x111), and the texture has transparent pixels. Plain
+  surfaces (0x100, e.g. building walls) keep other data in their alpha and are
+  drawn solid.
 
 The game's axes are left-handed; glTF's are right-handed, so Z is negated
 (points, normals, quaternion x/y) and triangle winding is reversed.
@@ -85,6 +88,12 @@ class _Writer:
         return len(self.accessors) - 1
 
 
+def cutout_flag(piece):
+    """Whether the game alpha-tests this piece's texture (MTRL word 5, bit 0x10)."""
+    words = piece.material or ()
+    return len(words) > 5 and bool(words[5] & 0x10)
+
+
 def export(model, lod=0, damaged=False, textures=None, texture_name=None, animations=(),
            in_place=False) -> bytes:
     """Return .glb bytes. textures: {texture hash: (png bytes, has_alpha)};
@@ -116,12 +125,12 @@ def export(model, lod=0, damaged=False, textures=None, texture_name=None, animat
     joint_by_hash = {name_hash(j.name): i for i, j in enumerate(model.joints)}
     xforms = mdl.joint_transforms(model.joints)
 
-    # Materials, one per texture.
+    # Materials, one per texture and cut-out setting.
     material_of = {}
 
-    def material(texture):
-        if texture in material_of:
-            return material_of[texture]
+    def material(texture, cutout):
+        if (texture, cutout) in material_of:
+            return material_of[(texture, cutout)]
         m = {"name": texture_name(texture),
              "pbrMetallicRoughness": {"metallicFactor": 0.0, "roughnessFactor": 1.0}}
         if texture in textures:
@@ -133,12 +142,12 @@ def export(model, lod=0, damaged=False, textures=None, texture_name=None, animat
             tex = len(gl.setdefault("textures", []))
             gl["textures"].append({"source": image, "sampler": 0})
             m["pbrMetallicRoughness"]["baseColorTexture"] = {"index": tex}
-            if has_alpha:
+            if has_alpha and cutout:
                 m["alphaMode"] = "MASK"
                 m["alphaCutoff"] = 0.5
-        material_of[texture] = len(gl["materials"])
+        material_of[(texture, cutout)] = len(gl["materials"])
         gl["materials"].append(m)
-        return material_of[texture]
+        return material_of[(texture, cutout)]
 
     # Skin shared by all skinned pieces.
     palette = skin_palette(model.joints)
@@ -197,7 +206,7 @@ def export(model, lod=0, damaged=False, textures=None, texture_name=None, animat
         mesh = len(gl["meshes"])
         gl["meshes"].append({"name": mdl.piece_object_name(model, index),
                              "primitives": [{"attributes": attrs, "indices": indices,
-                                             "material": material(p.texture)}]})
+                                             "material": material(p.texture, cutout_flag(p))}]})
         node = {"name": mdl.piece_object_name(model, index), "mesh": mesh}
         node_index = len(gl["nodes"])
         gl["nodes"].append(node)

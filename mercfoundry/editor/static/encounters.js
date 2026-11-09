@@ -18,7 +18,10 @@ export function createEncounters(ctx) {
   const group = new THREE.Group();
   scene.add(group);
   const mats = {};
-  const mat = (key) => (mats[key] ||= new THREE.MeshLambertMaterial({color: COLOURS[key]}));
+  // The game's spawn points are many (hundreds on a map): small and faint.
+  const mat = (key) => (mats[key] ||= new THREE.MeshLambertMaterial(
+    key === 'game-point' ? {color: COLOURS[key], transparent: true, opacity: 0.45, depthWrite: false}
+                         : {color: COLOURS[key]}));
   const st = {map: null, game: [], mod: [], templates: [], selected: null, dirty: new Set(), place: null, show: true};
 
   // The squad picker: templates the running game has loaded here first (the
@@ -55,6 +58,7 @@ export function createEncounters(ctx) {
           const sel = {source, file, layer, enc, set, index};
           const m = new THREE.Mesh(POINT_GEO, mat(same(sel, st.selected) ? 'selected' : `${source}-point`));
           m.position.copy(threePos(p));
+          if (source === 'game') m.scale.setScalar(0.5);
           m.userData.pick = sel;
           group.add(m);
         });
@@ -116,6 +120,21 @@ export function createEncounters(ctx) {
     if (!hit) return null;
     const sel = hit.object.userData.pick;
     return {distance: hit.distance, apply: () => { ctx.deselectOthers(); select({...sel}); }};
+  }
+
+  // Hover text for whatever is under the ray, or null.
+  function hoverText(ray) {
+    if (!st.show) return null;
+    const hit = ray.intersectObjects(group.children, true)[0];
+    if (!hit) return null;
+    const sel = hit.object.userData.pick;
+    const who = sel.source === 'game' ? 'game' : 'mod';
+    if (sel.member) {
+      return {distance: hit.distance, title: sel.member.name || '(squad member)',
+              text: `${who} squad member of ${sel.squad.name}, encounter ${sel.enc.name}`};
+    }
+    return {distance: hit.distance, title: `Spawn point ${sel.set}${sel.index}`,
+            text: `${who} encounter ${sel.enc.name}: where its squads appear`};
   }
 
   function moved(node) {
@@ -403,7 +422,7 @@ export function createEncounters(ctx) {
   $('show-squads').addEventListener('change', (e) => { st.show = e.target.checked; if (!st.show) select(null); rebuild(); });
 
   return {
-    load, pick, select, moved, placeClick, cancelPlace, saveBody, saved, find, deleteSelected, setLoaded,
+    load, pick, select, moved, placeClick, hoverText, cancelPlace, saveBody, saved, find, deleteSelected, setLoaded,
     isPlacing: () => !!st.place,
     files: () => st.mod.map((f) => f.file),
     hasSelection: () => !!st.selected,

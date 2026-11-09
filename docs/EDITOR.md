@@ -20,8 +20,12 @@ toolkit bundle run it the same way: `foundry\python\python.exe foundry\mercfound
   `GeometryFile`, which for some, such as soldiers and night lampposts, differs
   from the model its record names). Farther ones are see-through stand-ins the
   size of their model, coloured by kind: buildings tan, trees green, props
-  orange, characters red, vehicles blue, markers yellow. Hovering over an object
-  shows its name, model and kind.
+  orange, characters red, vehicles blue, markers yellow. Hovering over anything
+  (object, squad member, spawn point, path or zone) says what it is, and the
+  panel's **Key** explains the colours. The game's own spawn points are small,
+  faint cones (a map has hundreds). Textures use alpha cut-outs only where the
+  game does (leaves, fences), and surfaces show from both sides, so buildings
+  look as they do in game.
 - The terrain is what the game will have: when the mod sits in the game's `mods`
   folder, the editor applies the terrain edits of every enabled source mod, in
   load order, as `mod sync` does. Elsewhere it applies the mod's own.

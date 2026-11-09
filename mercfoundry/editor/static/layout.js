@@ -139,6 +139,22 @@ export function createLayout(ctx) {
     return {distance: hit.distance, apply: () => { ctx.deselectObject(); select(item); }};
   }
 
+  function hoverText(ray) {
+    if (st.draw) return null;
+    ray.params.Line.threshold = 1.5;
+    const lines = [];
+    for (const g of group.children) {
+      if (!g.visible || !g.userData.item) continue;
+      for (const c of g.children) if (c.isLine) lines.push(c);
+    }
+    const hit = ray.intersectObjects(lines, false)[0];
+    if (!hit) return null;
+    const it = hit.object.parent.userData.item;
+    const type = it.properties && it.properties.type ? ` (${it.properties.type})` : '';
+    return {distance: hit.distance, title: it.name,
+            text: `${it.source} ${it.kind === 'path' ? 'path' : 'zone' + type}, layer ${it.layer}`};
+  }
+
   function handleMoved(handle) {
     const {item, index} = handle.userData.handle;
     const p = handle.position.clone().sub(new THREE.Vector3(0, LIFT, 0));
@@ -391,7 +407,7 @@ export function createLayout(ctx) {
   $('show-zones').addEventListener('change', (e) => setVisible('boundary', e.target.checked));
 
   return {
-    load, pick, select, handleMoved, drawClick, finishDraw, cancelDraw, saveBody, saved, find,
+    load, pick, select, handleMoved, hoverText, drawClick, finishDraw, cancelDraw, saveBody, saved, find,
     isDrawing: () => !!st.draw,
     files: () => [...st.files],
     hasSelection: () => !!st.selected,

@@ -58,10 +58,19 @@ class GltfTests(unittest.TestCase):
     def test_textures_embedded_with_alpha_mode(self):
         m = sample()
         img = png.encode(1, 1, bytes((255, 0, 0, 0)), 4)
-        doc, binary = gltf.read(gltf.export(m, textures={name_hash("tex"): (img, True)}))
+
+        def textured_material(flags):
+            for p in m.pieces:
+                p.material = (0, 0, 0, p.texture, 0, flags, 0)
+            doc, binary = gltf.read(gltf.export(m, textures={name_hash("tex"): (img, True)}))
+            return doc, binary, [x for x in doc["materials"] if "baseColorTexture" in x["pbrMetallicRoughness"]][0]
+
+        # Cut-outs only where the game alpha-tests (material flag 0x10, as on leaves).
+        doc, binary, mat = textured_material(0x111)
         self.assertEqual(len(doc["images"]), 1)
-        mat = [x for x in doc["materials"] if "baseColorTexture" in x["pbrMetallicRoughness"]][0]
         self.assertEqual(mat["alphaMode"], "MASK")
+        _, _, mat = textured_material(0x100)        # e.g. a building wall: alpha holds other data
+        self.assertNotIn("alphaMode", mat)
         view = doc["bufferViews"][doc["images"][0]["bufferView"]]
         self.assertEqual(binary[view["byteOffset"]:view["byteOffset"] + 8], b"\x89PNG\r\n\x1a\n")
 

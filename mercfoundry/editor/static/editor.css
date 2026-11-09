@@ -39,3 +39,12 @@ dd { margin: 0; word-break: break-all; }
 #tip { position: absolute; z-index: 5; pointer-events: none; padding: 4px 8px; border-radius: 4px; white-space: pre;
        background: rgba(20, 23, 27, 0.88); border: 1px solid #4a5059; color: #e8e8e8; font-size: 12px; }
 #tip b { color: #fff; }
+#key { margin: 12px 0 4px; }
+#key summary { cursor: pointer; color: #b8c2cc; font-weight: 600; }
+.key { list-style: none; padding: 0; margin: 6px 0; }
+.key li { display: flex; align-items: center; gap: 6px; margin: 3px 0; flex-wrap: wrap; }
+.key li.note { color: #8d98a3; font-size: 12px; }
+.key i { display: inline-block; width: 12px; height: 12px; border-radius: 2px; flex: none; }
+.key i.dot { border-radius: 50%; }
+.key i.line { height: 3px; width: 16px; }
+.key i.cone { width: 0; height: 0; border-radius: 0; border-left: 6px solid transparent; border-right: 6px solid transparent; border-top: 11px solid; }

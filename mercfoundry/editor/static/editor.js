@@ -182,7 +182,12 @@ function loadModel(name) {
   if (!modelCache.has(name)) {
     modelCache.set(name, fetch(`/api/model/${encodeURIComponent(name)}.glb`)
       .then((r) => { if (!r.ok) throw new Error(r.statusText); return r.arrayBuffer(); })
-      .then((buf) => new Promise((ok, bad) => loader.parse(buf, '', (g) => ok(g.scene), bad)))
+      .then((buf) => new Promise((ok, bad) => loader.parse(buf, '', (g) => {
+        // Both sides: some game surfaces (roofs, for one) face the other way
+        // from how the export winds them, and would vanish from above.
+        g.scene.traverse((o) => { if (o.isMesh) for (const m of [].concat(o.material)) m.side = THREE.DoubleSide; });
+        ok(g.scene);
+      }, bad)))
       .catch(() => null));
   }
   return modelCache.get(name);
@@ -651,14 +656,22 @@ renderer.domElement.addEventListener('pointermove', (e) => {
     hoverPending = null;
     const rec = boxes ? objectUnder(e) : null;
     const tip = $('tip');
-    if (!rec) { tip.hidden = true; return; }
-    const title = rec.copyName ? `${rec.copyName} (copy)` : rec.name || '(unnamed)';
-    const what = [rec.geometry || rec.model, rec.type].filter(Boolean).join(' · ');
-    const extra = rec.context ? `\nfrom ${rec.by}` : rec.deleted ? '\nremoved' : '';
+    // Objects first; else a squad member, spawn point, path or zone.
+    let title, text;
+    if (rec) {
+      title = rec.copyName ? `${rec.copyName} (copy)` : rec.name || '(unnamed)';
+      text = [rec.geometry || rec.model, rec.type].filter(Boolean).join(' · ') +
+             (rec.context ? `\nfrom ${rec.by}` : rec.deleted ? '\nremoved' : '');
+    } else {
+      const other = [encs.hoverText(ray), layout.hoverText(ray)].filter(Boolean)
+        .sort((a, b) => a.distance - b.distance)[0];
+      if (!other) { tip.hidden = true; return; }
+      ({title, text} = other);
+    }
     tip.innerHTML = '';
     const b = document.createElement('b');
     b.textContent = title;
-    tip.append(b, document.createTextNode(`\n${what}${extra}`));
+    tip.append(b, document.createTextNode(`\n${text}`));
     const r = view.getBoundingClientRect();
     tip.style.left = `${Math.min(e.clientX - r.left + 14, r.width - 220)}px`;
     tip.style.top = `${e.clientY - r.top + 14}px`;

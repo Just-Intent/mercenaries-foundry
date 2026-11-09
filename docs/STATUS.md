@@ -66,6 +66,7 @@
 - Editor live link: Foundry Console polls the editor (WinHTTP, its own thread) with the player's position and runs its live edits on the game thread: object moves, turns and removals, and teleporting the player. Tested in game: the player marker follows the player, objects moved in the editor move in game, and teleporting works on foot (in a vehicle the game puts the player back, and the console says so).
 - Editor live spawning: new squad members and copies of named objects spawn in the running game (Spawner_SpawnTemplate) and then move and delete live by name; the squad picker lists the templates the game has loaded where the player is first. Tested in game: a squad of a loaded template spawned; the picker listed the loaded templates first.
 - Editor objects are recognisable: models load from each object's GeometryFile (fixing 208 objects on the opening map, such as soldiers, lampposts and location markers, whose own model names don't exist), far-away stand-ins are sized to their model's bounds and coloured by kind, and hovering names an object.
+- Editor buildings look right: glTF exports use alpha cut-outs only where the game alpha-tests (material flag 0x10, as on leaves; building walls keep other data in their alpha and were cut full of holes), and the editor draws surfaces from both sides (roofs vanished from above). The game's spawn points are smaller and fainter, hovering names spawn points, squad members, paths and zones, and the panel has a colour key.
 - 228 tests pass.
 
 ## Fixed from retail data
