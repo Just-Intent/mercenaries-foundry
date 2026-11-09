@@ -65,6 +65,7 @@
 - Editor shows other mods: objects other enabled source mods add, move or remove (from their object rules and encounter layers, applied in load order as a build would) appear read only, labelled with the mod. Tested on the installed mods: Terrain Hill's patroller and collision-test props on the opening map, and both contract mods' soldiers in free roam.
 - Editor live link: Foundry Console polls the editor (WinHTTP, its own thread) with the player's position and runs its live edits on the game thread: object moves, turns and removals, and teleporting the player. Tested in game: the player marker follows the player, objects moved in the editor move in game, and teleporting works on foot (in a vehicle the game puts the player back, and the console says so).
 - Editor live spawning: new squad members and copies of named objects spawn in the running game (Spawner_SpawnTemplate) and then move and delete live by name; the squad picker lists the templates the game has loaded where the player is first. Tested in game: a squad of a loaded template spawned; the picker listed the loaded templates first.
+- Editor objects are recognisable: models load from each object's GeometryFile (fixing 208 objects on the opening map, such as soldiers, lampposts and location markers, whose own model names don't exist), far-away stand-ins are sized to their model's bounds and coloured by kind, and hovering names an object.
 - 228 tests pass.
 
 ## Fixed from retail data

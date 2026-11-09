@@ -7,6 +7,7 @@ GET  /api/terrain/<map>.json   terrain size, spacing and origin
 GET  /api/terrain/<map>.bin    float32 heights, row by row
 GET  /api/objects/<map>        the map's objects, with the mod's editor edits
 GET  /api/model/<name>.glb     a model with its textures
+GET  /api/bounds/<map>         each drawn model's bounds, for far-away stand-ins
 GET  /api/layout/<map>         paths and zones: the game's (with the mod's layout
                                changes) and the mod's own (encounters/*.json)
 POST /api/layout/save          {"map", "game": [...], "mod": {file: {...}}}
@@ -96,6 +97,9 @@ def make_handler(scene: Scene, mod_name: str, live: Live = None):
                         objs = scene.objects(path[len("/api/objects/"):])
                         edits = scene.load_edits()
                     return self.send(200, {"objects": objs, "edits": edits})
+                if path.startswith("/api/bounds/"):
+                    with lock:
+                        return self.send(200, scene.bounds(path[len("/api/bounds/"):]))
                 if path == "/api/live/state":
                     return self.send(200, live.state())
                 if path.startswith("/api/context/"):

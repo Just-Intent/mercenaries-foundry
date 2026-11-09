@@ -58,7 +58,8 @@ const ghostMat = new THREE.MeshBasicMaterial({color: 0xff4040, transparent: true
 let terrainMesh = null, boxes = null;
 const loader = new GLTFLoader();
 const modelCache = new Map();
-const boxGeo = new THREE.BoxGeometry(2, 2, 2).translate(0, 1, 0);
+const boxGeo = new THREE.BoxGeometry(1, 1, 1);            // stand-ins: scaled to each model's bounds
+const bounds = {};                                          // model -> [min x, y, z, max x, y, z] (game axes)
 const selMat = new THREE.MeshLambertMaterial({color: 0xffcc33});
 
 const threePos = (p) => new THREE.Vector3(p[0], p[1], -p[2]);
@@ -83,10 +84,28 @@ function heading(m3) {
   const gx = m3[0], gz = -m3[2];
   return Math.round(THREE.MathUtils.radToDeg(Math.atan2(-gz, gx)) * 100) / 100;
 }
-function colourOf(name) {
-  let h = 0;
-  for (const c of name) h = (h * 31 + c.charCodeAt(0)) >>> 0;
-  return new THREE.Color().setHSL((h % 360) / 360, 0.45, 0.55);
+// Stand-in colours by kind of object (objectType).
+const KIND_COLOURS = [
+  [/^(building|static|fixture|bridge)/i, 0xb7ab92],
+  [/^tree/i, 0x4f8a3c],
+  [/^(prop|constrained|crate|itemcache|destructible)/i, 0xc58a4a],
+  [/^human/i, 0xe0504a],
+  [/^(jeep|tank|car|truck|apc|heli|plane|boat|bike|vehicle)/i, 0x4a8ee0],
+  [/^(location|marker|spawn|trigger)/i, 0xf0d040],
+];
+function colourOf(rec) {
+  for (const [re, c] of KIND_COLOURS) if (re.test(rec.type || '')) return new THREE.Color(c);
+  return new THREE.Color(0xa0a8b0);
+}
+// A unit box's placement inside an object: its model's bounds (centre and
+// size; three axes flip z), or a 1.5 m marker for models without them.
+function standIn(rec) {
+  const b = bounds[rec.geometry || rec.model];
+  const m = new THREE.Matrix4();
+  if (!b) return m.makeTranslation(0, 0.75, 0).multiply(new THREE.Matrix4().makeScale(1.5, 1.5, 1.5));
+  const size = [Math.max(b[3] - b[0], 0.3), Math.max(b[4] - b[1], 0.3), Math.max(b[5] - b[2], 0.3)];
+  m.makeTranslation((b[0] + b[3]) / 2, (b[1] + b[4]) / 2, -(b[2] + b[5]) / 2);
+  return m.multiply(new THREE.Matrix4().makeScale(...size));
 }
 
 // ------------------------------------------------------------------ status
@@ -154,7 +173,7 @@ function transformOf(rec) {
 function placeBox(rec) {
   if (rec.slot >= boxes.instanceMatrix.count) return;
   const hidden = rec.node || rec.deleted || rec.removed || rec.hiddenBy;
-  const m = hidden ? new THREE.Matrix4().makeScale(0, 0, 0) : transformOf(rec);
+  const m = hidden ? new THREE.Matrix4().makeScale(0, 0, 0) : transformOf(rec).multiply(standIn(rec));
   boxes.setMatrixAt(rec.slot, m);
   boxes.instanceMatrix.needsUpdate = true;
 }
@@ -175,14 +194,15 @@ function ensureNode(rec) {
   node.userData.rec = rec;
   node.matrixAutoUpdate = true;
   transformOf(rec).decompose(node.position, node.quaternion, node.scale);
-  const box = new THREE.Mesh(boxGeo, new THREE.MeshLambertMaterial({color: colourOf(rec.model)}));
+  const box = new THREE.Mesh(boxGeo, new THREE.MeshLambertMaterial({color: colourOf(rec)}));
+  standIn(rec).decompose(box.position, box.quaternion, box.scale);
   node.add(box);
   scene.add(node);
   rec.node = node;
   state.nodes.add(rec);
   placeBox(rec);
   if (rec.deleted) ghost(node);
-  loadModel(rec.model).then((model) => {
+  loadModel(rec.geometry || rec.model).then((model) => {
     if (!model || rec.node !== node) return;
     node.remove(box);
     node.add(model.clone(true));
@@ -225,7 +245,7 @@ function addRecord(rec) {
   state.records.push(rec);
   state.byId.set(rec.id, rec);
   if (rec.slot >= boxes.instanceMatrix.count) return;     // beyond the batch: shown only up close
-  boxes.setColorAt(rec.slot, colourOf(rec.model));
+  boxes.setColorAt(rec.slot, colourOf(rec));
   boxes.instanceColor.needsUpdate = true;
   placeBox(rec);
 }
@@ -240,18 +260,22 @@ async function loadMap(name) {
   if (boxes) scene.remove(boxes);
   state.records = []; state.byId.clear(); state.moved = {}; state.copies = []; state.removed = new Set();
 
-  const [meta, buf, objs] = await Promise.all([
+  const [meta, buf, objs, sizes] = await Promise.all([
     getJSON(`/api/terrain/${name}.json`),
     fetch(`/api/terrain/${name}.bin`).then((r) => r.arrayBuffer()),
     getJSON(`/api/objects/${name}`),
+    getJSON(`/api/bounds/${name}`),
   ]);
+  Object.assign(bounds, sizes);
   state.map = name;
   state.terrain = {meta, heights: new Float32Array(buf)};
   terrainMesh = buildTerrain(meta, state.terrain.heights);
   scene.add(terrainMesh);
 
   const capacity = objs.objects.length + 4096;     // room for copies and other mods' objects
-  boxes = new THREE.InstancedMesh(boxGeo, new THREE.MeshLambertMaterial(), capacity);
+  // See-through, so big stand-ins (a forest model can cover a hillside) show
+  // where things are without hiding what's behind them.
+  boxes = new THREE.InstancedMesh(boxGeo, new THREE.MeshLambertMaterial({transparent: true, opacity: 0.45, depthWrite: false}), capacity);
   boxes.count = 0;
   boxes.instanceColor = new THREE.InstancedBufferAttribute(new Float32Array(capacity * 3), 3);
   scene.add(boxes);
@@ -305,6 +329,7 @@ async function loadContext(name, summary) {
     dropNode(rec, true);
     placeBox(rec);
   }
+  try { Object.assign(bounds, await getJSON(`/api/bounds/${name}`)); } catch { /* boxes stay markers */ }
   for (const o of ctx.added) {
     addRecord({...o, context: true, original: {position: o.position, rotation: o.rotation}});
   }
@@ -439,6 +464,7 @@ function addCopy(src, name, position, rotation, select_ = true) {
   if (!src) return null;
   const rec = {
     id: `copy:${copySerial++}`, layer: src.layer, name: src.name, model: src.model,
+    geometry: src.geometry, type: src.type,
     position, rotation, copyName: name, source: src.id,
   };
   addRecord(rec);
@@ -581,7 +607,7 @@ renderer.domElement.addEventListener('pointerup', (e) => {
   if (encs.isPlacing()) { encs.placeClick(ray); return; }
   // The nearest of an object or a path/zone (point handles win).
   let objectHit = null;
-  if (boxes.visible) {
+  if (boxes && boxes.visible) {        // (no map yet while loading)
     const targets = [boxes, ...[...state.nodes].map((r) => r.node)];
     for (const h of ray.intersectObjects(targets, true)) {
       if (h.object === boxes) {
@@ -602,6 +628,44 @@ renderer.domElement.addEventListener('pointerup', (e) => {
   layout.select(null);
   encs.select(null);
 });
+// Hover: what an object is (name, model, kind), without selecting it.
+let hoverPending = null;
+function objectUnder(e) {
+  pick(e);
+  const targets = [boxes, ...[...state.nodes].map((r) => r.node)].filter((t) => t && t.visible);
+  for (const h of ray.intersectObjects(targets, true)) {
+    if (h.object === boxes) {
+      const rec = state.records.find((r) => r.slot === h.instanceId);
+      if (rec && !rec.node && !rec.removed) return rec;
+      continue;
+    }
+    let o = h.object;
+    while (o && !o.userData.rec) o = o.parent;
+    if (o) return o.userData.rec;
+  }
+  return null;
+}
+renderer.domElement.addEventListener('pointermove', (e) => {
+  if (hoverPending || e.buttons) { if (e.buttons) $('tip').hidden = true; return; }
+  hoverPending = requestAnimationFrame(() => {
+    hoverPending = null;
+    const rec = boxes ? objectUnder(e) : null;
+    const tip = $('tip');
+    if (!rec) { tip.hidden = true; return; }
+    const title = rec.copyName ? `${rec.copyName} (copy)` : rec.name || '(unnamed)';
+    const what = [rec.geometry || rec.model, rec.type].filter(Boolean).join(' · ');
+    const extra = rec.context ? `\nfrom ${rec.by}` : rec.deleted ? '\nremoved' : '';
+    tip.innerHTML = '';
+    const b = document.createElement('b');
+    b.textContent = title;
+    tip.append(b, document.createTextNode(`\n${what}${extra}`));
+    const r = view.getBoundingClientRect();
+    tip.style.left = `${Math.min(e.clientX - r.left + 14, r.width - 220)}px`;
+    tip.style.top = `${e.clientY - r.top + 14}px`;
+    tip.hidden = false;
+  });
+});
+renderer.domElement.addEventListener('pointerleave', () => { $('tip').hidden = true; });
 renderer.domElement.addEventListener('dblclick', (e) => {
   pick(e);
   const hit = ray.intersectObject(terrainMesh)[0];

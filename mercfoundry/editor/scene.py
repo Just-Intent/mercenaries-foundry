@@ -31,6 +31,14 @@ def from_three(m3):
     return [[g[r][c] for r in range(3)] for c in range(3)]
 
 
+def look(o):
+    """What the editor draws for an object: the model the game draws (its
+    GeometryFile, which some objects' own model field doesn't name, e.g. night
+    lampposts and soldiers) and its kind (objectType)."""
+    props = {k.lower(): v for k, v in o["properties"]}
+    return {"geometry": props.get("geometryfile") or o["model"], "type": props.get("objecttype", "")}
+
+
 def heading(rows):
     return find.yaw([v for row in rows for v in row])
 
@@ -135,7 +143,34 @@ class Scene:
                 continue
             rows = [list(o["rotation"][0:3]), list(o["rotation"][3:6]), list(o["rotation"][6:9])]
             out.append({"id": f"{o['layer']}:{o['index']}", "layer": o["layer"], "name": o["name"],
-                        "model": o["model"], "position": list(o["position"]), "rotation": to_three(rows)})
+                        "model": o["model"], **look(o),
+                        "position": list(o["position"]), "rotation": to_three(rows)})
+        return out
+
+    def bounds(self, map_name):
+        """{model: [min x, y, z, max x, y, z]} for the models this map's objects
+        draw (from each model's header), for sizing far-away stand-ins."""
+        import struct
+        from .. import ucfb
+        if not hasattr(self, "_bounds"):
+            self._bounds = {}
+        want = {o["geometry"] for o in self.objects(map_name)}
+        want |= {a["geometry"] for a in self.context_objects(map_name)["added"]} if getattr(self, "_ctx_world", None) else set()
+        out = {}
+        for g in sorted(want):
+            if g not in self._bounds:
+                b = None
+                try:
+                    mr, _ = model.find(self.archives, g)
+                    for tag, data in ucfb.iter_chunks(ucfb.unwrap(mr, b"modl")):
+                        if tag == b"INFO" and len(data) >= 56:
+                            b = [round(v, 3) for v in struct.unpack_from("<6f", data, 32)]
+                            break
+                except (KeyError, ValueError):
+                    pass
+                self._bounds[g] = b
+            if self._bounds[g]:
+                out[g] = self._bounds[g]
         return out
 
     # ------------------------------------------------------------ other mods
@@ -179,7 +214,7 @@ class Scene:
         def entry(o, by, n):
             rows = [list(o["rotation"][0:3]), list(o["rotation"][3:6]), list(o["rotation"][6:9])]
             return {"id": f"ctx:{o['layer']}:{n}", "layer": o["layer"], "name": o["name"], "model": o["model"],
-                    "position": list(o["position"]), "rotation": to_three(rows), "by": by}
+                    **look(o), "position": list(o["position"]), "rotation": to_three(rows), "by": by}
 
         added, removed = [], {}
         for name, changes in data.replace.items():

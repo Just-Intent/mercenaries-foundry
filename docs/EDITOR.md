@@ -15,8 +15,13 @@ toolkit bundle run it the same way: `foundry\python\python.exe foundry\mercfound
 ## What it does
 
 - Shows a map's terrain and objects. Pick the map at the top (`swn` is the
-  opening mission, `sw` and `nw` the two free-roam maps). Objects are boxes until
-  you're near them, then their models load with textures.
+  opening mission, `sw` and `nw` the two free-roam maps). Objects near the view
+  show their real models with textures (the model the game draws: an object's
+  `GeometryFile`, which for some, such as soldiers and night lampposts, differs
+  from the model its record names). Farther ones are see-through stand-ins the
+  size of their model, coloured by kind: buildings tan, trees green, props
+  orange, characters red, vehicles blue, markers yellow. Hovering over an object
+  shows its name, model and kind.
 - The terrain is what the game will have: when the mod sits in the game's `mods`
   folder, the editor applies the terrain edits of every enabled source mod, in
   load order, as `mod sync` does. Elsewhere it applies the mod's own.
@@ -104,7 +109,8 @@ toolkit bundle run it the same way: `foundry\python\python.exe foundry\mercfound
 (`vendor/three/`, MIT, with its LICENSE) and a small JSON API:
 `/api/info`, `/api/terrain/<map>.json` and `.bin` (float32 heights),
 `/api/objects/<map>` (objects plus the editor's saved edits),
-`/api/model/<name>.glb`, `/api/layout/<map>` (paths and zones),
+`/api/model/<name>.glb`, `/api/bounds/<map>` (model sizes, from each model's
+header), `/api/layout/<map>` (paths and zones),
 `/api/encounters/<map>`, `/api/templates`, `/api/context/<map>` (other mods'
 objects), the live link (`/api/live/poll` for the plugin, `/api/live/state` and
 `/api/live/send` for the page; the line protocol is in `live.py`), and `POST /api/save`,
