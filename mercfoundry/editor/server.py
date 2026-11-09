@@ -11,6 +11,9 @@ GET  /api/layout/<map>         paths and zones: the game's (with the mod's layou
                                changes) and the mod's own (encounters/*.json)
 POST /api/layout/save          {"map", "game": [...], "mod": {file: {...}}}
 GET  /api/context/<map>        objects other enabled mods add, move or remove
+POST /api/live/poll            the running game's plugin: its state in, commands out
+GET  /api/live/state           connected?, the player's position, command results
+POST /api/live/send            {"commands": [...]} for the game (see live.py)
 GET  /api/encounters/<map>     encounters: the game's (read only) and the mod's
 GET  /api/templates            objects a squad member can copy (template_*)
 POST /api/encounters/save      {"map", "files": {file: [encounter, ...]}}
@@ -24,6 +27,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from importlib import resources
 from urllib.parse import unquote, urlparse
 
+from .live import Live
 from .scene import Scene
 
 TYPES = {".js": "text/javascript", ".html": "text/html; charset=utf-8", ".css": "text/css",
@@ -43,8 +47,9 @@ def _static(path):
         return None
 
 
-def make_handler(scene: Scene, mod_name: str):
+def make_handler(scene: Scene, mod_name: str, live: Live = None):
     lock = threading.Lock()
+    live = live or Live()
 
     class Handler(BaseHTTPRequestHandler):
         def log_message(self, fmt, *args):
@@ -91,6 +96,8 @@ def make_handler(scene: Scene, mod_name: str):
                         objs = scene.objects(path[len("/api/objects/"):])
                         edits = scene.load_edits()
                     return self.send(200, {"objects": objs, "edits": edits})
+                if path == "/api/live/state":
+                    return self.send(200, live.state())
                 if path.startswith("/api/context/"):
                     with lock:
                         return self.send(200, scene.context_objects(path[len("/api/context/"):]))
@@ -118,8 +125,13 @@ def make_handler(scene: Scene, mod_name: str):
             if self.headers.get("Origin") not in (None, f"http://{self.headers.get('Host')}"):
                 return self.fail(403, "cross-origin request refused")
             length = int(self.headers.get("Content-Length") or 0)
+            body = self.rfile.read(length)
+            if path == "/api/live/poll":             # the game's plugin (text lines)
+                return self.send(200, live.poll(body.decode("utf-8", "replace")), "text/plain; charset=utf-8")
             try:
-                doc = json.loads(self.rfile.read(length) or b"{}")
+                doc = json.loads(body or b"{}")
+                if path == "/api/live/send":
+                    return self.send(200, {"queued": live.send(doc.get("commands", []))})
                 if path == "/api/save":
                     with lock:
                         n = scene.save_edits(doc.get("moved", {}), doc.get("copies", []), doc.get("removed", []))

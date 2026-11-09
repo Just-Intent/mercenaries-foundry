@@ -9,6 +9,7 @@ import {TransformControls} from 'three/addons/controls/TransformControls.js';
 import {GLTFLoader} from 'three/addons/loaders/GLTFLoader.js';
 import {createLayout} from './layout.js';
 import {createEncounters} from './encounters.js';
+import {createLive} from './live.js';
 
 const $ = (id) => document.getElementById(id);
 const NEAR_RADIUS = 220;      // metres around the view centre that show real models
@@ -46,7 +47,7 @@ function resize() {
   camera.aspect = w / h;
   camera.updateProjectionMatrix();
 }
-window.addEventListener('resize', resize);
+new ResizeObserver(resize).observe(view);     // the header can wrap, so watch the view itself
 
 // ------------------------------------------------------------------ state
 const state = {
@@ -262,6 +263,7 @@ async function loadMap(name) {
     const rec = state.byId.get(id);
     if (!rec) continue;
     rec.position = e.position; rec.rotation = e.rotation;
+    rec.loadedAt = e.position;       // where a built copy of this mod puts it in the game
     state.moved[id] = {position: e.position, rotation: e.rotation};
     placeBox(rec);
   }
@@ -373,6 +375,7 @@ function deleteSelected() {
   rec.position = rec.original.position; rec.rotation = rec.original.rotation;
   rec.deleted = true;
   state.removed.add(rec.id);
+  live.objectRemoved(rec);
   select(null);
   dropNode(rec, true);
   placeBox(rec);
@@ -393,6 +396,7 @@ function recordEdit(rec) {
     c.position = rec.position; c.rotation = rec.rotation;
   } else {
     state.moved[rec.id] = {position: rec.position, rotation: rec.rotation};
+    live.objectMoved(rec);
   }
   setDirty(true);
   refreshChanges();
@@ -408,6 +412,7 @@ function revert(rec) {
     boxes.setMatrixAt(rec.slot, new THREE.Matrix4().makeScale(0, 0, 0));
     boxes.instanceMatrix.needsUpdate = true;
   } else if (rec.deleted) {
+    if (live.isOn()) status('Restored here; the game brings it back when it next starts with this mod.');
     rec.deleted = false;
     state.removed.delete(rec.id);
     select(null);
@@ -421,6 +426,7 @@ function revert(rec) {
     if (rec.node) transformOf(rec).decompose(rec.node.position, rec.node.quaternion, rec.node.scale);
     placeBox(rec);
     showSelected();
+    live.objectMoved(rec);
   }
   setDirty(true);
   refreshChanges();
@@ -681,6 +687,10 @@ const encs = createEncounters({
   layoutFiles: () => layout.files(),
   objectNames: () => new Set(state.records.filter((r) => !r.removed)
     .map((r) => (r.copyName || r.name || '').toLowerCase()).filter(Boolean)),
+});
+const live = createLive({
+  scene, threePos, heightAt, status, $, lookAt, heading,
+  target: () => gamePos(controls.target),
 });
 $('show-objects').addEventListener('change', (e) => {
   const on = e.target.checked;

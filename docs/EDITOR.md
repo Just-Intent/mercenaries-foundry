@@ -73,6 +73,14 @@ toolkit bundle run it the same way: `foundry\python\python.exe foundry\mercfound
     a row there, facing you, with fresh names (`<encounter>_<squad>_<n>`).
   - A script loads the layer (`Utility_ReadLevelFile('<layer>')`) and commands
     its squads (`Squad_Command`); see [ENCOUNTERS.md](ENCOUNTERS.md).
+- **Live link**: with the game running and Foundry Console on, the console finds
+  the editor by itself (port 8740) and the **Live** button shows the connection.
+  A cyan arrow marks the player; **To player** looks there and **Player here**
+  teleports the player (on foot) to the middle of the view. With Live on, moving,
+  turning, undoing or removing a game object also does it in the running game
+  (drags send when they settle); the status line shows the game's replies. The
+  saved mod files still decide what the game has when it next starts. Copies,
+  new squads and other mods' objects need a rebuild.
 - **Save** (Ctrl+S) writes `objects/editor.json`: one rule per moved object
   (matched by name, or by model and original position), one `copy` rule per
   copy and one `remove` rule per removed object. The build applies them like any object rule, and the editor reads them
@@ -91,7 +99,8 @@ toolkit bundle run it the same way: `foundry\python\python.exe foundry\mercfound
 `/api/objects/<map>` (objects plus the editor's saved edits),
 `/api/model/<name>.glb`, `/api/layout/<map>` (paths and zones),
 `/api/encounters/<map>`, `/api/templates`, `/api/context/<map>` (other mods'
-objects), and `POST /api/save`,
+objects), the live link (`/api/live/poll` for the plugin, `/api/live/state` and
+`/api/live/send` for the page; the line protocol is in `live.py`), and `POST /api/save`,
 `/api/layout/save` and `/api/encounters/save`. Saving refuses requests from
 other web origins.
 

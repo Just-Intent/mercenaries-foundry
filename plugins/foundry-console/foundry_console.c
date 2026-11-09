@@ -14,6 +14,11 @@
  *                Actor_Remove).
  *   Lua        - run a line of Lua in a loaded script's state (an
  *                expression shows its values; a statement shows "ok").
+ *   Live link  - when the Foundry editor runs (python -m mercfoundry edit,
+ *                port 8740), the console tells it where the player is and
+ *                carries out its live edits: move, turn or remove objects and
+ *                teleport the player (see mercfoundry/editor/live.py). A
+ *                thread polls the editor, so the game never waits on it.
  *
  * While the console has focus it tells the game a tool window is open (as
  * the F9 panel does): the game leaves exclusive fullscreen so the window
@@ -31,8 +36,10 @@
 #include <math.h>
 #include "mercenaries_plugin.h"
 #include "mercfoundry_functions.h"
+#include <winhttp.h>
 #pragma comment(lib, "user32.lib")
 #pragma comment(lib, "gdi32.lib")
+#pragma comment(lib, "winhttp.lib")
 
 #define PLAYER0_HASH 0x660E4490u      /* HashName("player0") */
 #define NAME_PROPERTY_HASH 0x8D39BDE6u /* HashName("name") */
@@ -943,9 +950,12 @@ static void hud_draw(const char *text)
     host->set_overlay(host->context, hud_pixels, HUD_W, (uint32_t)h, 12, 150);
 }
 
+static void live_update(double dt);
+
 static int MERC_PLUGIN_CALL on_update(void *ud, const MercPluginUpdate *u)
 {
     (void)ud;
+    live_update(u->wall_delta_seconds);
     /* F7 toggles the window while this game (or the console) has focus. */
     DWORD pid = 0;
     GetWindowThreadProcessId(GetForegroundWindow(), &pid);
@@ -1297,9 +1307,254 @@ static DWORD WINAPI window_thread(void *arg)
     return 0;
 }
 
+/* ---------- live link with the Foundry editor ---------- */
+
+#define LIVE_PORT 8740
+#define LIVE_LINES 64
+#define LIVE_LINE 640
+static char live_cmds[LIVE_LINES][LIVE_LINE];
+static unsigned live_cmd_count;
+static char live_state[256];          /* player and gameplay lines, from the game thread */
+static char live_results[2048];       /* result lines for the next poll */
+static volatile LONG live_stop, live_connected;
+static double since_live;
+
+/* The live thread: post the game's state, take back the editor's commands. */
+static DWORD WINAPI live_thread(void *arg)
+{
+    (void)arg;
+    HINTERNET session = WinHttpOpen(L"FoundryConsole/1.0", WINHTTP_ACCESS_TYPE_NO_PROXY,
+                                    WINHTTP_NO_PROXY_NAME, WINHTTP_NO_PROXY_BYPASS, 0);
+    if (!session) return 0;
+    WinHttpSetTimeouts(session, 500, 500, 1000, 1000);
+    HINTERNET conn = WinHttpConnect(session, L"127.0.0.1", LIVE_PORT, 0);
+    while (!InterlockedCompareExchange(&live_stop, 0, 0)) {
+        char body[2560];
+        EnterCriticalSection(&lock);
+        int n = snprintf(body, sizeof(body), "%s%s", live_state, live_results);
+        live_results[0] = 0;
+        LeaveCriticalSection(&lock);
+        int ok = 0;
+        HINTERNET req = conn ? WinHttpOpenRequest(conn, L"POST", L"/api/live/poll", NULL, WINHTTP_NO_REFERER,
+                                                  WINHTTP_DEFAULT_ACCEPT_TYPES, 0) : NULL;
+        if (req && WinHttpSendRequest(req, L"Content-Type: text/plain\r\n", (DWORD)-1L, body, (DWORD)n, (DWORD)n, 0) &&
+            WinHttpReceiveResponse(req, NULL)) {
+            char reply[LIVE_LINES * LIVE_LINE];
+            DWORD got = 0, total = 0;
+            while (total < sizeof(reply) - 1 && WinHttpReadData(req, reply + total, (DWORD)(sizeof(reply) - 1 - total), &got) && got)
+                total += got;
+            reply[total] = 0;
+            ok = 1;
+            char *next = NULL;
+            EnterCriticalSection(&lock);
+            for (char *line = strtok_s(reply, "\r\n", &next); line; line = strtok_s(NULL, "\r\n", &next))
+                if (live_cmd_count < LIVE_LINES)
+                    snprintf(live_cmds[live_cmd_count++], LIVE_LINE, "%s", line);
+            LeaveCriticalSection(&lock);
+        }
+        if (req) WinHttpCloseHandle(req);
+        InterlockedExchange(&live_connected, ok);
+        Sleep(ok ? 250 : 2000);       /* no editor running: check now and then */
+    }
+    if (conn) WinHttpCloseHandle(conn);
+    WinHttpCloseHandle(session);
+    return 0;
+}
+
+static void live_result(const char *fmt, ...)
+{
+    char text[256];
+    va_list ap;
+    va_start(ap, fmt);
+    vsnprintf(text, sizeof(text), fmt, ap);
+    va_end(ap);
+    EnterCriticalSection(&lock);
+    size_t len = strlen(live_results);
+    snprintf(live_results + len, sizeof(live_results) - len, "result %s\n", text);
+    LeaveCriticalSection(&lock);
+}
+
+/* The object a live command means: by name, else the nearest with the model
+ * (when given) within 2.5 m of one of the points. */
+static uint32_t live_find(const char *name, const char *model, unsigned npts, const float *pts)
+{
+    MercGuestCall c;
+    if (strcmp(name, "-") != 0) {
+        uint32_t want = hash_name(name);
+        host->read_guest(host->context, NAME_KEYS, name_keys, sizeof(name_keys));
+        host->read_guest(host->context, NAME_HANDLES, name_handles, sizeof(name_handles));
+        for (unsigned j = 0; j < NAME_SLOTS; j++)
+            if (name_keys[j] == want && guest(MF_FN_World_ObjectFromHandle, 0, 1, &name_handles[j], &c) && c.eax)
+                return c.eax;
+        return 0;
+    }
+    if (!npts || !host->read_guest(host->context, OBJECTS, slot_objects, sizeof(slot_objects)) ||
+        !host->read_guest(host->context, OBJECT_HANDLES, slot_handles, sizeof(slot_handles)))
+        return 0;
+    uint32_t best = 0;
+    float best_d = 2.5f;
+    for (unsigned i = 0; i < OBJECT_SLOTS; i++) {
+        uint32_t obj = slot_objects[i];
+        unsigned char head[0x34];
+        if (!obj || !host->read_guest(host->context, obj, head, sizeof(head))) continue;
+        uint16_t flags;
+        float pos[3];
+        memcpy(&flags, head + MF_OFF_WorldObject_flags, 2);
+        if (!(flags & 1) || (flags & 4)) continue;
+        memcpy(pos, head + WORLDOBJECT_POSITION, 12);
+        for (unsigned k = 0; k < npts; k++) {
+            float dx = pos[0] - pts[3 * k], dy = pos[1] - pts[3 * k + 1], dz = pos[2] - pts[3 * k + 2];
+            float d = sqrtf(dx * dx + dy * dy + dz * dz);
+            if (d >= best_d) continue;
+            if (strcmp(model, "-") != 0) {
+                char m[48];
+                uint32_t handle;
+                memcpy(&handle, head + MF_OFF_WorldObject_handle, 4);
+                object_model(obj, handle, m, sizeof(m));
+                if (_stricmp(m, model) != 0) continue;
+            }
+            best = obj;
+            best_d = d;
+        }
+    }
+    return best;
+}
+
+/* Place an object (absolute position and heading in radians) or remove it,
+ * as do_edit does for the console's buttons. */
+static int live_apply(uint32_t obj, const float *pos, float yaw, int remove)
+{
+    MercGuestCall c;
+    uint32_t scratch, size;
+    int ok = 0;
+    uint16_t flags = 0;
+    if (!host->guest_scratch(host->context, &scratch, &size) || size < 256) return 0;
+    host->read_guest(host->context, obj + MF_OFF_WorldObject_flags, &flags, 2);
+    if (flags & FLAG_PLAIN) {
+        if (remove) return guest(MF_FN_WorldObject_Remove, obj, 0, NULL, &c);
+        float m[16] = {cosf(yaw), 0, -sinf(yaw), 0, 0, 1, 0, 0, sinf(yaw), 0, cosf(yaw), 0, pos[0], pos[1], pos[2], 1};
+        host->write_guest(host->context, scratch, m, sizeof(m));
+        vcall(obj, 0x00, 1, &scratch, &ok);
+        return ok;
+    }
+    uint32_t actor = 0, value = 0, mask = 0;
+    host->read_guest(host->context, obj + MF_OFF_WorldObject_actor, &actor, 4);
+    host->read_guest(host->context, ACTOR_TYPE_VALUE, &value, 4);
+    host->read_guest(host->context, ACTOR_TYPE_MASK, &mask, 4);
+    uint32_t bits = actor ? vcall(actor, ACTOR_VT_TYPE, 0, NULL, &ok) : 0;
+    if (!actor || !ok || (bits & mask) != value) return 0;
+    if (remove) { vcall(actor, ACTOR_VT_REMOVE, 0, NULL, &ok); return ok; }
+    host->write_guest(host->context, scratch, pos, 12);
+    vcall(actor, ACTOR_VT_SET_POSITION, 1, &scratch, &ok);
+    if (!ok) return 0;
+    uint32_t bitsyaw;
+    memcpy(&bitsyaw, &yaw, 4);
+    vcall(actor, ACTOR_VT_SET_YAW, 1, &bitsyaw, &ok);
+    return ok;
+}
+
+static float teleport_to[3];
+static double teleport_check;        /* seconds until checking a teleport stuck */
+
+static void live_run(char *line)
+{
+    char *next = NULL;
+    char *op = strtok_s(line, " ", &next);
+    if (!op) return;
+    if (!strcmp(op, "teleport")) {
+        float p[3];
+        for (int i = 0; i < 3; i++) { char *t = strtok_s(NULL, " ", &next); p[i] = t ? (float)atof(t) : 0; }
+        /* As Lua_Actor_SetPosition does it: the named world object's actor
+         * (+0x24), type-checked, then its set-position call. If the player
+         * isn't there afterwards, a Lua line as well. */
+        uint32_t obj = live_find("player0", "-", 0, NULL), scratch, size, actor = 0, value = 0, mask = 0;
+        int ok = 0;
+        if (obj && host->guest_scratch(host->context, &scratch, &size) && size >= 16) {
+            host->read_guest(host->context, obj + MF_OFF_WorldObject_actor, &actor, 4);
+            host->read_guest(host->context, ACTOR_TYPE_VALUE, &value, 4);
+            host->read_guest(host->context, ACTOR_TYPE_MASK, &mask, 4);
+            uint32_t bits = actor ? vcall(actor, ACTOR_VT_TYPE, 0, NULL, &ok) : 0;
+            if (actor && ok && (bits & mask) == value) {
+                host->write_guest(host->context, scratch, p, 12);
+                vcall(actor, ACTOR_VT_SET_POSITION, 1, &scratch, &ok);
+            } else {
+                ok = 0;
+            }
+        }
+        float m[16];
+        uint32_t player = find_player();
+        int there = ok && player && host->read_guest(host->context, player + MF_OFF_Actor_transform, m, sizeof(m)) &&
+                    fabsf(m[12] - p[0]) < 3.0f && fabsf(m[14] - p[2]) < 3.0f;
+        if (!there) {
+            char lua[160];
+            snprintf(lua, sizeof(lua), "Actor_SetPosition('player0', %.2f, %.2f, %.2f)", p[0], p[1], p[2]);
+            run_lua(0, lua);
+        }
+        live_result(there ? "teleported the player to %.0f, %.0f, %.0f"
+                    : ok ? "the player didn't move; asked a script to teleport them to %.0f, %.0f, %.0f"
+                         : "asked a script to teleport the player to %.0f, %.0f, %.0f", p[0], p[1], p[2]);
+        /* In a vehicle the game puts the player back with it: check shortly. */
+        memcpy(teleport_to, p, sizeof(teleport_to));
+        teleport_check = 0.5;
+        return;
+    }
+    int remove = !strcmp(op, "remove");
+    if (!remove && strcmp(op, "move")) { live_result("unknown command %s", op); return; }
+    char *name = strtok_s(NULL, " ", &next), *model = strtok_s(NULL, " ", &next), *count = strtok_s(NULL, " ", &next);
+    if (!name || !model || !count) return;
+    unsigned n = (unsigned)atoi(count);
+    if (n > 4) n = 4;
+    float pts[12], to[4] = {0};
+    for (unsigned i = 0; i < 3 * n; i++) { char *t = strtok_s(NULL, " ", &next); pts[i] = t ? (float)atof(t) : 0; }
+    for (int i = 0; !remove && i < 4; i++) { char *t = strtok_s(NULL, " ", &next); to[i] = t ? (float)atof(t) : 0; }
+    const char *what = strcmp(name, "-") ? name : model;
+    uint32_t obj = live_find(name, model, n, pts);
+    if (!obj) { live_result("%s: not found in the game here", what); return; }
+    int ok = live_apply(obj, to, to[3] * 3.14159265f / 180.0f, remove);
+    live_result(ok ? "%s %s" : "%s: the game wouldn't %s it", what,
+                ok ? (remove ? "removed" : "moved") : (remove ? "remove" : "move"));
+}
+
+/* Game thread: the state for the next poll, then the commands that came. */
+static void live_update(double dt)
+{
+    if (!InterlockedCompareExchange(&live_connected, 0, 0)) return;
+    if (teleport_check > 0 && (teleport_check -= dt) <= 0) {
+        float m[16];
+        uint32_t player = find_player();
+        if (player && host->read_guest(host->context, player + MF_OFF_Actor_transform, m, sizeof(m)) &&
+            (fabsf(m[12] - teleport_to[0]) > 3.0f || fabsf(m[14] - teleport_to[2]) > 3.0f))
+            live_result("the game put the player back; teleport works on foot (get out of the vehicle first)");
+    }
+    since_live += dt;
+    if (since_live < 0.2) return;
+    since_live = 0;
+    int playing = host->in_gameplay(host->context);
+    char state[256] = "";
+    uint32_t player = playing ? find_player() : 0;
+    float m[16];
+    if (player && host->read_guest(host->context, player + MF_OFF_Actor_transform, m, sizeof(m)))
+        snprintf(state, sizeof(state), "player %.2f %.2f %.2f %.3f %.3f\ngameplay 1\n", m[12], m[13], m[14], m[8], m[10]);
+    else
+        snprintf(state, sizeof(state), "gameplay 0\n");
+    static char cmds[LIVE_LINES][LIVE_LINE];
+    unsigned n;
+    EnterCriticalSection(&lock);
+    memcpy(live_state, state, sizeof(state));
+    n = live_cmd_count;
+    memcpy(cmds, live_cmds, n * LIVE_LINE);
+    live_cmd_count = 0;
+    LeaveCriticalSection(&lock);
+    for (unsigned i = 0; i < n; i++) {
+        if (playing) live_run(cmds[i]);
+        else live_result("not in gameplay; skipped: %.60s", cmds[i]);
+    }
+}
+
 static void MERC_PLUGIN_CALL on_shutdown(void *ud)
 {
     (void)ud;
+    InterlockedExchange(&live_stop, 1);
     if (window_thread_id) PostThreadMessageW(window_thread_id, WM_QUIT, 0, 0);
 }
 
@@ -1321,6 +1576,8 @@ MERC_PLUGIN_EXPORT int MERC_PLUGIN_CALL MercenariesPlugin_Init(
     plugin->on_update = on_update;
     plugin->on_shutdown = on_shutdown;
     HANDLE t = CreateThread(NULL, 0, window_thread, NULL, 0, &window_thread_id);
+    if (t) CloseHandle(t);
+    t = CreateThread(NULL, 0, live_thread, NULL, 0, NULL);
     if (t) CloseHandle(t);
     char text[96];
     snprintf(text, sizeof(text), "ready: %u templates; press F7 in game", template_count);

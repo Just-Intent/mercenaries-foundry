@@ -36,3 +36,26 @@ class EditorSceneTests(unittest.TestCase):
         self.assertIsNotNone(server._static("vendor/three/build/three.module.js"))
         self.assertIsNone(server._static("static/../scene.py"))
         self.assertIsNone(server._static("static/missing.js"))
+
+
+class LiveLinkTests(unittest.TestCase):
+    def test_commands_and_poll(self):
+        from mercfoundry.editor.live import Live
+        live = Live()
+        self.assertEqual(live.state()["connected"], False)
+        live.send([{"op": "move", "name": "", "model": "dmz_bld_skpost", "from": [[1, 2, 3], [4, 5, 6]],
+                    "position": [7, 8, 9], "heading": 30},
+                   {"op": "remove", "name": "FoundryPatroller", "model": "x y", "from": []},
+                   {"op": "teleport", "position": [1, 2, 3]}])
+        reply = live.poll("player 1 2 3 0 1\ngameplay 1\nresult dmz_bld_skpost moved\n")
+        self.assertEqual(reply.splitlines(), [
+            "move - dmz_bld_skpost 2 1.000 2.000 3.000 4.000 5.000 6.000 7.000 8.000 9.000 30.000",
+            "remove FoundryPatroller - 0",
+            "teleport 1.000 2.000 3.000"])
+        state = live.state()
+        self.assertTrue(state["connected"] and state["gameplay"])
+        self.assertEqual(state["player"]["position"], [1.0, 2.0, 3.0])
+        self.assertEqual(state["results"], ["dmz_bld_skpost moved"])
+        self.assertEqual(live.poll(""), "")      # commands go once
+        with self.assertRaises(ValueError):
+            live.send([{"op": "explode"}])

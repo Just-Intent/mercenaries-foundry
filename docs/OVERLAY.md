@@ -23,6 +23,10 @@ python -m mercfoundry objectnames game_files/DATAxbox -o "$mods\Foundry Console\
 
 The template and object-name lists come from your own game data, so it is generated at install time and never committed. Enable **Foundry Console** in the launcher's mod selector and restart the game.
 
+## Live link with the editor
+
+When the Foundry editor is running (`python -m mercfoundry edit`, port 8740), the console polls it from its own thread (WinHTTP, about four times a second; every two seconds while no editor answers), so the game never waits on the network. It sends the player's position and heading and gets back the editor's live edits, which it carries out on the game thread: move or turn an object (found by name, else by model within 2.5 m of where the game or the editor last had it), remove one, or teleport the player. Teleporting follows `Lua_Actor_SetPosition` (the named object's actor, type-checked, then its set-position call); it works on foot, and the console reports when the game put the player back (in a vehicle). See [EDITOR.md](EDITOR.md).
+
 ## How it works
 
 The window runs on its own thread. Everything that touches the game is queued and done in the plugin's `on_update`, on the game's thread, with `call_guest` and the [function map](FUNCTION_MAP.md): `World_FindActorByName("player0")`, the actor fields `transform`, `money` and `hitPoints`, `Template_GetProperty`, `Spawner_SpawnTemplate` and `Player_SetMoney`.
