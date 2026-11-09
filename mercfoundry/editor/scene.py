@@ -160,6 +160,25 @@ class Scene:
             self._looks[name] = (meta, paint, bytes(light))
         return self._looks[name]
 
+    def terrain_decals(self, name):
+        """The ground's decals (roads, concrete), as the context mods leave
+        them: {"textures": [name...], "decals": [[cell x, cell z, texture
+        index, u, v x 4 corners in 1/2048ths], ...]}. Corners go (x, z+1),
+        (x+1, z+1), (x, z), (x+1, z), as stored."""
+        from .. import terrain_decals
+        data = self._modded_terrain()
+        rec = next(((a, r) for a, r in data.records(name_hash("Terrain")) if r.key == name_hash(name)), None)
+        if rec is None:
+            raise KeyError(name)
+        doc = terrain_decals.export(terrain.tern_chunks(data.current(*rec)))
+        names = list(doc["textures"])
+        out = []
+        for d in doc["decals"]:
+            t = d["texture"]
+            k = t if isinstance(t, int) else names.index(t)
+            out.append([d["cell"][0], d["cell"][1], k] + [v for uv in d["uv"] for v in uv])
+        return {"textures": names, "decals": out}
+
     def texture_png(self, name):
         """A game texture as PNG (its full-size image), cached."""
         if not hasattr(self, "_pngs"):

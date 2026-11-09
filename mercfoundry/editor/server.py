@@ -8,6 +8,7 @@ GET  /api/terrain/<map>.bin    float32 heights, row by row
 GET  /api/look/<map>.json      the ground's texture layers (texture, scale, axis)
 GET  /api/look/<map>.paint     each layer's opacity, layer after layer (bytes)
 GET  /api/look/<map>.light     baked lighting, RGB per height sample
+GET  /api/look/<map>.decals    road and concrete decals (cell, texture, corner UVs)
 GET  /api/texture/<name>.png   a game texture
 GET  /api/objects/<map>        the map's objects, with the mod's editor edits
 GET  /api/model/<name>.glb     a model with its textures
@@ -99,6 +100,9 @@ def make_handler(scene: Scene, mod_name: str, live: Live = None):
                         meta, paint, light = scene.terrain_look(name)
                     if part == "json":
                         return self.send(200, meta)
+                    if part == "decals":
+                        with terrain_lock:
+                            return self.send(200, scene.terrain_decals(name))
                     return self.send(200, paint if part == "paint" else light, "application/octet-stream")
                 if path.startswith("/api/texture/") and path.endswith(".png"):
                     data = scene.texture_png(path[len("/api/texture/"):-4])

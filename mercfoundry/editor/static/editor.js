@@ -279,7 +279,8 @@ async function loadMap(name) {
   scene.add(terrainMesh);
   // The game's ground textures, in the background (plain shading until then).
   const ground = terrainMesh;
-  applyGround(ground, name, scene.fog).catch((err) => console.warn('ground textures:', err));
+  applyGround(ground, name, scene.fog, {...meta, heights: state.terrain.heights})
+    .catch((err) => console.warn('ground textures:', err));
 
   const capacity = objs.objects.length + 4096;     // room for copies and other mods' objects
   // See-through, so big stand-ins (a forest model can cover a hillside) show

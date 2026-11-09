@@ -30,7 +30,8 @@ toolkit bundle run it the same way: `foundry\python\python.exe foundry\mercfound
   tiled at its scale (top-down, or from the side for cliff layers with
   projection 4 and 5), blended by their painted opacity and multiplied by the
   map's baked lighting (so the opening map is dark: it's night). Plain shading
-  shows until the textures arrive. Road decals aren't drawn yet.
+  shows until the textures arrive. Roads, concrete and parking (the terrain's
+  decals, one 8 m cell each) are drawn on top, lit the same way.
 - The terrain is what the game will have: when the mod sits in the game's `mods`
   folder, the editor applies the terrain edits of every enabled source mod, in
   load order, as `mod sync` does. Elsewhere it applies the mod's own.
@@ -118,8 +119,8 @@ toolkit bundle run it the same way: `foundry\python\python.exe foundry\mercfound
 (`vendor/three/`, MIT, with its LICENSE) and a small JSON API:
 `/api/info`, `/api/terrain/<map>.json` and `.bin` (float32 heights),
 `/api/objects/<map>` (objects plus the editor's saved edits),
-`/api/model/<name>.glb`, `/api/look/<map>.json`, `.paint` and `.light` (the
-ground's layers, paint and baked lighting), `/api/texture/<name>.png`,
+`/api/model/<name>.glb`, `/api/look/<map>.json`, `.paint`, `.light` and `.decals`
+(the ground's layers, paint, baked lighting and road decals), `/api/texture/<name>.png`,
 `/api/bounds/<map>` (model sizes, from each model's
 header), `/api/layout/<map>` (paths and zones),
 `/api/encounters/<map>`, `/api/templates`, `/api/context/<map>` (other mods'

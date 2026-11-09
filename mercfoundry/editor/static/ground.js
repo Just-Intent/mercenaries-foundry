@@ -87,10 +87,88 @@ void main() {
   outColor = vec4(c, 1.0);
 }`;
 
+// Decals (roads, concrete): one 8 m cell each, its corners on the height
+// grid, stored (x, z+1), (x+1, z+1), (x, z), (x+1, z) with texture
+// coordinates in 1/2048ths. Drawn just above the ground, lit like it.
+const DECAL_CORNERS = [[0, 1], [1, 1], [0, 0], [1, 0]];     // (dx, dz) per stored corner
+const DECAL_FRAGMENT = /* glsl */ `
+precision highp float;
+uniform sampler2D map;
+uniform float lightScale;
+uniform vec3 fogColor;
+uniform float fogNear;
+uniform float fogFar;
+in vec3 vLight;
+in vec2 vPaint;
+in vec3 vWorld;
+out vec4 outColor;
+void main() {
+  vec4 t = texture(map, vPaint);
+  if (t.a < 0.08) discard;
+  vec3 c = t.rgb * vLight * lightScale;
+  c = mix(c, fogColor, smoothstep(fogNear, fogFar, length(vWorld - cameraPosition)));
+  outColor = vec4(c, t.a);
+}`;
+
+async function addDecals(mesh, map, grid, light, fog) {
+  const r = await fetch(`/api/look/${map}.decals`);
+  if (!r.ok) return 0;
+  const {textures, decals} = await r.json();
+  const {size, spacing, x0, z0, heights} = grid;
+  const byTexture = new Map();
+  for (const d of decals) {
+    if (!byTexture.has(d[2])) byTexture.set(d[2], []);
+    byTexture.get(d[2]).push(d);
+  }
+  const loader = new THREE.TextureLoader();
+  const group = new THREE.Group();
+  group.name = 'decals';
+  for (const [k, list] of byTexture) {
+    const name = textures[k];
+    if (!name) continue;
+    const pos = new Float32Array(list.length * 6 * 3), uv = new Float32Array(list.length * 6 * 2);
+    const lit = new Float32Array(list.length * 6 * 3);
+    let n = 0;
+    for (const d of list) {
+      const corner = DECAL_CORNERS.map(([dx, dz], c) => {
+        const col = Math.min(d[0] + dx, size - 1), row = Math.min(d[1] + dz, size - 1);
+        const i = row * size + col;
+        return {p: [x0 + (d[0] + dx) * spacing, heights[i] + 0.06, -(z0 + (d[1] + dz) * spacing)],
+                uv: [d[3 + 2 * c] / 2048, d[4 + 2 * c] / 2048], l: [light[3 * i], light[3 * i + 1], light[3 * i + 2]]};
+      });
+      for (const c of [2, 3, 0, 3, 1, 0]) {            // two triangles over the cell
+        pos.set(corner[c].p, n * 3);
+        uv.set(corner[c].uv, n * 2);
+        lit.set(corner[c].l, n * 3);
+        n++;
+      }
+    }
+    const geo = new THREE.BufferGeometry();
+    geo.setAttribute('position', new THREE.BufferAttribute(pos, 3));
+    geo.setAttribute('paintUv', new THREE.BufferAttribute(uv, 2));
+    geo.setAttribute('light', new THREE.BufferAttribute(lit, 3));
+    const tex = loader.load(`/api/texture/${encodeURIComponent(name)}.png`);
+    tex.flipY = false;                                // the game's v runs down the image
+    tex.wrapS = tex.wrapT = THREE.RepeatWrapping;
+    tex.anisotropy = 4;
+    const m = new THREE.Mesh(geo, new THREE.ShaderMaterial({
+      glslVersion: THREE.GLSL3, vertexShader: VERTEX, fragmentShader: DECAL_FRAGMENT,
+      uniforms: {map: {value: tex}, lightScale: {value: LIGHT_SCALE},
+                 fogColor: {value: fog.color}, fogNear: {value: fog.near}, fogFar: {value: fog.far}},
+      transparent: true, depthWrite: false, side: THREE.DoubleSide,
+      polygonOffset: true, polygonOffsetFactor: -2, polygonOffsetUnits: -2,
+    }));
+    m.renderOrder = 1;
+    group.add(m);
+  }
+  mesh.add(group);
+  return decals.length;
+}
+
 // Give a terrain mesh (built from the height grid, size x size vertices,
 // row by row) the game's ground. Resolves when done; leaves the mesh as it
 // was if anything is missing.
-export async function applyGround(mesh, map, fog) {
+export async function applyGround(mesh, map, fog, grid) {
   const r = await fetch(`/api/look/${map}.json`);
   if (!r.ok) return false;
   const look = await r.json();
@@ -133,5 +211,6 @@ export async function applyGround(mesh, map, fog) {
       fogColor: {value: fog.color}, fogNear: {value: fog.near}, fogFar: {value: fog.far},
     },
   });
+  if (grid) await addDecals(mesh, map, grid, lightAttr, fog);
   return true;
 }
