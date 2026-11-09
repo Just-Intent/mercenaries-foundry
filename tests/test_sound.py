@@ -4,7 +4,9 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from mercfoundry import modbuild, sounds, xsb, xwb
+from mercfoundry import dsk, modbuild, sounds, ucfb, xsb, xwb
+from mercfoundry.hashing import name_hash
+from tests.test_dsk import build
 
 
 def tone(n, freq=440.0, rate=22050, amp=9000):
@@ -81,6 +83,21 @@ def make_xsb(wave_banks, cues, sounds_):
     return bytes(head + cue_recs + b"".join(records) + banks + extra + name_blob)
 
 
+def registry_record(bank, cue, wave):
+    """An assets.dsk sound registry record with one simple cue, as the game lists them."""
+    c = ucfb.pack_chunk
+    full = f"{bank}.{cue}".encode()
+    xcl = (c(b"INFO", b"name\0" + full + b"\0num_components\x001\0") + c(b"FLOT", b"positional\x000\0") +
+           c(b"STRG", b"bank\0" + bank.encode() + b"\0") +
+           c(b"SSET", c(b"INFO", b"name\0sound_set\0num_elements\x001\0") + c(b"SNDS", c(b"REC_", b"name\0" + full + b"\0"))))
+    play = c(b"INFO", b"num_elements\x001\0") + c(b"WAVE", c(b"REC_", b"name\0%s.%s\0bank\0%s\0wave_entry_index\x000\0" % (
+        bank.encode(), wave.encode(), bank.encode())))
+    xsl = (c(b"INFO", b"name\0" + full + b"\0num_components\x001\0") + c(b"FLOT", b"positional\x000\0volume\x00-300\0") +
+           c(b"STRG", b"bank\0" + bank.encode() + b"\0category\0voiceover\0") +
+           c(b"TSET", c(b"INFO", b"name\0track_set\0num_elements\x001\0") + c(b"TRKS", c(b"REC_", c(b"PLAY", play)))))
+    return c(b"ucfb", c(b"xcl_", xcl) + c(b"xsl_", xsl))
+
+
 class AdpcmTest(unittest.TestCase):
     def test_round_trip_mono_and_stereo(self):
         n = 2000
@@ -124,6 +141,20 @@ class WaveBankTest(unittest.TestCase):
         self.assertEqual(xwb.rebuild(xwb.parse(self.data), {}), self.data)
         streamed = make_xwb("st", self.waves, alignment=2048, streaming=True)
         self.assertEqual(xwb.rebuild(xwb.parse(streamed), {}), streamed)
+
+    def test_rebuild_add(self):
+        b = xwb.parse(self.data)
+        extra = xwb.encode_adpcm(tone(200, 990), 1)
+        out = xwb.parse(xwb.rebuild(b, {}, [(adpcm_format(), extra, "bip")]))
+        self.assertEqual([e.name for e in out.entries], ["beep", "boop", "bip"])
+        self.assertEqual(out.wave(out.entries[2]), extra)
+        self.assertEqual(out.wave(out.entries[0]), b.wave(b.entries[0]))
+        st = xwb.parse(make_xwb("st", self.waves, alignment=2048, streaming=True))
+        out = xwb.parse(xwb.rebuild(st, {}, [(adpcm_format(), extra, "bip")]))
+        self.assertEqual(len(out.entries), 3)
+        self.assertEqual(out.regions[3][0] % 2048, 0)
+        self.assertTrue(all(e.offset % 2048 == 0 for e in out.entries))
+        self.assertEqual(out.wave(out.entries[2]), extra)
 
     def test_rebuild_replace(self):
         b = xwb.parse(make_xwb("st", self.waves, alignment=2048, streaming=True))
@@ -172,6 +203,7 @@ class SoundModTest(unittest.TestCase):
             ["fx"], [("one", 0), ("pick", 1)], [("simple", 0, 0), ("variation", [(0, 0), (1, 0)])]))
         (self.data.parent / "rsm_xbox.ini").write_text(
             "[ResidentWaveBanks]\nbank fx\tdataxbox/sound/sfx/fx.xwb\n[SoundBanks]\nbank fx\tdataxbox/sound/sfx/fx.xsb\n")
+        build(self.data / "assets.dsk", [(name_hash("sounds"), sounds.REGISTRY, registry_record("fx", "one", "beep"))])
         self.mod = root / "mod"
         (self.mod / "sounds" / "fx").mkdir(parents=True)
         self.lib = xsb.Library(self.data)
@@ -213,6 +245,45 @@ class SoundModTest(unittest.TestCase):
         from mercfoundry import sync
         (self.mod / "mod.json").write_text('{"name": "Sounds"}')
         self.assertTrue(sync.is_source(self.mod))
+
+    def test_new_cue(self):
+        (self.mod / "sounds" / "fx" / "new").mkdir()
+        (self.mod / "sounds" / "fx" / "new" / "extra.wav").write_bytes(xwb.wav(tone(3000, 660), 1, 22050))
+        out = Path(self.tmp.name) / "out"
+        result = modbuild.build(self.mod, self.data, out)
+        self.assertEqual(sorted(result.files), ["DATAxbox/SOUND/sfx/fx.xsb", "DATAxbox/SOUND/sfx/fx.xwb"])
+        wb = xwb.parse((out / "DATAxbox/SOUND/sfx/fx.xwb").read_bytes())
+        self.assertEqual(len(wb.entries), 3)
+        self.assertEqual(wb.wave(wb.entries[0]), self.waves[0][1])
+        raw = (out / "DATAxbox/SOUND/sfx/fx.xsb").read_bytes()
+        sb = xsb.parse(raw)
+        self.assertEqual([c.name for c in sb.cues], ["one", "pick", "extra"])
+        self.assertEqual(sb.cue_waves(sb.cue("extra")), [("fx", 2)])
+        self.assertEqual(sb.cue_waves(sb.cue("pick")), [("fx", 0), ("fx", 1)])
+        self.assertEqual(struct.unpack_from("<H", raw, 6)[0], xsb.crc(raw))
+        size = struct.unpack_from("<H", raw, 0x1A)[0]
+        self.assertEqual(size, 16)
+        for i, c in enumerate(sb.cues):
+            self.assertEqual(struct.unpack_from("<H", raw, 0x38 + 20 * i + 14)[0], xsb.name_slot(c.name, size))
+        arc = dsk.Archive(out / "assets.dsk")
+        root = ucfb.parse(arc.read(arc.records[0]))[0]
+        self.assertEqual([c.tag for c in root.children], [b"xcl_", b"xsl_", b"xcl_", b"xsl_"])
+        raw_rec = arc.read(arc.records[0])
+        added = raw_rec[len(registry_record("fx", "one", "beep")):]
+        self.assertNotIn(b"fx.one", added)
+        self.assertIn(b"name\0fx.extra\0bank\0fx\0wave_entry_index\x002\0", added)
+
+    def test_new_cue_that_exists(self):
+        (self.mod / "sounds" / "fx" / "new").mkdir()
+        (self.mod / "sounds" / "fx" / "new" / "ONE.wav").write_bytes(xwb.wav(tone(100), 1, 22050))
+        with self.assertRaises(ValueError):
+            modbuild.build(self.mod, self.data, Path(self.tmp.name) / "out")
+
+    def test_name_slot_and_crc(self):
+        # Retail values: XACT's name hash and CRC-16/X.25.
+        self.assertEqual(xsb.name_slot("wpn_dryfire_small", 16), 15)
+        self.assertEqual(xsb.name_slot("engine_stop", 16), 12)
+        self.assertEqual(xsb.crc(b"\0" * 8 + b"123456789"), 0x906E)
 
     def test_unknown_cue(self):
         (self.mod / "sounds" / "fx" / "nope.wav").write_bytes(xwb.wav(tone(100), 1, 22050))

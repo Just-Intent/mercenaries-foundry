@@ -39,12 +39,13 @@ Hz) into `<out>/<bank>/`. A cue with one wave is written as `<cue>.wav`. A cue
 with several waves is written as `<cue>.1.wav`, `<cue>.2.wav` and so on. Leave
 out the cue names to export the whole bank.
 
-## Replacing sounds in a mod
+## Replacing and adding sounds in a mod
 
 | Put this in your mod folder | To |
 |---|---|
 | `sounds/<bank>/<cue>.wav` | Replace every wave the cue can play |
 | `sounds/<bank>/<cue>.<n>.wav` | Replace only the cue's n-th wave (as `sound export` names them) |
+| `sounds/<bank>/new/<cue>.wav` | Add a new cue to the bank, played like any other: `Audio_PlayVoiceover('fio.MyLine01')` |
 
 The `.wav` must be PCM, 16-bit, at any rate, mono or stereo. The build converts
 it to the replaced wave's own format: Xbox ADPCM, with that wave's channel
@@ -67,8 +68,25 @@ Some limits:
   `.wav`.
 - A wave that looped over its whole length still loops. Other loop points are
   dropped.
-- Cues can't be added yet. That needs a sound bank writer and registering the
-  bank in `rsm_xbox.ini`.
+- New cues play one wave, with the settings of the bank's first simple cue
+  (its volume, category and 3D settings). Cues that pick at random or play
+  several waves can't be added yet.
+
+### How a new cue is added
+
+The build adds a new cue in three places, all from your copy of the game:
+
+1. Its wave goes at the end of the wave bank the sound bank plays from
+   (`vo.xwb` for voice banks). Existing waves keep their numbers.
+2. The cue and a one-wave sound go at the end of the sound bank. Every offset
+   after them moves, every cue's name slot is worked out again, and the
+   checksum is rewritten.
+3. The game's own entries for the cue go into `assets.dsk`: an `xcl_` cue and
+   an `xsl_` sound chunk, copied from one of the bank's simple cues, in the
+   record that lists the bank's cues.
+
+Tested in game: a new Fiona cue, `fio.FOUNDRY01`, played from the console
+with `Audio_PlayVoiceover`, and her existing lines still played.
 
 `mod pack` drops `.wav` files that are unchanged exports of the game's audio.
 Every other sound is shared as it is, so it has to be the author's own
@@ -130,9 +148,9 @@ against resident banks' wave names: `vh_jeep.engine_start` plays
 
 | Offset | Contents |
 |---|---|
-| 0x00 | `"SDBK"`, u16 version (11), u16 crc |
+| 0x00 | `"SDBK"`, u16 version (11), u16 checksum: CRC-16/X.25 of everything from byte 8 on. The game refuses a bank whose checksum doesn't match. |
 | 0x08 | u32 wave bank names (16 bytes each), u32 track table, u32 variation and 3D data, u32 end |
-| 0x18 | u16 ?, u16 ?, u16 sound count, u16 cue count, u16 ?, u16 wave bank count |
+| 0x18 | u16 ?, u16 name table size, u16 sound count, u16 cue count, u16 ?, u16 wave bank count |
 | 0x38 | Cues, 20 bytes each, then sounds, 20 bytes each |
 
 **Cue** (20 bytes) holds these fields in order:
@@ -141,8 +159,20 @@ against resident banks' wave names: `vh_jeep.engine_start` plays
 - u16 sound index (0xFFFF means none).
 - u32 name offset.
 - u32 −1.
-- u32 ?.
+- u16 0, u16 name slot.
 - u32 0x07FFFFFF.
+
+**Name table.** The game finds a cue by name through a hash table built when
+the bank loads (the lookup is at 0x27F5AE in the game). The table has
+max(16, cue count) slots, the u16 at 0x1A. Each cue stores its slot, worked out
+from its name like this:
+
+- `h` starts at 0.
+- For each byte `c` of the name: `h = c + (h >> 1) + 3h`, in 32 bits.
+- The slot is `h` modulo the table size.
+
+This matches all 5,252 retail cues. A wrong slot or table size makes cues
+unplayable: when the size changes, every cue's slot changes with it.
 
 **Sound** (20 bytes) holds these fields in order:
 
@@ -181,6 +211,23 @@ The kind flags say what `what` means:
 | 4, 5 | 16 | Pitch and volume |
 | 12, 15 | 8 | Unknown |
 | 8, 10, 11, 16 | 8 + n | u32 length n, then n bytes |
+
+## The game's sound registry (`assets.dsk`)
+
+Four `assets.dsk` records (type 0xFA83847D) list every cue and sound in
+readable chunks. The game builds its cue table from them. That table maps
+`HashName("<bank>.<cue>")` to an entry for `Audio_PlayVoiceover` and the
+engine's other sound calls.
+
+| Chunk | What it is |
+|---|---|
+| `xcl_` / `xch_` | A cue: `INFO` (name, e.g. `fio.SWNFIO01`), `FLOT` (positional), `STRG` (bank), `SSET` (its sounds by name) |
+| `xsl_` / `xsh_` | A sound: `INFO`, `FLOT` (positional, priority, volume), `STRG` (bank, category, layer), `TSET` → `TRKS` → `PLAY` → `WAVE` entries (`name` such as `vo.01011FIO`, `bank`, `wave_entry_index`) |
+
+These entries name waves even in the streamed voice bank, which has no name
+table of its own. The game reads each cue's bank from them, but finds the cue
+itself by name in the XACT sound bank. Every cue needs an entry here and in
+its sound bank.
 
 Wave bank names resolve through `rsm_xbox.ini`. Every voice sound bank names
 `vo`, the shared streamed bank. The per-speaker wave banks in `SOUND/vo/<speaker>/`

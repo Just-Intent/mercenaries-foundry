@@ -9,12 +9,16 @@ names its wave banks; every voice bank plays from the one streamed vo.xwb.
 Layout (worked out from the retail banks; every registered bank reads
 cleanly this way):
 
-  0x00  "SDBK", u16 version (11), u16 crc
+  0x00  "SDBK", u16 version (11), u16 CRC-16/X.25 of bytes 8 onward (checked)
   0x08  u32 wave bank names (16 bytes each), u32 track table, u32 variation
         and 3D data, u32 end
-  0x18  u16 ?, u16 ?, u16 sound count, u16 cue count, u16 ?, u16 wave bank count
+  0x18  u16 ?, u16 name table size, u16 sound count, u16 cue count, u16 ?,
+        u16 wave bank count
   0x38  cues, 20 bytes: u16 flags, u16 sound (0xFFFF: none), u32 name
-        offset, u32 -1, u32 ?, u32 0x07FFFFFF
+        offset, u32 -1, u16 0, u16 name slot, u32 0x07FFFFFF
+  The u16 at 0x1A is the size of the cue name table, max(16, cue count);
+  each cue's name slot is name_slot(name, size). The game finds cues by
+  name through it, so a wrong slot or size makes cues unplayable.
   then  sounds, 20 bytes: u32 what (below), u16 category/volume, u16 ?,
         u8 track count, u8 ?, u8 ?, u8 kind flags, 8 bytes ?
   kind flags bit 3: simple, `what` is u16 wave + u16 wave bank
@@ -143,6 +147,92 @@ def parse(data: bytes) -> SoundBank:
                         break
         bank.sounds.append(s)
     return bank
+
+
+def add_cues(data: bytes, cues) -> bytes:
+    """The bank with new simple cues appended: cues = [(name, wave, wave bank
+    index, template sound)], each playing one wave; its sound copies the
+    template sound's settings (volume, category, 3D). Everything after the
+    cue and sound tables moves down, and every offset into it is moved too."""
+    if not cues:
+        return data
+    bank = parse(data)
+    if bank.problems:
+        raise ValueError("can't add to a bank that doesn't read cleanly: " + "; ".join(bank.problems[:3]))
+    out = bytearray(data)
+    nsound, ncue = struct.unpack_from("<HH", data, 0x1C)
+    cue_end = 0x38 + 20 * ncue
+    sound_end = cue_end + 20 * nsound
+    shift = 40 * len(cues)
+
+    def moved(off):
+        return off + shift if off >= sound_end else off + 20 * len(cues) if off >= cue_end else off
+
+    for at in (0x08, 0x0C, 0x10, 0x14):
+        struct.pack_into("<I", out, at, moved(struct.unpack_from("<I", data, at)[0]))
+    for i in range(ncue):
+        at = 0x38 + 20 * i + 4
+        struct.pack_into("<I", out, at, moved(struct.unpack_from("<I", data, at)[0]))
+    for k in range(nsound):
+        at = cue_end + 20 * k
+        what, = struct.unpack_from("<I", data, at)
+        flags, tracks = data[at + 11], data[at + 8]
+        if flags & SIMPLE:
+            continue
+        struct.pack_into("<I", out, at, moved(what))
+        if flags & VARIATION:
+            continue
+        for t in range(tracks):
+            entry, = struct.unpack_from("<I", data, what + 4 * t)
+            p = entry >> 8
+            struct.pack_into("<I", out, what + 4 * t, (entry & 0xFF) | moved(p) << 8)
+            for _ in range(entry & 0xFF):
+                kind = data[p]
+                if kind in PLAY_EVENTS and struct.unpack_from("<I", data, p + 4)[0] & EVENT_VARIATION:
+                    struct.pack_into("<I", out, p + 8, moved(struct.unpack_from("<I", data, p + 8)[0]))
+                p += EVENT_SIZE[kind] if kind in EVENT_SIZE else 8 + struct.unpack_from("<I", data, p + 4)[0]
+    new_cues, new_sounds, names = bytearray(), bytearray(), bytearray()
+    end = len(data) + shift
+    for j, (name, wave, wbank, template) in enumerate(cues):
+        new_cues += struct.pack("<HHIIII", 0, nsound + j, end + len(names), 0xFFFFFFFF, 0, 0x07FFFFFF)
+        names += name.encode("latin-1") + b"\0"
+        rec = bytearray(data[cue_end + 20 * template:cue_end + 20 * template + 20])
+        struct.pack_into("<I", rec, 0, wave | wbank << 16)
+        rec[8] = 1
+        rec[11] = (rec[11] & ~(SIMPLE | VARIATION)) | SIMPLE
+        new_sounds += rec
+    body = bytes(out)
+    result = bytearray(body[:cue_end] + new_cues + body[cue_end:sound_end] + new_sounds + body[sound_end:] + names)
+    struct.pack_into("<HH", result, 0x1C, nsound + len(cues), ncue + len(cues))
+    # The cue name table: as many slots as cues (16 at least), each cue
+    # keeping its slot; a changed size moves every cue's slot.
+    size = max(struct.unpack_from("<H", data, 0x1A)[0], ncue + len(cues))
+    struct.pack_into("<H", result, 0x1A, size)
+    for i, c in enumerate(bank.cues + [Cue(0, n, 0) for n, *_ in cues]):
+        struct.pack_into("<H", result, 0x38 + 20 * i + 14, name_slot(c.name, size))
+    struct.pack_into("<I", result, 0x14, len(result))
+    struct.pack_into("<H", result, 6, crc(result))
+    return bytes(result)
+
+
+def name_slot(name: str, size: int) -> int:
+    """A cue's slot in the bank's cue name table (XACT's name hash, from the
+    game's lookup at 0x27F5AE): h = c + h/2 + 3h per byte, modulo the size."""
+    h = 0
+    for c in name.encode("latin-1"):
+        h = (c + (h >> 1) + h * 3) & 0xFFFFFFFF
+    return h % size
+
+
+def crc(data: bytes) -> int:
+    """The header's checksum: CRC-16/X.25 of everything after byte 8. A bank
+    whose checksum doesn't match is refused by the game."""
+    value = 0xFFFF
+    for b in memoryview(data)[8:]:
+        value ^= b
+        for _ in range(8):
+            value = (value >> 1) ^ 0x8408 if value & 1 else value >> 1
+    return value ^ 0xFFFF
 
 
 def read_registry(text: str):

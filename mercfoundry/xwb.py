@@ -199,11 +199,12 @@ def encode_like(e: Entry, wav_data: bytes) -> bytes:
     raise ValueError(f"wave {e.index}: codec {e.codec} isn't supported")
 
 
-def rebuild(bank: WaveBank, replace: dict) -> bytes:
+def rebuild(bank: WaveBank, replace: dict, add=()) -> bytes:
     """The bank with some waves' data replaced ({index: wave data in the
-    entry's format}). Other waves keep their bytes; the wave data is laid out
-    again at the bank's alignment. Replaced waves lose their loop points
-    unless the original looped the whole wave (then the new one does too)."""
+    entry's format}) and new waves added at the end ([(format, data, name)]).
+    Other waves keep their bytes; the wave data is laid out again at the
+    bank's alignment. Replaced waves lose their loop points unless the
+    original looped the whole wave (then the new one does too)."""
     data, regions = bank.data, bank.regions
     align = max(bank.alignment, 1)
     out_waves = bytearray()
@@ -225,12 +226,35 @@ def rebuild(bank: WaveBank, replace: dict) -> bytes:
             ls, ll = 0, frames if whole else 0
         entries += struct.pack("<6I", e.flags, e.format, offset, len(body), ls, ll)
         entries += data[regions[1][0] + e.index * bank.meta_size + 24:regions[1][0] + (e.index + 1) * bank.meta_size]
+    if not add:
+        out_waves += b"\0" * (-len(out_waves) % align)
+        head = bytearray(data[:regions[3][0]])
+        if len(entries) != regions[1][1]:
+            raise ValueError("entry table size changed")
+        head[regions[1][0]:regions[1][0] + len(entries)] = entries
+        struct.pack_into("<II", head, 8 + 8 * 3, regions[3][0], len(out_waves))
+        return bytes(head) + bytes(out_waves)
+    # New waves go at the end: the entry table and name table grow, and the
+    # wave data starts again at the next aligned offset after them.
+    names = bytearray(data[regions[2][0]:regions[2][0] + regions[2][1]]) if regions[2][1] else None
+    _, name_size, _ = struct.unpack_from("<III", data, regions[0][0] + 24)
+    for fmt, body, label in add:
+        out_waves += b"\0" * (-len(out_waves) % align)
+        entries += struct.pack("<6I", 0x10000, fmt, len(out_waves), len(body), 0, 0)
+        entries += b"\0" * (bank.meta_size - 24)
+        out_waves += body
+        if names is not None:
+            names += label.encode("latin-1")[:name_size - 1].ljust(name_size, b"\0")
     out_waves += b"\0" * (-len(out_waves) % align)
-    head = bytearray(data[:regions[3][0]])
-    if len(entries) != regions[1][1]:
-        raise ValueError("entry table size changed")
-    head[regions[1][0]:regions[1][0] + len(entries)] = entries
-    struct.pack_into("<II", head, 8 + 8 * 3, regions[3][0], len(out_waves))
+    head = bytearray(data[:regions[1][0]])
+    struct.pack_into("<I", head, regions[0][0] + 4, len(bank.entries) + len(add))
+    head += entries
+    names_at = len(head) if names is not None else 0
+    if names is not None:
+        head += names
+    head += b"\0" * (-len(head) % align)
+    struct.pack_into("<4I", head, 8 + 8 * 1, regions[1][0], len(entries), names_at, len(names or b""))
+    struct.pack_into("<II", head, 8 + 8 * 3, len(head), len(out_waves))
     return bytes(head) + bytes(out_waves)
 
 
