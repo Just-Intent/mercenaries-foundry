@@ -169,13 +169,17 @@ class Scene:
         return self.mod / "objects" / EDITOR_RULES
 
     def load_edits(self):
-        """The editor's own rules, as {"moved": {id: {...}}, "copies": [...]}."""
+        """The editor's own rules, as {"moved": {id: {...}}, "copies": [...],
+        "removed": [id, ...]}."""
         p = self.rules_path()
         rules = json.loads(p.read_text(encoding="utf-8")) if p.exists() else []
-        moved, copies = {}, []
+        moved, copies, removed = {}, [], []
         for rule in rules:
             src = self._match(rule)
             if src is None:
+                continue
+            if rule.get("remove"):
+                removed.append(f"{src['layer']}:{src['index']}")
                 continue
             rows = [list(src["rotation"][0:3]), list(src["rotation"][3:6]), list(src["rotation"][6:9])]
             from ..modbuild import _turn
@@ -187,7 +191,7 @@ class Scene:
                 copies.append({**entry, "as": rule.get("as", "")})
             else:
                 moved[entry["source"]] = entry
-        return {"moved": moved, "copies": copies}
+        return {"moved": moved, "copies": copies, "removed": removed}
 
     def _match(self, rule):
         for o in self.all_objects():
@@ -201,9 +205,10 @@ class Scene:
                     return o
         return None
 
-    def save_edits(self, moved, copies):
-        """Write objects/editor.json from {id: {position, rotation}} and
-        [{source, as, position, rotation}]. Returns the rule count."""
+    def save_edits(self, moved, copies, removed=()):
+        """Write objects/editor.json from {id: {position, rotation}},
+        [{source, as, position, rotation}] and [id, ...] to remove. Returns
+        the rule count."""
         # Copies first: a copy finds its source by its original position,
         # which a move rule for the same source would change.
         rules = []
@@ -216,12 +221,30 @@ class Scene:
                 raise ValueError(f"the game already has an object named {new_name!r}")
             names.add(new_name.lower())
             rules.append({**self._rule(c["source"], c), "copy": True, "as": new_name})
+        removed = set(removed)
         for oid, e in moved.items():
-            rules.append(self._rule(oid, e))
+            if oid not in removed:
+                rules.append(self._rule(oid, e))
+        # Removals last: copies of a removed object still find it first.
+        for oid in sorted(removed):
+            rule = find.rule_for(self.find_object(oid))
+            rule.pop("move", None)
+            rules.append({**rule, "remove": True})
+        if removed:
+            self._require("0.51")          # the first toolkit with "remove" rules
         p = self.rules_path()
         p.parent.mkdir(parents=True, exist_ok=True)
         p.write_text(json.dumps(rules, indent=1) + "\n", encoding="utf-8")
         return len(rules)
+
+    def _require(self, version):
+        """Raise mod.json "requires" to at least version."""
+        from ..modbuild import _version
+        meta_path = self.mod / "mod.json"
+        meta = json.loads(meta_path.read_text(encoding="utf-8")) if meta_path.exists() else {"name": self.mod.name}
+        if _version(meta.get("requires", "0")) < _version(version):
+            meta["requires"] = version
+            meta_path.write_text(json.dumps(meta, indent=1) + "\n", encoding="utf-8")
 
     def _rule(self, oid, e):
         src = self.find_object(oid)

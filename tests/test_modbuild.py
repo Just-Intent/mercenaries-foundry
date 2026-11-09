@@ -107,6 +107,26 @@ class ModBuildTests(unittest.TestCase):
         self.write("objects/o.json", json.dumps({"template": "jeep_template", "set": {"Faction": "China"}}))
         self.assertEqual(modbuild.build(self.project, self.data, self.out).written, [])
 
+    def test_requires_newer_toolkit(self):
+        meta = json.loads((self.project / "mod.json").read_text(encoding="utf-8"))
+        (self.project / "mod.json").write_text(json.dumps({**meta, "requires": "99.0"}), encoding="utf-8")
+        with self.assertRaises(ValueError) as cm:
+            modbuild.build(self.project, self.data, self.out)
+        self.assertIn("needs Mercenaries Foundry 99.0 or newer", str(cm.exception))
+        (self.project / "mod.json").write_text(json.dumps({**meta, "requires": "0.1"}), encoding="utf-8")
+        modbuild.build(self.project, self.data, self.out)
+
+    def test_remove_object(self):
+        self.write("objects/o.json", json.dumps({"template": "jeep_template", "remove": True}))
+        result = modbuild.build(self.project, self.data, self.out)
+        self.assertIn("objects jeep_template: 1 instances removed", result.changes)
+        self.assertTrue(any("scripts that use it by name" in w for w in result.warnings))
+        doc = world.to_json(self.records("assets.dsk")[(name_hash("base_layer"), WORLD)])
+        self.assertFalse([c for c in doc["chunks"] if c.get("tag") == "inst"])
+        self.write("objects/o.json", json.dumps({"template": "jeep_template", "remove": True, "turn": 5}))
+        with self.assertRaises(ValueError):
+            modbuild.build(self.project, self.data, self.out)
+
     def test_errors(self):
         self.write("objects/o.json", json.dumps({"template": "nothing_like_this", "set": {"a": "b"}}))
         with self.assertRaises(ValueError):

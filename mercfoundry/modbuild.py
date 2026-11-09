@@ -286,7 +286,7 @@ def _apply_scripts(data, folder, result):
             result.changes.append(f"script {name}: added")
 
 
-ACTIONS = ("set", "move", "position", "turn", "copy")
+ACTIONS = ("set", "move", "position", "turn", "copy", "remove")
 
 
 def _rules(folder):
@@ -294,13 +294,16 @@ def _rules(folder):
         doc = json.loads(f.read_text(encoding="utf-8"))
         for rule in doc if isinstance(doc, list) else [doc]:
             if not isinstance(rule, dict) or not any(k in rule for k in ACTIONS):
-                raise ValueError(f"{f.name}: each rule needs one of {', '.join(ACTIONS)}")
+                raise ValueError(f"{f.name}: each rule needs one of {', '.join(ACTIONS)} (a mod made with a "
+                                 f"newer toolkit may use actions this one doesn't know)")
             if "set" in rule and not isinstance(rule["set"], dict):
                 raise ValueError(f"{f.name}: \"set\" must be an object of property -> value")
             if not (rule.get("name") or rule.get("template") or rule.get("model") or rule.get("near")):
                 raise ValueError(f"{f.name}: each rule needs a \"name\", \"model\" or \"near\" to match")
             if "near" in rule and (not isinstance(rule["near"], list) or len(rule["near"]) != 3):
                 raise ValueError(f"{f.name}: \"near\" must be [x, y, z]")
+            if rule.get("remove") and any(k in rule for k in ("set", "move", "position", "turn", "copy")):
+                raise ValueError(f"{f.name}: a \"remove\" rule can't also change or copy the object")
             if rule.get("copy") and not rule.get("as"):
                 raise ValueError(f"{f.name}: \"copy\" needs \"as\", the new object's name")
             for key in ("move", "position"):
@@ -594,7 +597,13 @@ def _apply_objects(data, folder, result):
                     if "position" not in c or math.dist(c["position"], rule["near"]) > float(rule.get("radius", 0.5)):
                         continue
                 hits[n] += 1
-                if rule.get("copy"):
+                if rule.get("remove"):
+                    k -= 1
+                    del chunks[k]
+                    if c.get("template"):
+                        result.warnings.append(f"{fname}: removed the named object {c['template']!r}; "
+                                               "scripts that use it by name will fail")
+                elif rule.get("copy"):
                     twin = copy.deepcopy(c)
                     twin["template"] = rule["as"]
                     _apply_rule(twin, rule)
@@ -609,7 +618,7 @@ def _apply_objects(data, folder, result):
         if not n:
             raise ValueError(f"{fname}: no object matches {what!r}" +
                              (f" in layer {rule['layer']!r}" if rule.get("layer") else ""))
-        verb = f"copied as {rule['as']!r}" if rule.get("copy") else "updated"
+        verb = f"copied as {rule['as']!r}" if rule.get("copy") else "removed" if rule.get("remove") else "updated"
         result.changes.append(f"objects {what}: {n} instances {verb}")
 
 
@@ -1023,6 +1032,22 @@ def _apply_collision_flags(data, folder, result):
                               ", ".join(f"shape {k} = {v}" for k, v in sorted(flags.items())))
 
 
+def _version(text):
+    return tuple(int(p) for p in re.findall(r"\d+", str(text))[:3])
+
+
+def check_requires(folder):
+    """mod.json "requires": the oldest toolkit version that builds the mod."""
+    from . import __version__
+    meta = Path(folder) / "mod.json"
+    if not meta.exists():
+        return
+    need = json.loads(meta.read_text(encoding="utf-8")).get("requires")
+    if need and _version(need) > _version(__version__):
+        raise ValueError(f"{project_name(folder)} needs Mercenaries Foundry {need} or newer; "
+                         f"this toolkit is {__version__} (update foundry\\mercfoundry.pyz)")
+
+
 def project_name(folder) -> str:
     folder = Path(folder)
     meta = folder / "mod.json"
@@ -1047,6 +1072,7 @@ def build(projects, data_dir, out_dir, name=None, description=None) -> Result:
     for project in projects:
         if not project.is_dir():
             raise FileNotFoundError(f"{project} is not a folder")
+        check_requires(project)
     mod_names = [project_name(p) for p in projects]
     if len(set(mod_names)) != len(mod_names):
         raise ValueError("two mods have the same name: " + ", ".join(mod_names))

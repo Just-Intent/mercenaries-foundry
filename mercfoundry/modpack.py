@@ -273,6 +273,14 @@ def pack(src, out, data_dir) -> dict:
     archives = [dsk.Archive(p) for p in sorted(data_dir.glob("*.dsk"))]
     shutil.copytree(src, out, dirs_exist_ok=True)
     report = {"converted": [], "dropped": [], "warnings": []}
+    # Shared mods record the toolkit they were packed with, so an older
+    # toolkit says it's too old instead of failing on a newer feature.
+    from . import __version__
+    meta_path = out / "mod.json"
+    meta = json.loads(meta_path.read_text(encoding="utf-8")) if meta_path.exists() else {"name": src.name}
+    if "requires" not in meta:
+        meta["requires"] = ".".join(__version__.split(".")[:2])
+        meta_path.write_text(json.dumps(meta, indent=1) + "\n", encoding="utf-8")
 
     # Scripts that replace a game script become diffs.
     for f in sorted((out / "scripts").glob("*.lua")) if (out / "scripts").is_dir() else []:

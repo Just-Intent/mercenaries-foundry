@@ -45,8 +45,9 @@ window.addEventListener('resize', resize);
 // ------------------------------------------------------------------ state
 const state = {
   map: null, terrain: null, records: [], byId: new Map(),
-  moved: {}, copies: [], selected: null, dirty: false, nodes: new Set(),
+  moved: {}, copies: [], removed: new Set(), selected: null, dirty: false, nodes: new Set(),
 };
+const ghostMat = new THREE.MeshBasicMaterial({color: 0xff4040, transparent: true, opacity: 0.35, depthWrite: false});
 let terrainMesh = null, boxes = null;
 const loader = new GLTFLoader();
 const modelCache = new Map();
@@ -144,7 +145,8 @@ function transformOf(rec) {
 }
 
 function placeBox(rec) {
-  const m = rec.node ? new THREE.Matrix4().makeScale(0, 0, 0) : transformOf(rec);
+  const hidden = rec.node || rec.deleted || rec.removed;
+  const m = hidden ? new THREE.Matrix4().makeScale(0, 0, 0) : transformOf(rec);
   boxes.setMatrixAt(rec.slot, m);
   boxes.instanceMatrix.needsUpdate = true;
 }
@@ -171,16 +173,23 @@ function ensureNode(rec) {
   rec.node = node;
   state.nodes.add(rec);
   placeBox(rec);
+  if (rec.deleted) ghost(node);
   loadModel(rec.model).then((model) => {
     if (!model || rec.node !== node) return;
     node.remove(box);
     node.add(model.clone(true));
+    if (rec.deleted) ghost(node);
   });
   return node;
 }
 
-function dropNode(rec) {
-  if (!rec.node || rec === state.selected) return;
+// A removed object, shown (when selected from the change list) as a red ghost.
+function ghost(node) {
+  node.traverse((o) => { if (o.isMesh) o.material = ghostMat; });
+}
+
+function dropNode(rec, force = false) {
+  if (!rec.node || (rec === state.selected && !force)) return;
   scene.remove(rec.node);
   rec.node = null;
   state.nodes.delete(rec);
@@ -191,13 +200,14 @@ function streamNearby() {
   const t = controls.target;
   const near = [];
   for (const rec of state.records) {
-    if (rec.removed) continue;
+    if (rec.removed || rec.deleted) continue;
     const dx = rec.position[0] - t.x, dz = -rec.position[2] - t.z;
     const d = dx * dx + dz * dz;
     if (d < NEAR_RADIUS * NEAR_RADIUS) near.push([d, rec]);
   }
   near.sort((a, b) => a[0] - b[0]);
   const keep = new Set(near.slice(0, MAX_NODES).map((x) => x[1]));
+  if (state.selected) keep.add(state.selected);
   for (const rec of [...state.nodes]) if (!keep.has(rec)) dropNode(rec);
   for (const rec of keep) ensureNode(rec);
 }
@@ -219,7 +229,7 @@ async function loadMap(name) {
   state.nodes.clear();
   if (terrainMesh) scene.remove(terrainMesh);
   if (boxes) scene.remove(boxes);
-  state.records = []; state.byId.clear(); state.moved = {}; state.copies = [];
+  state.records = []; state.byId.clear(); state.moved = {}; state.copies = []; state.removed = new Set();
 
   const [meta, buf, objs] = await Promise.all([
     getJSON(`/api/terrain/${name}.json`),
@@ -248,6 +258,13 @@ async function loadMap(name) {
     placeBox(rec);
   }
   for (const c of objs.edits.copies) addCopy(state.byId.get(c.source), c.as, c.position, c.rotation, false);
+  for (const id of objs.edits.removed || []) {
+    const rec = state.byId.get(id);
+    if (!rec) continue;
+    rec.deleted = true;
+    state.removed.add(id);
+    placeBox(rec);
+  }
   boxes.count = state.records.length;
 
   const names = [...new Set(state.records.map((r) => r.name).filter(Boolean))].sort();
@@ -262,7 +279,10 @@ async function loadMap(name) {
 function lookAt(p, distance = 40) {
   const t = threePos(p);
   controls.target.copy(t);
-  camera.position.set(t.x - distance * 0.6, t.y + distance * 0.55, t.z + distance * 0.6);
+  const cx = t.x - distance * 0.6, cz = t.z + distance * 0.6;
+  // Stay above the ground, which may rise between the camera and the object.
+  const ground = Math.max(heightAt(cx, -cz), heightAt((cx + t.x) / 2, -(cz + t.z) / 2));
+  camera.position.set(cx, Math.max(t.y + distance * 0.55, ground + 5), cz);
   controls.update();
   streamNearby();
 }
@@ -274,8 +294,11 @@ function select(rec) {
   $('selected').hidden = !rec;
   $('hint').hidden = !!rec;
   if (!rec) return;
-  gizmo.attach(ensureNode(rec));
-  setMode(gizmo.getMode());
+  const node = ensureNode(rec);
+  if (!rec.deleted) {
+    gizmo.attach(node);
+    setMode(gizmo.getMode());
+  }
   showSelected();
 }
 
@@ -289,10 +312,32 @@ function showSelected() {
   $('sel-layer').textContent = rec.layer;
   [$('px').value, $('py').value, $('pz').value] = rec.position.map((v) => v.toFixed(2));
   $('ph').value = heading(rec.rotation).toFixed(1);
-  const edited = rec.copyName || state.moved[rec.id];
-  $('sel-note').textContent = rec.copyName ? `A copy of ${rec.name || rec.model}.`
+  const edited = rec.copyName || state.moved[rec.id] || rec.deleted;
+  $('sel-note').textContent = rec.deleted ? 'Removed (saved as a rule). Undo changes brings it back.'
+    : rec.copyName ? `A copy of ${rec.name || rec.model}.`
     : edited ? 'Moved or turned (saved as a rule).' : '';
   $('revert').disabled = !edited;
+  for (const id of ['mode-move', 'mode-turn', 'ground', 'copy', 'delete', 'px', 'py', 'pz', 'ph']) {
+    $(id).disabled = !!rec.deleted;
+  }
+  $('delete').title = rec.name && !rec.copyName
+    ? `Delete. Scripts may use "${rec.name}" by name; removing it can break them.` : 'Delete';
+}
+
+function deleteSelected() {
+  const rec = state.selected;
+  if (!rec || rec.deleted) return;
+  if (rec.copyName) return revert(rec);       // a copy just goes
+  if (rec.name && !confirm(`"${rec.name}" has a name, so scripts may use it. Remove it anyway?`)) return;
+  delete state.moved[rec.id];
+  rec.position = rec.original.position; rec.rotation = rec.original.rotation;
+  rec.deleted = true;
+  state.removed.add(rec.id);
+  select(null);
+  dropNode(rec, true);
+  placeBox(rec);
+  setDirty(true);
+  refreshChanges();
 }
 
 function fromNode(rec) {
@@ -322,6 +367,14 @@ function revert(rec) {
     rec.removed = true;     // keeps its slot in the box batch, hidden
     boxes.setMatrixAt(rec.slot, new THREE.Matrix4().makeScale(0, 0, 0));
     boxes.instanceMatrix.needsUpdate = true;
+  } else if (rec.deleted) {
+    rec.deleted = false;
+    state.removed.delete(rec.id);
+    select(null);
+    dropNode(rec, true);         // the ghost goes; streaming brings the object back
+    placeBox(rec);
+    ensureNode(rec);
+    select(rec);
   } else {
     delete state.moved[rec.id];
     rec.position = rec.original.position; rec.rotation = rec.original.rotation;
@@ -391,6 +444,10 @@ function refreshChanges() {
     if (rec) items.push([rec, `Moved ${rec.name || rec.model}`]);
   }
   for (const c of state.copies) items.push([c.rec, `Copy ${c.as} (of ${c.rec.name || c.rec.model})`]);
+  for (const id of state.removed) {
+    const rec = state.byId.get(id);
+    if (rec) items.push([rec, `Removed ${rec.name || rec.model}`]);
+  }
   $('count').textContent = items.length ? `(${items.length})` : '';
   const ul = $('changes');
   ul.innerHTML = '';
@@ -406,6 +463,7 @@ async function save() {
   const body = {
     moved: state.moved,
     copies: state.copies.map((c) => ({source: c.source, as: c.as, position: c.position, rotation: c.rotation})),
+    removed: [...state.removed],
   };
   status('Saving...');
   try {
@@ -472,6 +530,7 @@ $('ground').onclick = () => {
   fromNode(rec);
 };
 $('copy').onclick = copySelected;
+$('delete').onclick = deleteSelected;
 $('copy-name').addEventListener('change', () => state.selected && renameCopy(state.selected, $('copy-name').value));
 $('revert').onclick = () => state.selected && revert(state.selected);
 $('save').onclick = save;
@@ -509,6 +568,7 @@ window.addEventListener('keydown', (e) => {
   else if (k === 'e') setMode('rotate');
   else if (k === 'g') $('ground').click();
   else if (k === 'c') copySelected();
+  else if (k === 'delete') deleteSelected();
   else if (k === 'escape') select(null);
   else if (k === 's' && (e.ctrlKey || e.metaKey)) { e.preventDefault(); if (state.dirty) save(); }
 });

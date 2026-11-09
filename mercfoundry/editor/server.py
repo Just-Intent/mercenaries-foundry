@@ -7,7 +7,8 @@ GET  /api/terrain/<map>.json   terrain size, spacing and origin
 GET  /api/terrain/<map>.bin    float32 heights, row by row
 GET  /api/objects/<map>        the map's objects, with the mod's editor edits
 GET  /api/model/<name>.glb     a model with its textures
-POST /api/save                 {"moved": {...}, "copies": [...]} -> objects/editor.json
+POST /api/save                 {"moved": {...}, "copies": [...], "removed": [...]}
+                               -> objects/editor.json
 """
 import json
 import mimetypes
@@ -102,7 +103,7 @@ def make_handler(scene: Scene, mod_name: str):
                 doc = json.loads(self.rfile.read(length) or b"{}")
                 if path == "/api/save":
                     with lock:
-                        n = scene.save_edits(doc.get("moved", {}), doc.get("copies", []))
+                        n = scene.save_edits(doc.get("moved", {}), doc.get("copies", []), doc.get("removed", []))
                     return self.send(200, {"rules": n, "file": f"objects/{scene.rules_path().name}"})
                 return self.fail(404, "not found")
             except (ValueError, KeyError) as err:

@@ -25,14 +25,18 @@ toolkit bundle run it the same way: `foundry\python\python.exe foundry\mercfound
 - Select an object to move it (W), turn it about the vertical (E), drop it to the
   ground (G) or copy it (C), or type its position and heading in the panel.
   Copies get a name you can change in the panel; names must be new.
+- Remove an object (Remove, or the Delete key). It disappears; pick it in the
+  change list to see a red ghost where it was, and **Undo changes** to bring it
+  back. Removing a named object asks first, since scripts may use it by name.
+  Saving a removal sets the mod's `"requires"` to 0.51, the first toolkit with
+  `remove` rules.
 - **Save** (Ctrl+S) writes `objects/editor.json`: one rule per moved object
-  (matched by name, or by model and original position) and one `copy` rule per
-  copy. The build applies them like any object rule, and the editor reads them
+  (matched by name, or by model and original position), one `copy` rule per
+  copy and one `remove` rule per removed object. The build applies them like any object rule, and the editor reads them
   back when it starts.
 
 ## Not yet
 
-- Removing objects (object rules have no remove action yet).
 - Tilting objects to the slope: objects turn about the vertical only.
 - Objects added or moved by other mods aren't shown; only terrain is.
 - Undo history: **Undo changes** puts one object back as the game has it.
