@@ -70,14 +70,16 @@ Edit the files in this folder, then build:
 - objects/*.json: {{"template": "player_humvee", "set": {{"physicsenginetorque": "3400"}}}}
 - textures/<name>.png: replaces or adds the texture <name> (power-of-two sizes).
 - models/<name>.obj (or .glb/.gltf): an edited export from `python -m mercfoundry model`.
+- sounds/<sound bank>/<cue>.wav: replaces the sound a cue plays (export them with `sound export`).
 
-Get the originals to edit with `extract --decode`, `texture` and `model`.
+Get the originals to edit with `extract --decode`, `texture`, `model` and `sound export`.
 """
 
 
 @dataclass
 class Result:
     written: list = field(default_factory=list)      # archive file names
+    files: list = field(default_factory=list)        # loose game files, "DATAxbox/..."
     changes: list = field(default_factory=list)      # human-readable lines
     warnings: list = field(default_factory=list)
 
@@ -188,7 +190,7 @@ def new_project(folder, name=None):
     folder = Path(folder)
     name = name or folder.resolve().name
     for sub in ("text", "scripts", "objects", "encounters", "missions", "textures", "models", "layout", "animations",
-                "animtables", "terrain"):
+                "animtables", "terrain", "sounds"):
         (folder / sub).mkdir(parents=True, exist_ok=True)
     meta = folder / "mod.json"
     if not meta.exists():
@@ -1060,9 +1062,14 @@ def project_name(folder) -> str:
     return folder.resolve().name
 
 
+def _apply_sounds(data, folder, result):
+    from . import sounds
+    sounds.apply(data, folder, result)
+
+
 STEPS = (_apply_text, _apply_scripts, _apply_objects, _apply_encounters, _apply_missions,
          _apply_textures, _apply_models, _apply_collision_flags, _apply_layout, _apply_animations,
-         _apply_animtables, _apply_terrain)
+         _apply_animtables, _apply_terrain, _apply_sounds)
 
 
 def build(projects, data_dir, out_dir, name=None, description=None) -> Result:
@@ -1104,12 +1111,15 @@ def build(projects, data_dir, out_dir, name=None, description=None) -> Result:
             if contracts:
                 _apply_contracts(data, contracts, result)
             _check_new_scripts(data, result)
+    from . import sounds
+    data.project = "Foundry"
+    sounds.finish(data, result)
     result.warnings += [f"conflict: {c}" for c in data.conflicts]
     names = sorted(set(data.replace) | set(data.add))
     names = [n for n in names if data.replace.get(n) or data.add.get(n)]
     out.mkdir(parents=True, exist_ok=True)
     # Fail before writing anything if the game has the files open.
-    for n in names:
+    for n in names + sorted(data.files):
         target = out / n
         if target.exists():
             try:
@@ -1136,6 +1146,7 @@ def build(projects, data_dir, out_dir, name=None, description=None) -> Result:
     for rel, body in sorted(data.files.items()):
         (out / rel).parent.mkdir(parents=True, exist_ok=True)
         (out / rel).write_bytes(body)
+        result.files.append(rel)
     meta = {}
     if len(projects) == 1 and (projects[0] / "mod.json").exists():
         meta = json.loads((projects[0] / "mod.json").read_text(encoding="utf-8"))

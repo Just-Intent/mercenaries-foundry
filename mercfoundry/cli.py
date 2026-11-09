@@ -273,10 +273,10 @@ def cmd_mod_build(args):
         print(f"  {line}")
     for w in result.warnings:
         print(f"  warning: {w}")
-    if not result.written:
+    if not result.written and not result.files:
         print("nothing to build: no edits change the game")
         return
-    print(f"wrote {', '.join(result.written)} to {args.out}")
+    print(f"wrote {', '.join(result.written + result.files)} to {args.out}")
     bad = 0
     for name in result.written:
         rep = verifier.verify_archive(Path(args.out) / name)
@@ -651,6 +651,43 @@ def cmd_terrain(args):
     sys.exit(f"no terrain named {args.name!r} (list them with list --type Terrain)")
 
 
+def cmd_sound(args):
+    from . import sounds, xsb
+    lib = xsb.Library(args.data)
+    if not lib.sound_paths:
+        sys.exit(f"no sound banks under {args.data} (it should be the DATAxbox folder)")
+    if args.sound_cmd == "list":
+        if not args.bank:
+            for name in sorted(lib.sound_paths):
+                sb = lib.sound_bank(name)
+                print(f"{name:10} {len(sb.cues):5} cues   {lib.rel(lib.sound_paths[name])}")
+            return
+        try:
+            sb = lib.sound_bank(args.bank)
+        except KeyError:
+            sys.exit(f"no sound bank {args.bank!r} (list them with: sound list <data>)")
+        for cue in sb.cues:
+            waves = sb.cue_waves(cue)
+            parts = []
+            for wbank, index in waves:
+                e = lib.wave_bank(wbank).entries[index]
+                parts.append(f"{wbank} #{index} {e.seconds:.1f}s" + (f" {e.name}" if e.name else ""))
+            kind = sb.sounds[cue.sound].kind if cue.sound < len(sb.sounds) else "none"
+            print(f"{kind:9} {args.bank}.{cue.name}: " + ("; ".join(parts) or "(plays no wave)"))
+        return
+    try:
+        written = sounds.export(lib, args.bank, Path(args.out) / args.bank.lower(), args.cues)
+    except KeyError:
+        sys.exit(f"no sound bank {args.bank!r} (list them with: sound list <data>)")
+    if not written:
+        sys.exit("no cue by that name" if args.cues else "the bank plays no waves")
+    for path in written[:20]:
+        print(f"wrote {path}")
+    if len(written) > 20:
+        print(f"... and {len(written) - 20} more")
+    print(f"{len(written)} .wav files; put edited ones in a mod's sounds/{args.bank.lower()}/ under the same names")
+
+
 def cmd_hash(args):
     for s in args.names:
         print(f"{name_hash(s):08X}  {s}")
@@ -817,6 +854,14 @@ def main(argv=None):
     s.add_argument("data", help="DATAxbox folder or assets.dsk")
     s.add_argument("name", help="terrain name, e.g. sw (the southern province) or nw")
     s.add_argument("-o", "--out", default="terrain")
+    s = add("sound", cmd_sound, "list the game's sound cues or export them as .wav")
+    ssub = s.add_subparsers(dest="sound_cmd", required=True)
+    t = ssub.add_parser("list", help="sound banks, or one bank's cues and the waves they play")
+    t.add_argument("data", help="DATAxbox folder"); t.add_argument("bank", nargs="?", help="sound bank, e.g. fio")
+    t = ssub.add_parser("export", help="write a sound bank's cues as .wav, named for a mod's sounds/ folder")
+    t.add_argument("data", help="DATAxbox folder"); t.add_argument("bank", help="sound bank, e.g. fio")
+    t.add_argument("cues", nargs="*", help="only these cues (default: all)")
+    t.add_argument("-o", "--out", default="sounds")
     s = add("hash", cmd_hash, "hash names the way the game does"); s.add_argument("names", nargs="+")
 
     args = p.parse_args(argv)

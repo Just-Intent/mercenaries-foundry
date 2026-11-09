@@ -42,6 +42,7 @@ python -m mercfoundry mod build my_mod --data game_files/DATAxbox --out "<port>/
 | `terrain/<name>.decals.json` | Replace a map's decals (roads, concrete, parking; exported by `terrain`), or lay roads from a few world points: `{"roads": [{"texture": "sw_decal_road_straight", "points": [[x, z], ...]}]}`. Roads keep the map's own decals. |
 | `terrain/<name>.surfaces.json` | Set each ground or decal texture's surface (`dirt`, `road`, `snow`, `grass`, `rock`: what shots and blasts kick up), dust, debris and effect. Exported by `terrain`; the build writes the level's config file (e.g. `DATAxbox/SW/SWN.ini`) into the mod. |
 | `animtables/<name>.json` | Replace a character's animation table: which clip plays for each handle the game asks for (e.g. `lb_upright_run_forward`), per weapon or seat set. Export one with `animtable DATAxbox player_american`. |
+| `sounds/<bank>/<cue>.wav` | Replace a sound: every wave the cue plays, or one with `<cue>.<n>.wav`. Export them with `sound export DATAxbox fio SWNfio01`; any 16-bit PCM `.wav` works and the build converts it to the game's format. See [docs/SOUND.md](docs/SOUND.md). |
 | `layout/<layer>.<kind>.json` | Replace a layer's paths, boundaries, regions or encounters (`kind` = `path`, `lineregion`, `region`, `encounter`), or `layout/<layer>.list.txt` for its load list. Export them with `layout DATAxbox <layer>`. |
 
 ### Editor

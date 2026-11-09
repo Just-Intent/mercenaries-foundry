@@ -69,7 +69,8 @@
 - Editor buildings look right: glTF exports use alpha cut-outs only where the game alpha-tests (material flag 0x10, as on leaves; building walls keep other data in their alpha and were cut full of holes), and the editor draws surfaces from both sides (roofs vanished from above). The game's spawn points are smaller and fainter, hovering names spawn points, squad members, paths and zones, and the panel has a colour key.
 - Editor ground textures: the terrain shows its texture layers blended by their paint and lit by the baked lighting (a shader with the layers in one texture array and the paint in another), from the terrain as the enabled mods leave it. The server's single lock became three, so the other-mods build no longer holds up models and the ground.
 - Editor roads: the terrain's decals (roads, concrete, parking) are drawn over the ground, one quad per cell on the height grid with the stored corner texture coordinates, lit by the baked lighting.
-- 228 tests pass.
+- Sound ([SOUND.md](SOUND.md)): the game's XACT wave banks and sound banks are read: all 133 wave banks (8,589 waves, Xbox ADPCM decoded) and every cue in the 100 registered sound banks, resolved to the waves it plays (simple, random variations and multi-track sounds). `sound list` and `sound export` write cues as `.wav`. Mods replace sounds with `sounds/<bank>/<cue>.wav`; the build encodes them to Xbox ADPCM at the wave's own rate and channels and rebuilds the wave bank as a loose file. Every retail bank rebuilds byte-for-byte with nothing replaced. Tested in game: a replaced voice line played.
+- 242 tests pass.
 
 ## Fixed from retail data
 - Text values aren't NUL-terminated. The decoder had assumed they were and found no strings.
@@ -101,6 +102,7 @@
 - 2026-11-08, object inspector: the nearby list showed objects within 100 m with names where they have one (loc_hospital, c_race_HQm2HQa_01_gate16b); a static rock reported objectType static, hitPoints 1, GeometryFile summer_env_rock01. Unnamed objects are labelled by model (the player's own gear at 1 m, pickups such as global_pic_ammo, props such as global_militaryboxstack with hitPoints 3000).
 - 2026-11-08, object edits: on nearby props, Bring here, Up/Down 1 m, Turn ±45 and Remove all worked.
 - 2026-11-08, console in fullscreen: with DISPLAY: FULLSCREEN, F7 blinked the screen, the game switched to a borderless window and the console appeared over it. At the native 640 x 480 the picture turned 4:3 (the game's real aspect; exclusive mode had the monitor stretch it).
+- 2026-11-09, sound: a source mod holding only `sounds/fio/SWNfio01.wav` (Fiona's opening line reversed, given at 44.1 kHz stereo) was built at launch into a rebuilt `DATAxbox/SOUND/vo/vo.xwb` (converted to the wave's 22,050 Hz mono ADPCM). In the opening mission the line played backwards. The first try didn't build: the launch sync didn't count a folder with only `sounds/` as a source mod (fixed).
 - Lesson: the C-17 cargo-hold scene uses a separate model, `c17_humvee`, which shares the Humvee texture. Check model edits on the vehicle you drive.
 - Lesson: a new game starts in `playable_intro` (C-17 briefing, then `allies0`), not the Ace of Clubs, which is Allied mission 4. Script tests belong there.
 

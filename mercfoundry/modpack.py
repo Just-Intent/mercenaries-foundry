@@ -12,6 +12,9 @@ to the player's own game data:
                                        pixels, the grey value is the new opacity
     textures/<name>.changes.png + <name>.mask.png
                                        new pixels where the mask is white
+
+Sounds (sounds/<bank>/<cue>.wav) can't be reduced to changes: unchanged
+exports are dropped and the rest are shared as they are.
 """
 import difflib
 import json
@@ -485,6 +488,26 @@ def pack(src, out, data_dir) -> dict:
     for f in sorted((out / "models").glob("*.obj")) if (out / "models").is_dir() else []:
         report["warnings"].append(f"models/{f.name} still holds game geometry; edit the model as glTF "
                                   "(model --glb) so mod pack can keep only your changes")
+
+    # Sounds: unchanged exports of the game's audio are dropped; anything
+    # else is shared as it is, so it has to be the author's own.
+    if (out / "sounds").is_dir():
+        from . import sounds, xsb
+        lib, kept = xsb.Library(data_dir), []
+        for f in sorted((out / "sounds").rglob("*.wav")):
+            rel = f.relative_to(out).as_posix()
+            try:
+                same = sounds.unchanged(lib, f)
+            except (ValueError, KeyError):
+                same = False          # the build reports what's wrong with it
+            if same:
+                f.unlink()
+                report["dropped"].append(f"{rel} (same as the game's)")
+            else:
+                kept.append(rel)
+        if kept:
+            report["warnings"].append(f"{len(kept)} sound file{'s are' if len(kept) != 1 else ' is'} shared as "
+                                      "recorded: make sure they're yours to share, not edited game audio")
     return report
 
 

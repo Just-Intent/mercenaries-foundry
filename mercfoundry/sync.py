@@ -21,7 +21,7 @@ from pathlib import Path
 
 OUTPUT = "Foundry Mods"
 SOURCE_DIRS = ("text", "scripts", "objects", "encounters", "missions", "textures", "models", "layout",
-               "animations", "animtables", "terrain")
+               "animations", "animtables", "terrain", "sounds")
 
 
 @dataclass
