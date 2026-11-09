@@ -20,6 +20,14 @@ toolkit bundle run it the same way: `foundry\python\python.exe foundry\mercfound
 - The terrain is what the game will have: when the mod sits in the game's `mods`
   folder, the editor applies the terrain edits of every enabled source mod, in
   load order, as `mod sync` does. Elsewhere it applies the mod's own.
+- Other mods: when the mod sits in the game's `mods` folder, objects that other
+  enabled source mods add (copies, encounter-layer props and squads) show too,
+  and game objects they move or remove are hidden or shown where they put them.
+  The editor runs those mods' object rules and encounter layers, in load order,
+  as a build would (this mod's own other rule files and layers count too, except
+  `editor.json` and its squads, which are edited here). They're read only:
+  selecting one says which mod changed it. This runs in the background after the
+  map loads (about 20 seconds the first time).
 - Find objects by name or model (search box), or double-click the ground to look
   there. Drag to orbit, right-drag to pan, scroll to zoom.
 - Select an object to move it (W), turn it about the vertical (E), drop it to the
@@ -73,7 +81,6 @@ toolkit bundle run it the same way: `foundry\python\python.exe foundry\mercfound
 ## Not yet
 
 - Tilting objects to the slope: objects turn about the vertical only.
-- Objects added or moved by other mods aren't shown; only terrain is.
 - Undo history: **Undo changes** puts one object back as the game has it.
 
 ## How it works
@@ -83,7 +90,8 @@ toolkit bundle run it the same way: `foundry\python\python.exe foundry\mercfound
 `/api/info`, `/api/terrain/<map>.json` and `.bin` (float32 heights),
 `/api/objects/<map>` (objects plus the editor's saved edits),
 `/api/model/<name>.glb`, `/api/layout/<map>` (paths and zones),
-`/api/encounters/<map>` and `/api/templates`, and `POST /api/save`,
+`/api/encounters/<map>`, `/api/templates`, `/api/context/<map>` (other mods'
+objects), and `POST /api/save`,
 `/api/layout/save` and `/api/encounters/save`. Saving refuses requests from
 other web origins.
 

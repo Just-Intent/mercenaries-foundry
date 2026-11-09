@@ -10,6 +10,7 @@ GET  /api/model/<name>.glb     a model with its textures
 GET  /api/layout/<map>         paths and zones: the game's (with the mod's layout
                                changes) and the mod's own (encounters/*.json)
 POST /api/layout/save          {"map", "game": [...], "mod": {file: {...}}}
+GET  /api/context/<map>        objects other enabled mods add, move or remove
 GET  /api/encounters/<map>     encounters: the game's (read only) and the mod's
 GET  /api/templates            objects a squad member can copy (template_*)
 POST /api/encounters/save      {"map", "files": {file: [encounter, ...]}}
@@ -90,6 +91,9 @@ def make_handler(scene: Scene, mod_name: str):
                         objs = scene.objects(path[len("/api/objects/"):])
                         edits = scene.load_edits()
                     return self.send(200, {"objects": objs, "edits": edits})
+                if path.startswith("/api/context/"):
+                    with lock:
+                        return self.send(200, scene.context_objects(path[len("/api/context/"):]))
                 if path.startswith("/api/encounters/"):
                     with lock:
                         return self.send(200, scene.encounters(path[len("/api/encounters/"):]))

@@ -151,7 +151,8 @@ function transformOf(rec) {
 }
 
 function placeBox(rec) {
-  const hidden = rec.node || rec.deleted || rec.removed;
+  if (rec.slot >= boxes.instanceMatrix.count) return;
+  const hidden = rec.node || rec.deleted || rec.removed || rec.hiddenBy;
   const m = hidden ? new THREE.Matrix4().makeScale(0, 0, 0) : transformOf(rec);
   boxes.setMatrixAt(rec.slot, m);
   boxes.instanceMatrix.needsUpdate = true;
@@ -206,7 +207,7 @@ function streamNearby() {
   const t = controls.target;
   const near = [];
   for (const rec of state.records) {
-    if (rec.removed || rec.deleted) continue;
+    if (rec.removed || rec.deleted || rec.hiddenBy) continue;
     const dx = rec.position[0] - t.x, dz = -rec.position[2] - t.z;
     const d = dx * dx + dz * dz;
     if (d < NEAR_RADIUS * NEAR_RADIUS) near.push([d, rec]);
@@ -222,6 +223,7 @@ function addRecord(rec) {
   rec.slot = state.records.length;
   state.records.push(rec);
   state.byId.set(rec.id, rec);
+  if (rec.slot >= boxes.instanceMatrix.count) return;     // beyond the batch: shown only up close
   boxes.setColorAt(rec.slot, colourOf(rec.model));
   boxes.instanceColor.needsUpdate = true;
   placeBox(rec);
@@ -247,7 +249,7 @@ async function loadMap(name) {
   terrainMesh = buildTerrain(meta, state.terrain.heights);
   scene.add(terrainMesh);
 
-  const capacity = objs.objects.length + 512;
+  const capacity = objs.objects.length + 4096;     // room for copies and other mods' objects
   boxes = new THREE.InstancedMesh(boxGeo, new THREE.MeshLambertMaterial(), capacity);
   boxes.count = 0;
   boxes.instanceColor = new THREE.InstancedBufferAttribute(new Float32Array(capacity * 3), 3);
@@ -280,7 +282,35 @@ async function loadMap(name) {
   const [items, encounters] = await Promise.all([layout.load(name), encs.load(name)]);
   refreshChanges();
   setDirty(false);
-  status(`${state.records.length} objects, ${items} paths and zones, ${encounters} encounters`);
+  const summary = `${state.records.length} objects, ${items} paths and zones, ${encounters} encounters`;
+  status(`${summary}; reading other mods...`);
+  loadContext(name, summary);      // in the background: it can take a while the first time
+}
+
+// Objects other enabled mods add, move or remove (read only here).
+async function loadContext(name, summary) {
+  let ctx;
+  try {
+    ctx = await getJSON(`/api/context/${name}`);
+  } catch (err) {
+    return status(`${summary}; other mods not shown: ${err.message}`, true);
+  }
+  if (state.map !== name) return;
+  for (const [id, by] of Object.entries(ctx.removed)) {
+    const rec = state.byId.get(id);
+    if (!rec) continue;
+    rec.hiddenBy = by;
+    dropNode(rec, true);
+    placeBox(rec);
+  }
+  for (const o of ctx.added) {
+    addRecord({...o, context: true, original: {position: o.position, rotation: o.rotation}});
+  }
+  boxes.count = Math.min(state.records.length, boxes.instanceMatrix.count);
+  const mods = [...new Set(ctx.added.map((o) => o.by).concat(Object.values(ctx.removed)))];
+  const n = ctx.added.length + Object.keys(ctx.removed).length;
+  status(n ? `${summary}; ${ctx.added.length} added and ${Object.keys(ctx.removed).length} moved or removed by ${mods.join(', ')}`
+    : `${summary}; no other mod changes objects here`);
 }
 
 function lookAt(p, distance = 40) {
@@ -304,7 +334,7 @@ function select(rec) {
   $('hint').hidden = !!rec;
   if (!rec) return;
   const node = ensureNode(rec);
-  if (!rec.deleted) {
+  if (!rec.deleted && !rec.context) {
     gizmo.attach(node);
     setMode(gizmo.getMode());
   }
@@ -322,12 +352,13 @@ function showSelected() {
   [$('px').value, $('py').value, $('pz').value] = rec.position.map((v) => v.toFixed(2));
   $('ph').value = heading(rec.rotation).toFixed(1);
   const edited = rec.copyName || state.moved[rec.id] || rec.deleted;
-  $('sel-note').textContent = rec.deleted ? 'Removed (saved as a rule). Undo changes brings it back.'
+  $('sel-note').textContent = rec.context ? `Added or moved by ${rec.by} (read only here: edit it in that mod).`
+    : rec.deleted ? 'Removed (saved as a rule). Undo changes brings it back.'
     : rec.copyName ? `A copy of ${rec.name || rec.model}.`
     : edited ? 'Moved or turned (saved as a rule).' : '';
-  $('revert').disabled = !edited;
+  $('revert').disabled = !edited || !!rec.context;
   for (const id of ['mode-move', 'mode-turn', 'ground', 'copy', 'delete', 'px', 'py', 'pz', 'ph']) {
-    $(id).disabled = !!rec.deleted;
+    $(id).disabled = !!rec.deleted || !!rec.context;
   }
   $('delete').title = rec.name && !rec.copyName
     ? `Delete. Scripts may use "${rec.name}" by name; removing it can break them.` : 'Delete';

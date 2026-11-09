@@ -289,8 +289,10 @@ def _apply_scripts(data, folder, result):
 ACTIONS = ("set", "move", "position", "turn", "copy", "remove")
 
 
-def _rules(folder):
+def _rules(folder, skip=()):
     for f in sorted((folder / "objects").glob("*.json")):
+        if f.name in skip:
+            continue
         doc = json.loads(f.read_text(encoding="utf-8"))
         for rule in doc if isinstance(doc, list) else [doc]:
             if not isinstance(rule, dict) or not any(k in rule for k in ACTIONS):
@@ -568,8 +570,8 @@ def _material_warnings(rules):
     return out
 
 
-def _apply_objects(data, folder, result):
-    rules = list(_rules(folder))
+def _apply_objects(data, folder, result, skip=()):
+    rules = list(_rules(folder, skip))
     if not rules:
         return
     result.warnings += _material_warnings(rules)

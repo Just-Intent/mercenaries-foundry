@@ -138,6 +138,107 @@ class Scene:
                         "model": o["model"], "position": list(o["position"]), "rotation": to_three(rows)})
         return out
 
+    # ------------------------------------------------------------ other mods
+    def _context_world(self):
+        """The context mods' object rules and encounter layers, applied as a
+        build would (once): this mod's own too, except the editor's rules
+        (shown as edits) and its squad members (shown as squads)."""
+        if getattr(self, "_ctx_world", None) is None:
+            from .. import modbuild
+            data = modbuild._Data(self.data)
+            mine = self.mod.resolve()
+            for p in self.context:
+                p = Path(p)
+                data.project = modbuild.project_name(p)
+                part = modbuild.Result()
+                try:
+                    modbuild._apply_objects(data, p, part, skip=(EDITOR_RULES,) if p.resolve() == mine else ())
+                    modbuild._apply_encounters(data, p, part)
+                except ValueError as err:
+                    print(f"editor: skipped {data.project}'s objects: {err}", flush=True)
+            self._ctx_world = data
+        return self._ctx_world
+
+    def context_objects(self, map_name):
+        """Objects other mods add, move or remove on this map:
+        {"added": [object...], "removed": {game object id: mod name}}."""
+        from .. import world
+        m = map_name.lower()
+        data = self._context_world()
+        mine = self.mod.resolve()
+        mine_name = None
+        from ..modbuild import project_name
+        mine_name = project_name(mine)
+        WORLD = name_hash("world")
+
+        def key(o):
+            r = o["rotation"] or ()
+            return (o["name"].lower(), o["model"].lower(), tuple(round(v, 2) for v in o["position"] or ()),
+                    tuple(round(v, 3) for v in r))
+
+        def entry(o, by, n):
+            rows = [list(o["rotation"][0:3]), list(o["rotation"][3:6]), list(o["rotation"][6:9])]
+            return {"id": f"ctx:{o['layer']}:{n}", "layer": o["layer"], "name": o["name"], "model": o["model"],
+                    "position": list(o["position"]), "rotation": to_three(rows), "by": by}
+
+        added, removed = [], {}
+        for name, changes in data.replace.items():
+            for rec in data.archive(name).records:
+                if rec.kind != WORLD or rec.ident not in changes:
+                    continue
+                layer = self.names().get(rec.key) or f"{rec.key:08X}"
+                if not self._in_map(layer, m):
+                    continue
+                by = data.changed_by.get((name, rec.ident), "another mod")
+                base = [o for o in world.iter_objects(data.archive(name).read(rec)) if o["position"]]
+                now = [o for o in world.iter_objects(changes[rec.ident]) if o["position"]]
+                now_keys = {}
+                for o in now:
+                    now_keys.setdefault(key(o), []).append(o)
+                base_keys = {}
+                for o in base:
+                    base_keys.setdefault(key(o), []).append(o)
+                for o in base:
+                    if not now_keys.get(key(o)):
+                        removed[f"{layer}:{o['index']}"] = by
+                    else:
+                        now_keys[key(o)].pop()
+                for k, rest in now_keys.items():
+                    for o in rest:
+                        o["layer"] = layer
+                        added.append(entry(o, by, len(added)))
+        for arc_name, recs in data.add.items():
+            for k, kind, body in recs:
+                if kind != WORLD:
+                    continue
+                by = data.added_by.get((k, kind), "another mod")
+                objs = [o for o in world.iter_objects(body) if o["position"]]
+                if not objs:
+                    continue
+                layer = objs[0]["layer"]
+                for o in objs:
+                    props = {a.lower(): b for a, b in o["properties"]}
+                    if by == mine_name and props.get("encounter", "none").lower() != "none":
+                        continue     # this mod's squad members show as squads
+                    added.append(entry(o, by, len(added)))
+        # New layers name their map in TNAM; keep the ones on this map.
+        maps = self._layer_maps(data)
+        added = [a for a in added if maps.get(a["layer"].lower(), m) == m or self._in_map(a["layer"], m)]
+        return {"added": added, "removed": removed}
+
+    def _layer_maps(self, data):
+        """Map of each added layer (lower-case name -> map), from its TNAM."""
+        from .. import world
+        out = {}
+        for recs in data.add.values():
+            for k, kind, body in recs:
+                if kind == name_hash("world"):
+                    doc = world.to_json(body)
+                    tn = next((c for c in doc["chunks"] if c.get("tag") == "TNAM"), None)
+                    mp = bytes.fromhex(tn["hex"]).split(b"\0")[0].decode("latin-1").lower() if tn and "hex" in tn else ""
+                    out[(doc.get("name") or "").lower()] = mp
+        return out
+
     def find_object(self, oid):
         layer, _, index = oid.rpartition(":")
         for o in self.all_objects():
