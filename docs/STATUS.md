@@ -78,6 +78,7 @@
 - Path events: `EVNT` decoded (all 857 retail path records round-trip). Mod paths take `"events"`: animation clips played at points, with a chance in percent. Tested in game on the test range: a patrolling soldier fidgeted at both ends with 100, and never with 0. So retail's one shipped event (chance 0) never plays.
 - Editor places templates: any vehicle, prop or character goes into the mod's map layer with its real model, and spawns live when the game has it loaded. Layers marked `"load": "map"` (all editor-made layers) load in free roam on their map through a generated `foundry_layers` script hooked into `LoadNoMissionState`, so editor work shows in the game with no script. Fixed: saving in the editor dropped other maps' object rules. Tested in game: a Humvee and a soldier placed in the editor appeared in free roam.
 - Editor water: the game's water areas (`type water` boundaries with a surface height, colour and texture) are drawn as surfaces, with their own toggle.
+- Editor path extras: the mod's own paths get pauses, animations (path events, with a chance) and links in the panel, kept on their points when points are added or deleted. Fixed: road decals one cell past the map's edge got NaN heights (the editor's console errors).
 - 252 tests pass.
 
 ## Fixed from retail data
@@ -125,7 +126,7 @@
 - Python 3.12.10 alongside 3.13. The port's `.venv` has its pinned CMake 3.31.6, Ninja 1.13.0 and Capstone 5.0.6.
 
 ## Next steps
-1. Editor: live copies of unnamed scenery, path pauses, links and events, editing the game's own encounters.
+1. Editor: live copies of unnamed scenery, editing the game's own encounters.
 2. Collision flags: what bit 4 does; why bullets pass through pines and some rock meshes; collision for edited existing pieces.
 3. Moving skin bones on characters (animations override bone translations); what animation-table priorities and flags do.
 4. Function map: name more engine functions (actors, AI commands, missions); find the path from a vehicle actor to its drivetrain, so plugins can change handling live with the setters.

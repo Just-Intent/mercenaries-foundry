@@ -93,6 +93,24 @@
           <label>Z <input id="qz" type="number" step="0.1"></label>
         </div>
       </div>
+      <div id="path-extras" hidden>
+        <div id="point-extras" hidden>
+          <label class="field">Pause here (seconds) <input id="pt-pause" type="number" min="0" step="0.5"></label>
+          <label class="field">Animations here
+            <input id="pt-anims" type="text" list="anims" spellcheck="false"
+                   placeholder="clip, or clip:chance (comma between)"
+                   title="Animation clips a character plays on reaching this point, e.g. all_allies_fb_fidget01. A chance in percent after a colon (default 100)."></label>
+        </div>
+        <p class="hint">Links (where a character can go on from here):</p>
+        <ul id="path-links" class="links"></ul>
+        <div class="xyz">
+          <label>To path <input id="link-path" type="text" list="path-names" spellcheck="false"></label>
+          <label>at point <input id="link-their" type="number" min="0" step="1" value="0"></label>
+          <button id="link-add" title="Link this path's selected point (or its last) to that point of another path">Link</button>
+        </div>
+      </div>
+      <datalist id="anims"></datalist>
+      <datalist id="path-names"></datalist>
       <div class="buttons">
         <button id="item-add" title="Insert">Add point</button>
         <button id="item-del-point">Delete point</button>

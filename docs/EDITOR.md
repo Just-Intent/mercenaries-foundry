@@ -103,6 +103,18 @@ toolkit bundle run it the same way: `foundry\python\python.exe foundry\mercfound
     ("loaded here"); others appear after a rebuild. Copies of unnamed scenery and
     other mods' objects need a rebuild. The panel's **Game replies** list keeps
     the game's last answers.
+- **Path pauses, animations and links** (the mod's own paths). Select a
+  point to set:
+  - a pause in seconds;
+  - animations a character plays on reaching it. These are clip names, with
+    an optional chance in percent: `all_allies_fb_fidget01, all_allies_fb_idle:50`.
+    The box suggests idle, fidget and similar clips.
+
+  The game never has both pauses and animations on one path, so the panel
+  refuses that. **Links** joins the selected point (or the last one) to a
+  point of another path, so characters can go on from there; links can be
+  removed again. Adding or deleting points keeps pauses, animations and links
+  on the same points.
 - **Water** is drawn where the game has it: every boundary with `type water`
   (the south map's coast, bays, rivers and ponds; the north map's oceans and
   rivers) is filled at its `height`. The fill uses its `texture` (default

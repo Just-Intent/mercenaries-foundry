@@ -236,6 +236,15 @@ export function createLayout(ctx) {
       }
       spec.pauses = out;
     }
+    if (spec.events) {
+      const out = {};
+      for (const [k, v] of Object.entries(spec.events)) {
+        const i = +k;
+        if (by < 0 && i === from) continue;
+        out[i >= from + (by > 0 ? 0 : 1) ? i + by : i] = v;
+      }
+      spec.events = out;
+    }
     for (const link of spec.links || []) {
       if (link.our_point !== undefined && link.our_point >= from + (by > 0 ? 0 : 1)) link.our_point += by;
     }
@@ -379,14 +388,119 @@ export function createLayout(ctx) {
     $('item-revert').hidden = mod;
     $('item-del-point').disabled = st.point === null;
     $('item-note').textContent = mod
-      ? `Saved in encounters/${it.file}. A script loads the layer with Utility_ReadLevelFile('${it.layer}').`
+      ? `Saved in encounters/${it.file}.`
       : 'A game item: drag its points (click a point first). The number of points stays the same.';
+    showExtras(it);
     $('point-xyz').hidden = st.point === null;
     if (st.point !== null) {
       const p = it.points[st.point];
       $('point-label').textContent = `Point ${st.point}`;
       [$('qx').value, $('qy').value, $('qz').value] = p.map((v) => v.toFixed(2));
     }
+  }
+
+  // ---------------------------------------------------------------- path extras
+  // Pauses (seconds), events (animation clips) and links, on the mod's own
+  // paths: what the build writes as PSTM, EVNT and JNCT.
+  let animList = null;
+  async function loadAnims() {
+    if (animList) return;
+    animList = [];
+    try { animList = await (await fetch('/api/animations')).json(); } catch (e) { return; }
+    $('anims').innerHTML = animList.filter((n) => /fidget|idle|look|salute|smoke|talk|wave|point/i.test(n))
+      .map((n) => `<option value="${n}">`).join('');
+  }
+  const eventsText = (list) => (list || []).map((e) => (typeof e === 'string' ? e
+    : (e.value === undefined || +e.value === 100 ? e.anim : `${e.anim}:${e.value}`))).join(', ');
+  function parseEvents(text) {
+    const out = [];
+    for (const part of text.split(',').map((s) => s.trim()).filter(Boolean)) {
+      const [anim, chance] = part.split(':').map((s) => s.trim());
+      if (!/^[A-Za-z0-9_]+$/.test(anim)) throw new Error(`"${anim}" isn't a clip name`);
+      if (chance === undefined) out.push(anim);
+      else if (Number.isFinite(+chance) && +chance >= 0 && +chance <= 100) out.push({anim, value: +chance});
+      else throw new Error(`the chance for ${anim} is 0 to 100`);
+    }
+    return out;
+  }
+  function showExtras(it) {
+    const on = it.source === 'mod' && it.kind === 'path';
+    $('path-extras').hidden = !on;
+    if (!on) return;
+    loadAnims();
+    const spec = it.spec || (it.spec = {});
+    $('path-names').innerHTML = st.items.filter((x) => x.kind === 'path' && x !== it)
+      .map((x) => `<option value="${x.name}">`).join('');
+    $('point-extras').hidden = st.point === null;
+    if (st.point !== null) {
+      const pause = (spec.pauses || {})[st.point];
+      const events = (spec.events || {})[st.point];
+      if (document.activeElement !== $('pt-pause')) $('pt-pause').value = pause === undefined ? '' : pause;
+      if (document.activeElement !== $('pt-anims')) $('pt-anims').value = eventsText(events);
+    }
+    const ul = $('path-links');
+    ul.innerHTML = '';
+    for (const [i, link] of (spec.links || []).entries()) {
+      const li = document.createElement('li');
+      const ours = link.our_point === undefined ? it.points.length - 1 : link.our_point;
+      li.textContent = `Point ${ours} → ${link.path}, point ${link.their_point || 0} `;
+      const x = document.createElement('button');
+      x.textContent = 'Remove';
+      x.onclick = () => { spec.links.splice(i, 1); edited(it); showPanel(); };
+      li.appendChild(x);
+      ul.appendChild(li);
+    }
+  }
+  function setPause() {
+    const it = st.selected;
+    if (!it || st.point === null) return;
+    const spec = it.spec || (it.spec = {});
+    const v = $('pt-pause').value.trim();
+    if (v !== '' && (spec.events || {})[st.point]) {
+      status('This point plays animations; the game never has a pause and animations on one path point', true);
+      return showPanel();
+    }
+    if (v !== '' && Object.keys(spec.events || {}).length) {
+      status('This path has animations; the game never has pauses and animations on one path', true);
+      return showPanel();
+    }
+    spec.pauses = spec.pauses || {};
+    if (v === '' || +v <= 0) delete spec.pauses[st.point];
+    else spec.pauses[st.point] = +v;
+    if (!Object.keys(spec.pauses).length) delete spec.pauses;
+    edited(it);
+    status('');
+  }
+  function setAnims() {
+    const it = st.selected;
+    if (!it || st.point === null) return;
+    const spec = it.spec || (it.spec = {});
+    let list;
+    try { list = parseEvents($('pt-anims').value); } catch (e) { status(e.message, true); return; }
+    if (list.length && Object.keys(spec.pauses || {}).length) {
+      status('This path has pauses; the game never has pauses and animations on one path', true);
+      return showPanel();
+    }
+    spec.events = spec.events || {};
+    if (list.length) spec.events[st.point] = list; else delete spec.events[st.point];
+    if (!Object.keys(spec.events).length) delete spec.events;
+    edited(it);
+    status(list.length ? 'Characters following this path play these on reaching the point (needs toolkit 0.65 to build).' : '');
+  }
+  function addLink() {
+    const it = st.selected;
+    if (!it) return;
+    const other = $('link-path').value.trim();
+    const target = st.items.find((x) => x.kind === 'path' && x.name.toLowerCase() === other.toLowerCase());
+    if (!target) return status(`No path called ${other} on this map`, true);
+    const their = Math.max(0, Math.min(target.points.length - 1, Math.round(+$('link-their').value || 0)));
+    const spec = it.spec || (it.spec = {});
+    spec.links = spec.links || [];
+    spec.links.push({path: target.name, their_point: their,
+                     our_point: st.point === null ? it.points.length - 1 : st.point});
+    edited(it);
+    showPanel();
+    status('');
   }
 
   function setPointFromPanel() {
@@ -458,6 +572,9 @@ export function createLayout(ctx) {
   for (const id of ['qx', 'qy', 'qz']) $(id).addEventListener('change', setPointFromPanel);
   $('show-paths').addEventListener('change', (e) => setVisible('path', e.target.checked));
   $('show-zones').addEventListener('change', (e) => setVisible('boundary', e.target.checked));
+  $('pt-pause').addEventListener('change', setPause);
+  $('pt-anims').addEventListener('change', setAnims);
+  $('link-add').onclick = addLink;
   $('show-water').addEventListener('change', (e) => {
     st.showWater = e.target.checked;
     for (const it of st.items) if (it.water) it.water.visible = st.showWater;

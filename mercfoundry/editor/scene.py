@@ -88,6 +88,13 @@ class Scene:
                 dsk.collect_names(a, self._names)
         return self._names
 
+    def animation_names(self):
+        """Names of the game's animation clips (for path events), sorted."""
+        from ..animation import ANIMATION
+        book = self.names()
+        out = {book.get(r.key) for a in self.archives for r in a.records if r.kind == ANIMATION}
+        return sorted((n for n in out if n), key=str.lower)
+
     def maps(self):
         """Terrains that are maps: ones with a world layer of the same name."""
         tern, world_kind = name_hash("Terrain"), name_hash("world")

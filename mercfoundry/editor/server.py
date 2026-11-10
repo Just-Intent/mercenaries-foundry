@@ -136,6 +136,9 @@ def make_handler(scene: Scene, mod_name: str, live: Live = None):
                 if path.startswith("/api/encounters/"):
                     with objects_lock:
                         return self.send(200, scene.encounters(path[len("/api/encounters/"):]))
+                if path == "/api/animations":
+                    with objects_lock:
+                        return self.send(200, scene.animation_names())
                 if path == "/api/templates":
                     with objects_lock:
                         return self.send(200, scene.templates())
