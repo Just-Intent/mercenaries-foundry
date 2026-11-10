@@ -57,8 +57,12 @@ class FindTests(unittest.TestCase):
             (proj / "objects" / "r.json").write_text(json.dumps(rule))
             modbuild.build(proj, self.dir / "data", self.dir / f"out_{hit['index']}")
             arc = dsk.Archive(self.dir / f"out_{hit['index']}" / "assets.dsk")
-            moved = [o for o in world.iter_objects(arc.read(arc.records[0])) if o["position"][1] == 1.0]
-            self.assertEqual([o["index"] for o in moved], [hit["index"]])
+            objs = list(world.iter_objects(arc.read(arc.records[0])))
+            moved = [o for o in objs if o["position"][1] == 1.0]
+            # The one object, moved to the end of the layer; its old place a marker.
+            self.assertEqual([o["index"] for o in moved], [len(objs) - 1])
+            self.assertEqual((moved[0]["model"], moved[0]["name"]), (hit["model"], hit["name"]))
+            self.assertEqual(objs[hit["index"]]["model"], "global_location")
 
 
 if __name__ == "__main__":

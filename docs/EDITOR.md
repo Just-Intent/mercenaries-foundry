@@ -106,14 +106,15 @@ toolkit bundle run it the same way: `foundry\python\python.exe foundry\mercfound
     properties, so it may not survive its area unloading; the saved mod has it
     for good). Moving or turning a copy removes it in the game and spawns it
     again where it now is (buildings moved by the game stop drawing). The
-    game's own buildings and gates aren't moved or removed live (the game
-    moves only their actor, so the building jumps or stays and a gate's doors
-    stay): their changes show after a restart. Other mods' objects need a
+    game's own objects move the same way: copied to the new place from their
+    own properties and removed (Foundry Console's `respawn`), then known by a
+    name of their own (`fmv_<layer>_<index>`, or their own name). A gate moved
+    live leaves its doors until the next start. Other mods' objects need a
     rebuild. The panel's **Game replies** list keeps the game's last answers.
-  - Saved games keep the state of objects with a game actor (gates,
-    buildings, vehicles, props that move), position included: a moved gate
-    loads where the save had it. Such moves show in a new game, or a save
-    made after the move.
+  - Saved games keep the state of objects (position included) by their place
+    in their layer, so the built mod moves an object the same way too: its
+    place becomes an invisible location marker and the object goes at the end
+    of the layer, where a save made before the move can't put it back.
 - **Gates** draw with their doors: a gate's doors are models of their own
   (`geometryNameGateA`/`B`), hung on its `k_gateclosedA`/`B` joints. In the
   game they are separate objects too, made when the area loads, so a gate

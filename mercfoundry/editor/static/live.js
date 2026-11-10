@@ -83,37 +83,31 @@ export function createLive(ctx) {
     st.pending.set(key, setTimeout(() => { st.pending.delete(key); fn(); }, 250));
   }
 
-  // Buildings and gates have a game actor that a live move shifts on its own
-  // (to the object's origin, which isn't the actor's centre): the drawn
-  // building stays or jumps, and a gate's doors (objects of their own) stay.
-  // Their moves and removals show after a restart instead.
-  const STATIC_ACTOR = /^(building|gate)$/i;
-  function skipped(rec, what) {
-    if (!STATIC_ACTOR.test(rec.type || '')) return false;
-    if (st.on && st.connected) status(`Live: ${what} ${rec.type}s shows after a restart (the game can't do it live)`);
-    return true;
-  }
   const same = (a, b) => a && b && a.every((v, i) => Math.abs(v - b[i]) < 1e-3);
 
+  // The game's own objects move by being copied to the new place (from their
+  // own properties) and removed, under a name of their own after the first
+  // time: the game can't move buildings and gates live (it moves only their
+  // actor), and the built mod moves objects the same way (see modbuild).
+  const liveName = (rec) => rec.name || `fmv_${rec.id.replace(/[^A-Za-z0-9_]/g, '_')}`;
   function objectMoved(rec) {
     if (rec.context) return;
     if (rec.copyName) return respawnCopy(rec);
     // A click can report a move of nothing; send only real moves.
     if (same(rec.position, rec.liveAt || rec.loadedAt || rec.original.position) &&
         same(rec.rotation, rec.liveRot || rec.loadedRot || rec.original.rotation)) return;
-    if (skipped(rec, 'moving')) return;
     later(rec, () => {
-      send([{op: 'move', name: rec.name, model: rec.model, from: places(rec),
-             position: rec.position, heading: ctx.heading(rec.rotation)}]);
-      if (st.on && st.connected) { rec.liveAt = rec.position; rec.liveRot = rec.rotation; }
+      if (!st.on || !st.connected) return;
+      send([{op: 'respawn', name: rec.liveSpawned ? liveName(rec) : rec.name, model: rec.model,
+             from: places(rec), as: liveName(rec), position: rec.position, heading: ctx.heading(rec.rotation)}]);
+      rec.liveSpawned = true; rec.liveAt = rec.position; rec.liveRot = rec.rotation;
     });
   }
 
   function objectRemoved(rec) {
     if (rec.context) return;
     if (rec.copyName) return removeNamed(rec.copyName);
-    if (skipped(rec, 'removing')) return;
-    send([{op: 'remove', name: rec.name, model: rec.model, from: places(rec)}]);
+    send([{op: 'remove', name: rec.liveSpawned ? liveName(rec) : rec.name, model: rec.model, from: places(rec)}]);
   }
 
   // A moved copy is removed and spawned again where it now is: buildings

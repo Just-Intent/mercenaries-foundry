@@ -82,12 +82,18 @@ class RuleTests(unittest.TestCase):
 
     def test_move_by_name(self):
         doc = self.build([{"name": "loc_start", "move": [1, 5, -2]}])
-        self.assertEqual(self.insts(doc)[1]["position"], [1, 5, -2])
+        insts = self.insts(doc)
+        # Moved objects go last; their old place stays, as a marker (saved
+        # games know objects by their place in the layer).
+        self.assertEqual((insts[1]["model"], insts[1]["template"]), ("global_location", ""))
+        self.assertEqual((insts[-1]["template"], insts[-1]["position"]), ("loc_start", [1, 5, -2]))
+        self.assertEqual(len(insts), 4)
 
     def test_near_matches_one_unnamed_object(self):
         doc = self.build([{"model": "rock", "near": [10, 0, 20], "position": [11, 0, 21]}])
         rocks = [c for c in self.insts(doc) if c["model"] == "rock"]
-        self.assertEqual([r["position"] for r in rocks], [[11, 0, 21], [50, 0, 50]])
+        self.assertEqual([r["position"] for r in rocks], [[50, 0, 50], [11, 0, 21]])
+        self.assertEqual(self.insts(doc)[0]["model"], "global_location")
 
     def test_copy_places_new_object_and_updates_counts(self):
         doc = self.build([{"model": "rock", "near": [10, 0, 20], "copy": True, "as": "my_rock",

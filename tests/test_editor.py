@@ -76,5 +76,8 @@ class LiveLinkTests(unittest.TestCase):
         self.assertEqual(live.poll(""), "copy - dmz_bld_skpost 1 1.000 2.000 3.000 post_copy 7.000 8.000 9.000 90.000\n")
         with self.assertRaises(ValueError):
             live.send([{"op": "copy", "name": "", "model": "m", "from": [], "as": "two words", "position": [0, 0, 0]}])
+        live.send([{"op": "respawn", "name": "", "model": "gate", "from": [[1, 2, 3]], "as": "fmv_x",
+                    "position": [4, 5, 6], "heading": 0}])
+        self.assertEqual(live.poll(""), "respawn - gate 1 1.000 2.000 3.000 fmv_x 4.000 5.000 6.000 0.000\n")
         live.send([{"op": "inspect", "position": [1, 2, 3], "radius": 10}])
         self.assertEqual(live.poll(""), "inspect 1.000 2.000 3.000 10.000\n")

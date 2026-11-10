@@ -106,12 +106,12 @@ def command_line(c: dict) -> str:
         if t == "-" or n == "-":
             raise ValueError("spawn needs a template and a name, without spaces")
         return " ".join(["spawn", t, n] + [_num(v) for v in c["position"]] + [_num(c.get("heading", 0.0))])
-    if op == "copy":
+    if op in ("copy", "respawn"):
         n = _word(c.get("as"))
         if n == "-":
-            raise ValueError("copy needs a new name, without spaces")
+            raise ValueError(f"{op} needs a new name, without spaces")
         pts = [p for p in c.get("from", []) if p and len(p) == 3][:4]
-        head = ["copy", _word(c.get("name")), _word(c.get("model")), str(len(pts))]
+        head = [op, _word(c.get("name")), _word(c.get("model")), str(len(pts))]
         head += [_num(v) for p in pts for v in p] + [n]
         return " ".join(head + [_num(v) for v in c["position"]] + [_num(c.get("heading", 0.0))])
     if op == "inspect":

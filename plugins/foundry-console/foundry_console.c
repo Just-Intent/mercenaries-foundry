@@ -1596,11 +1596,15 @@ static void live_run(char *line)
         if (!shown) live_result("inspect: nothing within %.0f m of %.1f %.1f %.1f", v[3], v[0], v[1], v[2]);
         return;
     }
-    if (!strcmp(op, "copy")) {
+    int respawn = !strcmp(op, "respawn");
+    if (respawn || !strcmp(op, "copy")) {
         /* copy <name> <model> <n> <n points> <new name> <x> <y> <z> <heading>: a
          * copy of an object found as move finds it. Unnamed scenery isn't a
          * template, so its property block is registered as one under a made-up
-         * name, then spawned like a template; the copy has the new name. */
+         * name, then spawned like a template; the copy has the new name.
+         * respawn (same arguments): the copy, then the object removed, which is
+         * how the editor moves objects (buildings moved by the game stop
+         * drawing; a spawned copy draws). The block outlives the removal. */
         char *src = strtok_s(NULL, " ", &next), *model = strtok_s(NULL, " ", &next);
         char *count = strtok_s(NULL, " ", &next);
         if (!src || !model || !count) return;
@@ -1641,6 +1645,12 @@ static void live_run(char *line)
         host->write_guest(host->context, scratch + 64, name, strlen(name) + 1);
         uint32_t args[5] = {hash, scratch + 64, scratch, 0, 0};
         int ok = guest(MF_FN_Spawner_SpawnTemplate, MF_VAR_g_Spawner, 5, args, &c) && c.eax;
+        if (respawn && ok) {
+            float none[3] = {0, 0, 0};
+            int gone = live_apply(obj, none, 0, 1);
+            live_result(gone ? "%s moved (as %s)" : "%s: placed as %s, but the old one wouldn't go", what, name);
+            return;
+        }
         live_result(ok ? "%s: copied as %s" : "%s: copying as %s failed", what, name);
         return;
     }

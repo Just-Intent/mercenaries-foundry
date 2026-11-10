@@ -324,6 +324,13 @@ def _turn(rotation, degrees):
     return [[r[0] * c + r[2] * s, r[1], -r[0] * s + r[2] * c] for r in rotation]
 
 
+def _to_marker(inst):
+    """An object's place in its layer kept as an invisible, unnamed location
+    marker: saved games know objects by their place in the layer."""
+    inst.update(model="global_location", template="",
+                properties=[["GeometryFile", "global_humanmarker"], ["objectType", "location"]])
+
+
 def _apply_rule(inst, rule):
     for prop, value in rule.get("set", {}).items():
         for pair in inst["properties"]:
@@ -695,8 +702,7 @@ def _apply_objects(data, folder, result, skip=()):
                     # for the same reason copies go last: saved games know
                     # objects by their place in the layer.
                     named = c.get("template")
-                    c.update(model="global_location", template="",
-                             properties=[["GeometryFile", "global_humanmarker"], ["objectType", "location"]])
+                    _to_marker(c)
                     if named:
                         result.warnings.append(f"{fname}: removed the named object {named!r}; "
                                                "scripts that use it by name will fail")
@@ -709,6 +715,15 @@ def _apply_objects(data, folder, result, skip=()):
                     twin["template"] = rule["as"]
                     _apply_rule(twin, rule)
                     twins.append(twin)
+                elif any(k in rule for k in ("move", "position", "turn")):
+                    # Moved: placed again at the end of the layer, its old place
+                    # kept as a marker. A saved game restores the state (position
+                    # too) of the object in each place, so a moved gate would load
+                    # back where the save had it; the new place is new to saves.
+                    twin = copy.deepcopy(c)
+                    _apply_rule(twin, rule)
+                    twins.append(twin)
+                    _to_marker(c)
                 else:
                     _apply_rule(c, rule)
             chunks += twins          # later rules can still move them
