@@ -85,7 +85,8 @@
 - Editor path extras: the mod's own paths get pauses, animations (path events, with a chance) and links in the panel, kept on their points when points are added or deleted. Fixed: road decals one cell past the map's edge got NaN heights (the editor's console errors).
 - Editor edits the game's own encounters: spawn points move, are added and deleted, saved as a layout changes file (the whole encounter, replaced by name at build). Checked in the build (SW Allies 6's `A6_Shortcut` set Z: 6 points to 7, one moved); not played in game.
 - Editor minimap: the whole map from above (hill-shaded terrain, water, the camera's view, the player when live); click to jump there.
-- 252 tests pass.
+- Model exports unmirrored (0.67): glTF and OBJ exports used to negate only Z (the game was taken to be left-handed), which mirrored models; they now turn them half round (X and Z negated, winding kept), as the game draws them. Old exports are recognised by their glTF header and still import the old way. Checks: 45 models (6 named, 39 random) export, pass the vertex check and re-import byte-identical through glTF, 33 through OBJ; a Humvee's left seats come out on its left; a road sign reads correctly in the editor; the Terrain Hill mod's old Humvee changes file still raises the turret and places the new seat 0.8 m above the left front seat.
+- 253 tests pass.
 
 ## Fixed from retail data
 - Text values aren't NUL-terminated. The decoder had assumed they were and found no strings.

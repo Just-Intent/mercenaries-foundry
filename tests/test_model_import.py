@@ -63,7 +63,7 @@ f -4/-4 -2/-2 -1/-1
         self.assertEqual(p.name, "Cube")
         self.assertEqual(p.material, "brick.001")
         self.assertEqual(len(p.triangles), 3)       # quad -> 2, plus one triangle
-        self.assertEqual(p.positions[1], (1.0, 0.0, -0.0))
+        self.assertEqual(p.positions[1], (-1.0, 0.0, -0.0))   # OBJ x, z are the game's -x, -z
         self.assertEqual(p.uvs[2], (1.0, 0.0))      # V flipped back
         self.assertIsNone(p.normals[0])
 
@@ -139,9 +139,9 @@ class ImportTests(unittest.TestCase):
         for p in parts + [new]:
             text.append(f"o {p.name}")
             text.append(f"usemtl {p.material}")
-            text += [f"v {x:.8f} {y:.8f} {-z:.8f}" for x, y, z in p.positions]
+            text += [f"v {-x:.8f} {y:.8f} {-z:.8f}" for x, y, z in p.positions]   # as the export: turned half round
             text += [f"vt {u} {1 - v}" for u, v in p.uvs]
-            text += [f"f {a + base}/{a + base} {c + base}/{c + base} {b + base}/{b + base}" for a, b, c in p.triangles]
+            text += [f"f {a + base}/{a + base} {b + base}/{b + base} {c + base}/{c + base}" for a, b, c in p.triangles]
             base += len(p.positions)
         nm, ns, rep = mi.import_obj(self.mr, self.sr, "\n".join(text) + "\n", 0)
         self.assertEqual(rep.removed, [2])

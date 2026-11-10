@@ -158,7 +158,7 @@ class GltfImportTests(unittest.TestCase):
         b = gltf_anim.to_animation(tracks, a)
         self.assertEqual(b.frames, 3)
         x, y, z, w = b.tracks[1].rotations[1]
-        self.assertAlmostEqual(z, 0.7071068, places=5)      # mirroring Z negates x and y, not z
+        self.assertAlmostEqual(z, -0.7071068, places=5)     # the half turn about Y negates x and z
         self.assertEqual((x, y), (0.0, 0.0))
         self.assertEqual(b.tracks[0].rotations, a.tracks[0].rotations)  # untouched joint kept
 
@@ -187,4 +187,4 @@ class GltfImportTests(unittest.TestCase):
             self.assertTrue(any("nonexistent" in w for w in result.warnings))
             arc = _dsk.Archive(d / "out" / "streamed.dsk")
             got = animation.decode(arc.read(arc.records[0]))
-            self.assertAlmostEqual(got.tracks[1].rotations[2][2], 0.7071, places=3)
+            self.assertAlmostEqual(got.tracks[1].rotations[2][2], -0.7071, places=3)

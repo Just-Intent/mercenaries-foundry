@@ -65,14 +65,14 @@ def parse_obj(text: str) -> list:
         if op == "v":
             x, y, z = (float(v) for v in parts[1:4])
             col = tuple(float(c) for c in parts[4:7]) if len(parts) >= 7 else None
-            vs.append(((x, y, -z), col))
+            vs.append(((-x, y, -z), col))
         elif op == "vt":
             u = float(parts[1])
             v = float(parts[2]) if len(parts) > 2 else 0.0
             vts.append((u, 1 - v))
         elif op == "vn":
             x, y, z = (float(v) for v in parts[1:4])
-            vns.append((x, y, -z))
+            vns.append((-x, y, -z))
         elif op in ("o", "g"):
             name = " ".join(parts[1:]) or "unnamed"
             if op == "g" and current and current.name == name:
@@ -105,8 +105,8 @@ def parse_obj(text: str) -> list:
                     current.normals.append(vns[ni] if ni is not None else None)
                 corners.append(lookup[key])
             for k in range(1, len(corners) - 1):
-                # Export reversed the winding for the Z flip; reverse it back.
-                current.triangles.append((corners[0], corners[k + 1], corners[k]))
+                # The export's half turn keeps the winding.
+                current.triangles.append((corners[0], corners[k], corners[k + 1]))
     out = []
     for p in pieces:
         if not p.triangles:

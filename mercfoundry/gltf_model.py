@@ -20,8 +20,8 @@ glTF tool:
   RiderSeatpoint_* or turret properties. Moving skin bones (bone*) is not
   fully supported: animations that set a bone's translation override it.
 
-Positions go back to the game's left-handed axes (Z negated) and triangle
-winding is reversed, undoing the export.
+Positions go back to the decoded model's axes (X and Z negated: the
+export's half turn, undone), winding kept.
 """
 import math
 import re
@@ -70,8 +70,18 @@ def _normal(nm, n):
     return tuple(c / ln for c in v)
 
 
+_LEGACY = [False]       # set per file by read() and read_skeleton() (gltf.legacy)
+
+
 def _flip(p):
-    return (p[0], p[1], -p[2])
+    """glTF to decoded model space: the export's half turn about Y (its own
+    inverse); for files from before 0.67, the old Z mirror."""
+    return (p[0], p[1], -p[2]) if _LEGACY[0] else (-p[0], p[1], -p[2])
+
+
+def _game_quat(q):
+    """A glTF rotation back in the game's axes (as gltf._flip_quat)."""
+    return (-q[0], -q[1], q[2], q[3]) if _LEGACY[0] else (-q[0], q[1], -q[2], q[3])
 
 
 def _values(doc, buffers, index, count=None):
@@ -90,6 +100,7 @@ def read(path, model):
     settings is {"lod": n, "damaged": bool} when the file records it (our
     exports do), else {}."""
     doc, buffers = gltf_anim.load(path)
+    _LEGACY[0] = gltf.legacy(doc)
     nodes = doc.get("nodes", [])
     warnings = []
     parent = {}
@@ -200,7 +211,8 @@ def read(path, model):
                                 "they take the nearest original vertex's bone")
             for t in range(0, len(idx) - 2, 3):
                 a, b, c = idx[t:t + 3]
-                piece.triangles.append((a, c, b))  # undo the export's winding flip
+                # The export's half turn keeps winding; the old mirror reversed it.
+                piece.triangles.append((a, c, b) if _LEGACY[0] else (a, b, c))
             if piece.triangles:
                 pieces.append(piece)
     settings = {}
@@ -250,6 +262,7 @@ def read_skeleton(path, model):
     name the model doesn't have; it takes its place and rotation from the
     file and is added at the end of the skeleton."""
     doc, _ = gltf_anim.load(path)
+    _LEGACY[0] = gltf.legacy(doc)
     nodes = doc.get("nodes", [])
     parent = {}
     for i, n in enumerate(nodes):
@@ -324,7 +337,7 @@ def read_skeleton(path, model):
             m = world_of(i)
             pos = _flip(_point(m, (0.0, 0.0, 0.0)))
             q = _quat_from_matrix(m)
-            rot = (-q[0], -q[1], q[2], q[3])          # back to the game's axes (as gltf._flip_quat)
+            rot = _game_quat(q)
             prot = world_rot[pkey] if pkey in world_rot else new_world[pkey][0]
             ppos = resolved_pos(pkey) if pkey in game else new_world[pkey][1]
             local_rot = mdl._qmul(_conj(prot), rot)

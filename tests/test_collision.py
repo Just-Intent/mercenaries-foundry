@@ -75,8 +75,8 @@ class ImportCollisionTests(unittest.TestCase):
         for n, name in enumerate(names):
             nv = sum(1 for l in lines if l.startswith("v "))
             lines += [f"o {name}", "usemtl tex"]
-            lines += [f"v {x} {y} {-z}" for x, y, z in ((5, 0, 0), (6, 0, 0), (5, 2, 1))]
-            lines.append(f"f {nv + 1} {nv + 3} {nv + 2}")
+            lines += [f"v {-x} {y} {-z}" for x, y, z in ((5, 0, 0), (6, 0, 0), (5, 2, 1))]   # OBJ = game turned half round
+            lines.append(f"f {nv + 1} {nv + 2} {nv + 3}")
         return "\n".join(lines) + "\n"
 
     def test_new_piece_gets_box_in_joint_space(self):
@@ -128,7 +128,7 @@ class ShapeLimitTests(unittest.TestCase):
         obj, _ = model.to_obj(m, 0)
         lines = obj.splitlines()
         nv = sum(1 for l in lines if l.startswith("v "))
-        lines += ["o new_arm", "usemtl tex", "v 5 0 0", "v 6 0 0", "v 5 2 -1", f"f {nv + 1} {nv + 3} {nv + 2}"]
+        lines += ["o new_arm", "usemtl tex", "v -5 0 0", "v -6 0 0", "v -5 2 -1", f"f {nv + 1} {nv + 2} {nv + 3}"]
         nm, ns, rep = mi.import_obj(self.mr, sr, "\n".join(lines) + "\n")
         self.last_sr = ns
         return model.decode(nm, ns), rep

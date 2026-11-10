@@ -271,7 +271,8 @@ def piece_object_name(model: Model, index: int) -> str:
 
 
 def to_obj(model: Model, lod=0, texture_name=None, damaged=False) -> tuple:
-    """Return (obj text, mtl text). Z is negated for OBJ's right-handed axes.
+    """Return (obj text, mtl text), turned half round (X and Z negated) as the
+    glTF export: the game draws the decoded model that way round (front +z).
     Vertex colours are written as `v x y z r g b`."""
     texture_name = texture_name or (lambda h: f"{h:08X}")
     obj = [f"# {model.name}, level of detail {lod}" + (", damaged" if damaged else ""),
@@ -288,12 +289,12 @@ def to_obj(model: Model, lod=0, texture_name=None, damaged=False) -> tuple:
             mtl += [f"newmtl {tex}", "Kd 1 1 1", f"map_Kd {tex}.png", ""]
         obj.append(f"o {piece_object_name(model, index)}")
         obj.append(f"usemtl {tex}")
-        obj += [f"v {x:.8f} {y:.8f} {-z:.8f} {c[0] / 255:.4f} {c[1] / 255:.4f} {c[2] / 255:.4f}"
+        obj += [f"v {-x:.8f} {y:.8f} {-z:.8f} {c[0] / 255:.4f} {c[1] / 255:.4f} {c[2] / 255:.4f}"
                 for (x, y, z), c in zip(p.positions, p.colors)]
         obj += [f"vt {u:.6f} {1 - v:.6f}" for u, v in p.uvs]
-        obj += [f"vn {x:.4f} {y:.4f} {-z:.4f}" for x, y, z in p.normals]
+        obj += [f"vn {-x:.4f} {y:.4f} {-z:.4f}" for x, y, z in p.normals]
         for a, b, c in p.triangles:
-            a, b, c = a + base, c + base, b + base  # z flip reverses winding
+            a, b, c = a + base, b + base, c + base  # a turn keeps the winding
             obj.append(f"f {a}/{a}/{a} {b}/{b}/{b} {c}/{c}/{c}")
         base += len(p.positions)
     return "\n".join(obj) + "\n", "\n".join(mtl)

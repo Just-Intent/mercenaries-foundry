@@ -2,7 +2,7 @@
 
 Clips are matched to game animations by name (Blender's "Armature|" prefix
 and ".001" suffixes are ignored). Each clip is resampled to the game's 30
-frames per second and converted back to the game's left-handed axes. A
+frames per second and turned back to the game's axes (as the export). A
 joint the clip doesn't animate keeps the original animation's motion
 (stretched to the new length), so root motion survives an `--in-place`
 export.
@@ -92,6 +92,7 @@ def clips(path):
     """{clip name: {joint name (lower): {"rotation"|"translation": (times, values, interp)}}}"""
     doc, buffers = load(path)
     nodes = doc.get("nodes", [])
+    old = gltf.legacy(doc)        # our exports from before 0.67: Z mirrored, not turned
     out = {}
     for anim in doc.get("animations", []):
         tracks = {}
@@ -108,6 +109,9 @@ def clips(path):
             if interp == "CUBICSPLINE":  # (in-tangent, value, out-tangent) per key
                 values = values[1::3]
                 interp = "LINEAR"
+            if old:   # to the current axes: the old mirror, turned (x negated, and y and z for rotations)
+                values = [(v[0], -v[1], -v[2], v[3]) if path_ == "rotation" else (-v[0], v[1], v[2])
+                          for v in values]
             tracks.setdefault(node_name, {})[path_] = (times, values, interp)
         out[clip_name(anim.get("name", ""))] = tracks
     return out

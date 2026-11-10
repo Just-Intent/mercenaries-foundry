@@ -12,8 +12,11 @@
   surfaces (0x100, e.g. building walls) keep other data in their alpha and are
   drawn solid.
 
-The game's axes are left-handed; glTF's are right-handed, so Z is negated
-(points, normals, quaternion x/y) and triangle winding is reversed.
+The game's world is right-handed, like glTF, and draws a model turned half
+round from its decoded data (front +z, as glTF has it), so X and Z are
+negated (points, normals, quaternion x/z): a turn, not a mirror, so left
+stays left and winding is kept. (Exports before 0.67 negated only Z, which
+mirrored models; a Humvee's driver's seat came out on the right.)
 Mesh nodes are named like the OBJ export (p<index>_<joint>).
 """
 import json
@@ -27,12 +30,26 @@ FLOAT, USHORT, UINT, UBYTE = 5126, 5123, 5125, 5121
 ARRAY_BUFFER, ELEMENT_ARRAY_BUFFER = 34962, 34963
 
 
+# Recorded in our exports' asset extras. Files of ours without it are from
+# before 0.67, when exports negated only Z (a mirror); imports read those
+# the old way (legacy()).
+AXES = "turned"
+
+
+def legacy(doc) -> bool:
+    """A mercfoundry export from before 0.67 (Z negated, winding reversed)."""
+    ours = doc.get("asset", {}).get("extras", {}).get("mercfoundry")
+    return isinstance(ours, dict) and ours.get("axes") != AXES
+
+
 def _flip_point(p):
-    return (p[0], p[1], -p[2])
+    """Decoded model space to glTF: turned half round about Y."""
+    return (-p[0], p[1], -p[2])
 
 
 def _flip_quat(q):
-    return (-q[0], -q[1], q[2], q[3])
+    """A rotation (x, y, z, w) seen from the turned axes."""
+    return (-q[0], q[1], -q[2], q[3])
 
 
 def _normalise(q):
@@ -103,7 +120,8 @@ def export(model, lod=0, damaged=False, textures=None, texture_name=None, animat
     texture_name = texture_name or (lambda h: f"{h:08X}")
     w = _Writer()
     gl = {"asset": {"version": "2.0", "generator": "mercfoundry",
-                    "extras": {"mercfoundry": {"model": model.name, "lod": lod, "damaged": bool(damaged)}}},
+                    "extras": {"mercfoundry": {"model": model.name, "lod": lod, "damaged": bool(damaged),
+                                               "axes": AXES}}},
           "scene": 0,
           "scenes": [{"name": model.name, "nodes": []}], "nodes": [], "meshes": [],
           "materials": [], "accessors": w.accessors, "bufferViews": w.views, "buffers": []}
@@ -200,7 +218,7 @@ def export(model, lod=0, damaged=False, textures=None, texture_name=None, animat
             attrs["JOINTS_0"] = w.accessor(struct.pack(f"<{4 * n}H", *joints), USHORT, n, "VEC4", ARRAY_BUFFER)
             attrs["WEIGHTS_0"] = w.accessor(struct.pack(f"<{4 * n}f", *([1.0, 0.0, 0.0, 0.0] * n)),
                                             FLOAT, n, "VEC4", ARRAY_BUFFER)
-        tris = [c for a, b, cc in p.triangles for c in (a, cc, b)]  # Z flip reverses winding
+        tris = [c for t in p.triangles for c in t]       # a turn keeps the winding
         indices = w.accessor(struct.pack(f"<{len(tris)}I", *tris), UINT, len(tris), "SCALAR",
                              ELEMENT_ARRAY_BUFFER)
         mesh = len(gl["meshes"])

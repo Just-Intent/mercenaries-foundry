@@ -201,7 +201,7 @@ other web origins. Requests take one of three locks (objects, terrain, other
 mods), so a slow first build of one doesn't hold up the others; models and
 textures take none.
 
-The 3D view uses three.js axes, which are the game's with Z flipped, as in the
-glTF export. `scene.py` converts rotations (`to_three`, `from_three`) and turns
-an edited rotation back into a rule's `turn` (a three.js turn of +θ about the
-vertical is a game turn of -θ); tests in `tests/test_editor.py`.
+The 3D view uses the game's axes as they are (both right-handed), and models
+come from the glTF export, which is already in the game's object axes.
+`scene.py` passes rotations through (`to_three`, `from_three`) and turns an
+edited rotation back into a rule's `turn`; tests in `tests/test_editor.py`.

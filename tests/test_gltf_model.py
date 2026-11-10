@@ -127,7 +127,7 @@ class GltfModelImportTests(unittest.TestCase):
         self.assertEqual(joints["bone_b"].rotation, (0, 0, 0, 1))           # rotations kept
 
     def test_moved_parent_carries_children(self):
-        self.doc["nodes"][node(self.doc, "bone_a")]["translation"] = [0.5, 0.0, -0.3]   # glTF z = game -z
+        self.doc["nodes"][node(self.doc, "bone_a")]["translation"] = [-0.5, 0.0, -0.3]  # glTF x, z = game -x, -z
         nm, ns, rep = self.run_import()
         m = model.decode(nm, ns)
         joints = {j.name: j for j in m.joints}

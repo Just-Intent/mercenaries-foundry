@@ -2,8 +2,8 @@
 // turns and copies saved as mod rules (objects/editor.json).
 //
 // Coordinates: the game's world is right-handed, like three.js, so the 3D
-// view uses the game's (x, y, z) as they are. Models come from the glTF
-// export (z flipped) and are drawn as the game draws them: see loadModel.
+// view uses the game's (x, y, z) as they are, and models come from the glTF
+// export already in the game's object axes (decoded data turned half round).
 import * as THREE from 'three';
 import {OrbitControls} from 'three/addons/controls/OrbitControls.js';
 import {TransformControls} from 'three/addons/controls/TransformControls.js';
@@ -101,13 +101,14 @@ function colourOf(rec) {
   return new THREE.Color(0xa0a8b0);
 }
 // A unit box's placement inside an object: its model's bounds (centre and
-// size; three axes flip z), or a 1.5 m marker for models without them.
+// size), or a 1.5 m marker for models without them.
 function standIn(rec) {
   const b = bounds[rec.geometry || rec.model];
   const m = new THREE.Matrix4();
   if (!b) return m.makeTranslation(0, 0.75, 0).multiply(new THREE.Matrix4().makeScale(1.5, 1.5, 1.5));
   const size = [Math.max(b[3] - b[0], 0.3), Math.max(b[4] - b[1], 0.3), Math.max(b[5] - b[2], 0.3)];
-  m.makeTranslation((b[0] + b[3]) / 2, (b[1] + b[4]) / 2, (b[2] + b[5]) / 2);
+  // The header's box is in decoded model axes: turned half round, as the export.
+  m.makeTranslation(-(b[0] + b[3]) / 2, (b[1] + b[4]) / 2, -(b[2] + b[5]) / 2);
   return m.multiply(new THREE.Matrix4().makeScale(...size));
 }
 
@@ -189,9 +190,6 @@ function loadModel(name) {
         // Both sides: some game surfaces (roofs, for one) face the other way
         // from how the export winds them, and would vanish from above.
         g.scene.traverse((o) => { if (o.isMesh) for (const m of [].concat(o.material)) m.side = THREE.DoubleSide; });
-        // The export flips z; the game draws the decoded model turned half
-        // round (front +z): undo the flip and turn = negate x.
-        g.scene.scale.x = -1;
         ok(g.scene);
       }, bad)))
       .catch(() => null));

@@ -1,7 +1,7 @@
 """Structural and geometric checks for exported .glb files.
 
 Walks the node tree like a viewer would and compares every vertex with the
-model decoder's model-space positions (Z flipped). Used by tests and by
+model decoder's model-space positions (turned half round, as the export). Used by tests and by
 `model --glb --check`.
 """
 import math
@@ -83,7 +83,7 @@ def check(glb: bytes, model, lod=0, damaged=False) -> dict:
         m = identity if "skin" in node else world[i]
         for got, want in zip(positions, piece.positions):
             g = _apply(m, got)
-            worst = max(worst, math.dist(g, (want[0], want[1], -want[2])))
+            worst = max(worst, math.dist(g, gltf._flip_point(want)))
         vertices += len(positions)
     if pieces:
         raise ValueError(f"pieces missing from the file: {', '.join(sorted(pieces))[:200]}")
