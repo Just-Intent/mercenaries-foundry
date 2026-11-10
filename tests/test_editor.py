@@ -25,11 +25,12 @@ class EditorSceneTests(unittest.TestCase):
             t = random.uniform(-170, 170)
             self.assertAlmostEqual(scene.turn_between(rows, _turn(rows, t)), t, places=3)
 
-    def test_three_turn_is_opposite_game_turn(self):
-        # three.js turns about +Y the other way round from the game (Z is flipped).
+    def test_three_turn_is_game_turn(self):
+        # The game's world is right-handed like three.js: a three.js turn about
+        # +Y is the same turn in the game.
         th = math.radians(30)
         ry = [math.cos(th), 0, -math.sin(th), 0, 1, 0, math.sin(th), 0, math.cos(th)]
-        self.assertAlmostEqual(scene.turn_between(IDENTITY, scene.from_three(ry)), -30.0, places=3)
+        self.assertAlmostEqual(scene.turn_between(IDENTITY, scene.from_three(ry)), 30.0, places=3)
 
     def test_placed_yaw_round_trip(self):
         from mercfoundry.encounters import _rotation

@@ -55,7 +55,7 @@ export function createLive(ctx) {
     if (st.connected && st.player) {
       const p = st.player.position, f = st.player.forward;
       marker.position.copy(threePos(p));
-      marker.rotation.y = Math.atan2(f[0], -f[1]);     // game forward (x, z) -> three (x, -z)
+      marker.rotation.y = Math.atan2(f[0], f[1]);      // turns +z to the game forward (x, z)
       marker.visible = true;
     } else {
       marker.visible = false;

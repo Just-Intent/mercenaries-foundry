@@ -1,8 +1,9 @@
 """Map data for the editor, and object edits as mod rules.
 
-Coordinates: the game is left-handed; the editor (three.js, like the glTF
-export) uses (x, y, -z). An object's stored rotation is three rows, the
-object's own axes in world space.
+Coordinates: the game's world is right-handed, like three.js, so the editor
+uses the game's (x, y, z) as they are (checked in game: a plaza's parking lot
+on the +z side shows on the left looking -x). An object's stored rotation is
+three rows, the object's own axes in world space.
 """
 import json
 import math
@@ -17,18 +18,12 @@ EDITOR_RULES = "editor.json"      # objects/editor.json in the mod
 
 def to_three(rows):
     """Column-major 3x3 for three.js from the game's rotation rows."""
-    g = [[rows[c][r] for c in range(3)] for r in range(3)]     # columns are the axes
-    s = (1, 1, -1)
-    m = [[g[r][c] * s[r] * s[c] for c in range(3)] for r in range(3)]
-    return [m[r][c] for c in range(3) for r in range(3)]
+    return [rows[c][r] for c in range(3) for r in range(3)]   # columns are the axes
 
 
 def from_three(m3):
     """Game rotation rows from a column-major 3x3 three.js rotation."""
-    s = (1, 1, -1)
-    m = [[m3[c * 3 + r] for c in range(3)] for r in range(3)]
-    g = [[m[r][c] * s[r] * s[c] for c in range(3)] for r in range(3)]
-    return [[g[r][c] for r in range(3)] for c in range(3)]
+    return [[m3[c * 3 + r] for r in range(3)] for c in range(3)]
 
 
 def look(o):

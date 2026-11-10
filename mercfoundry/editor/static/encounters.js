@@ -74,7 +74,7 @@ export function createEncounters(ctx) {
           const g = new THREE.Group();
           g.add(new THREE.Mesh(MEMBER_GEO, mat(key)), new THREE.Mesh(NOSE_GEO, mat(key)));
           g.position.copy(threePos(member.position));
-          g.rotation.y = THREE.MathUtils.degToRad(-(member.yaw || 0));
+          g.rotation.y = THREE.MathUtils.degToRad(member.yaw || 0);
           for (const c of g.children) c.userData.pick = sel;
           g.userData.pick = sel;
           group.add(g);
@@ -370,7 +370,7 @@ export function createEncounters(ctx) {
     if (enc.squads.some((s) => s.name === pl.squadName)) return status(`${pl.encName} already has a squad ${pl.squadName}`, true);
     const cam = ctx.camera.position;
     const toCam = Math.atan2(cam.x - hit.point.x, cam.z - hit.point.z);       // three.js angle to the camera
-    const yaw = Math.round(THREE.MathUtils.radToDeg(Math.PI - toCam) * 10) / 10;
+    const yaw = Math.round(THREE.MathUtils.radToDeg(toCam) * 10) / 10;   // facing the camera
     const side = new THREE.Vector3(Math.cos(toCam), 0, -Math.sin(toCam));
     const back = new THREE.Vector3(-Math.sin(toCam), 0, -Math.cos(toCam));    // away from the camera
     const squad = {name: pl.squadName, points: Object.keys(enc.points).slice(0, 1), members: []};

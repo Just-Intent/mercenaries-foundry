@@ -1,8 +1,9 @@
 // Mercenaries Foundry editor: a map's terrain and objects, with object moves,
 // turns and copies saved as mod rules (objects/editor.json).
 //
-// Coordinates: the panel and the server use the game's (x, y, z); the 3D view
-// uses three.js axes, (x, y, -z), like the glTF export.
+// Coordinates: the game's world is right-handed, like three.js, so the 3D
+// view uses the game's (x, y, z) as they are. Models come from the glTF
+// export (z flipped) and are drawn as the game draws them: see loadModel.
 import * as THREE from 'three';
 import {OrbitControls} from 'three/addons/controls/OrbitControls.js';
 import {TransformControls} from 'three/addons/controls/TransformControls.js';
@@ -64,8 +65,8 @@ const boxGeo = new THREE.BoxGeometry(1, 1, 1);            // stand-ins: scaled t
 const bounds = {};                                          // model -> [min x, y, z, max x, y, z] (game axes)
 const selMat = new THREE.MeshLambertMaterial({color: 0xffcc33});
 
-const threePos = (p) => new THREE.Vector3(p[0], p[1], -p[2]);
-const gamePos = (v) => [round(v.x), round(v.y), round(-v.z)];
+const threePos = (p) => new THREE.Vector3(p[0], p[1], p[2]);
+const gamePos = (v) => [round(v.x), round(v.y), round(v.z)];
 const round = (v) => Math.round(v * 1000) / 1000;
 
 function rotMatrix(m3) {
@@ -82,8 +83,8 @@ function m3From(quat) {
 }
 // Heading in the game's sense (the mod rule "turn"): from the object's x axis.
 function heading(m3) {
-  // three column 0 is the object's x axis in three space; game z = -three z.
-  const gx = m3[0], gz = -m3[2];
+  // three column 0 is the object's x axis.
+  const gx = m3[0], gz = m3[2];
   return Math.round(THREE.MathUtils.radToDeg(Math.atan2(-gz, gx)) * 100) / 100;
 }
 // Stand-in colours by kind of object (objectType).
@@ -106,7 +107,7 @@ function standIn(rec) {
   const m = new THREE.Matrix4();
   if (!b) return m.makeTranslation(0, 0.75, 0).multiply(new THREE.Matrix4().makeScale(1.5, 1.5, 1.5));
   const size = [Math.max(b[3] - b[0], 0.3), Math.max(b[4] - b[1], 0.3), Math.max(b[5] - b[2], 0.3)];
-  m.makeTranslation((b[0] + b[3]) / 2, (b[1] + b[4]) / 2, -(b[2] + b[5]) / 2);
+  m.makeTranslation((b[0] + b[3]) / 2, (b[1] + b[4]) / 2, (b[2] + b[5]) / 2);
   return m.multiply(new THREE.Matrix4().makeScale(...size));
 }
 
@@ -143,7 +144,7 @@ function buildTerrain(meta, heights) {
   for (let r = 0; r < size; r++) {
     for (let k = 0; k < size; k++) {
       const i = r * size + k, h = heights[i];
-      pos.set([x0 + k * spacing, h, -(z0 + r * spacing)], i * 3);
+      pos.set([x0 + k * spacing, h, z0 + r * spacing], i * 3);
       c.copy(low).lerp(high, (h - lo) / Math.max(hi - lo, 1));
       col.set([c.r, c.g, c.b], i * 3);
     }
@@ -153,7 +154,7 @@ function buildTerrain(meta, heights) {
   for (let r = 0; r < size - 1; r++) {
     for (let k = 0; k < size - 1; k++) {
       const a = r * size + k, b = a + size, c1 = a + 1, d = b + 1;
-      idx.set([a, c1, b, c1, d, b], n);   // wound so the ground faces up
+      idx.set([a, b, c1, c1, b, d], n);   // wound so the ground faces up (+z is row by row)
       n += 6;
     }
   }
@@ -188,6 +189,9 @@ function loadModel(name) {
         // Both sides: some game surfaces (roofs, for one) face the other way
         // from how the export winds them, and would vanish from above.
         g.scene.traverse((o) => { if (o.isMesh) for (const m of [].concat(o.material)) m.side = THREE.DoubleSide; });
+        // The export flips z; the game draws the decoded model turned half
+        // round (front +z): undo the flip and turn = negate x.
+        g.scene.scale.x = -1;
         ok(g.scene);
       }, bad)))
       .catch(() => null));
@@ -236,7 +240,7 @@ function streamNearby() {
   const near = [];
   for (const rec of state.records) {
     if (rec.removed || rec.deleted || rec.hiddenBy) continue;
-    const dx = rec.position[0] - t.x, dz = -rec.position[2] - t.z;
+    const dx = rec.position[0] - t.x, dz = rec.position[2] - t.z;
     const d = dx * dx + dz * dz;
     if (d < NEAR_RADIUS * NEAR_RADIUS) near.push([d, rec]);
   }
@@ -366,7 +370,7 @@ function lookAt(p, distance = 40) {
   controls.target.copy(t);
   const cx = t.x - distance * 0.6, cz = t.z + distance * 0.6;
   // Stay above the ground, which may rise between the camera and the object.
-  const ground = Math.max(heightAt(cx, -cz), heightAt((cx + t.x) / 2, -(cz + t.z) / 2));
+  const ground = Math.max(heightAt(cx, cz), heightAt((cx + t.x) / 2, (cz + t.z) / 2));
   camera.position.set(cx, Math.max(t.y + distance * 0.55, ground + 5), cz);
   controls.update();
   streamNearby();

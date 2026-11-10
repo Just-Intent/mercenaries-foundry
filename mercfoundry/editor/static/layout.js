@@ -59,7 +59,7 @@ export function createLayout(ctx) {
     if (!isWater(it) || it.points.length < 3) return;
     const shape = new THREE.Shape(it.points.map((p) => new THREE.Vector2(p[0], p[2])));
     const geo = new THREE.ShapeGeometry(shape);
-    geo.rotateX(-Math.PI / 2);         // shape (x, z) -> three (x, 0, -z), the game's z flipped
+    geo.rotateX(Math.PI / 2);          // shape (x, z) -> three (x, 0, z)
     const h = parseFloat(prop(it, 'height'));
     const y = Number.isFinite(h) ? h : it.points.reduce((s, p) => s + p[1], 0) / it.points.length;
     const byte = (k, d) => { const v = parseFloat(prop(it, k)); return Number.isFinite(v) ? v / 255 : d; };

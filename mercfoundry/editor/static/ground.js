@@ -134,7 +134,7 @@ async function addDecals(mesh, map, grid, light, fog) {
         // Clamped to the grid: a few decals sit one cell past the map's edge.
         const col = Math.max(0, Math.min(d[0] + dx, size - 1)), row = Math.max(0, Math.min(d[1] + dz, size - 1));
         const i = row * size + col;
-        return {p: [x0 + (d[0] + dx) * spacing, heights[i] + 0.06, -(z0 + (d[1] + dz) * spacing)],
+        return {p: [x0 + (d[0] + dx) * spacing, heights[i] + 0.06, z0 + (d[1] + dz) * spacing],
                 uv: [d[3 + 2 * c] / 2048, d[4 + 2 * c] / 2048], l: [light[3 * i], light[3 * i + 1], light[3 * i + 2]]};
       });
       for (const c of [2, 3, 0, 3, 1, 0]) {            // two triangles over the cell
