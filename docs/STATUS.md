@@ -130,7 +130,7 @@
 - Python 3.12.10 alongside 3.13. The port's `.venv` has its pinned CMake 3.31.6, Ninja 1.13.0 and Capstone 5.0.6.
 
 ## Next steps
-1. Editor: live moves of the game's own buildings (objects with a game actor) move the actor but not what's drawn, and setting the world object's transform as well (vtable +0x00) made them stop drawing; copies of named objects spawn by name, and names can repeat across layers (two `sk_HQ`s), so one can spawn another layer's object; adding squads to the game's own encounters.
+1. Editor: live moves of the game's own buildings and gates (objects with a game actor) move the actor (to the object's origin, not the actor's centre) but not what's drawn, and setting the world object's transform as well (vtable +0x00) made them stop drawing, so the editor doesn't send them; saved games restore such objects' positions over a mod's moves (a gate moved by a mod loaded back between its fences); copies of named objects spawn by name, and names can repeat across layers (two `sk_HQ`s), so one can spawn another layer's object; adding squads to the game's own encounters.
 2. Collision flags: what bit 4 does; why bullets pass through pines and some rock meshes; collision for edited existing pieces.
 3. Moving skin bones on characters (animations override bone translations); what animation-table priorities and flags do.
 4. Function map: name more engine functions (actors, AI commands, missions); find the path from a vehicle actor to its drivetrain, so plugins can change handling live with the setters.

@@ -272,7 +272,11 @@ function addRecord(rec) {
 }
 
 // ------------------------------------------------------------------ loading a map
+// Switching maps while one loads: the older load stops at its next wait
+// (else both add their objects and copies, and saving finds copies twice).
+let loadSerial = 0;
 async function loadMap(name) {
+  const mine = ++loadSerial;
   status(`Loading ${name}...`);
   select(null);
   for (const rec of [...state.nodes]) { rec.node && scene.remove(rec.node); }
@@ -288,6 +292,7 @@ async function loadMap(name) {
     getJSON(`/api/objects/${name}`),
     getJSON(`/api/bounds/${name}`),
   ]);
+  if (mine !== loadSerial) return;
   Object.assign(bounds, sizes);
   state.map = name;
   state.terrain = {meta, heights: new Float32Array(buf)};
@@ -315,6 +320,7 @@ async function loadMap(name) {
     if (!rec) continue;
     rec.position = e.position; rec.rotation = e.rotation;
     rec.loadedAt = e.position;       // where a built copy of this mod puts it in the game
+    rec.loadedRot = e.rotation;
     state.moved[id] = {position: e.position, rotation: e.rotation};
     placeBox(rec);
   }
@@ -322,6 +328,7 @@ async function loadMap(name) {
   // Objects placed from templates, in the mod's layers for this map.
   state.layerFile = objs.edits.layer_file;
   if (objs.edits.placed.length && !state.templates) state.templates = await getJSON('/api/templates');
+  if (mine !== loadSerial) return;
   for (const p of objs.edits.placed) {
     addPlaced(p.from, p.name, p.file, p.position, p.rotation, false, p.set);
     state.placedFiles.add(p.file);
@@ -340,6 +347,7 @@ async function loadMap(name) {
   const start = state.records.find((r) => /playerstart|drop_start/i.test(r.name)) || state.records[0];
   if (start) lookAt(start.position, 60);
   const [items, encounters] = await Promise.all([layout.load(name), encs.load(name)]);
+  if (mine !== loadSerial) return;
   minimap.setWater(waterAreas ? waterAreas() : []);
   refreshChanges();
   setDirty(false);

@@ -435,13 +435,16 @@ class Scene:
         # which a move rule for the same source would change.
         rules = []
         names = {o["name"].lower() for o in self.all_objects() if o["name"]}
+        taken = set()
         for c in copies:
             new_name = c.get("as") or ""
             if not new_name:
                 raise ValueError("a placed copy needs a name")
+            if new_name.lower() in taken:
+                raise ValueError(f"two copies are named {new_name!r}")
             if new_name.lower() in names:
                 raise ValueError(f"the game already has an object named {new_name!r}")
-            names.add(new_name.lower())
+            taken.add(new_name.lower())
             rules.append({**self._rule(c["source"], c), "copy": True, "as": new_name})
         removed = set(removed)
         for oid, e in moved.items():

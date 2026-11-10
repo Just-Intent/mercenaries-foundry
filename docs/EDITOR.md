@@ -105,9 +105,19 @@ toolkit bundle run it the same way: `foundry\python\python.exe foundry\mercfound
     its properties under the copy's name (the copy borrows the original's
     properties, so it may not survive its area unloading; the saved mod has it
     for good). Moving or turning a copy removes it in the game and spawns it
-    again where it now is (buildings moved by the game stop drawing). Other
-    mods' objects need a rebuild. The panel's **Game replies** list keeps the
-    game's last answers.
+    again where it now is (buildings moved by the game stop drawing). The
+    game's own buildings and gates aren't moved or removed live (the game
+    moves only their actor, so the building jumps or stays and a gate's doors
+    stay): their changes show after a restart. Other mods' objects need a
+    rebuild. The panel's **Game replies** list keeps the game's last answers.
+  - Saved games keep the state of objects with a game actor (gates,
+    buildings, vehicles, props that move), position included: a moved gate
+    loads where the save had it. Such moves show in a new game, or a save
+    made after the move.
+- **Gates** draw with their doors: a gate's doors are models of their own
+  (`geometryNameGateA`/`B`), hung on its `k_gateclosedA`/`B` joints. In the
+  game they are separate objects too, made when the area loads, so a gate
+  copied live has no doors until the next start.
 - **The game's own encounters**: their spawn points can be dragged, typed in,
   added to their set or deleted. A game set keeps at least one point, since
   the game's squads name their sets. The edited encounter is saved whole as
