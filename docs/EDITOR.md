@@ -115,6 +115,20 @@ toolkit bundle run it the same way: `foundry\python\python.exe foundry\mercfound
     in their layer, so the built mod moves an object the same way too: its
     place becomes an invisible location marker and the object goes at the end
     of the layer, where a save made before the move can't put it back.
+- **Terrain** (T): reshape, paint and lay roads on the map's ground. In
+  terrain mode left-drag paints, middle-drag orbits, right-drag pans; Esc
+  leaves. **Raise**, **Lower**, **Flatten** (to the height where the stroke
+  starts) and **Smooth** change the height samples, with a radius and a
+  strength (the longer you hold, the more); **Paint** and **Erase paint**
+  raise or lower one texture layer's opacity (later layers draw over earlier
+  ones); **Road** lays a road through clicked points (texture and width; Enter
+  finishes). Undo stroke (Ctrl+Z) steps back. Save writes
+  `terrain/<map>.heights.changes.json` (height units; the build relights
+  changed slopes), `terrain/<map>.layerNN.<texture>.changes.png` (changed
+  pixels, merged with what's there) and `terrain/<map>.decals.json` "roads"
+  (the view redraws the ground with them). Samples back at their loaded value
+  aren't saved; a mod's whole-map heights or layer image takes precedence, so
+  painting over it is refused. Objects keep their height: Drop to ground.
 - **Gates** draw with their doors: a gate's doors are models of their own
   (`geometryNameGateA`/`B`), hung on its `k_gateclosedA`/`B` joints. In the
   game they are separate objects too, which the game makes for each gate,

@@ -27,6 +27,7 @@
   <input id="place-template" type="text" list="templates" spellcheck="false" placeholder="Template to place"
          title="Any template: a vehicle, prop or character. Click Place, then the ground.">
   <button id="place" title="Place the template where you click (P)">Place</button>
+  <button id="terrain-mode" title="Edit the ground's height (T)">Terrain</button>
   <datalist id="templates"></datalist>
   <span class="spacer"></span>
   <button id="live">Live (no game)</button>
@@ -122,6 +123,39 @@
         <button id="item-revert">Undo changes</button>
       </div>
       <p id="item-note" class="hint"></p>
+    </div>
+    <div id="terrain" hidden>
+      <h2>Terrain</h2>
+      <div class="buttons">
+        <button id="terrain-raise" class="on">Raise</button><button id="terrain-lower">Lower</button>
+        <button id="terrain-flatten" title="To the height where the stroke starts">Flatten</button>
+        <button id="terrain-smooth">Smooth</button>
+      </div>
+      <div class="buttons">
+        <button id="terrain-paint" title="Paint a ground texture layer on">Paint</button>
+        <button id="terrain-erase" title="Take a ground texture layer off">Erase paint</button>
+        <button id="terrain-road" title="Lay a road through clicked points">Road</button>
+      </div>
+      <label class="field" id="terrain-paint-row" hidden>Texture layer <select id="terrain-layer"></select></label>
+      <div id="terrain-road-row" hidden>
+        <label class="field">Road texture <input id="terrain-road-texture" type="text" list="terrain-road-textures" spellcheck="false"></label>
+        <datalist id="terrain-road-textures"></datalist>
+        <label class="field">Width (m) <input id="terrain-road-span" type="number" min="4" max="60" value="25"></label>
+        <div class="buttons"><button id="terrain-road-finish" title="Enter">Finish road</button></div>
+        <p class="hint">Click points along the ground; Enter finishes, Esc cancels. Saved roads become the
+          game's road decals (terrain/&lt;map&gt;.decals.json); the view shows them after Save.</p>
+      </div>
+      <div id="terrain-brush-rows">
+        <label class="field">Radius <span id="terrain-radius-v">12 m</span>
+          <input id="terrain-radius" type="range" min="2" max="80" value="12"></label>
+        <label class="field">Strength <span id="terrain-strength-v">50%</span>
+          <input id="terrain-strength" type="range" min="5" max="100" value="50"></label>
+      </div>
+      <div class="buttons"><button id="terrain-undo" disabled>Undo stroke</button></div>
+      <p class="hint">Left-drag paints; middle-drag orbits, right-drag pans, scroll zooms; Esc leaves.
+        Heights save as terrain/&lt;map&gt;.heights.changes.json (the build relights changed slopes),
+        paint as terrain/&lt;map&gt;.layerNN.&lt;texture&gt;.changes.png. A layer paints over the ones
+        listed before it. Objects keep their height: use Drop to ground on them.</p>
     </div>
     <div id="squad-form" hidden>
       <h2>New squad</h2>

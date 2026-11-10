@@ -13,6 +13,7 @@ import {createEncounters} from './encounters.js';
 import {createLive} from './live.js';
 import {applyGround} from './ground.js';
 import {createMinimap} from './minimap.js';
+import {createTerrainEditor} from './terrain_edit.js';
 
 const $ = (id) => document.getElementById(id);
 const NEAR_RADIUS = 220;      // metres around the view centre that show real models
@@ -282,6 +283,7 @@ async function loadMap(name) {
   if (terrainMesh) scene.remove(terrainMesh);
   if (boxes) scene.remove(boxes);
   state.records = []; state.byId.clear(); state.moved = {}; state.copies = []; state.removed = new Set();
+  terrainEdit.reset();
   state.placedFiles = new Set(); state.placing = null;
 
   const [meta, buf, objs, sizes] = await Promise.all([
@@ -682,6 +684,24 @@ async function save() {
       for (const f of Object.keys(placed)) state.placedFiles.add(f);
       note += `; placed objects in ${done.files.join(', ')}`;
     }
+    const terr = terrainEdit.saveBody(), paint = terrainEdit.paintBody(), roads = terrainEdit.roadsBody();
+    if (terr) {
+      const done = await post('/api/terrain/save', terr);
+      note += `; ground heights in ${done.file}`;
+    }
+    if (paint) {
+      const done = await post('/api/terrain/paint', paint);
+      note += `; ground paint in ${done.files.join(', ')}`;
+    }
+    if (roads) {
+      const done = await post('/api/terrain/roads', roads);
+      note += `; roads in ${done.file}`;
+    }
+    if (terrainEdit.saved() && terrainMesh) {
+      // The new roads as the game lays them: the ground and its decals again.
+      applyGround(terrainMesh, state.map, scene.fog, {...state.terrain.meta, heights: state.terrain.heights})
+        .catch((err) => console.warn('ground textures:', err));
+    }
     const encBody = encs.saveBody();
     if (encBody) {
       const done = await post('/api/encounters/save', encBody);
@@ -722,8 +742,12 @@ function pick(e) {
   ray.setFromCamera(pointer, camera);
   return ray;
 }
-renderer.domElement.addEventListener('pointerdown', (e) => { downAt = [e.clientX, e.clientY]; });
+renderer.domElement.addEventListener('pointerdown', (e) => {
+  downAt = [e.clientX, e.clientY];
+  if (terrainEdit.down(e)) { try { renderer.domElement.setPointerCapture(e.pointerId); } catch (err) { /* no capture */ } }
+});
 renderer.domElement.addEventListener('pointerup', (e) => {
+  if (terrainEdit.up() || terrainEdit.isOn()) return;
   if (!downAt || Math.hypot(e.clientX - downAt[0], e.clientY - downAt[1]) > 4 || e.button !== 0) return;
   if (gizmo.dragging || gizmo.axis) return;
   pick(e);
@@ -771,6 +795,7 @@ function objectUnder(e) {
   return null;
 }
 renderer.domElement.addEventListener('pointermove', (e) => {
+  if (terrainEdit.move(e)) { $('tip').hidden = true; return; }
   if (hoverPending || e.buttons) { if (e.buttons) $('tip').hidden = true; return; }
   hoverPending = requestAnimationFrame(() => {
     hoverPending = null;
@@ -860,6 +885,9 @@ window.addEventListener('keydown', (e) => {
   else if (k === 'c') copySelected();
   else if (k === 'p') startPlace();
   else if (k === 'm') minimap.toggle();
+  else if (k === 't') terrainEdit.setOn(!terrainEdit.isOn());
+  else if (k === 'z' && (e.ctrlKey || e.metaKey) && terrainEdit.isOn()) { e.preventDefault(); terrainEdit.undo(); }
+  else if (k === 'enter' && terrainEdit.isLayingRoad()) terrainEdit.finishRoad();
   else if (k === 'enter' && layout.isDrawing()) layout.finishDraw();
   else if (k === 'insert' && layout.hasSelection()) layout.addPoint();
   else if (k === 'delete') {
@@ -867,7 +895,9 @@ window.addEventListener('keydown', (e) => {
     else if (encs.hasSelection()) encs.deleteSelected();
     else deleteSelected();
   } else if (k === 'escape') {
-    if (layout.isDrawing()) { layout.cancelDraw(); status(''); }
+    if (terrainEdit.isLayingRoad()) { terrainEdit.cancelRoad(); status('Road cancelled'); }
+    else if (terrainEdit.isOn()) terrainEdit.setOn(false);
+    else if (layout.isDrawing()) { layout.cancelDraw(); status(''); }
     else if (encs.isPlacing()) { encs.cancelPlace(); status(''); }
     else if (state.placing) { state.placing = null; status(''); }
     else { select(null); layout.select(null); encs.select(null); }
@@ -883,6 +913,13 @@ $('map').addEventListener('change', async () => {
 // ------------------------------------------------------------------ paths and zones
 let modName = '';
 const slug = (s) => s.toLowerCase().replace(/[^a-z0-9]+/g, '_').replace(/^_|_$/g, '') || 'mod';
+// Terrain editing: brushes on the height samples; the mesh and minimap follow.
+const terrainEdit = createTerrainEditor({
+  $, controls, status, setDirty: (v) => setDirty(v), gamePos: (v) => gamePos(v), pick: (e) => pick(e),
+  scene, threePos: (p) => threePos(p), heightAt: (x, z) => heightAt(x, z),
+  terrain: () => ({mesh: terrainMesh, meta: state.terrain.meta, heights: state.terrain.heights}),
+  onHeights: () => minimap.setTerrain(state.terrain.meta, state.terrain.heights),
+});
 // The minimap (water areas come from the layout module once it has loaded).
 let waterAreas = null;
 const minimap = createMinimap({$, heightAt, lookAt: (p, d) => lookAt(p, d)});
@@ -922,6 +959,7 @@ $('show-objects').addEventListener('change', (e) => {
 let lastStream = 0;
 let lastMinimap = 0;
 function frame(t) {
+  terrainEdit.tick(t);
   controls.update();
   if (t - lastStream > 500) { lastStream = t; if (state.records.length) streamNearby(); }
   if (t - lastMinimap > 100) { lastMinimap = t; minimap.draw(gamePos(controls.target), gamePos(camera.position), live.player()); }

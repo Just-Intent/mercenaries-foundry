@@ -71,7 +71,7 @@ in vec2 vPaint;
 in vec3 vWorld;
 out vec4 outColor;
 void main() {
-  vec3 g = vec3(vWorld.x, vWorld.y, -vWorld.z);      // game axes
+  vec3 g = vWorld;                                    // the view uses the game's axes
   vec3 c = vec3(0.35, 0.37, 0.3);
   for (int i = 0; i < 16; i++) {
     if (i >= count) break;
@@ -212,6 +212,11 @@ export async function applyGround(mesh, map, fog, grid) {
       fogColor: {value: fog.color}, fogNear: {value: fog.near}, fogFar: {value: fog.far},
     },
   });
+  // What terrain painting needs: the paint bytes (layer after layer, w x w)
+  // and their texture, re-uploaded after edits.
+  mesh.userData.ground = {paint: paintTex.image.data, tex: paintTex, w, layers: look.layers};
+  const old = mesh.getObjectByName('decals');
+  if (old) mesh.remove(old);
   if (grid) await addDecals(mesh, map, grid, lightAttr, fog);
   return true;
 }

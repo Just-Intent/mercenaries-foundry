@@ -25,6 +25,9 @@ GET  /api/encounters/<map>     encounters: the game's (read only) and the mod's
 GET  /api/templates            objects a squad member can copy (template_*)
 POST /api/encounters/save      {"map", "files": {file: [encounter, ...]}}
 POST /api/placed/save          {"map", "files": {file: [{from, name, position, rotation}]}}: objects placed from templates
+POST /api/terrain/save         {"map", "samples": [[column, row, height units], ...]}: painted ground heights
+POST /api/terrain/paint        {"map", "layers": {layer: {"texture", "pixels": [[col, row, opacity]]}}}
+POST /api/terrain/roads        {"map", "roads": [{"texture", "span", "points": [[x, z], ...]}]}
 POST /api/save                 {"moved": {...}, "copies": [...], "removed": [...]}
                                -> objects/editor.json
 """
@@ -174,6 +177,15 @@ def make_handler(scene: Scene, mod_name: str, live: Live = None):
                 if path == "/api/placed/save":
                     with objects_lock:
                         return self.send(200, scene.save_placed(doc["map"], doc.get("files", {})))
+                if path == "/api/terrain/paint":
+                    with objects_lock:
+                        return self.send(200, scene.save_paint(doc["map"], doc.get("layers", {})))
+                if path == "/api/terrain/roads":
+                    with objects_lock:
+                        return self.send(200, scene.save_roads(doc["map"], doc.get("roads", [])))
+                if path == "/api/terrain/save":
+                    with objects_lock:
+                        return self.send(200, scene.save_terrain(doc["map"], doc.get("samples", [])))
                 if path == "/api/encounters/save":
                     with objects_lock:
                         return self.send(200, scene.save_encounters(doc["map"], doc.get("files", {}),

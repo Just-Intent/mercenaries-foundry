@@ -87,7 +87,8 @@
 - Editor minimap: the whole map from above (hill-shaded terrain, water, the camera's view, the player when live); click to jump there.
 - Model exports unmirrored (0.67): glTF and OBJ exports used to negate only Z (the game was taken to be left-handed), which mirrored models; they now turn them half round (X and Z negated, winding kept), as the game draws them. Old exports are recognised by their glTF header and still import the old way. Checks: 45 models (6 named, 39 random) export, pass the vertex check and re-import byte-identical through glTF, 33 through OBJ; a Humvee's left seats come out on its left; a road sign reads correctly in the editor; the Terrain Hill mod's old Humvee changes file still raises the turret and places the new seat 0.8 m above the left front seat.
 - Collision follows edited pieces (0.67.1): model imports move and stretch the box-shape boxes of pieces whose outline changed, grouped by how they moved, keeping each box in its shape (flags kept); boxes shared with untouched parts stay. Tested in game: straight sandbag walls shifted 2 m were solid at their new place, not their old.
-- 254 tests pass.
+- Editor terrain tools (0.68): brushes raise, lower, flatten and smooth height samples, paint and erase ground texture layers, and lay roads through clicked points; saved as the mod's heights changes, layer changes images and decals roads, which the build already applies. Fixed on the way: the editor drew ground textures mirrored (a leftover z flip in its ground shader). Tested in game: painted heights, a painted texture and a laid road all showed.
+- 257 tests pass.
 
 ## Fixed from retail data
 - Text values aren't NUL-terminated. The decoder had assumed they were and found no strings.

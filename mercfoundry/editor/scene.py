@@ -132,9 +132,93 @@ class Scene:
         info = terrain.parse_info(chunks[b"INFO"])
         size, heights = terrain.decode_heights(chunks)
         sp = info["spacing"]
-        meta = {"name": name, "size": size, "spacing": sp,
+        meta = {"name": name, "size": size, "spacing": sp, "step": info["step"],
                 "x0": -size * sp / 2, "z0": -(size * sp / 2 - sp)}
         return meta, struct.pack(f"<{size * size}f", *(h for row in heights for h in row))
+
+    def save_paint(self, map_name, layers):
+        """Ground paint from the editor ({layer: {texture, pixels: [[col, row,
+        opacity]]}}) merged into the mod's terrain/<map>.layerNN.<texture>.changes.png
+        (grey = opacity, alpha 255 = changed; the build applies it)."""
+        import re
+        from .. import png
+        if not re.fullmatch(r"[A-Za-z0-9_]+", map_name):
+            raise ValueError(f"bad map name {map_name!r}")
+        meta, _, _ = self.terrain_look(map_name)
+        w = meta["paint_size"]
+        tdir = self.mod / "terrain"
+        written = []
+        for key, layer in layers.items():
+            index = int(key)
+            texture = re.sub(r"[^A-Za-z0-9_]", "_", layer.get("texture") or "")
+            existing = sorted(tdir.glob(f"{map_name}.layer{index:02d}.*")) if tdir.is_dir() else []
+            whole = [f for f in existing if not f.name.lower().endswith(".changes.png")]
+            if whole:
+                raise ValueError(f"terrain/{whole[0].name} repaints this layer as a whole image; edit that image")
+            p = existing[0] if existing else tdir / f"{map_name}.layer{index:02d}.{texture}.changes.png"
+            la = bytearray(w * w * 2)
+            if p.exists():
+                pw, ph, rgba = png.decode(p.read_bytes())
+                if (pw, ph) != (w, w):
+                    raise ValueError(f"terrain/{p.name} is {pw} x {ph}, not {w} x {w}")
+                for i in range(w * w):
+                    if rgba[4 * i + 3] >= 128:
+                        la[2 * i], la[2 * i + 1] = rgba[4 * i], 255
+            for x, z, v in layer.get("pixels", []):
+                i = int(z) * w + int(x)
+                la[2 * i], la[2 * i + 1] = max(0, min(255, int(v))), 255
+            tdir.mkdir(parents=True, exist_ok=True)
+            p.write_bytes(png.encode(w, w, bytes(la), 2))
+            written.append(f"terrain/{p.name}")
+        self._terrain = None
+        if hasattr(self, "_looks"):
+            self._looks.pop(map_name, None)
+        return {"files": written}
+
+    def save_roads(self, map_name, roads):
+        """Roads laid in the editor ([{texture, span, points: [[x, z]]}])
+        added to the mod's terrain/<map>.decals.json "roads"."""
+        import re
+        if not re.fullmatch(r"[A-Za-z0-9_]+", map_name):
+            raise ValueError(f"bad map name {map_name!r}")
+        p = self.mod / "terrain" / f"{map_name}.decals.json"
+        doc = json.loads(p.read_text(encoding="utf-8")) if p.exists() else {}
+        for r in roads:
+            pts = [[round(float(x), 2), round(float(z), 2)] for x, z in r["points"]]
+            if len(pts) < 2 or not r.get("texture"):
+                raise ValueError("a road needs a texture and two points or more")
+            doc.setdefault("roads", []).append({"texture": r["texture"], "span": float(r.get("span", 25)),
+                                                 "points": pts})
+        p.parent.mkdir(parents=True, exist_ok=True)
+        p.write_text(json.dumps(doc, indent=1) + "\n", encoding="utf-8")
+        self._terrain = None
+        if hasattr(self, "_looks"):
+            self._looks.pop(map_name, None)
+        return {"file": f"terrain/{p.name}", "roads": len(doc["roads"])}
+
+    def save_terrain(self, map_name, samples):
+        """Height samples painted in the editor ([column, row, height units])
+        merged into the mod's terrain/<map>.heights.changes.json (the build
+        sets them and relights changed slopes)."""
+        import re
+        if not re.fullmatch(r"[A-Za-z0-9_]+", map_name):
+            raise ValueError(f"bad map name {map_name!r}")
+        tdir = self.mod / "terrain"
+        if (tdir / f"{map_name}.heights.png").exists():
+            raise ValueError(f"terrain/{map_name}.heights.png reshapes this map as a whole image; "
+                             "edit that image, or remove it to paint in the editor")
+        p = tdir / f"{map_name}.heights.changes.json"
+        doc = json.loads(p.read_text(encoding="utf-8")) if p.exists() else {"terrain": map_name, "samples": []}
+        merged = {(int(x), int(z)): int(v) for x, z, v in doc.get("samples", [])}
+        for x, z, v in samples:
+            merged[(int(x), int(z))] = int(v)
+        doc = {"terrain": map_name, "samples": [[x, z, v] for (x, z), v in sorted(merged.items(), key=lambda kv: (kv[0][1], kv[0][0]))]}
+        tdir.mkdir(parents=True, exist_ok=True)
+        p.write_text(json.dumps(doc, separators=(",", ":")) + "\n", encoding="utf-8")
+        self._terrain = None          # the next look at the map reads it again
+        if hasattr(self, "_looks"):
+            self._looks.pop(map_name, None)
+        return {"file": f"terrain/{p.name}", "samples": len(doc["samples"])}
 
     def terrain_look(self, name):
         """How the ground is drawn, as the context mods leave it: (meta, paint

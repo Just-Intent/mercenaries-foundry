@@ -45,6 +45,64 @@ class EditorSceneTests(unittest.TestCase):
         self.assertIsNone(server._static("static/missing.js"))
 
 
+class TerrainSaveTests(unittest.TestCase):
+    def test_painted_samples_merge(self):
+        import json, tempfile
+        from pathlib import Path
+        from mercfoundry.editor.scene import Scene
+        with tempfile.TemporaryDirectory() as d:
+            sc = Scene.__new__(Scene)
+            sc.mod, sc._terrain = Path(d), "cached"
+            sc.save_terrain("sw", [[3, 4, 100], [5, 4, 90]])
+            done = sc.save_terrain("sw", [[3, 4, 120], [1, 0, 7]])       # repainted and new samples
+            doc = json.loads((Path(d) / "terrain" / "sw.heights.changes.json").read_text())
+            self.assertEqual(doc, {"terrain": "sw", "samples": [[1, 0, 7], [3, 4, 120], [5, 4, 90]]})
+            self.assertEqual((done["samples"], sc._terrain), (3, None))     # the map is read again
+            (Path(d) / "terrain" / "sw.heights.png").write_bytes(b"")
+            with self.assertRaises(ValueError):                               # a whole-map image wins
+                sc.save_terrain("sw", [[0, 0, 1]])
+
+
+class GroundSaveTests(unittest.TestCase):
+    def scene(self, d):
+        from pathlib import Path
+        from mercfoundry.editor.scene import Scene
+        sc = Scene.__new__(Scene)
+        sc.mod, sc._terrain = Path(d), "cached"
+        sc.terrain_look = lambda name: ({"paint_size": 4}, b"", b"")
+        return sc
+
+    def test_roads_add_up(self):
+        import json, tempfile
+        from pathlib import Path
+        with tempfile.TemporaryDirectory() as d:
+            sc = self.scene(d)
+            sc.save_roads("sw", [{"texture": "sw_decal_road_straight", "span": 20, "points": [[0, 0], [50.123, 7]]}])
+            done = sc.save_roads("sw", [{"texture": "sw_decal_road_straight", "points": [[1, 1], [2, 2]]}])
+            doc = json.loads((Path(d) / "terrain" / "sw.decals.json").read_text())
+            self.assertEqual(done["roads"], 2)
+            self.assertEqual(doc["roads"][0], {"texture": "sw_decal_road_straight", "span": 20.0,
+                                               "points": [[0.0, 0.0], [50.12, 7.0]]})
+            with self.assertRaises(ValueError):
+                sc.save_roads("sw", [{"texture": "x", "points": [[0, 0]]}])
+
+    def test_paint_merges_into_a_changes_image(self):
+        import tempfile
+        from pathlib import Path
+        from mercfoundry import png
+        with tempfile.TemporaryDirectory() as d:
+            sc = self.scene(d)
+            sc.save_paint("sw", {"3": {"texture": "sw_tt_grass", "pixels": [[1, 0, 200]]}})
+            done = sc.save_paint("sw", {"3": {"texture": "sw_tt_grass", "pixels": [[2, 3, 50]]}})
+            self.assertEqual(done["files"], ["terrain/sw.layer03.sw_tt_grass.changes.png"])
+            w, h, rgba = png.decode((Path(d) / "terrain" / "sw.layer03.sw_tt_grass.changes.png").read_bytes())
+            marked = {i: rgba[4 * i] for i in range(w * h) if rgba[4 * i + 3] >= 128}
+            self.assertEqual(((w, h), marked), ((4, 4), {1: 200, 14: 50}))
+            (Path(d) / "terrain" / "sw.layer05.rock.png").write_bytes(b"")
+            with self.assertRaises(ValueError):                 # a whole-layer image wins
+                sc.save_paint("sw", {"5": {"texture": "rock", "pixels": [[0, 0, 1]]}})
+
+
 class LiveLinkTests(unittest.TestCase):
     def test_commands_and_poll(self):
         from mercfoundry.editor.live import Live
