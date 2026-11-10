@@ -199,6 +199,32 @@ This is what `global`'s `DebugSkipToMission` does, plus the map switch. Use a th
 
 Tested in game (2026-11-08): `sw_allies9` (three NK soldiers copied from a mission-6 template, placed north of the allies HQ), started from the skip line above. The contract mail arrived, the objective showed its text with markers on the soldiers and a 0/3 counter, and the counter rose to 3/3 before the mission completed.
 
+### Path events
+
+A path can make the characters following it play an animation when they reach
+a point, such as a guard fidgeting at each end of his beat:
+
+```json
+"paths": {"guard_beat": {"points": [[x, y, z], [x, y, z], [x, y, z]],
+                         "events": {"0": ["all_allies_fb_fidget01"],
+                                    "2": [{"anim": "all_allies_fb_fidget03", "value": 50},
+                                          {"anim": "all_allies_fb_idle", "value": 50}]}}}
+```
+
+- **Animations** are clip names, such as `all_allies_fb_fidget01` or
+  `all_sk_fb_fidget02`. Load them with the layer's `"loads": {"animation": [...]}`
+  if nothing else does.
+- **`value`** is the chance in percent. A bare clip name gets 100.
+- The game stores events per point in the path's `EVNT` chunk. Each point has
+  a list of entries: the clip name, the chance, and a word the game reads as a
+  float and treats as on above 0 (all retail events leave it at 0).
+- Retail barely uses events: 11 of 3,367 paths have them, mostly in developer
+  test layers. The one shipped event, NW Mafia 1's `mafia1_pskat1`, has a
+  chance of 0, so it never plays.
+
+Tested in game (2026-11-10), on the test range. A soldier patrolling a path
+with `"value": 0` walked without fidgeting. With 100, he fidgeted at both ends.
+
 ### Traffic zones
 
 The game's traffic is people and vehicles that walk and drive set routes: the

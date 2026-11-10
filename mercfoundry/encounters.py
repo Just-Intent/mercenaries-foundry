@@ -47,7 +47,16 @@ t_<zone>_<id> (vehicles) and p_<zone>_<id> (people), with a "width"
 property and linked end to end. Scripts fill it:
 Traffic_AddZoneSpawner('foundry-zone', 'template_...'), Traffic_SetZoneDensity.
 
-Paths (path > NAME, INFO, PROP, [PSTM], PNTS, ORNT, JNCT) are what
+A path's "events": {"1": ["all_allies_fb_fidget01"]} plays animation clips
+when a character following it reaches that point (EVNT). "value" is the
+chance in percent (default 100; tested in game: 0 never plays, 100 always
+does), so {"anim": ..., "value": 50} for one of two clips. Retail's one
+shipped event (NW Mafia 1's mafia1_pskat1) has 0 and so never plays; test
+layers use 100 and 50 + 50. "flags" is read by the game as a float, on when
+above 0 (0x124870), and is 0 in all retail events. Events and pauses never
+share a path in retail.
+
+Paths (path > NAME, INFO, PROP, [PSTM | EVNT], PNTS, ORNT, JNCT) are what
 Ai_Command(actor, 'Patrol', '<path>', '1.0', 'loPri') and an object's own
 "path" property follow.  JNCT links join this path's point (default: its
 last) to another path's point (default: its first), as most retail links do.
@@ -148,8 +157,19 @@ def _path_node(name, spec):
     for p, _ in pauses:
         if not 0 <= p < len(points):
             raise ValueError(f"path {name}: pause at point {p}, which doesn't exist")
+    events = []
+    for p, clips in sorted(((int(p), c) for p, c in (spec.get("events") or {}).items())):
+        if not 0 <= p < len(points):
+            raise ValueError(f"path {name}: events at point {p}, which doesn't exist")
+        clips = [clips] if isinstance(clips, (str, dict)) else list(clips)
+        events.append({"point": p, "events": [
+            {"anim": c, "value": 100.0, "flags": 0} if isinstance(c, str) else
+            {"anim": c["anim"], "value": float(c.get("value", 100.0)), "flags": int(c.get("flags", 0))}
+            for c in clips]})
+    if events and pauses:
+        raise ValueError(f"path {name}: retail paths have pauses or events, never both")
     values = [[k, v] for k, v in (spec.get("properties") or {}).items()]
-    values += [["num_respect_bridge_flags", 0], ["num_pause_times", len(pauses)], ["num_nodes_with_events", 0]]
+    values += [["num_respect_bridge_flags", 0], ["num_pause_times", len(pauses)], ["num_nodes_with_events", float(len(events)) if events else 0]]   # a float when set, as retail
     links = [{"path": k["path"], "their_point": int(k.get("their_point", 0)),
               "our_point": int(k.get("our_point", len(points) - 1))} for k in spec.get("links", [])]
     kids = [{"tag": "NAME", "text": name},
@@ -157,6 +177,8 @@ def _path_node(name, spec):
             {"tag": "PROP", "values": values}]
     if pauses:
         kids.append({"tag": "PSTM", "at_points": pauses})
+    if events:
+        kids.append({"tag": "EVNT", "nodes": events})
     kids += [{"tag": "PNTS", "points": points},
              {"tag": "ORNT", "rotations": [[1.0, 0.0, 0.0, 0.0]] * len(points)},
              {"tag": "JNCT", "links": links}]

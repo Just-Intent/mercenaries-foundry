@@ -52,6 +52,16 @@ In game (free roam on the south map), open Foundry Console (F7) and run
 Made by `python -m mercfoundry test-range` from your own game files.
 """
 
+EVENTS_TEST = """function FoundryRangeTest()
+  -- Path events: the walker patrols foundry_range_patrol (30 m south of you)
+  -- and fidgets at each end (the path's EVNT). Traffic is off, so nothing
+  -- else moves.
+  Traffic_SetZoneEnabled('foundry-range', false)
+  Ai_Command('foundry_range_walker', 'Patrol', 'foundry_range_patrol', '1.0', 'loPri')
+  Ui_MessageBoxPrint('[yellow]Foundry range: path events test (watch the soldier in front of you)', 0)
+end
+"""
+
 TRAFFIC_TEST = """function FoundryRangeTest()
   -- Traffic: soldiers from the range layer's own template walk its loop.
   Traffic_ResetZoneSpawners('foundry-range')
@@ -84,7 +94,7 @@ def flatten(units, info):
     return new, target * step
 
 
-def range_lua(height, test=TRAFFIC_TEST):
+def range_lua(height, test=EVENTS_TEST):
     cx, cz = CENTRE
     return f"""-- Foundry Test Range: run by Foundry_Range() (Foundry Console) in the
 -- script state the console uses. Loads the range layer once, moves the player
@@ -123,13 +133,26 @@ def _loop(zone, cx, cz, half, y):
     return paths
 
 
+def _patrol(y):
+    """A 30 m path 30 m south of the landing spot, with a fidget at each end."""
+    cx, cz = CENTRE
+    pts = [[cx - 15, round(y, 2), cz - 70], [cx, round(y, 2), cz - 70], [cx + 15, round(y, 2), cz - 70]]
+    return {"foundry_range_patrol": {"points": pts,
+                                     "events": {"0": [{"anim": "all_allies_fb_fidget01", "value": 100}],
+                                                "2": [{"anim": "all_allies_fb_fidget03", "value": 100}]}}}
+
+
 def layer(height):
     cx, cz = CENTRE
     return {
         "map": "SW",
         "objects": [{"from": "template_allies_gunner", "name": "template_foundry_range_gunner",
-                     "position": [cx - 110, round(height + 0.3, 2), cz - 110], "yaw": 0}],
-        "paths": _loop("foundry-range", cx, cz, 50.0, height + 0.3),
+                     "position": [cx - 110, round(height + 0.3, 2), cz - 110], "yaw": 0},
+                    {"from": "template_allies_gunner", "name": "foundry_range_walker",
+                     "position": [cx - 15, round(height + 0.3, 2), cz - 70], "yaw": 90,
+                     "set": {"path": "foundry_range_patrol"}}],
+        "loads": {"animation": ["all_allies_fb_fidget01", "all_allies_fb_fidget03"]},
+        "paths": {**_loop("foundry-range", cx, cz, 50.0, height + 0.3), **_patrol(height + 0.3)},
         "traffic": {"foundry-range": {"density": 10, "urgency": 10}},
     }
 

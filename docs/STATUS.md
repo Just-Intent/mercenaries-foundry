@@ -75,7 +75,8 @@
 - Regions in mod layers: `"regions"` in `encounters/<layer>.json` adds boxes and spheres (rebuilds all 12 retail region records exactly, rotation aside). Tested in game: `Region_GetPosition` returned a new box's position and `Event_ActorToLocationProximity` fired within 25 m of it.
 - Traffic zones in mod layers: `"traffic"` declares zones in the map's level config (`[TrafficZone]` in `SW\SW.ini`, at most 150), and paths named `t_<zone>_<id>`/`p_<zone>_<id>` are their routes. Found by following the game's traffic manager (0x3DC970): zones come only from the map config, routes join their zone when a path whose name starts `t_`/`p_` loads (0x124870), and traffic spawns only within about 45 m ahead of the camera. Foundry Console's `Foundry_TrafficZone()` shows a zone as the game holds it. Tested in game on the test range: allied soldiers from the range layer's own template walked its loop.
 - Test range: `test-range` writes a mod with a flat 240 m pad on the south map, 220 m or more from all the game's traffic and AI. `Foundry_Range()` in Foundry Console takes you there and runs the mod's `range.lua`, so in-game tests have clean results.
-- 249 tests pass.
+- Path events: `EVNT` decoded (all 857 retail path records round-trip). Mod paths take `"events"`: animation clips played at points, with a chance in percent. Tested in game on the test range: a patrolling soldier fidgeted at both ends with 100, and never with 0. So retail's one shipped event (chance 0) never plays.
+- 250 tests pass.
 
 ## Fixed from retail data
 - Text values aren't NUL-terminated. The decoder had assumed they were and found no strings.
@@ -124,10 +125,9 @@
 ## Next steps
 1. Editor: live copies of unnamed scenery, path pauses and links, editing the game's own encounters, placing objects from templates.
 2. Collision flags: what bit 4 does; why bullets pass through pines and some rock meshes; collision for edited existing pieces.
-3. Missions: path animation events (`EVNT`).
-4. Moving skin bones on characters (animations override bone translations); what animation-table priorities and flags do.
-5. Function map: name more engine functions (actors, AI commands, missions); find the path from a vehicle actor to its drivetrain, so plugins can change handling live with the setters.
-6. Overlay: spawning and object editing from the in-game panel (now only in the window).
+3. Moving skin bones on characters (animations override bone translations); what animation-table priorities and flags do.
+4. Function map: name more engine functions (actors, AI commands, missions); find the path from a vehicle actor to its drivetrain, so plugins can change handling live with the setters.
+5. Overlay: spawning and object editing from the in-game panel (now only in the window).
 
 ## Notes
 - Several port tools mention replacing "source-informed" versions. Use only versions re-derived from retail (see PROVENANCE.md).

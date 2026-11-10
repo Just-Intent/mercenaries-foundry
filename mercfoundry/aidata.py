@@ -8,7 +8,8 @@ its exact bytes or it stays hex. Established from retail data:
             (name\\0 + 4-byte value, repeated), PNTS (float[3] each), ORNT
             (quaternion per point), JNCT (links: other path, its point,
             our point), sometimes PSTM / RBRG ((point, value) pairs), ROTN
-            (point number as text + quaternion) and EVNT (hex)
+            (point number as text + quaternion) and EVNT (animations played
+            at points)
   lineregion lrg_: NAME, INFO (u16 0, u16 properties, u16 points), PROP
             (name\\0value\\0 pairs), PNTS: a named boundary polygon, e.g.
             "allies1_killbox" (type=killbox)
@@ -111,6 +112,35 @@ def _pack_strings(items):
     return b"".join(s.encode("ascii") + b"\0" for s in items)
 
 
+def _events(b):
+    """EVNT: per point with events, u32 point, u32 count, then count x
+    (animation clip name, NUL, f32 chance in percent, u32 flags). Characters
+    following the path play a clip when they reach the point (tested: 0
+    never plays, 100 always). The game reads flags as a float, on above 0."""
+    out, p = [], 0
+    while p < len(b):
+        point, count = struct.unpack_from("<II", b, p)
+        p += 8
+        events = []
+        for _ in range(count):
+            end = b.index(b"\0", p)
+            anim = b[p:end].decode("ascii")
+            value, flags = struct.unpack_from("<fI", b, end + 1)
+            p = end + 9
+            events.append({"anim": anim, "value": value, "flags": flags})
+        out.append({"point": point, "events": events})
+    return out
+
+
+def _pack_events(nodes):
+    out = bytearray()
+    for n in nodes:
+        out += struct.pack("<II", int(n["point"]), len(n["events"]))
+        for e in n["events"]:
+            out += e["anim"].encode("ascii") + b"\0" + struct.pack("<fI", float(e.get("value", 0.0)), int(e.get("flags", 0)))
+    return bytes(out)
+
+
 def _decode_leaf(tag, body, parent):
     """(json dict) for a leaf; exact or hex."""
     t = tag.decode("latin-1")
@@ -146,6 +176,8 @@ def _decode_leaf(tag, body, parent):
                                                for i in range(0, len(body), 8)]}
         elif tag == b"ROTN":
             attempt = {"tag": t, "facings": _facings(body)}
+        elif tag == b"EVNT":
+            attempt = {"tag": t, "nodes": _events(body)}
     except (ValueError, UnicodeDecodeError, struct.error):
         attempt = None
     if attempt is not None and _encode_leaf(attempt) == body:
@@ -178,6 +210,8 @@ def _encode_leaf(item):
         return b"".join(struct.pack("<If", int(p), float(v)) for p, v in item["at_points"])
     if "facings" in item:
         return _pack_facings(item["facings"])
+    if "nodes" in item:
+        return _pack_events(item["nodes"])
     raise ValueError(f"can't encode {item.get('tag')}")
 
 

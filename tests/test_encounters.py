@@ -129,6 +129,27 @@ class EncounterTests(unittest.TestCase):
         doc = {"paths": {"p_foundry-m10_01a": {}, "t_foundry-m10_02": {}, "p_foundry-m100_01": {}, "other": {}}}
         self.assertEqual(encounters.zone_paths(doc, "foundry-m10"), ["p_foundry-m10_01a", "t_foundry-m10_02"])
 
+    def test_path_events(self):
+        doc = {"paths": {"walk": {"points": [[0, 0, 0], [5, 0, 0], [10, 0, 0]],
+                                  "events": {"2": ["all_allies_fb_fidget03"],
+                                             "0": [{"anim": "all_allies_fb_fidget01", "value": 50},
+                                                   "all_allies_fb_idle"]}}}}
+        recs = self.build(doc)
+        pdoc = aidata.to_json(recs[encounters.PATH], "path")
+        self.assertEqual(aidata.from_json(pdoc), recs[encounters.PATH])
+        kids = pdoc["tree"][0]["children"][0]["children"]
+        self.assertEqual([c["tag"] for c in kids], ["NAME", "INFO", "PROP", "EVNT", "PNTS", "ORNT", "JNCT"])
+        ev = kids[3]["nodes"]
+        self.assertEqual([n["point"] for n in ev], [0, 2])
+        self.assertEqual(ev[0]["events"][0], {"anim": "all_allies_fb_fidget01", "value": 50.0, "flags": 0})
+        self.assertEqual(ev[0]["events"][1]["value"], 100.0)     # a bare clip name always plays
+        self.assertEqual(dict(kids[2]["values"])["num_nodes_with_events"], 2.0)
+        with self.assertRaises(ValueError):
+            self.build({"paths": {"bad": {"points": [[0, 0, 0], [1, 0, 0]], "events": {"5": ["x"]}}}})
+        with self.assertRaises(ValueError):
+            self.build({"paths": {"both": {"points": [[0, 0, 0], [1, 0, 0]], "events": {"0": ["x"]},
+                                           "pauses": {"1": 2}}}})
+
     def test_junction_codec(self):
         body = struct.pack("<H", 2) + b"t_a\0" + struct.pack("<HH", 0, 11) + b"t_b\0" + struct.pack("<HH", 2, 1)
         node = aidata._decode_leaf(b"JNCT", body, b"path")
