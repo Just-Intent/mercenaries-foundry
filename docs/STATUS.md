@@ -120,7 +120,7 @@
 ## Next steps
 1. Editor: live copies of unnamed scenery, path pauses and links, editing the game's own encounters, placing objects from templates.
 2. Collision flags: what bit 4 does; why bullets pass through pines and some rock meshes; collision for edited existing pieces.
-3. Missions: regions (boxes) in mod layers, radio voice-overs, traffic zones, path animation events (`EVNT`).
+3. Missions: regions (boxes) in mod layers, traffic zones, path animation events (`EVNT`).
 4. Moving skin bones on characters (animations override bone translations); what animation-table priorities and flags do.
 5. Function map: name more engine functions (actors, AI commands, missions); find the path from a vehicle actor to its drivetrain, so plugins can change handling live with the setters.
 6. Overlay: spawning and object editing from the in-game panel (now only in the window).

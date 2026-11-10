@@ -184,4 +184,37 @@ This is what `global`'s `DebugSkipToMission` does, plus the map switch. Use a th
 
 Tested in game (2026-11-08): `sw_allies9` (three NK soldiers copied from a mission-6 template, placed north of the allies HQ), started from the skip line above. The contract mail arrived, the objective showed its text with markers on the soldiers and a 0/3 counter, and the counter rose to 3/3 before the mission completed.
 
+### Radio lines
+
+A mission can have voiced radio lines with subtitles, as the game's own
+contracts do. Each line needs three parts:
+
+- **The voice:** `sounds/fio/new/<cue>.wav` adds a new cue to Fiona's bank (any
+  bank works; see [SOUND.md](SOUND.md)).
+- **The subtitle:** a string `vo.<bank>.<cue>` in the mission file's
+  `"strings"`, e.g. `"vo.fio.S10START": "Foundry here. ..."`. It goes into the
+  mission's own text record, as retail subtitles do. The speaker's name comes
+  from `interface.subtitlename.<bank>` ("Fiona :").
+- **Playing it:** `Radio_QueueMessage('<cue>', pre, post, delay)` from the
+  `util_banter` script (load it with `Utility_LoadUtilityScript('util_banter')`).
+  It plays `fio.<cue>` through the game's banter queue, so lines never overlap.
+  `post` names a function to run when the line ends, for example to complete
+  the mission after the last line.
+
+Give each line a delay of 3 to 4 seconds when it starts with an objective
+message (`util_ObjMsgPrint`). The game doesn't show a subtitle while that
+message is up, so a line that starts with one plays without its subtitle.
+
+`dev-mods/second-contract` has three lines: a briefing when the objective
+appears, one after the first kill, and one after the last. The last line
+completes the contract:
+
+```lua
+Radio_QueueMessage('S10DONE', nil, 'FoundryContractDone', 3.5)
+```
+
+Tested in game (2026-11-09): all three lines played with their subtitles. With no
+delay, none showed one; the same line played with no objective message
+up did show its subtitle.
+
 Not yet decoded: path animation events (`EVNT`), how traffic zones pick encounters (`Traffic_SetZoneEncounter`), and the first `INFO` word of point sets (always 1).
