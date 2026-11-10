@@ -108,8 +108,8 @@ toolkit bundle run it the same way: `foundry\python\python.exe foundry\mercfound
     again where it now is (buildings moved by the game stop drawing). The
     game's own objects move the same way: copied to the new place from their
     own properties and removed (Foundry Console's `respawn`), then known by a
-    name of their own (`fmv_<layer>_<index>`, or their own name). A gate moved
-    live leaves its doors until the next start. Other mods' objects need a
+    name of their own (`fmv_<layer>_<index>`, or their own name); a gate
+    moved this way comes with its doors. Other mods' objects need a
     rebuild. The panel's **Game replies** list keeps the game's last answers.
   - Saved games keep the state of objects (position included) by their place
     in their layer, so the built mod moves an object the same way too: its
@@ -117,8 +117,8 @@ toolkit bundle run it the same way: `foundry\python\python.exe foundry\mercfound
     of the layer, where a save made before the move can't put it back.
 - **Gates** draw with their doors: a gate's doors are models of their own
   (`geometryNameGateA`/`B`), hung on its `k_gateclosedA`/`B` joints. In the
-  game they are separate objects too, made when the area loads, so a gate
-  copied live has no doors until the next start.
+  game they are separate objects too, which the game makes for each gate,
+  spawned ones included.
 - **The game's own encounters**: their spawn points can be dragged, typed in,
   added to their set or deleted. A game set keeps at least one point, since
   the game's squads name their sets. The edited encounter is saved whole as
