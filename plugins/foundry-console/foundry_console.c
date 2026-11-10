@@ -1561,6 +1561,41 @@ static void live_run(char *line)
         live_result(ok ? "%s spawned (%s)" : "%s: spawning %s failed", name, tmpl);
         return;
     }
+    if (!strcmp(op, "inspect")) {
+        /* inspect <x> <y> <z> [radius]: every world object that near, one
+         * reply each: the slot object, flags, position, actor, property block
+         * (and its three words), name hash and GeometryFile. For finding out
+         * what a copy or a move found and made. */
+        float v[4] = {0, 0, 0, 6};
+        for (int i = 0; i < 4; i++) { char *t = strtok_s(NULL, " ", &next); if (t) v[i] = (float)atof(t); }
+        if (!host->read_guest(host->context, OBJECTS, slot_objects, sizeof(slot_objects))) return;
+        unsigned shown = 0;
+        for (unsigned i = 0; i < OBJECT_SLOTS && shown < 12; i++) {
+            uint32_t obj = slot_objects[i];
+            unsigned char head[0x34];
+            if (!obj || !host->read_guest(host->context, obj, head, sizeof(head))) continue;
+            float pos[3];
+            uint16_t flags;
+            uint32_t block, actor, handle, words[3] = {0}, name = 0;
+            memcpy(pos, head + WORLDOBJECT_POSITION, 12);
+            float dx = pos[0] - v[0], dy = pos[1] - v[1], dz = pos[2] - v[2];
+            if (dx * dx + dy * dy + dz * dz > v[3] * v[3]) continue;
+            memcpy(&flags, head + MF_OFF_WorldObject_flags, 2);
+            memcpy(&block, head + MF_OFF_WorldObject_template, 4);
+            memcpy(&actor, head + MF_OFF_WorldObject_actor, 4);
+            memcpy(&handle, head + MF_OFF_WorldObject_handle, 4);
+            if (block) host->read_guest(host->context, block, words, sizeof(words));
+            if (actor) host->read_guest(host->context, actor + 4, &name, 4);
+            char m[48];
+            object_model(obj, handle, m, sizeof(m));
+            live_result("inspect %08x flags %04x at %.1f %.1f %.1f actor %08x name %08x block %08x [%08x %08x %08x] %s",
+                        obj, flags, pos[0], pos[1], pos[2], actor, name, block, words[0], words[1], words[2],
+                        m[0] ? m : "-");
+            shown++;
+        }
+        if (!shown) live_result("inspect: nothing within %.0f m of %.1f %.1f %.1f", v[3], v[0], v[1], v[2]);
+        return;
+    }
     if (!strcmp(op, "copy")) {
         /* copy <name> <model> <n> <n points> <new name> <x> <y> <z> <heading>: a
          * copy of an object found as move finds it. Unnamed scenery isn't a

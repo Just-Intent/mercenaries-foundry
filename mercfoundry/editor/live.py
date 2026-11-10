@@ -114,6 +114,8 @@ def command_line(c: dict) -> str:
         head = ["copy", _word(c.get("name")), _word(c.get("model")), str(len(pts))]
         head += [_num(v) for p in pts for v in p] + [n]
         return " ".join(head + [_num(v) for v in c["position"]] + [_num(c.get("heading", 0.0))])
+    if op == "inspect":
+        return "inspect " + " ".join(_num(v) for v in list(c["position"]) + [c.get("radius", 6.0)])
     if op == "loaded":
         return "loaded"
     if op == "teleport":
