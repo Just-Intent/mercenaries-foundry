@@ -363,6 +363,33 @@ def _world_index(data, archives):
     return data.world_index
 
 
+def _add_traffic(data, f, layer, doc, result):
+    """A layer's "traffic" zones, declared in its map's level config (a loose
+    DATAxbox file, like terrain surfaces)."""
+    from . import encounters, terrain_surfaces
+    map_ = doc.get("map") or ""
+    levels = data.dir / "levels.ini"
+    config = terrain_surfaces.level_config(levels.read_text(encoding="latin-1"), map_) if levels.exists() else None
+    if not config or not (data.dir / config).exists():
+        raise ValueError(f"encounters/{f.name}: traffic needs the layer's \"map\" to be a level (e.g. SW); "
+                         f"no level config for {map_!r}")
+    path = "DATAxbox/" + config.replace("\\", "/")
+    ini = data.files[path].decode("latin-1") if path in data.files else \
+        (data.dir / config).read_bytes().decode("latin-1")
+    try:
+        ini = encounters.add_traffic_zones(ini, doc["traffic"])
+    except ValueError as err:
+        raise ValueError(f"encounters/{f.name}: {err}") from err
+    data.files[path] = ini.encode("latin-1")
+    for zone in doc["traffic"]:
+        routes = encounters.zone_paths(doc, zone)
+        if not routes:
+            result.warnings.append(f"encounters/{f.name}: traffic zone {zone} has no routes; name paths "
+                                   f"t_{zone}_01 (vehicles) or p_{zone}_01 (people)")
+    result.changes.append(f"layer {layer}: traffic zone{'s' if len(doc['traffic']) != 1 else ''} "
+                          f"{', '.join(doc['traffic'])} declared in {config}")
+
+
 def _apply_encounters(data, folder, result):
     """encounters/<layer>.json: a new world layer (objects, encounter, list)."""
     from . import encounters, find
@@ -420,6 +447,8 @@ def _apply_encounters(data, folder, result):
         records = encounters.build(layer, doc, find_source, source_loads)
         for kind, body in records.items():
             data.new("assets.dsk", name_hash(layer), kind, body)
+        if doc.get("traffic"):
+            _add_traffic(data, f, layer, doc, result)
         n = len(encounters.member_names(doc))
         result.changes.append(f"layer {layer}: {n} objects, {len(doc.get('encounters', []))} encounters "
                               f"(load it from a script with Utility_ReadLevelFile('{layer}'))")

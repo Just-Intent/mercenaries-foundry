@@ -347,3 +347,22 @@ class SurfaceTests(unittest.TestCase):
             surfaces.unlink()                                     # a later build without it removes the file
             modbuild.build(d / "proj", d / "data", d / "out")
             self.assertFalse(out.exists())
+
+
+class TestRangeTests(unittest.TestCase):
+    def test_flatten(self):
+        from mercfoundry import testrange
+        info = {"size": 512, "spacing": 8.0, "step": 0.5}
+        units = [[(x * 7 + z * 3) % 400 for x in range(512)] for z in range(512)]
+        new, height = testrange.flatten(units, info)
+        x0, z0 = -512 * 8 / 2, -(512 * 8 / 2 - 8)
+        cx, cz = testrange.CENTRE
+        at = lambda x, z: (int((z - z0) / 8), int((x - x0) / 8))
+        iz, ix = at(cx, cz)
+        target = new[iz][ix]
+        self.assertEqual(height, target * 0.5)
+        for dx, dz in ((-110, -110), (110, 110), (0, 115)):
+            jz, jx = at(cx + dx, cz + dz)
+            self.assertEqual(new[jz][jx], target)
+        far = at(cx + 300, cz)
+        self.assertEqual(new[far[0]][far[1]], units[far[0]][far[1]])

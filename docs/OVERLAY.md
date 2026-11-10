@@ -10,6 +10,19 @@ A developer window for Mercenaries Recompiled, built as a plugin on the [plugin 
 | Nearby | World objects within 100 m, nearest first (every half second while the window is open), named where the game has a name for them, otherwise labelled by model in brackets (e.g. `[global_militaryboxstack]`). Selecting one shows its handle, flags, position, distance, heading and its properties as the game reports them (objectType, displayName, faction, hitPoints, GeometryFile, ...). Buttons below edit it: **Bring here** (3 m in front of you), **Up / Down 1 m**, **Turn -45 / +45** and **Remove**. |
 | Lua | Run a line of Lua in one of the game's Lua states (Enter runs it). An expression shows its values (`2 + 3` shows `= 5`); a statement shows `ok`; errors show Lua's message. |
 
+
+Script commands it adds, for the Lua box or any script:
+
+- `Foundry_TrafficZone('<zone>')` shows the traffic manager's view of a zone.
+  It reads the manager at 0x3DC970, with zones of 0x294 bytes at +0x2C and
+  routes of 40 bytes at +0x18B58. It shows the zone's density, whether it's
+  enabled, its spawners (template hash, then the resolved handle) and how many
+  routes joined it.
+- `Foundry_Range()` runs the [test range](ENCOUNTERS.md#test-range)'s
+  `range.lua` in the calling script state. It looks for the file in
+  `mods\Foundry Test Range` first, then in the launcher's runtime copy, where
+  each mod's top-level files are copied.
+
 ## Install
 
 Needs the port with the Foundry patches and hook wrappers ([port/README.md](../port/README.md)). Then, from this repository's root (PowerShell):

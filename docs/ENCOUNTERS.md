@@ -199,6 +199,86 @@ This is what `global`'s `DebugSkipToMission` does, plus the map switch. Use a th
 
 Tested in game (2026-11-08): `sw_allies9` (three NK soldiers copied from a mission-6 template, placed north of the allies HQ), started from the skip line above. The contract mail arrived, the objective showed its text with markers on the soldiers and a 0/3 counter, and the counter rose to 3/3 before the mission completed.
 
+### Traffic zones
+
+The game's traffic is people and vehicles that walk and drive set routes: the
+civilians around towns, convoys, patrols, helicopters. It's organised in
+zones. A mod layer can add its own zone:
+
+```json
+"paths": {
+  "p_foundry-range_01a": {"points": [[x, y, z], ...], "properties": {"width": 3.0},
+                          "links": [{"path": "p_foundry-range_02a", "their_point": 0}]},
+  "...": {}
+},
+"traffic": {"foundry-range": {"density": 10, "urgency": 10}}
+```
+
+- **Zones are declared by the map.** The map's level config (`SW\SW.ini` for
+  the south map) lists every zone as a `[TrafficZone]` section: `Name`,
+  `Density`, `Urgency`, `CivDensity`, and for vehicle zones `Encounter` and
+  `Squad`. The game reads it when the map loads. The south map declares 100
+  zones, the north 66, and the game keeps at most 150. `"traffic"` adds
+  sections to the layer's map config, written into the mod as a loose file.
+  Keys: `density`, `urgency`, `civ_density`, `encounter`, `squad`.
+- **Routes are paths named for their zone.** A path named `t_<zone>_<id>` is a
+  vehicle route and `p_<zone>_<id>` a pedestrian route, for example
+  `p_dmz-peds_01a`. They join their zone when their layer loads. The zone name
+  is the part between the first two underscores. Routes have a `width` and
+  link end to end. A mission's routes can arrive with its layer after the map
+  loads, as NW Allies 7's `t_a7-NKground_*` routes do. The game keeps at most
+  1,024 routes; the south map's own use about 700.
+- **Scripts fill the zone.**
+  - `Traffic_AddZoneSpawner('<zone>', '<template>')` adds a template to spawn.
+    An optional third argument is a cap; the default is 10,000.
+  - `Traffic_AddZoneCivSpawner` adds a civilian template.
+  - `Traffic_ResetZoneSpawners` and `Traffic_ResetZoneCivSpawners` clear the
+    lists.
+  - `Traffic_SetZoneDensity` and `Traffic_SetZoneEnabled` set the density and
+    switch the zone on or off.
+
+  The template must be loaded where the zone is used. A copy of a template in
+  the mission's own layer works: `{"from": "template_allies_gunner", "name":
+  "template_my_soldier"}`.
+- **Where traffic appears.** The game spawns traffic only within about 45 m
+  ahead of the camera: 20 m ahead with a 25 m radius on foot, 30 m and 38 m
+  in a vehicle (0x16A800). So routes need to pass in front of the player.
+  Short routes right beside the player stay empty.
+- **Density isn't a count.** With density 10, a 400 m loop on the test range
+  filled up gradually: 7 soldiers, then 17 as the player looked around.
+  Without any spawner, a zone spawns the game's civilians.
+
+Foundry Console's `Foundry_TrafficZone('<zone>')` shows the game's view of a
+zone: whether it exists, its density, whether it's enabled, its spawners and
+their resolved templates, and how many routes joined it.
+
+Tested in game (2026-11-10), on the [test range](#test-range): a walking
+loop in the range layer, declared with `"traffic"`. It was filled from a copy
+of the allied gunner template in the same layer, and allied soldiers walked
+it.
+
+### Test range
+
+`python -m mercfoundry test-range DATAxbox "<port>/mods/Foundry Test Range"`
+writes a source mod, built from your own game files. It holds:
+
+- a flat 240 m pad on the south map, centred on (-480, 500) at 135 m;
+- the range layer;
+- `range.lua`.
+
+The site is 220 m or more from every traffic route, soldier and vehicle in the
+game, inside the playable area, so whatever moves there belongs to the test.
+
+In game (free roam on the south map), run `Foundry_Range()` in Foundry Console.
+It runs `range.lua`:
+
+1. It loads the range layer once.
+2. It moves you to the pad's north edge. The game's north is −z.
+3. After 3 seconds it calls `FoundryRangeTest()`.
+
+Edit `range.lua` in the mod folder to change the test; the change applies the
+next time you run the command. Layer changes need a relaunch.
+
 ### Radio lines
 
 A mission can have voiced radio lines with subtitles, as the game's own

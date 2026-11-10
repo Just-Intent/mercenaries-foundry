@@ -40,6 +40,13 @@ markers: util_SetupSingleTargetRegionObjective) and
 Event_ActorToLocationProximity(func, 'b', actor, 'foundry_site', radius,
 TRUE, TRUE), as delivery objectives do.
 
+"traffic": {"foundry-zone": {"density": 100}} declares traffic zones in the
+map's level config ([TrafficZone] in e.g. SW\\SW.ini, which the game reads
+when the map loads). A zone's routes are the layer's paths named
+t_<zone>_<id> (vehicles) and p_<zone>_<id> (people), with a "width"
+property and linked end to end. Scripts fill it:
+Traffic_AddZoneSpawner('foundry-zone', 'template_...'), Traffic_SetZoneDensity.
+
 Paths (path > NAME, INFO, PROP, [PSTM], PNTS, ORNT, JNCT) are what
 Ai_Command(actor, 'Patrol', '<path>', '1.0', 'loPri') and an object's own
 "path" property follow.  JNCT links join this path's point (default: its
@@ -154,6 +161,55 @@ def _path_node(name, spec):
              {"tag": "ORNT", "rotations": [[1.0, 0.0, 0.0, 0.0]] * len(points)},
              {"tag": "JNCT", "links": links}]
     return {"tag": "path", "children": kids}
+
+
+TRAFFIC_KEYS = {"density": "Density", "urgency": "Urgency", "civ_density": "CivDensity",
+                "civdensity": "CivDensity", "encounter": "Encounter", "squad": "Squad"}
+MAX_TRAFFIC_ZONES = 150         # the traffic manager's table (0x16A370 stops adding at 150)
+
+
+def traffic_zone_names(ini_text):
+    """Names of the [TrafficZone] sections in a level config."""
+    names, in_zone = [], False
+    for line in ini_text.splitlines():
+        s = line.strip()
+        if s.startswith("["):
+            in_zone = s.lower() == "[trafficzone]"
+        elif in_zone and s.lower().startswith("name"):
+            parts = s.split(None, 1)
+            if len(parts) == 2:
+                names.append(parts[1].strip())
+    return names
+
+
+def add_traffic_zones(ini_text, zones):
+    """The level config with [TrafficZone] sections added for
+    {"zone": {"density": 100, "urgency": 10, "civ_density": 20,
+    "encounter": ..., "squad": ...}}. The zone's routes are paths named
+    t_<zone>_<id> (vehicles) or p_<zone>_<id> (people)."""
+    have = {n.lower() for n in traffic_zone_names(ini_text)}
+    out = ini_text.rstrip("\r\n") + "\r\n"
+    for name, spec in zones.items():
+        if name.lower() in have:
+            raise ValueError(f"traffic zone {name}: the map already has a zone with that name")
+        if not name or any(c.isspace() for c in name):
+            raise ValueError(f"traffic zone {name!r}: names have no spaces")
+        have.add(name.lower())
+        lines = [f"Name\t\t\t{name}"]
+        for key, value in (spec or {}).items():
+            k = TRAFFIC_KEYS.get(key.lower(), key)
+            lines.append(f"{k}{chr(9) * (3 if len(k) < 8 else 2)}{value}")
+        out += "\r\n[TrafficZone]\r\n" + "\r\n".join(lines) + "\r\n"
+    if len(have) > MAX_TRAFFIC_ZONES:
+        raise ValueError(f"traffic zones: the map would have {len(have)}; the game keeps only {MAX_TRAFFIC_ZONES}")
+    return out
+
+
+def zone_paths(doc, zone):
+    """The layer's paths belonging to a traffic zone (t_<zone>_<id>, p_<zone>_<id>)."""
+    low = zone.lower()
+    return [p for p in (doc.get("paths") or {})
+            if p.lower().startswith(("t_" + low + "_", "p_" + low + "_"))]
 
 
 def member_names(doc):

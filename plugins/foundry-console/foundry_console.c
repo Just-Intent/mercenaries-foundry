@@ -1621,6 +1621,151 @@ static void MERC_PLUGIN_CALL on_shutdown(void *ud)
     if (window_thread_id) PostThreadMessageW(window_thread_id, WM_QUIT, 0, 0);
 }
 
+/* Foundry_TrafficZone('name'): the traffic manager's view of a zone, as a
+ * string. The manager is a static object (Traffic_* commands pass 0x3DC970);
+ * zones are a table of 0x294-byte entries at +0x2C, count at +0x28 (at most
+ * 150): +0 name hash, +4 density, +8 spawner count (at most 15), +0xC the
+ * spawners' template names, +0x100 a 12-byte template handle each, +0x290
+ * enabled. */
+#define TRAFFIC_MANAGER 0x3DC970u
+#define TRAFFIC_ZONE_SIZE 0x294u
+
+static int MERC_PLUGIN_CALL cmd_traffic_zone(void *ud, uint32_t L)
+{
+    (void)ud;
+    MercGuestCall c;
+    char name[64] = {0}, out[900];
+    uint32_t args[2] = {L, 1};
+    if (guest(MF_FN_Lua_ArgString, 0, 2, args, &c) && c.eax)
+        for (unsigned i = 0; i < sizeof(name) - 1; i++)
+            if (!host->read_guest(host->context, c.eax + i, &name[i], 1) || !name[i]) break;
+    uint32_t count = 0;
+    host->read_guest(host->context, TRAFFIC_MANAGER + 0x28, &count, 4);
+    int n = snprintf(out, sizeof(out), "%u zones", count);
+    uint32_t want = hash_name(name);
+    int found = 0;
+    for (uint32_t i = 0; i < count && i < 150; i++) {
+        uint32_t zone = TRAFFIC_MANAGER + 0x2C + i * TRAFFIC_ZONE_SIZE, hash = 0;
+        host->read_guest(host->context, zone, &hash, 4);
+        if (hash != want) continue;
+        float density = 0;
+        uint32_t spawners = 0;
+        uint8_t enabled = 0;
+        host->read_guest(host->context, zone + 4, &density, 4);
+        host->read_guest(host->context, zone + 8, &spawners, 4);
+        host->read_guest(host->context, zone + 0x290, &enabled, 1);
+        n += snprintf(out + n, sizeof(out) - n, "; %s is #%u: density %.0f, %s, %u spawner%s", name, i,
+                      density, enabled ? "enabled" : "disabled", spawners, spawners == 1 ? "" : "s");
+        for (uint32_t s = 0; s < spawners && s < 15 && n < (int)sizeof(out) - 64; s++) {
+            uint32_t tmpl = 0, handle[3] = {0};
+            host->read_guest(host->context, zone + 0xC + s * 4, &tmpl, 4);
+            host->read_guest(host->context, zone + 0x100 + s * 12, handle, 12);
+            n += snprintf(out + n, sizeof(out) - n, " [%08X: %08X %08X %08X]", tmpl, handle[0], handle[1], handle[2]);
+        }
+        /* Routes: 40-byte entries at +0x18B58, count at +0x18B54 (at most
+         * 1024): +0 path, +4 zone, +8 vehicle or pedestrian settings, +0x18
+         * enabled. Added when a path named t_<zone>_... or p_<zone>_... loads. */
+        uint32_t routes = 0, mine = 0, on = 0, people = 0;
+        host->read_guest(host->context, TRAFFIC_MANAGER + 0x18B54, &routes, 4);
+        for (uint32_t r = 0; r < routes && r < 1024; r++) {
+            uint32_t entry = TRAFFIC_MANAGER + 0x18B58 + r * 40, owner = 0, cfg = 0;
+            uint8_t en = 0;
+            host->read_guest(host->context, entry + 4, &owner, 4);
+            host->read_guest(host->context, entry + 8, &cfg, 4);
+            host->read_guest(host->context, entry + 0x18, &en, 1);
+            if (owner != zone) continue;
+            mine++;
+            on += en != 0;
+            people += cfg == TRAFFIC_MANAGER + 0x22D44;
+        }
+        n += snprintf(out + n, sizeof(out) - n, "; %u of %u routes (%u enabled, %u for people)",
+                      mine, routes, on, people);
+        found = 1;
+    }
+    if (!found)
+        snprintf(out + n, sizeof(out) - n, "; no zone named %s", name);
+    uint32_t scratch, size;
+    if (host->guest_scratch(host->context, &scratch, &size) && size > sizeof(out)) {
+        host->write_guest(host->context, scratch, out, strlen(out) + 1);
+        uint32_t push[2] = {L, scratch};
+        guest(MF_FN_lua_pushstring, 0, 2, push, &c);
+        return 1;
+    }
+    return 0;
+}
+
+/* Foundry_Range(): run mods/Foundry Test Range/range.lua in the calling
+ * script's Lua state (it loads the range layer, moves the player to the pad
+ * and starts the current test). Returns "ok" or the error. */
+static void push_text(uint32_t L, const char *text)
+{
+    MercGuestCall c;
+    uint32_t scratch, size;
+    if (host->guest_scratch(host->context, &scratch, &size) && size > strlen(text) + 1) {
+        host->write_guest(host->context, scratch, text, strlen(text) + 1);
+        uint32_t push[2] = {L, scratch};
+        guest(MF_FN_lua_pushstring, 0, 2, push, &c);
+    }
+}
+
+static int MERC_PLUGIN_CALL cmd_range(void *ud, uint32_t L)
+{
+    (void)ud;
+    char path[MAX_PATH], result[512];
+    HMODULE self = NULL;
+    GetModuleHandleExA(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS | GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT,
+                       (LPCSTR)cmd_range, &self);
+    /* The launcher runs the game from mod-cache\<id>\runtime, with this DLL in
+     * runtime\plugins\foundry-console and each mod's top-level files copied
+     * into runtime. Prefer the installation's own copy (edits apply without a
+     * relaunch), then the runtime copy, then a plain mods\ layout. */
+    char dir[MAX_PATH];
+    GetModuleFileNameA(self, dir, sizeof(dir));
+    static const char *const tries[] = {
+        "\\..\\..\\..\\..\\..\\mods\\Foundry Test Range\\range.lua",
+        "\\..\\..\\range.lua",
+        "\\..\\Foundry Test Range\\range.lua"};
+    char *slash = strrchr(dir, '\\');
+    if (slash) *slash = 0;
+    FILE *f = NULL;
+    for (unsigned t = 0; t < sizeof(tries) / sizeof(tries[0]) && !f; t++) {
+        snprintf(path, sizeof(path), "%s%s", dir, tries[t]);
+        f = fopen(path, "rb");
+    }
+    if (!f) { push_text(L, "no mods\\Foundry Test Range\\range.lua"); return 1; }
+    static char text[3800];
+    size_t n = fread(text, 1, sizeof(text) - 1, f);
+    int too_long = !feof(f) && fgetc(f) != EOF;
+    fclose(f);
+    if (too_long) { push_text(L, "range.lua is too long (3.7 KB at most)"); return 1; }
+    uint32_t scratch, size;
+    if (!host->guest_scratch(host->context, &scratch, &size) || size < n + 64) {
+        push_text(L, "no scratch memory for range.lua");
+        return 1;
+    }
+    const uint32_t name = scratch, body = scratch + 32;
+    host->write_guest(host->context, name, "=range", 7);
+    host->write_guest(host->context, body, text, n);
+    uint32_t args[1] = {L};
+    uint32_t top = lua_call(MF_FN_lua_gettop, 1, args);
+    uint32_t load[4] = {L, body, (uint32_t)n, name};
+    uint32_t status = lua_call(MF_FN_luaL_loadbuffer, 4, load);
+    if (!status) {
+        uint32_t pcall[4] = {L, 0, 0, 0};
+        status = lua_call(MF_FN_lua_pcall, 4, pcall);
+    }
+    if (status) {
+        uint32_t tostr[2] = {L, (uint32_t)-1};
+        read_text(lua_call(MF_FN_lua_tostring, 2, tostr), result, sizeof(result));
+    } else {
+        strcpy(result, "ok");
+    }
+    uint32_t settop[2] = {L, top};
+    lua_call(MF_FN_lua_settop, 2, settop);
+    push_text(L, result);
+    return 1;
+}
+
 MERC_PLUGIN_EXPORT int MERC_PLUGIN_CALL MercenariesPlugin_Init(
     const MercPluginHost *h, MercPlugin *plugin, char *error, uint32_t error_size)
 {
@@ -1636,6 +1781,10 @@ MERC_PLUGIN_EXPORT int MERC_PLUGIN_CALL MercenariesPlugin_Init(
         h->log(h->context, "spawn hook unavailable (run port-hooks); recent spawns won't show");
     if (!h->hook_guest(h->context, MF_FN_LuaScript_RegisterCommands, NULL, script_loaded, NULL))
         h->log(h->context, "script hook unavailable (run port-hooks); the Lua console can't find scripts");
+    if (!MERC_PLUGIN_HOST_HAS(h, add_lua_command) ||
+        !h->add_lua_command(h->context, "Foundry_TrafficZone", cmd_traffic_zone, NULL) ||
+        !h->add_lua_command(h->context, "Foundry_Range", cmd_range, NULL))
+        h->log(h->context, "script commands unavailable; Foundry_TrafficZone and Foundry_Range won't exist");
     plugin->on_update = on_update;
     plugin->on_shutdown = on_shutdown;
     HANDLE t = CreateThread(NULL, 0, window_thread, NULL, 0, &window_thread_id);

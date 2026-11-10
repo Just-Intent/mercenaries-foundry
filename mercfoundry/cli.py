@@ -688,6 +688,16 @@ def cmd_sound(args):
     print(f"{len(written)} .wav files; put edited ones in a mod's sounds/{args.bank.lower()}/ under the same names")
 
 
+def cmd_test_range(args):
+    from . import testrange
+    try:
+        height = testrange.make(args.data, args.out)
+    except (OSError, StopIteration) as err:
+        sys.exit(f"couldn't make the range: {err}")
+    print(f"wrote {args.out}: a flat pad at {height:.1f} m, centred on {testrange.CENTRE}")
+    print("enable it in the launcher, then in game (south map, free roam) run Foundry_Range() in Foundry Console")
+
+
 def cmd_hash(args):
     for s in args.names:
         print(f"{name_hash(s):08X}  {s}")
@@ -854,6 +864,8 @@ def main(argv=None):
     s.add_argument("data", help="DATAxbox folder or assets.dsk")
     s.add_argument("name", help="terrain name, e.g. sw (the southern province) or nw")
     s.add_argument("-o", "--out", default="terrain")
+    s = add("test-range", cmd_test_range, "write the Foundry Test Range mod: a flat pad far from the game's AI")
+    s.add_argument("data", help="DATAxbox folder"); s.add_argument("out", help="the mod folder to write, e.g. <port>/mods/Foundry Test Range")
     s = add("sound", cmd_sound, "list the game's sound cues or export them as .wav")
     ssub = s.add_subparsers(dest="sound_cmd", required=True)
     t = ssub.add_parser("list", help="sound banks, or one bank's cues and the waves they play")

@@ -114,6 +114,21 @@ class EncounterTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             self.build({"regions": {"cone": {"type": "cone", "position": [0, 0, 0]}}})
 
+    def test_traffic_zones(self):
+        ini = "[TrafficZone]\r\nName\t\t\tdmz-peds\r\nDensity\t\t\t50\r\n"
+        out = encounters.add_traffic_zones(ini, {"foundry-m10": {"density": 100, "civ_density": 20},
+                                                 "foundry-air": {}})
+        self.assertTrue(out.startswith(ini))
+        self.assertEqual(encounters.traffic_zone_names(out), ["dmz-peds", "foundry-m10", "foundry-air"])
+        self.assertIn("[TrafficZone]\r\nName\t\t\tfoundry-m10\r\nDensity\t\t\t100\r\nCivDensity\t\t20\r\n", out)
+        with self.assertRaises(ValueError):
+            encounters.add_traffic_zones(ini, {"DMZ-PEDS": {}})
+        many = "".join(f"[TrafficZone]\r\nName\t\t\tz{i}\r\n" for i in range(150))
+        with self.assertRaises(ValueError):
+            encounters.add_traffic_zones(many, {"one-more": {}})
+        doc = {"paths": {"p_foundry-m10_01a": {}, "t_foundry-m10_02": {}, "p_foundry-m100_01": {}, "other": {}}}
+        self.assertEqual(encounters.zone_paths(doc, "foundry-m10"), ["p_foundry-m10_01a", "t_foundry-m10_02"])
+
     def test_junction_codec(self):
         body = struct.pack("<H", 2) + b"t_a\0" + struct.pack("<HH", 0, 11) + b"t_b\0" + struct.pack("<HH", 2, 1)
         node = aidata._decode_leaf(b"JNCT", body, b"path")
