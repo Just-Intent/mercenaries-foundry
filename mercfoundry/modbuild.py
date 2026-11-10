@@ -449,9 +449,24 @@ def _apply_encounters(data, folder, result):
             data.new("assets.dsk", name_hash(layer), kind, body)
         if doc.get("traffic"):
             _add_traffic(data, f, layer, doc, result)
+        if doc.get("load"):
+            if doc["load"] != "map":
+                raise ValueError(f"encounters/{f.name}: \"load\" is \"map\" (load with its map in free roam)")
+            from . import missions
+            m = (doc.get("map") or "").lower()
+            if m not in missions.FREE_ROAM_MAPS:
+                result.warnings.append(f"encounters/{f.name}: \"load\": \"map\" works on the free-roam maps "
+                                       f"({', '.join(missions.FREE_ROAM_MAPS).upper()}), not {m.upper() or 'no map'}; "
+                                       f"load this layer from a script")
+            else:
+                names = encounters.member_names(doc)
+                data.map_layers = getattr(data, "map_layers", []) + [
+                    {"map": m, "layer": layer, "check": names[0] if names else None}]
         n = len(encounters.member_names(doc))
-        result.changes.append(f"layer {layer}: {n} objects, {len(doc.get('encounters', []))} encounters "
-                              f"(load it from a script with Utility_ReadLevelFile('{layer}'))")
+        loads = (f"loads with the {(doc.get('map') or '').upper()} map in free roam" if doc.get("load") == "map"
+                 and (doc.get("map") or "").lower() in ("sw", "nw")
+                 else f"load it from a script with Utility_ReadLevelFile('{layer}')")
+        result.changes.append(f"layer {layer}: {n} objects, {len(doc.get('encounters', []))} encounters ({loads})")
 
 
 def _mission_order(projects):
@@ -582,6 +597,34 @@ def _apply_contracts(data, contracts, result):
         data.set(a, r, script.encode(script.with_source(old, missions.patch_global(old.source))))
     result.changes.append(f"contacts: {', '.join(c['id'] for c in contracts)} offered at faction HQs "
                           f"(global's LoadNoMissionState runs {missions.CONTRACTS_SCRIPT})")
+
+
+def _apply_map_layers(data, result):
+    """Mod layers marked "load": "map": a generated foundry_layers script loads
+    them when free roam starts on their map (hooked into global's
+    LoadNoMissionState, like the HQ contacts)."""
+    from . import missions
+    key = name_hash(missions.LAYERS_SCRIPT)
+    if any(r.key == key for _, r in data.records(SCRIPT)):
+        raise ValueError(f"the game already has a script named {missions.LAYERS_SCRIPT}")
+    data.new("assets.dsk", key, SCRIPT, script.encode(script.new(missions.LAYERS_SCRIPT,
+                                                                missions.layers_script(data.map_layers))))
+    for map_ in missions.FREE_ROAM_MAPS:
+        for a, r in data.records(name_hash("list")):
+            if r.key == name_hash(map_):
+                text_list = missions.add_to_list(data.current(a, r).decode("latin-1"), "script", missions.LAYERS_SCRIPT)
+                data.set(a, r, text_list.encode("latin-1"))
+    hit = [(a, r) for a, r in data.records(SCRIPT) if r.key == name_hash("global")]
+    if not hit:
+        raise ValueError("the game data has no global script to hook map layers into")
+    for a, r in hit:
+        old = script.decode(data.current(a, r))
+        data.set(a, r, script.encode(script.with_source(old, missions.patch_global_layers(old.source))))
+    by_map = {}
+    for l in data.map_layers:
+        by_map.setdefault(l["map"], []).append(l["layer"])
+    result.changes.append("layers loaded with their map in free roam: " +
+                          "; ".join(f"{m.upper()}: {', '.join(ls)}" for m, ls in sorted(by_map.items())))
 
 
 def _check_new_scripts(data, result):
@@ -1155,6 +1198,8 @@ def build(projects, data_dir, out_dir, name=None, description=None) -> Result:
             data.project = "Foundry"
             if contracts:
                 _apply_contracts(data, contracts, result)
+            if getattr(data, "map_layers", None):
+                _apply_map_layers(data, result)
             _check_new_scripts(data, result)
     from . import sounds
     data.project = "Foundry"

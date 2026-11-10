@@ -89,6 +89,19 @@ Scripts don't use regions as trigger zones; use a boundary for that.
 
 Tested in game (2026-11-09): a box in the test contract's layer. `Region_GetPosition` returned its position and the proximity event fired within 25 m.
 
+A layer can also load by itself with its map:
+
+```json
+{"map": "SW", "load": "map", "objects": [...]}
+```
+
+The build generates a script, `foundry_layers`, that loads such layers
+whenever free roam starts on their map. It's hooked into `global`'s
+`LoadNoMissionState`, right after the HQ bouncers spawn. A layer is loaded
+again only if it's gone: when its first named object no longer exists, for
+example after a mission reset the map. This works on the free-roam maps (`SW`,
+`NW`). The editor marks the layers it makes this way.
+
 Load the layer and command it from a script (a mod's `scripts/<name>.lua`). For example, in a copy of `allies0`:
 
 ```lua

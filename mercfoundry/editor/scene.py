@@ -410,10 +410,19 @@ class Scene:
                     return o
         return None
 
-    def save_edits(self, moved, copies, removed=()):
+    def save_edits(self, moved, copies, removed=(), map_name=None):
         """Write objects/editor.json from {id: {position, rotation}},
         [{source, as, position, rotation}] and [id, ...] to remove. Returns
-        the rule count."""
+        the rule count. With map_name (the map being edited), rules for
+        objects on other maps are kept: the editor only holds one map's."""
+        kept = []
+        p = self.rules_path()
+        if map_name and p.exists():
+            m = map_name.lower()
+            for rule in json.loads(p.read_text(encoding="utf-8")):
+                src = self._match(rule)
+                if src is None or not self._in_map(src["layer"], m):
+                    kept.append(rule)
         # Copies first: a copy finds its source by its original position,
         # which a move rule for the same source would change.
         rules = []
@@ -437,7 +446,7 @@ class Scene:
             rules.append({**rule, "remove": True})
         if removed:
             self._require("0.51")          # the first toolkit with "remove" rules
-        p = self.rules_path()
+        rules = kept + rules
         p.parent.mkdir(parents=True, exist_ok=True)
         p.write_text(json.dumps(rules, indent=1) + "\n", encoding="utf-8")
         return len(rules)
@@ -624,16 +633,95 @@ class Scene:
                 mod.append({"file": f.name, "layer": f.stem, "encounters": doc.get("encounters", [])})
         return {"game": game, "mod": mod}
 
+    # ------------------------------------------------------------ placed objects
+    # Objects placed from templates go in the mod's own layer for the map
+    # (encounters/<mod>_<map>.json, "objects"), which loads with the map in
+    # free roam ("load": "map").
+
+    def editor_layer_file(self, map_name):
+        import re
+        meta = self.mod / "mod.json"
+        name = json.loads(meta.read_text(encoding="utf-8")).get("name") if meta.exists() else None
+        slug = re.sub(r"[^a-z0-9]+", "_", (name or self.mod.name).lower()).strip("_") or "mod"
+        return f"{slug}_{map_name.lower()}.json"
+
+    def load_placed(self, map_name):
+        """Objects in the mod's layers for this map: [{file, from, name,
+        position, rotation (editor form)}]."""
+        from ..encounters import _rotation
+        m = map_name.lower()
+        out = []
+        edir = self.mod / "encounters"
+        for f in sorted(edir.glob("*.json")) if edir.is_dir() else []:
+            doc = json.loads(f.read_text(encoding="utf-8"))
+            if (doc.get("map") or "").lower() != m:
+                continue
+            for o in doc.get("objects", []):
+                out.append({"file": f.name, "from": o["from"], "name": o["name"],
+                            "position": o["position"], "set": o.get("set"),
+                            "rotation": to_three(_rotation(float(o.get("yaw", 0))))})
+        return out
+
+    def save_placed(self, map_name, files):
+        """files: {layer file name: [{from, name, position, rotation, set?}]},
+        replacing those files' "objects". The editor's own layer file (and
+        any new file) loads with the map."""
+        import re
+        taken = {o["name"].lower() for o in self.all_objects() if o["name"]}
+        world_layers = {(self.names().get(r.key) or "").lower() for a in self.archives for r in a.records
+                        if r.kind == name_hash("world")}
+        seen = set()
+        for fname, objs in files.items():
+            if not re.fullmatch(r"[A-Za-z0-9_]+\.json", fname):
+                raise ValueError(f"layer file names use letters, digits and _ only: {fname!r}")
+            for o in objs:
+                n = o["name"].lower()
+                if not re.fullmatch(r"[A-Za-z0-9_\-]+", o["name"]):
+                    raise ValueError(f"object names use letters, digits, _ and - only: {o['name']!r}")
+                if n in taken or n in seen:
+                    raise ValueError(f"the name {o['name']!r} is already used; placed objects need new names")
+                seen.add(n)
+        own = self.editor_layer_file(map_name).lower()
+        for fname, objs in files.items():
+            p = self.mod / "encounters" / fname
+            if p.exists():
+                doc = json.loads(p.read_text(encoding="utf-8"))
+            else:
+                if p.stem.lower() in world_layers:
+                    raise ValueError(f"the game already has a layer named {p.stem!r}")
+                doc = {"map": map_name.upper()}
+            if fname.lower() == own or not p.exists():
+                doc["load"] = "map"
+            out = []
+            for o in objs:
+                rows = from_three(o["rotation"])
+                item = {"from": o["from"], "name": o["name"],
+                        "position": [round(float(v), 3) for v in o["position"]],
+                        "yaw": round(math.degrees(math.atan2(-rows[0][2], rows[0][0])), 2)}
+                if o.get("set"):
+                    item["set"] = o["set"]
+                out.append(item)
+            if out:
+                doc["objects"] = out
+            else:
+                doc.pop("objects", None)
+            p.parent.mkdir(parents=True, exist_ok=True)
+            p.write_text(json.dumps(doc, indent=1) + "\n", encoding="utf-8")
+        if files:
+            self._require("0.65")          # the first toolkit with "load": "map"
+        return {"files": [f"encounters/{f}" for f in files]}
+
     def templates(self):
         """Objects a squad member can copy: templates (template_*), with
-        their kind, faction and model."""
+        their kind, faction, model and the model they draw (GeometryFile)."""
         out = []
         for o in self.all_objects():
             if not o["name"].lower().startswith("template_"):
                 continue
             props = {k.lower(): v for k, v in o["properties"]}
             out.append({"name": o["name"], "type": props.get("objecttype", ""),
-                        "faction": props.get("faction", ""), "model": o["model"], "layer": o["layer"]})
+                        "faction": props.get("faction", ""), "model": o["model"], "layer": o["layer"],
+                        "geometry": props.get("geometryfile", o["model"])})
         out.sort(key=lambda t: (t["type"] != "human", t["name"].lower()))
         return out
 
@@ -670,7 +758,11 @@ class Scene:
             else:
                 if p.stem.lower() in world_layers:
                     raise ValueError(f"the game already has a layer named {p.stem!r}")
-                doc = {"map": map_name.upper()}
+                doc = {"map": map_name.upper(), "load": "map"}       # editor layers load with their map
+                self._require("0.65")
+            if fname.lower() == self.editor_layer_file(map_name).lower() and "load" not in doc:
+                doc["load"] = "map"
+                self._require("0.65")
             if encs:
                 doc["encounters"] = encs
             else:

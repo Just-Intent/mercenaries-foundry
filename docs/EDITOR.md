@@ -103,10 +103,29 @@ toolkit bundle run it the same way: `foundry\python\python.exe foundry\mercfound
     ("loaded here"); others appear after a rebuild. Copies of unnamed scenery and
     other mods' objects need a rebuild. The panel's **Game replies** list keeps
     the game's last answers.
+- **Place** puts down any template: a vehicle, prop or character. Type or pick
+  the template in the toolbar box, click **Place** (or press P), then click the
+  ground.
+  - A placed object shows its real model. It moves, turns, renames, copies and
+    removes like a copy.
+  - With the live link on, it spawns in the running game if the game has that
+    template loaded there.
+  - It's saved in the mod's layer for the map, `encounters/<mod>_<map>.json`,
+    under `"objects"`.
+- **Editor layers load with their map.** Layer files the editor makes (squads,
+  paths, zones, placed objects) get `"load": "map"`. The build then loads them
+  whenever free roam starts on their map, so they appear in the game with no
+  script. This works on the south and north maps; the opening map has no free
+  roam, so its layers still need a script.
 - **Save** (Ctrl+S) writes `objects/editor.json`: one rule per moved object
   (matched by name, or by model and original position), one `copy` rule per
-  copy and one `remove` rule per removed object. The build applies them like any object rule, and the editor reads them
-  back when it starts. Path and zone edits are saved with them.
+  copy and one `remove` rule per removed object. The build applies them like
+  any object rule, and the editor reads them back when it starts. Path, zone,
+  squad and placed-object edits are saved with them. Rules for other maps are
+  kept; before 0.65, saving on one map dropped the edits on every other map.
+
+Tested in game (2026-11-10): an allied Humvee and an allied soldier placed in
+the editor on the south map appeared there in free roam.
 
 ## Not yet
 

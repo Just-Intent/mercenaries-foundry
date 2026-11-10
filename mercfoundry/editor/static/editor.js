@@ -265,6 +265,7 @@ async function loadMap(name) {
   if (terrainMesh) scene.remove(terrainMesh);
   if (boxes) scene.remove(boxes);
   state.records = []; state.byId.clear(); state.moved = {}; state.copies = []; state.removed = new Set();
+  state.placedFiles = new Set(); state.placing = null;
 
   const [meta, buf, objs, sizes] = await Promise.all([
     getJSON(`/api/terrain/${name}.json`),
@@ -302,6 +303,13 @@ async function loadMap(name) {
     placeBox(rec);
   }
   for (const c of objs.edits.copies) addCopy(state.byId.get(c.source), c.as, c.position, c.rotation, false);
+  // Objects placed from templates, in the mod's layers for this map.
+  state.layerFile = objs.edits.layer_file;
+  if (objs.edits.placed.length && !state.templates) state.templates = await getJSON('/api/templates');
+  for (const p of objs.edits.placed) {
+    addPlaced(p.from, p.name, p.file, p.position, p.rotation, false, p.set);
+    state.placedFiles.add(p.file);
+  }
   for (const id of objs.edits.removed || []) {
     const rec = state.byId.get(id);
     if (!rec) continue;
@@ -381,7 +389,8 @@ function select(rec) {
 function showSelected() {
   const rec = state.selected;
   if (!rec) return;
-  $('sel-title').textContent = rec.copyName ? `${rec.copyName} (copy)` : (rec.name || '(unnamed)');
+  $('sel-title').textContent = rec.copyName ? `${rec.copyName} (${rec.template ? 'placed from ' + rec.template : 'copy'})`
+                                             : (rec.name || '(unnamed)');
   $('copy-name-row').hidden = !rec.copyName;
   if (rec.copyName && document.activeElement !== $('copy-name')) $('copy-name').value = rec.copyName;
   $('sel-model').textContent = rec.model;
@@ -488,9 +497,74 @@ function addCopy(src, name, position, rotation, select_ = true) {
   return rec;
 }
 
+// What a placed object draws: its template's model, or (for "from" a named
+// object or "model:<name>") that object's.
+function placedLook(from) {
+  const low = from.toLowerCase();
+  const t = (state.templates || encs.templates() || []).find((x) => x.name.toLowerCase() === low);
+  if (t) return {model: t.model, geometry: t.geometry || t.model, type: t.type};
+  if (low.startsWith('model:')) return {model: from.slice(6), geometry: from.slice(6), type: ''};
+  const r = state.records.find((x) => !x.removed && (x.name || '').toLowerCase() === low);
+  return r ? {model: r.model, geometry: r.geometry, type: r.type} : {model: from, geometry: from, type: ''};
+}
+
+let placedSerial = 1;
+function addPlaced(from, name, file, position, rotation, select_ = true, set = null) {
+  const look = placedLook(from);
+  const rec = {
+    id: `placed:${placedSerial++}`, layer: file.replace(/\.json$/, ''), name: from, ...look,
+    position, rotation, copyName: name, template: from, file,
+  };
+  addRecord(rec);
+  boxes.count = state.records.length;
+  state.copies.push({rec, template: from, file, as: name, position, rotation, set});
+  if (select_) {
+    ensureNode(rec); select(rec); setDirty(true); refreshChanges();
+    live.spawn(from, name, position, heading(rotation));    // shows at once if the game has it loaded here
+  }
+  return rec;
+}
+
+function freshPlacedName(from) {
+  const base = from.replace(/^template_/i, '').replace(/^model:/i, '') || 'object';
+  const taken = takenNames();
+  let k = 1;
+  while (taken.has(`${base}_${k}`.toLowerCase())) k++;
+  return `${base}_${k}`;
+}
+
+function startPlace() {
+  const from = $('place-template').value.trim();
+  if (!from) return status('Type or pick a template to place first', true);
+  const low = from.toLowerCase();
+  const known = (encs.templates() || []).some((t) => t.name.toLowerCase() === low) ||
+    state.records.some((r) => !r.removed && (r.name || '').toLowerCase() === low);
+  if (!known) return status(`No template or named object called ${from}`, true);
+  select(null); layout.select(null); encs.select(null);
+  state.placing = from;
+  status(`Click the ground to place ${from} (in encounters/${state.layerFile}, which loads with the map); Esc cancels.`);
+}
+
+function placeAt(ray) {
+  const hit = ray.intersectObject(terrainMesh)[0];
+  if (!hit) return;
+  const from = state.placing;
+  state.placing = null;
+  const at = gamePos(hit.point).map(round);
+  addPlaced(from, freshPlacedName(from), state.layerFile, at, [1, 0, 0, 0, 1, 0, 0, 0, 1]);
+  status(`Placed ${from}; rename it in the panel if you like.`);
+}
+
 function copySelected() {
   const rec = state.selected;
   if (!rec) return;
+  if (rec.template) {         // another of the same template, beside it
+    const p = [...rec.position];
+    p[0] += 4;
+    p[1] = round(heightAt(p[0], p[2]));
+    addPlaced(rec.template, freshPlacedName(rec.template), rec.file, p, rec.rotation);
+    return;
+  }
   const base = (rec.copyName || rec.name || rec.model).replace(/_copy\d+$/, '');
   let k = 1;
   const taken = takenNames();
@@ -512,9 +586,9 @@ function renameCopy(rec, name) {
   name = name.trim();
   if (!/^[A-Za-z0-9_\-]+$/.test(name)) return status('Names use letters, digits, _ and - only', true);
   if (takenNames(rec).has(name.toLowerCase())) return status(`Another object is already named ${name}`, true);
-  if (live.isOn() && rec.name) {      // the game knows it by its old name: spawn it again
+  if (live.isOn() && (rec.template || rec.name)) {    // the game knows it by its old name: spawn it again
     live.removeNamed(rec.copyName);
-    live.spawn(rec.name, name, rec.position, heading(rec.rotation));
+    live.spawn(rec.template || rec.name, name, rec.position, heading(rec.rotation));
   }
   rec.copyName = name;
   state.copies.find((c) => c.rec === rec).as = name;
@@ -535,7 +609,9 @@ function refreshChanges() {
     const rec = state.byId.get(id);
     if (rec) items.push([rec, `Moved ${rec.name || rec.model}`]);
   }
-  for (const c of state.copies) items.push([c.rec, `Copy ${c.as} (of ${c.rec.name || c.rec.model})`]);
+  for (const c of state.copies) {
+    items.push([c.rec, c.template ? `Placed ${c.as} (${c.template})` : `Copy ${c.as} (of ${c.rec.name || c.rec.model})`]);
+  }
   for (const id of state.removed) {
     const rec = state.byId.get(id);
     if (rec) items.push([rec, `Removed ${rec.name || rec.model}`]);
@@ -553,10 +629,19 @@ function refreshChanges() {
 
 async function save() {
   const body = {
+    map: state.map,
     moved: state.moved,
-    copies: state.copies.map((c) => ({source: c.source, as: c.as, position: c.position, rotation: c.rotation})),
+    copies: state.copies.filter((c) => !c.template)
+      .map((c) => ({source: c.source, as: c.as, position: c.position, rotation: c.rotation})),
     removed: [...state.removed],
   };
+  // Placed objects, by layer file (files that lost all theirs get an empty list).
+  const placed = {};
+  for (const f of state.placedFiles) placed[f] = [];
+  for (const c of state.copies.filter((x) => x.template)) {
+    (placed[c.file] ||= []).push({from: c.template, name: c.as, position: c.position, rotation: c.rotation,
+                                  ...(c.set ? {set: c.set} : {})});
+  }
   status('Saving...');
   try {
     const post = async (url, data) => {
@@ -568,6 +653,11 @@ async function save() {
     };
     const lay = layout.saveBody();
     let note = '';
+    if (Object.keys(placed).length) {
+      const done = await post('/api/placed/save', {map: state.map, files: placed});
+      for (const f of Object.keys(placed)) state.placedFiles.add(f);
+      note += `; placed objects in ${done.files.join(', ')}`;
+    }
     const encBody = encs.saveBody();
     if (encBody) {
       const done = await post('/api/encounters/save', encBody);
@@ -615,6 +705,7 @@ renderer.domElement.addEventListener('pointerup', (e) => {
   pick(e);
   if (layout.isDrawing()) { layout.drawClick(ray); return; }
   if (encs.isPlacing()) { encs.placeClick(ray); return; }
+  if (state.placing) { placeAt(ray); return; }
   // The nearest of an object or a path/zone (point handles win).
   let objectHit = null;
   if (boxes && boxes.visible) {        // (no map yet while loading)
@@ -699,6 +790,7 @@ $('ground').onclick = () => {
   fromNode(rec);
 };
 $('copy').onclick = copySelected;
+$('place').onclick = startPlace;
 $('delete').onclick = deleteSelected;
 $('copy-name').addEventListener('change', () => state.selected && renameCopy(state.selected, $('copy-name').value));
 $('revert').onclick = () => state.selected && revert(state.selected);
@@ -742,6 +834,7 @@ window.addEventListener('keydown', (e) => {
   else if (k === 'e') setMode('rotate');
   else if (k === 'g') $('ground').click();
   else if (k === 'c') copySelected();
+  else if (k === 'p') startPlace();
   else if (k === 'enter' && layout.isDrawing()) layout.finishDraw();
   else if (k === 'insert' && layout.hasSelection()) layout.addPoint();
   else if (k === 'delete') {
@@ -751,6 +844,7 @@ window.addEventListener('keydown', (e) => {
   } else if (k === 'escape') {
     if (layout.isDrawing()) { layout.cancelDraw(); status(''); }
     else if (encs.isPlacing()) { encs.cancelPlace(); status(''); }
+    else if (state.placing) { state.placing = null; status(''); }
     else { select(null); layout.select(null); encs.select(null); }
   }
   else if (k === 's' && (e.ctrlKey || e.metaKey)) { e.preventDefault(); if (state.dirty) save(); }

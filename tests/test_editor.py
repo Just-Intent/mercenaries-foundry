@@ -31,6 +31,12 @@ class EditorSceneTests(unittest.TestCase):
         ry = [math.cos(th), 0, -math.sin(th), 0, 1, 0, math.sin(th), 0, math.cos(th)]
         self.assertAlmostEqual(scene.turn_between(IDENTITY, scene.from_three(ry)), -30.0, places=3)
 
+    def test_placed_yaw_round_trip(self):
+        from mercfoundry.encounters import _rotation
+        for yaw in (0.0, 37.5, -90.0, 179.0):
+            rows = scene.from_three(scene.to_three(_rotation(yaw)))
+            self.assertAlmostEqual(math.degrees(math.atan2(-rows[0][2], rows[0][0])), yaw, places=6)
+
     def test_static_files_are_served_from_the_package(self):
         self.assertIn(b"importmap", server._static("static/index.html"))
         self.assertIsNotNone(server._static("vendor/three/build/three.module.js"))

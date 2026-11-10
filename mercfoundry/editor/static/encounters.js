@@ -426,5 +426,6 @@ export function createEncounters(ctx) {
     isPlacing: () => !!st.place,
     files: () => st.mod.map((f) => f.file),
     hasSelection: () => !!st.selected,
+    templates: () => st.templates,
   };
 }

@@ -10,7 +10,7 @@ GET  /api/look/<map>.paint     each layer's opacity, layer after layer (bytes)
 GET  /api/look/<map>.light     baked lighting, RGB per height sample
 GET  /api/look/<map>.decals    road and concrete decals (cell, texture, corner UVs)
 GET  /api/texture/<name>.png   a game texture
-GET  /api/objects/<map>        the map's objects, with the mod's editor edits
+GET  /api/objects/<map>        the map's objects, with the mod's editor edits and placed objects
 GET  /api/model/<name>.glb     a model with its textures
 GET  /api/bounds/<map>         each drawn model's bounds, for far-away stand-ins
 GET  /api/context-bounds/<map> the same for other mods' objects
@@ -24,6 +24,7 @@ POST /api/live/send            {"commands": [...]} for the game (see live.py)
 GET  /api/encounters/<map>     encounters: the game's (read only) and the mod's
 GET  /api/templates            objects a squad member can copy (template_*)
 POST /api/encounters/save      {"map", "files": {file: [encounter, ...]}}
+POST /api/placed/save          {"map", "files": {file: [{from, name, position, rotation}]}}: objects placed from templates
 POST /api/save                 {"moved": {...}, "copies": [...], "removed": [...]}
                                -> objects/editor.json
 """
@@ -118,6 +119,8 @@ def make_handler(scene: Scene, mod_name: str, live: Live = None):
                     with objects_lock:
                         objs = scene.objects(path[len("/api/objects/"):])
                         edits = scene.load_edits()
+                        edits["placed"] = scene.load_placed(path[len("/api/objects/"):])
+                        edits["layer_file"] = scene.editor_layer_file(path[len("/api/objects/"):])
                     return self.send(200, {"objects": objs, "edits": edits})
                 if path.startswith("/api/bounds/"):
                     with objects_lock:
@@ -162,8 +165,12 @@ def make_handler(scene: Scene, mod_name: str, live: Live = None):
                     return self.send(200, {"queued": live.send(doc.get("commands", []))})
                 if path == "/api/save":
                     with objects_lock:
-                        n = scene.save_edits(doc.get("moved", {}), doc.get("copies", []), doc.get("removed", []))
+                        n = scene.save_edits(doc.get("moved", {}), doc.get("copies", []), doc.get("removed", []),
+                                             doc.get("map"))
                     return self.send(200, {"rules": n, "file": f"objects/{scene.rules_path().name}"})
+                if path == "/api/placed/save":
+                    with objects_lock:
+                        return self.send(200, scene.save_placed(doc["map"], doc.get("files", {})))
                 if path == "/api/encounters/save":
                     with objects_lock:
                         return self.send(200, scene.save_encounters(doc["map"], doc.get("files", {})))

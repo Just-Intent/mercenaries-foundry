@@ -119,6 +119,20 @@ class MissionTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             missions.patch_global("function Other() end\n")
 
+    def test_map_layers(self):
+        src = "function LoadNoMissionState()\nSpawnBouncers(TRUE)\nend\n"
+        out = missions.patch_global_layers(src)
+        self.assertIn("SpawnBouncers(TRUE)\nUtility_LoadUtilityScript('foundry_layers') foundry_LoadMapLayers()\nend", out)
+        self.assertEqual(missions.patch_global_layers(out), out)
+        both = missions.patch_global(out)          # with the contacts hook too
+        self.assertEqual(both.count("foundry_LoadMapLayers"), 1)
+        self.assertEqual(both.count("foundry_SetupContracts"), 1)
+        lua = missions.layers_script([{"map": "sw", "layer": "my_sw", "check": "my_tank_1"},
+                                      {"map": "nw", "layer": "paths_nw", "check": None}])
+        self.assertIn("{ map = 'sw', layer = 'my_sw', check = 'my_tank_1' },", lua)
+        self.assertIn("{ map = 'nw', layer = 'paths_nw', check = nil },", lua)
+        self.assertIn("Utility_ReadLevelFile(l.layer)", lua)
+
     def test_contracts_script(self):
         contact, strings = missions.contract("sw_allies9", {"title": "Field Test", "contact": {"name": "Major X"}},
                                              "MissionInfo.MissionTitle.SWAllies9", "MissionInfo.Description.SWAllies9")
