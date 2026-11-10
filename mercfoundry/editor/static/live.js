@@ -105,6 +105,13 @@ export function createLive(ctx) {
     if (!template || !name || /\s/.test(template + name)) return;
     send([{op: 'spawn', template, name, position, heading: heading || 0}]);
   }
+  // A copy of anything else (unnamed scenery): the game finds the source as a
+  // move would and spawns its properties under the new name.
+  function copy(src, name, position, heading) {
+    if (!name || /\s/.test(name) || src.context) return;
+    send([{op: 'copy', name: src.name, model: src.model, from: places(src), as: name,
+           position, heading: heading || 0}]);
+  }
   function moveNamed(key, name, position, heading) {
     later(key, () => send([{op: 'move', name, model: '', from: [], position, heading: heading || 0}]));
   }
@@ -116,7 +123,7 @@ export function createLive(ctx) {
     if (!st.connected) return status('Start the game with Foundry Console on, then try again.', true);
     st.on = !st.on;
     show();
-    status(st.on ? 'Live: moves, turns and removals now go to the game too (copies and squads need a rebuild).' : 'Live off');
+    status(st.on ? 'Live: moves, turns, removals and copies now go to the game too (squads need a rebuild).' : 'Live off');
   };
   $('to-player').onclick = () => st.player && ctx.lookAt(st.player.position, 40);
   $('player-here').onclick = () => {
@@ -138,7 +145,7 @@ export function createLive(ctx) {
                              body: JSON.stringify({commands: [{op: 'loaded'}]})});
   }
 
-  return {objectMoved, objectRemoved, spawn, moveNamed, removeNamed, askLoaded,
+  return {objectMoved, objectRemoved, spawn, copy, moveNamed, removeNamed, askLoaded,
           player: () => (st.on && st.connected ? st.player : null),
           loaded: () => st.loaded || null, isOn: () => st.on && st.connected};
 }

@@ -69,3 +69,9 @@ class LiveLinkTests(unittest.TestCase):
         self.assertEqual(live.state()["loaded"], ["a_tank", "b_soldier", "c_jeep"])
         with self.assertRaises(ValueError):
             live.send([{"op": "explode"}])
+        # A copy of unnamed scenery: found as a move finds it, spawned under the new name.
+        live.send([{"op": "copy", "name": "", "model": "dmz_bld_skpost", "from": [[1, 2, 3]], "as": "post_copy",
+                    "position": [7, 8, 9], "heading": 90}])
+        self.assertEqual(live.poll(""), "copy - dmz_bld_skpost 1 1.000 2.000 3.000 post_copy 7.000 8.000 9.000 90.000\n")
+        with self.assertRaises(ValueError):
+            live.send([{"op": "copy", "name": "", "model": "m", "from": [], "as": "two words", "position": [0, 0, 0]}])

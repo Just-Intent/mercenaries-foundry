@@ -494,8 +494,10 @@ function addCopy(src, name, position, rotation, select_ = true) {
   state.copies.push({rec, source: src.id, as: name, position, rotation});
   if (select_) {
     ensureNode(rec); select(rec); setDirty(true); refreshChanges();
-    // Copies of named objects can spawn in the running game (the game spawns by name).
+    // Copies spawn in the running game: named objects as templates, the rest
+    // from the source's own properties (the game finds it as a move would).
     if (src.name) live.spawn(src.name, name, position, heading(rotation));
+    else live.copy(src, name, position, heading(rotation));
   }
   return rec;
 }

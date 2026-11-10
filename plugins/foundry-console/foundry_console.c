@@ -1561,6 +1561,54 @@ static void live_run(char *line)
         live_result(ok ? "%s spawned (%s)" : "%s: spawning %s failed", name, tmpl);
         return;
     }
+    if (!strcmp(op, "copy")) {
+        /* copy <name> <model> <n> <n points> <new name> <x> <y> <z> <heading>: a
+         * copy of an object found as move finds it. Unnamed scenery isn't a
+         * template, so its property block is registered as one under a made-up
+         * name, then spawned like a template; the copy has the new name. */
+        char *src = strtok_s(NULL, " ", &next), *model = strtok_s(NULL, " ", &next);
+        char *count = strtok_s(NULL, " ", &next);
+        if (!src || !model || !count) return;
+        unsigned n = (unsigned)atoi(count);
+        if (n > 4) n = 4;
+        float pts[12], v[4] = {0};
+        for (unsigned i = 0; i < 3 * n; i++) { char *t = strtok_s(NULL, " ", &next); pts[i] = t ? (float)atof(t) : 0; }
+        char *name = strtok_s(NULL, " ", &next);
+        for (int i = 0; i < 4; i++) { char *t = strtok_s(NULL, " ", &next); v[i] = t ? (float)atof(t) : 0; }
+        if (!name) return;
+        const char *what = strcmp(src, "-") ? src : model;
+        uint32_t obj = live_find(src, model, n, pts), block = 0, scratch, size, table_count = 0;
+        MercGuestCall c;
+        if (!obj) { live_result("%s: not found in the game here, so no copy", what); return; }
+        if (!host->read_guest(host->context, obj + MF_OFF_WorldObject_template, &block, 4) || !block) {
+            live_result("%s: no properties to copy", what);
+            return;
+        }
+        if (!host->guest_scratch(host->context, &scratch, &size) || size < 256) return;
+        char key[40];
+        snprintf(key, sizeof(key), "foundry_copy_%08x", block);
+        uint32_t hash = hash_name(key);
+        uint32_t find[3] = {hash, MF_VAR_g_TemplateTable + 0x4008, 0xFFF};
+        if (!guest(MF_FN_HashTable_Find, 0, 3, find, &c)) return;
+        if ((int32_t)c.eax >= 0) {
+            /* Registered before: the block there may since be another object's. */
+            host->write_guest(host->context, MF_VAR_g_TemplateTable + 8 + c.eax * 4, &block, 4);
+        } else {
+            host->read_guest(host->context, MF_VAR_g_TemplateTable, &table_count, 4);
+            if (table_count >= 0xF00) { live_result("%s: the game's template table is full", what); return; }
+            host->write_guest(host->context, scratch + 128, &block, 4);
+            uint32_t add[2] = {hash, scratch + 128};
+            if (!guest(MF_FN_TemplateTable_Add, MF_VAR_g_TemplateTable, 2, add, &c)) return;
+        }
+        float yaw = v[3] * 3.14159265f / 180.0f;
+        float m[16] = {cosf(yaw), 0, -sinf(yaw), 0, 0, 1, 0, 0, sinf(yaw), 0, cosf(yaw), 0, v[0], v[1], v[2], 1};
+        host->write_guest(host->context, scratch, m, sizeof(m));
+        host->write_guest(host->context, scratch + 64, name, strlen(name) + 1);
+        uint32_t args[5] = {hash, scratch + 64, scratch, 0, 0};
+        int ok = guest(MF_FN_Spawner_SpawnTemplate, MF_VAR_g_Spawner, 5, args, &c) && c.eax;
+        live_result(ok ? "%s: copied as %s" : "%s: copying as %s failed", what, name);
+        return;
+    }
     int remove = !strcmp(op, "remove");
     if (!remove && strcmp(op, "move")) { live_result("unknown command %s", op); return; }
     char *name = strtok_s(NULL, " ", &next), *model = strtok_s(NULL, " ", &next), *count = strtok_s(NULL, " ", &next);

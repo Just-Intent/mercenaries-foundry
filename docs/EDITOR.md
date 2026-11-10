@@ -100,9 +100,12 @@ toolkit bundle run it the same way: `foundry\python\python.exe foundry\mercfound
     game too (the game spawns by name, from templates loaded where the player
     is), and are then moved and removed live by their names. Opening **New
     squad** asks the game which templates are loaded there and lists them first
-    ("loaded here"); others appear after a rebuild. Copies of unnamed scenery and
-    other mods' objects need a rebuild. The panel's **Game replies** list keeps
-    the game's last answers.
+    ("loaded here"); others appear after a rebuild. Copies of unnamed scenery
+    spawn live too: the game finds the original as a live move does and spawns
+    its properties under the copy's name (the copy borrows the original's
+    properties, so it may not survive its area unloading; the saved mod has it
+    for good). Other mods' objects need a rebuild. The panel's **Game replies**
+    list keeps the game's last answers.
 - **The game's own encounters**: their spawn points can be dragged, typed in,
   added to their set or deleted. A game set keeps at least one point, since
   the game's squads name their sets. The edited encounter is saved whole as

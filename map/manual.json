@@ -281,6 +281,13 @@
    "evidence": "inferred: from x and z of the vector it calls 0x1FA000 and negates the result; used by Actor_SetYaw, Location_GetYaw and the spawn-point commands"
   },
   {
+   "address": "0x001EAE80",
+   "name": "TemplateTable_Add",
+   "signature": "void __thiscall TemplateTable_Add(TemplateTable *this, uint32 nameHash, PropertyBlock *const *block)",
+   "evidence": "retail code: the world layer loader (0x1EEBC0) calls it on g_TemplateTable for each named inst with the name hash (property 0x8D39BDE6) and the inst's property block; it inserts the hash into the index at this + 0x4008 (the insert beside HashTable_Find, 0x1F2A60, mask 0xFFF), stores *block at this + 8 + index * 4 and counts it at this + 0; live test (2026-11-10, Foundry Console copy): adding an unnamed scenery object's property block (WorldObject +0x04) under a new hash, then Spawner_SpawnTemplate with that hash, spawned a copy of the object",
+   "notes": "WorldObject vtable +0x08 (SetTemplate, 0x1EBC30) looks templates up here: HashTable_Find(hash, this + 0x4008, 0xFFF), then the block at this + 8 + index * 4 (or this + 4 when missing). Spawner_SpawnTemplate spawns whatever block a hash finds."
+  },
+  {
    "address": "0x001ED340",
    "name": "Template_GetProperty",
    "signature": "uint32 __cdecl Template_GetProperty(uint32 templateHash, uint32 propertyHash)",
@@ -591,6 +598,11 @@
    "evidence": "retail code: this pointer of FactionManager_SetRelation in Lua_Faction_SetRelation"
   },
   {
+   "address": "0x004CC060",
+   "name": "g_TemplateTable",
+   "evidence": "retail code: this pointer of TemplateTable_Add in the world layer loader (0x1EEBC0); +0 count, +4 the not-found slot, +8 0x1000 property block pointers, +0x4008 their hash index (0x4D0068)"
+  },
+  {
    "address": "0x004031B0",
    "name": "g_Spawner",
    "evidence": "retail code: this pointer of Spawner_SpawnTemplate in Lua_Mission_Spawn"
@@ -715,6 +727,11 @@
      "offset": "0x00",
      "name": "vtable",
      "notes": "+0x04 type bits (TypeFilter_Cast); +0x0C property text by name hash (\"hitpoints\" = 0x6E99129D); +0x10 property by name hash (\"name\" = 0x8D39BDE6); live test (2026-11-08, Foundry Console object inspector): +0x0C answered objectType, hitPoints and GeometryFile for a static rock as well as actors; +0x00 SetTransform(const Matrix *) for plain objects (flag bit 3), as Lua_Actor_SetPosition and SetYaw use it"
+    },
+    {
+     "offset": "0x04",
+     "name": "template",
+     "notes": "the object's property block: the layer loader points it at the inst's own properties (0x4916E0 + 12 * inst); SetTemplate (vtable +0x08) at a template's from g_TemplateTable"
     },
     {
      "offset": "0x08",
