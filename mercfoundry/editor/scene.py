@@ -113,13 +113,24 @@ class Scene:
         """The context mods' terrain steps, applied as a build would (once)."""
         if self._terrain is None:
             from .. import modbuild
+            gen = getattr(self, "_terrain_gen", 0)
             data = modbuild._Data(self.data)
             for p in self.context:
                 if (Path(p) / "terrain").is_dir():
                     data.project = modbuild.project_name(p)
                     modbuild._apply_terrain(data, Path(p), modbuild.Result())
+            # A save during the build makes it stale: use it this once, keep nothing.
+            if gen != getattr(self, "_terrain_gen", 0):
+                return data
             self._terrain = data
         return self._terrain
+
+    def _forget_terrain(self, map_name):
+        """After a terrain save: read the mods' terrain files again next time."""
+        self._terrain = None
+        self._terrain_gen = getattr(self, "_terrain_gen", 0) + 1
+        if hasattr(self, "_looks"):
+            self._looks.pop(map_name, None)
 
     def terrain(self, name):
         """(meta, float32 heights bytes), row z from the map's -z edge, with
@@ -170,9 +181,7 @@ class Scene:
             tdir.mkdir(parents=True, exist_ok=True)
             p.write_bytes(png.encode(w, w, bytes(la), 2))
             written.append(f"terrain/{p.name}")
-        self._terrain = None
-        if hasattr(self, "_looks"):
-            self._looks.pop(map_name, None)
+        self._forget_terrain(map_name)
         return {"files": written}
 
     def save_roads(self, map_name, roads):
@@ -191,9 +200,7 @@ class Scene:
                                                  "points": pts})
         p.parent.mkdir(parents=True, exist_ok=True)
         p.write_text(json.dumps(doc, indent=1) + "\n", encoding="utf-8")
-        self._terrain = None
-        if hasattr(self, "_looks"):
-            self._looks.pop(map_name, None)
+        self._forget_terrain(map_name)
         return {"file": f"terrain/{p.name}", "roads": len(doc["roads"])}
 
     def save_terrain(self, map_name, samples):
@@ -215,9 +222,7 @@ class Scene:
         doc = {"terrain": map_name, "samples": [[x, z, v] for (x, z), v in sorted(merged.items(), key=lambda kv: (kv[0][1], kv[0][0]))]}
         tdir.mkdir(parents=True, exist_ok=True)
         p.write_text(json.dumps(doc, separators=(",", ":")) + "\n", encoding="utf-8")
-        self._terrain = None          # the next look at the map reads it again
-        if hasattr(self, "_looks"):
-            self._looks.pop(map_name, None)
+        self._forget_terrain(map_name)
         return {"file": f"terrain/{p.name}", "samples": len(doc["samples"])}
 
     def terrain_look(self, name):

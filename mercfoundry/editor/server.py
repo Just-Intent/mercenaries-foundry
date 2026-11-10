@@ -178,13 +178,13 @@ def make_handler(scene: Scene, mod_name: str, live: Live = None):
                     with objects_lock:
                         return self.send(200, scene.save_placed(doc["map"], doc.get("files", {})))
                 if path == "/api/terrain/paint":
-                    with objects_lock:
+                    with objects_lock, terrain_lock:      # not while a ground read is building
                         return self.send(200, scene.save_paint(doc["map"], doc.get("layers", {})))
                 if path == "/api/terrain/roads":
-                    with objects_lock:
+                    with objects_lock, terrain_lock:      # not while a ground read is building
                         return self.send(200, scene.save_roads(doc["map"], doc.get("roads", [])))
                 if path == "/api/terrain/save":
-                    with objects_lock:
+                    with objects_lock, terrain_lock:      # not while a ground read is building
                         return self.send(200, scene.save_terrain(doc["map"], doc.get("samples", [])))
                 if path == "/api/encounters/save":
                     with objects_lock:
