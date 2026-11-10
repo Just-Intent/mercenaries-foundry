@@ -190,14 +190,22 @@ def append_boxes(cshp_body: bytes, shape_index: int, boxes) -> bytes:
 
     boxes: [(centre, half, rows)] in that shape's joint space; they take the
     shape's material."""
+    return rewrite_box_shape(cshp_body, shape_index, (), boxes)
+
+
+def rewrite_box_shape(cshp_body: bytes, shape_index: int, drop=(), boxes=()) -> bytes:
+    """A box shape with the boxes at the indices in drop taken out and boxes
+    ([(centre, half, rows)] in its joint space, taking its material) added;
+    its counts and search tree follow."""
+    drop = set(drop)
     items, pad_last = ucfb.split(cshp_body)
     if not items or items[0][0] != b"cinf":
         raise ValueError("collision block has no cinf header")
     cinf = bytearray(items[0][1])
     total, = struct.unpack_from("<H", cinf, 6)
-    if total + len(boxes) > 0xFFFF:
+    if total - len(drop) + len(boxes) > 0xFFFF:
         raise ValueError("too many collision boxes")
-    struct.pack_into("<H", cinf, 6, total + len(boxes))
+    struct.pack_into("<H", cinf, 6, total - len(drop) + len(boxes))
     items[0] = (b"cinf", bytes(cinf))
     seen = -1
     for k, (tag, body) in enumerate(items):
@@ -212,8 +220,11 @@ def append_boxes(cshp_body: bytes, shape_index: int, boxes) -> bytes:
         if b"CBOX" not in d:
             raise ValueError("can only add boxes to a box shape")
         count = kw >> 16
-        sinf = struct.pack("<4I", material, joint, (kw & 0xFFFF) | (count + len(boxes)) << 16, flag) + d[b"sinf"][16:]
-        cbox = d[b"CBOX"] + b"".join(pack_box(material, c, h, r) for c, h, r in boxes)
+        old = d[b"CBOX"]
+        kept = b"".join(old[i * BOX_SIZE:(i + 1) * BOX_SIZE] for i in range(len(old) // BOX_SIZE) if i not in drop)
+        count = len(kept) // BOX_SIZE + len(boxes)
+        sinf = struct.pack("<4I", material, joint, (kw & 0xFFFF) | count << 16, flag) + d[b"sinf"][16:]
+        cbox = kept + b"".join(pack_box(material, c, h, r) for c, h, r in boxes)
         tree = None
         if b"CMOP" in d:
             from . import cmop

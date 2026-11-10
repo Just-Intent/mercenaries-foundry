@@ -1126,8 +1126,9 @@ def _apply_models(data, folder, result):
             data.set(a, recs[model.MODEL], nm)
             data.set(a, recs[model.SEGMENTS], ns)
         result.changes.append(f"model {name}: {len(report.edited)} pieces edited, {len(report.added)} added, "
-                              f"{len(report.removed)} removed, {report.collision_boxes} collision boxes added "
-                              f"(in {', '.join(found)})")
+                              f"{len(report.removed)} removed, {report.collision_boxes} collision boxes added"
+                              + (f", {report.collision_boxes_moved} moved with edited pieces" if report.collision_boxes_moved else "")
+                              + f" (in {', '.join(found)})")
         result.warnings += [f"model {name}: {w}" for w in report.warnings]
 
 

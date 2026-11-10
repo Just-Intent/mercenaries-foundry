@@ -133,6 +133,30 @@ class ShapeLimitTests(unittest.TestCase):
         self.last_sr = ns
         return model.decode(nm, ns), rep
 
+    def test_edited_piece_collision_follows_it(self):
+        # A box around the quad (its own) and one far off (another part's).
+        plain = model.decode(self.mr, segments_with_collision([segm(QUAD, [0, 1, 2, 3], "root")],
+                                                              cshp([box_shape(7, "root", [((0, 0, 0), (1, 1, 1))])], 1)))
+        pts = plain.pieces[0].positions
+        lo = [min(p[a] for p in pts) for a in range(3)]
+        hi = [max(p[a] for p in pts) for a in range(3)]
+        own = (tuple((lo[a] + hi[a]) / 2 for a in range(3)), tuple(max((hi[a] - lo[a]) / 2, 0.01) for a in range(3)))
+        far = ((40.0, 0.0, 0.0), (1.0, 1.0, 1.0))
+        sr = segments_with_collision([segm(QUAD, [0, 1, 2, 3], "root")], cshp([box_shape(7, "root", [own, far])], 2))
+        m = model.decode(self.mr, sr)
+        obj, _ = model.to_obj(m, 0)
+        # Move the piece 3 m along the game's +x (the OBJ's -x).
+        lines = [f"v {float(l.split()[1]) - 3} " + " ".join(l.split()[2:]) if l.startswith("v ") else l
+                 for l in obj.splitlines()]
+        nm, ns, rep = mi.import_obj(self.mr, sr, "\n".join(lines) + "\n")
+        self.assertEqual((rep.edited, rep.collision_boxes_moved, rep.collision_boxes), ([0], 1, 0))
+        (shape,) = model.decode(nm, ns).collision
+        centres = sorted(round(b.centre[0], 2) for b in shape.boxes)
+        self.assertEqual(centres, sorted([round(own[0][0] + 3, 2), 40.0]))     # far box kept, own box moved
+        # An edit that keeps the outline (here none) leaves collision alone.
+        nm2, ns2, rep2 = mi.import_obj(self.mr, sr, obj)
+        self.assertEqual((ns2, rep2.collision_boxes_moved), (sr, 0))
+
     def test_appends_into_existing_box_shape(self):
         block = cshp([mesh_shape(6, "root", kind=4), box_shape(9, "root", [((0, 0, 0), (1, 1, 1))], kind=2)], 1)
         m2, rep = self.run_import(block)

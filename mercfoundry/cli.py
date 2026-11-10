@@ -250,7 +250,8 @@ def cmd_model_import(args):
             continue
         print(f"{folder}: {len(r.edited)} pieces edited, {len(r.added)} added, {len(r.removed)} removed, "
               f"{r.unchanged} unchanged" + ("; quantization box grew" if r.box_grew else "")
-              + (f"; {r.collision_boxes} collision boxes added" if r.collision_boxes else ""))
+              + (f"; {r.collision_boxes} collision boxes added" if r.collision_boxes else "")
+              + (f"; {r.collision_boxes_moved} collision boxes moved with edited pieces" if r.collision_boxes_moved else ""))
         for w in r.warnings:
             print(f"  warning: {w}")
     print("now run pack on each folder")

@@ -221,6 +221,7 @@ class Report:
     unchanged: int = 0
     box_grew: bool = False
     collision_boxes: int = 0
+    collision_boxes_moved: int = 0
     warnings: list = field(default_factory=list)
 
     @property
@@ -483,7 +484,8 @@ def import_pieces(model_record: bytes, segments_record: bytes, objs: list,
     for body in reversed(added_bodies):
         new_items.insert(last_segm + 1, (b"segm", body))
 
-    # --- collision: one box around each new piece.
+    # --- collision: one box around each new piece; an edited piece whose
+    # outline changed takes its own boxes along (see below).
     # Vehicles break if they get a third collision shape (tested in-game), and
     # the game never gives any vehicle more than two. So boxes join an
     # existing shape where one can take them: a box shape (its tree rebuilt
@@ -491,8 +493,82 @@ def import_pieces(model_record: bytes, segments_record: bytes, objs: list,
     # (the mesh + boxes layout tanks use). A new box shape is added only when
     # the model has fewer than two shapes; a triangle mesh is the last resort
     # (vehicle triangle hulls don't collide with the world, tested in-game).
-    if collision and any(plan[0] is None for plan in plans):
+    def outline(points):
+        return ([min(q[a] for q in points) for a in range(3)], [max(q[a] for q in points) for a in range(3)])
+
+    reshaped = set()   # plan indices of edited pieces whose outline changed
+    for k, plan in enumerate(plans):
+        if plan[0] is None or not plan[1].positions or not model.pieces[plan[0]].positions:
+            continue
+        (olo, ohi), (nlo3, nhi3) = outline(model.pieces[plan[0]].positions), outline(plan[1].positions)
+        if max(abs(a - b) for a, b in zip(olo + ohi, nlo3 + nhi3)) > 0.01:
+            reshaped.add(k)
+
+    if collision and (any(plan[0] is None for plan in plans) or reshaped):  # new pieces; edited ones
         from . import collision as coll
+        where = next((k for k, (t, _) in enumerate(new_items) if t == b"cshp"), None)
+        if reshaped and where is not None:
+            # Edited pieces that moved or stretched the same way form a group;
+            # the boxes of a box shape lying wholly inside a group's old outline
+            # (with a margin) are its own and move and stretch with it, staying
+            # in their shape (so its flags stay). Boxes reaching beyond (shared
+            # with parts left as they were) stay put.
+            def affine(i, k):
+                (olo, ohi), (nlo3, nhi3) = outline(model.pieces[i].positions), outline(plans[k][1].positions)
+                out = []
+                for a in range(3):
+                    size = ohi[a] - olo[a]
+                    scale = (nhi3[a] - nlo3[a]) / size if size > 1e-4 else 1.0
+                    out.append((scale, nlo3[a] - olo[a] * scale))
+                return tuple(out)
+
+            groups = {}
+            for k in sorted(reshaped):
+                i = plans[k][0]
+                aff = affine(i, k)
+                key = tuple((round(sc, 3), round(off, 2)) for sc, off in aff)
+                g = groups.setdefault(key, {"aff": aff, "lo": [1e9] * 3, "hi": [-1e9] * 3, "names": []})
+                lo3, hi3 = outline(model.pieces[i].positions)
+                g["lo"] = [min(g["lo"][a], lo3[a]) for a in range(3)]
+                g["hi"] = [max(g["hi"][a], hi3[a]) for a in range(3)]
+                g["names"].append(plans[k][1].name)
+            shapes = coll.parse(new_items[where][1])
+            moves = {}    # shape -> {box index: (centre, half, rows)}
+            for g in groups.values():
+                lo3, hi3, aff = g["lo"], g["hi"], g["aff"]
+                pad = [0.05 + 0.05 * (hi3[a] - lo3[a]) for a in range(3)]
+                found = False
+                for si, sh in enumerate(shapes):
+                    if sh.is_mesh or not sh.boxes or sh.kind not in (0, 2, 3):
+                        continue
+                    rot, pos = xforms.get(sh.joint, ((0.0, 0.0, 0.0, 1.0), (0.0, 0.0, 0.0)))
+                    inv = _conj(rot)
+                    for b, box in enumerate(sh.boxes):
+                        if b in moves.get(si, {}):
+                            continue
+                        corners = [tuple(x + c for x, c in zip(mdl._qrot(rot, q), pos)) for q in box.corners()]
+                        if not all(lo3[a] - pad[a] <= q[a] <= hi3[a] + pad[a] for q in corners for a in range(3)):
+                            continue
+                        found = True
+                        mc = tuple(x + c for x, c in zip(mdl._qrot(rot, box.centre), pos))
+                        nc = tuple(aff[a][0] * mc[a] + aff[a][1] for a in range(3))
+                        centre = mdl._qrot(inv, tuple(nc[a] - pos[a] for a in range(3)))
+                        rows = box.rotation
+                        half = []
+                        for ax in range(3):
+                            # The box axis in model space; stretched as the model axes it leans on.
+                            d = mdl._qrot(rot, tuple(rows[3 * ax:3 * ax + 3]))
+                            f = sum(abs(d[a]) * abs(aff[a][0]) for a in range(3)) / max(sum(abs(v) for v in d), 1e-9)
+                            half.append(max(box.half[ax] * f, 0.01))
+                        moves.setdefault(si, {})[b] = (centre, tuple(half), tuple(rows))
+                if not found:
+                    report.warnings.append(f"{', '.join(g['names'])}: collision shared with other parts of the "
+                                           "model, so it wasn't moved with the edit")
+            body = new_items[where][1]
+            for si, moved in moves.items():
+                body = coll.rewrite_box_shape(body, si, set(moved), list(moved.values()))
+                report.collision_boxes_moved += len(moved)
+            new_items[where] = (b"cshp", body)
         wanted = []  # (piece joint, centre, half) in that joint's space
         for k, plan in enumerate(plans):
             if plan[0] is not None or not new_locals[k]:

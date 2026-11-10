@@ -86,7 +86,8 @@
 - Editor edits the game's own encounters: spawn points move, are added and deleted, saved as a layout changes file (the whole encounter, replaced by name at build). Checked in the build (SW Allies 6's `A6_Shortcut` set Z: 6 points to 7, one moved); not played in game.
 - Editor minimap: the whole map from above (hill-shaded terrain, water, the camera's view, the player when live); click to jump there.
 - Model exports unmirrored (0.67): glTF and OBJ exports used to negate only Z (the game was taken to be left-handed), which mirrored models; they now turn them half round (X and Z negated, winding kept), as the game draws them. Old exports are recognised by their glTF header and still import the old way. Checks: 45 models (6 named, 39 random) export, pass the vertex check and re-import byte-identical through glTF, 33 through OBJ; a Humvee's left seats come out on its left; a road sign reads correctly in the editor; the Terrain Hill mod's old Humvee changes file still raises the turret and places the new seat 0.8 m above the left front seat.
-- 253 tests pass.
+- Collision follows edited pieces (0.67.1): model imports move and stretch the box-shape boxes of pieces whose outline changed, grouped by how they moved, keeping each box in its shape (flags kept); boxes shared with untouched parts stay. Tested in game: straight sandbag walls shifted 2 m were solid at their new place, not their old.
+- 254 tests pass.
 
 ## Fixed from retail data
 - Text values aren't NUL-terminated. The decoder had assumed they were and found no strings.
@@ -133,7 +134,7 @@
 - Python 3.12.10 alongside 3.13. The port's `.venv` has its pinned CMake 3.31.6, Ninja 1.13.0 and Capstone 5.0.6.
 
 ## Next steps
-1. Collision flags: what bit 4 does; why bullets pass through pines and some rock meshes; collision for edited existing pieces.
+1. Collision flags: what bit 4 does; why bullets pass through pines and some rock meshes.
 2. Moving skin bones on characters (animations override bone translations); what animation-table priorities and flags do.
 3. Function map: name more engine functions (actors, AI commands, missions); find the path from a vehicle actor to its drivetrain, so plugins can change handling live with the setters.
 4. Overlay: spawning and object editing from the in-game panel (now only in the window).
