@@ -24,9 +24,11 @@ export function createEncounters(ctx) {
                          : {color: COLOURS[key]}));
   const st = {map: null, game: [], mod: [], templates: [], selected: null, dirty: new Set(), gameDirty: new Set(),
               place: null, show: true};
-  // What can be edited: everything of the mod's; of the game's, spawn points only
-  // (members are world objects, moved as objects; squads and encounters stay).
-  const editable = (sel) => sel && (sel.source === 'mod' || (sel.source === 'game' && !sel.member && sel.set !== undefined));
+  // What can be edited: everything of the mod's, including squads it adds to
+  // the game's encounters ("added"); of the game's, spawn points only (members
+  // are world objects, moved as objects; squads and encounters stay).
+  const ours = (sel) => sel && (sel.source === 'mod' || sel.added);
+  const editable = (sel) => sel && (ours(sel) || (sel.source === 'game' && !sel.member && sel.set !== undefined));
 
   // The squad picker: templates the running game has loaded here first (the
   // game can spawn those live), then the rest.
@@ -69,7 +71,8 @@ export function createEncounters(ctx) {
       }
       for (const squad of enc.squads || []) {
         for (const member of squad.members || []) {
-          const sel = {source, file, layer, enc, squad, member};
+          const sel = squad.file ? {source, file: squad.file, added: true, layer, enc, squad, member}
+                                 : {source, file, layer, enc, squad, member};
           const key = same(sel, st.selected) ? 'selected' : `${source}-member`;
           const g = new THREE.Group();
           g.add(new THREE.Mesh(MEMBER_GEO, mat(key)), new THREE.Mesh(NOSE_GEO, mat(key)));
@@ -161,7 +164,7 @@ export function createEncounters(ctx) {
     ctx.setDirty(true);
   }
   function markEdited(sel) {
-    if (sel.source === 'game') { st.gameDirty.add(sel.enc); ctx.setDirty(true); }
+    if (sel.source === 'game' && !sel.added) { st.gameDirty.add(sel.enc); ctx.setDirty(true); }
     else edited(sel.file);
   }
 
@@ -170,7 +173,7 @@ export function createEncounters(ctx) {
     const sel = st.selected;
     $('enc').hidden = !sel;
     if (!sel) return;
-    const mod = sel.source === 'mod';
+    const mod = ours(sel);
     if (sel.member) {
       $('enc-title').textContent = sel.member.name || '(unnamed member)';
       $('enc-what').textContent = `${mod ? 'Mod' : 'Game'} squad member`;
@@ -192,7 +195,12 @@ export function createEncounters(ctx) {
     if (editable(sel) && !mod) $('enc-add-point').hidden = $('enc-delete').hidden = false;
     $('enc-add-member').hidden = !mod || !sel.member;
     $('enc-delete-squad').hidden = !mod || !sel.squad;
-    $('enc-note').textContent = mod
+    $('enc-delete-enc').hidden = sel.source !== 'mod';
+    $('enc-note').textContent = sel.added
+      ? `The mod's squad in the game's encounter ${sel.enc.name}: its members are saved in encounters/${sel.file} `
+        + `(which loads with the map), the squad added to the encounter when the mod builds. `
+        + `Scripts send it with Squad_Command('${sel.enc.name}', '${sel.squad.name}', ...).`
+      : mod
       ? `Saved in encounters/${sel.file}. A script loads the layer with Utility_ReadLevelFile('${sel.layer}') and sends squads with Squad_Command.`
       : sel.member ? 'A game squad member: move it as an object (click it with Squads hidden, or find it by name).'
       : `A game encounter's spawn point: drag it, add points to set ${sel.set} or delete them. Saved as `
@@ -231,7 +239,7 @@ export function createEncounters(ctx) {
 
   function addMember() {
     const sel = st.selected;
-    if (!sel || sel.source !== 'mod' || !sel.member) return;
+    if (!ours(sel) || !sel.member) return;
     const m = {...sel.member, position: [sel.member.position[0] + 2, 0, sel.member.position[2]],
                name: freshName(`${sel.enc.name}_${sel.squad.name}_`)};
     m.position[1] = Math.round(heightAt(m.position[0], m.position[2]) * 1000) / 1000;
@@ -244,7 +252,7 @@ export function createEncounters(ctx) {
   function deleteSelected() {
     const sel = st.selected;
     if (!editable(sel)) return;
-    if (sel.source === 'game') {
+    if (sel.source === 'game' && !sel.added) {
       const pts = sel.enc.points[sel.set];
       if (pts.length <= 1) return status(`Set ${sel.set} needs a point: the game's squads name it`, true);
       pts.splice(sel.index, 1);
@@ -269,7 +277,7 @@ export function createEncounters(ctx) {
 
   function deleteSquad() {
     const sel = st.selected;
-    if (!sel || sel.source !== 'mod' || !sel.squad) return;
+    if (!ours(sel) || !sel.squad) return;
     if (!confirm(`Delete squad ${sel.squad.name} and its ${sel.squad.members.length} members?`)) return;
     sel.enc.squads = sel.enc.squads.filter((s) => s !== sel.squad);
     for (const m of sel.squad.members) ctx.live().removeNamed(m.name);
@@ -298,6 +306,9 @@ export function createEncounters(ctx) {
   }
 
   function startNewSquad() {
+    // With one of the game's encounters selected, the squad can join it.
+    const sel = st.selected;
+    st.newFor = sel && sel.source === 'game' ? sel.enc : null;
     ctx.deselectOthers();
     select(null);
     const fresh = `${ctx.slug(ctx.modName())}_${st.map}.json`;
@@ -315,8 +326,9 @@ export function createEncounters(ctx) {
   function fillEncounters() {
     const f = st.mod.find((x) => x.file === $('sq-file').value);
     const encs = f ? f.encounters.map((e) => e.name) : [];
-    $('sq-enc').innerHTML = encs.map((n) => `<option>${n}</option>`).join('') + '<option value="">New encounter...</option>';
-    $('sq-enc-new-row').hidden = encs.length > 0;
+    const game = st.newFor ? `<option value="game:">${st.newFor.name} (the game's, in ${st.newFor.layer})</option>` : '';
+    $('sq-enc').innerHTML = game + encs.map((n) => `<option>${n}</option>`).join('') + '<option value="">New encounter...</option>';
+    $('sq-enc-new-row').hidden = encs.length > 0 || !!st.newFor;
     $('sq-enc-new').value = `${ctx.slug(ctx.modName())}_enc1`.replace(/^(\d)/, 'e$1');
   }
 
@@ -328,12 +340,15 @@ export function createEncounters(ctx) {
     const notLoaded = st.loaded && ctx.live().isOn() &&
       !st.loaded.some((n) => n.toLowerCase() === template.toLowerCase());
     const count = Math.max(1, Math.min(40, +$('sq-count').value || 1));
-    const encName = $('sq-enc').value || $('sq-enc-new').value.trim();
+    const forGame = $('sq-enc').value === 'game:' && st.newFor;
+    const encName = forGame ? st.newFor.name : $('sq-enc').value || $('sq-enc-new').value.trim();
     const squadName = $('sq-name').value.trim();
     if (!/^[A-Za-z0-9_]+$/.test(encName) || !/^[A-Za-z0-9_]+$/.test(squadName)) {
       return status('Encounter and squad names use letters, digits and _ only', true);
     }
-    st.place = {kind: 'squad', file: $('sq-file').value, encName, squadName, template, count};
+    // A game encounter's squad: members in the mod's layer that loads with the map.
+    const file = forGame ? (ctx.layerFile() || $('sq-file').value) : $('sq-file').value;
+    st.place = {kind: 'squad', file, encName, squadName, template, count, game: forGame ? st.newFor : null};
     $('squad-form').hidden = true;
     status(`Click the ground to place ${count} member${count > 1 ? 's' : ''} of ${squadName}; Esc cancels.` +
            (notLoaded ? ` (${template} isn't loaded here: it shows in the game after a rebuild.)` : ''));
@@ -361,7 +376,7 @@ export function createEncounters(ctx) {
     // A new squad: members in a row across the view, facing the camera.
     let f = st.mod.find((x) => x.file === pl.file);
     if (!f) { f = {file: pl.file, layer: pl.file.replace(/\.json$/, ''), encounters: []}; st.mod.push(f); }
-    let enc = f.encounters.find((e) => e.name === pl.encName);
+    let enc = pl.game || f.encounters.find((e) => e.name === pl.encName);
     if (!enc) {
       enc = {name: pl.encName, points: {A: [[at[0], at[1], at[2] - 10]]}, squads: []};
       enc.points.A[0][1] = Math.round(heightAt(at[0], at[2] - 10) * 1000) / 1000;
@@ -373,7 +388,8 @@ export function createEncounters(ctx) {
     const yaw = Math.round(THREE.MathUtils.radToDeg(toCam) * 10) / 10;   // facing the camera
     const side = new THREE.Vector3(Math.cos(toCam), 0, -Math.sin(toCam));
     const back = new THREE.Vector3(-Math.sin(toCam), 0, -Math.cos(toCam));    // away from the camera
-    const squad = {name: pl.squadName, points: Object.keys(enc.points).slice(0, 1), members: []};
+    const squad = {name: pl.squadName, points: Object.keys(enc.points || {}).slice(0, 1), members: []};
+    if (pl.game) squad.file = pl.file;
     enc.squads.push(squad);
     // Rows of up to 8, 2.5 m apart, the first row where you clicked.
     const perRow = Math.min(pl.count, 8);
@@ -388,7 +404,8 @@ export function createEncounters(ctx) {
     }
     for (const m of squad.members) ctx.live().spawn(m.from, m.name, m.position, m.yaw);
     edited(pl.file);
-    select({source: 'mod', file: f.file, layer: f.layer, enc, squad, member: squad.members[0]});
+    select(pl.game ? {source: 'game', added: true, file: pl.file, layer: enc.layer, enc, squad, member: squad.members[0]}
+                   : {source: 'mod', file: f.file, layer: f.layer, enc, squad, member: squad.members[0]});
     status(`${pl.squadName} placed with ${pl.count} members`);
     return true;
   }
@@ -407,7 +424,20 @@ export function createEncounters(ctx) {
       files[file] = f ? f.encounters : [];
     }
     const game = [...st.gameDirty].map((enc) => ({layer: enc.layer, name: enc.name, points: enc.points}));
-    return {map: st.map, files, game};
+    // The mod's squads in the game's encounters, by the file that keeps them.
+    const gameSquads = {};
+    for (const file of st.dirty) {
+      gameSquads[file] = [];
+      for (const enc of st.game) {
+        for (const sq of enc.squads || []) {
+          if (sq.file === file) {
+            gameSquads[file].push({layer: enc.layer, encounter: enc.name, name: sq.name, points: sq.points || [],
+                                   members: sq.members});
+          }
+        }
+      }
+    }
+    return {map: st.map, files, game, game_squads: gameSquads};
   }
 
   function saved() { st.dirty.clear(); st.gameDirty.clear(); }

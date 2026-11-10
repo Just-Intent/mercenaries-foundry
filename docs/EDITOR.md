@@ -123,8 +123,14 @@ toolkit bundle run it the same way: `foundry\python\python.exe foundry\mercfound
   added to their set or deleted. A game set keeps at least one point, since
   the game's squads name their sets. The edited encounter is saved whole as
   `layout/<layer>.encounter.changes.json`, which the build applies to the
-  game's layer by encounter name. Squad members are world objects: move them
-  as objects. Squads and encounters themselves aren't added or removed.
+  game's layer by encounter name. The game's squad members are world
+  objects: move them as objects. To add a squad to a game encounter, select
+  one of its spawn points and click **New squad**: the form offers that
+  encounter ("the game's"). The members go in the mod's layer for the map
+  (which loads with it) and the squad joins the encounter when the mod builds
+  (`"game_squads"`, see ENCOUNTERS.md); its members can be moved, added and
+  deleted like the mod's own. The game's encounters aren't removed. Search
+  finds encounters by name.
 - **Path pauses, animations and links** (the mod's own paths). Select a
   point to set:
   - a pause in seconds;

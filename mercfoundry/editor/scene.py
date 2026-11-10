@@ -642,11 +642,18 @@ class Scene:
                                            "members": members.get((name.lower(), nm.lower()), [])})
                     game.append({"name": name, "layer": layer, "points": sets, "squads": squads})
         mod = []
+        by_enc = {(g["layer"].lower(), g["name"].lower()): g for g in game}
         edir = self.mod / "encounters"
         for f in sorted(edir.glob("*.json")) if edir.is_dir() else []:
             doc = json.loads(f.read_text(encoding="utf-8"))
             if (doc.get("map") or "").lower() == m:
                 mod.append({"file": f.name, "layer": f.stem, "encounters": doc.get("encounters", [])})
+                # The mod's squads for the game's encounters, shown on them.
+                for sq in doc.get("game_squads", []):
+                    g = by_enc.get((sq.get("layer", "").lower(), sq.get("encounter", "").lower()))
+                    if g is not None:
+                        g["squads"].append({"name": sq["name"], "points": sq.get("points", []),
+                                            "members": sq.get("members", []), "file": f.name})
         return {"game": game, "mod": mod}
 
     # ------------------------------------------------------------ placed objects
@@ -804,16 +811,29 @@ class Scene:
                 p.unlink()
         return written
 
-    def save_encounters(self, map_name, files, game=()):
+    def save_encounters(self, map_name, files, game=(), game_squads=None):
         """files: {layer file name: [encounter, ...]}, replacing the
         encounters of those mod layer files (new files are made for map_name);
-        game: edits to the game's own encounters (see save_game_encounters)."""
+        game: edits to the game's own encounters (see save_game_encounters);
+        game_squads: {layer file name: [squad for a game encounter, ...]}
+        (encounters.py "game_squads"), replacing those files' ones."""
+        game_squads = game_squads or {}
         game_files = self.save_game_encounters(game) if game else []
         import re
         taken = {o["name"].lower() for o in self.all_objects() if o["name"]}
         world_layers = {(self.names().get(r.key) or "").lower() for a in self.archives for r in a.records
                         if r.kind == name_hash("world")}
         seen = set()
+        for fname, sqs in game_squads.items():
+            if not re.fullmatch(r"[A-Za-z0-9_]+\.json", fname):
+                raise ValueError(f"layer file names use letters, digits and _ only: {fname!r}")
+            for sq in sqs:
+                for mem in sq.get("members", []):
+                    n = mem["name"].lower()
+                    if n in taken or n in seen:
+                        raise ValueError(f"the name {mem['name']!r} is already used; members need new names")
+                    seen.add(n)
+                    mem["position"] = [round(float(v), 3) for v in mem["position"]]
         for fname, encs in files.items():
             if not re.fullmatch(r"[A-Za-z0-9_]+\.json", fname):
                 raise ValueError(f"layer file names use letters, digits and _ only: {fname!r}")
@@ -832,7 +852,8 @@ class Scene:
                         mem["position"] = [round(float(v), 3) for v in mem["position"]]
                 for k in list(sets):
                     sets[k] = [[round(float(v), 3) for v in p] for p in sets[k]]
-        for fname, encs in files.items():
+        for fname in sorted(set(files) | set(game_squads)):
+            encs = files.get(fname)
             p = self.mod / "encounters" / fname
             if p.exists():
                 doc = json.loads(p.read_text(encoding="utf-8"))
@@ -846,11 +867,17 @@ class Scene:
                 self._require("0.65")
             if encs:
                 doc["encounters"] = encs
-            else:
+            elif encs is not None:
                 doc.pop("encounters", None)
+            if fname in game_squads:
+                if game_squads[fname]:
+                    doc["game_squads"] = [{k: v for k, v in sq.items() if k != "file"} for sq in game_squads[fname]]
+                    self._require("0.66")
+                else:
+                    doc.pop("game_squads", None)
             p.parent.mkdir(parents=True, exist_ok=True)
             p.write_text(json.dumps(doc, indent=1) + "\n", encoding="utf-8")
-        return {"files": [f"encounters/{f}" for f in files] + game_files}
+        return {"files": [f"encounters/{f}" for f in sorted(set(files) | set(game_squads))] + game_files}
 
     def _require(self, version):
         """Raise mod.json "requires" to at least version."""

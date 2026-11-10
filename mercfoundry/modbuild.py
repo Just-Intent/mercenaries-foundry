@@ -1179,9 +1179,31 @@ def _apply_sounds(data, folder, result):
     sounds.apply(data, folder, result)
 
 
+def _apply_game_squads(data, folder, result):
+    """encounters/*.json "game_squads": squad records added to the game's own
+    encounters (after layout changes, which replace whole encounters); their
+    members were built into the mod's layer with it."""
+    from . import aidata, encounters
+    by_layer = {}
+    for f in sorted((folder / "encounters").glob("*.json")) if (folder / "encounters").is_dir() else []:
+        for sq in json.loads(f.read_text(encoding="utf-8")).get("game_squads", []):
+            by_layer.setdefault(sq["layer"], []).append(sq)
+    for layer, squads in by_layer.items():
+        hit = [(a, r) for a, r in data.records(name_hash("encounter")) if r.key == name_hash(layer)]
+        if not hit:
+            raise ValueError(f"game_squads: no encounter record for layer {layer!r}")
+        for a, r in hit:
+            doc = aidata.to_json(data.current(a, r), "encounter")
+            encounters.add_game_squads(doc, squads)
+            data.set(a, r, aidata.from_json(doc))
+        for sq in squads:
+            result.changes.append(f"encounter {sq['encounter']} ({layer}): squad {sq['name']} added, "
+                                  f"{len(sq.get('members', []))} members")
+
+
 STEPS = (_apply_text, _apply_scripts, _apply_objects, _apply_encounters, _apply_missions,
-         _apply_textures, _apply_models, _apply_collision_flags, _apply_layout, _apply_animations,
-         _apply_animtables, _apply_terrain, _apply_sounds)
+         _apply_textures, _apply_models, _apply_collision_flags, _apply_layout, _apply_game_squads,
+         _apply_animations, _apply_animtables, _apply_terrain, _apply_sounds)
 
 
 def build(projects, data_dir, out_dir, name=None, description=None) -> Result:

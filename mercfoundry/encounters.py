@@ -28,6 +28,12 @@ A description (a mod's encounters/<layer>.json):
                                 "links": [{"path": "other", "their_point": 0}]}}}
 
 "boundaries": {"zone": {"points": [[x, y, z], ...], "properties": {"type": "killbox"}}}
+
+"game_squads": squads for the game's own encounters: [{"layer": "sw_allies6",
+"encounter": "enc_name", "name": "FoundrySquad1", "points": ["A"], "members":
+[...as above]}]. The members are objects of this layer; the squad record is
+added to that game encounter (after layout changes, which replace whole
+encounters).
 are polygons scripts watch (Event_ActorInBoundary(func, 'b', actor, 'zone',
 TRUE)) and switch (Boundary_Enable('zone', TRUE)).  Without properties a
 boundary is a plain trigger zone; retail types include killbox (restricted
@@ -234,14 +240,55 @@ def zone_paths(doc, zone):
             if p.lower().startswith(("t_" + low + "_", "p_" + low + "_"))]
 
 
+def _all_squads(doc):
+    for e in doc.get("encounters", []):
+        yield from e.get("squads", [])
+    yield from doc.get("game_squads", [])
+
+
 def member_names(doc):
-    out = [m["name"] for e in doc.get("encounters", []) for s in e.get("squads", []) for m in s.get("members", [])]
+    out = [m["name"] for s in _all_squads(doc) for m in s.get("members", [])]
     return out + [o["name"] for o in doc.get("objects", [])]
 
 
 def sources(doc):
-    out = [m["from"] for e in doc.get("encounters", []) for s in e.get("squads", []) for m in s.get("members", [])]
+    out = [m["from"] for s in _all_squads(doc) for m in s.get("members", [])]
     return sorted(set(out + [o["from"] for o in doc.get("objects", [])]), key=str.lower)
+
+
+def squad_node(name, sets, size):
+    """An SQD_ node: the squad's name, how many members, its point sets."""
+    node = {"tag": "SQD_", "children": [
+        {"tag": "NAME", "text": name},
+        {"tag": "INFO", "hex": struct.pack("<HHI", len(sets), 0, size).hex()}]}
+    if sets:
+        node["children"].append({"tag": "FPNT", "sets": list(sets)})
+    return node
+
+
+def add_game_squads(doc, squads):
+    """Add squads ({"encounter", "name", "points", "members"}) to a game
+    layer's encounter document (aidata JSON), in place."""
+    encs = {name: node for tag, name, node in aidata.items(doc) if tag == "enc_"}
+    for sq in squads:
+        enc = encs.get(sq["encounter"])
+        if enc is None:
+            raise ValueError(f"squad {sq['name']}: layer {sq['layer']} has no encounter {sq['encounter']!r}")
+        kids = enc["children"]
+        psts = next((c for c in kids if c["tag"] == "PSTS"), {"children": []})
+        have = {next((c.get("text") for c in p["children"] if c["tag"] == "NAME"), "")
+                for p in psts["children"] if p["tag"] == "PSET"}
+        missing = [s for s in sq.get("points", []) if s not in have]
+        if missing:
+            raise ValueError(f"squad {sq['name']}: encounter {sq['encounter']} has no point set {', '.join(missing)}")
+        sqds = next((c for c in kids if c["tag"] == "SQDS"), None)
+        if sqds is None:
+            sqds = {"tag": "SQDS", "children": []}
+            kids.append(sqds)
+        if any(n == sq["name"] for t, n, _ in aidata.items({"tree": [sqds]}) if t == "SQD_"):
+            raise ValueError(f"encounter {sq['encounter']} already has a squad {sq['name']!r}")
+        sqds["children"].append(squad_node(sq["name"], sq.get("points", []),
+                                           int(sq.get("size", len(sq.get("members", []))))))
 
 
 LAYER_KINDS = ("world", "encounter", "path", "lineregion", "region")
@@ -288,13 +335,7 @@ def build(layer, doc, find_source, source_loads=None):
             if missing:
                 raise ValueError(f"encounter {enc['name']}, squad {sq['name']}: no point set {', '.join(missing)}")
             members = sq.get("members", [])
-            size = int(sq.get("size", len(members)))
-            node = {"tag": "SQD_", "children": [
-                {"tag": "NAME", "text": sq["name"]},
-                {"tag": "INFO", "hex": struct.pack("<HHI", len(sets), 0, size).hex()}]}
-            if sets:
-                node["children"].append({"tag": "FPNT", "sets": sets})
-            squads.append(node)
+            squads.append(squad_node(sq["name"], sets, int(sq.get("size", len(members)))))
             for m in members:
                 insts.append(_member(find_source(m["from"]), m,
                                      {"encounter": enc["name"], "squad": sq["name"], "path": "none"}))
@@ -303,6 +344,10 @@ def build(layer, doc, find_source, source_loads=None):
             {"tag": "INFO", "hex": "0000000000000000", "auto": True},
             {"tag": "PSTS", "children": psets},
             {"tag": "SQDS", "children": squads}]})
+    for sq in doc.get("game_squads", []):
+        for m in sq.get("members", []):
+            insts.append(_member(find_source(m["from"]), m,
+                                 {"encounter": sq["encounter"], "squad": sq["name"], "path": "none"}))
     for o in doc.get("objects", []):
         insts.append(_member(find_source(o["from"]), o))
     wdoc = {"format": world.FORMAT, "name": layer, "strings": [], "chunks": [

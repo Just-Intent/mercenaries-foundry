@@ -53,6 +53,29 @@ class EncounterTests(unittest.TestCase):
         self.assertEqual(struct.unpack("<HHI", bytes.fromhex(sq["INFO"]["hex"])), (2, 0, 2))
         self.assertEqual(sq["FPNT"]["sets"], ["A", "B"])
 
+    def test_game_squads(self):
+        # A squad for a game encounter: members in this layer, the record
+        # added to the game's encounter (here one built from DOC).
+        doc = {"map": "swn", "game_squads": [{"layer": "game_layer", "encounter": "Ambush", "name": "Extra",
+                                             "points": ["B"],
+                                             "members": [{"from": "RoadblockRunner", "name": "Nk09",
+                                                          "position": [1, 0, 1]}]}]}
+        insts = [c for c in world.to_json(self.build(doc)[encounters.WORLD])["chunks"] if c.get("tag") == "inst"]
+        props = dict(insts[0]["properties"])
+        self.assertEqual((insts[0]["template"], props["encounter"], props["squad"]), ("Nk09", "Ambush", "Extra"))
+        self.assertNotIn(encounters.ENCOUNTER, self.build(doc))       # no encounter of its own
+        game = aidata.to_json(self.build()[encounters.ENCOUNTER], "encounter")
+        encounters.add_game_squads(game, doc["game_squads"])
+        game = aidata.to_json(aidata.from_json(game), "encounter")      # rebuilt
+        enc = {c["tag"]: c for c in game["tree"][0]["children"][0]["children"]}
+        self.assertEqual(struct.unpack("<4H", bytes.fromhex(enc["INFO"]["hex"]))[2:], (2, 2))
+        sq = {c["tag"]: c for c in enc["SQDS"]["children"][1]["children"]}
+        self.assertEqual((sq["NAME"]["text"], sq["FPNT"]["sets"]), ("Extra", ["B"]))
+        self.assertEqual(struct.unpack("<HHI", bytes.fromhex(sq["INFO"]["hex"])), (1, 0, 1))
+        for bad in ({"points": ["Z"]}, {"encounter": "Nope"}, {"name": "Squad1"}):
+            with self.assertRaises(ValueError):
+                encounters.add_game_squads(game, [{**doc["game_squads"][0], **bad}])
+
     def test_list(self):
         text = self.build()[encounters.LIST].decode()
         self.assertEqual(text, "\n[encounter]\n\nload my_layer\n\n[world]\n\nload my_layer\n")

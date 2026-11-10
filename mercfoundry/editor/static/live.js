@@ -118,9 +118,13 @@ export function createLive(ctx) {
     later(rec, () => send([{op: 'remove', name: rec.copyName, model: '', from: []}, copyCommand(src, rec.copyName,
                                                                                                rec.position, ctx.heading(rec.rotation))]));
   }
+  // Copies are made from the object itself (found by its name, or by model
+  // and place, or by the name a live move gave it), not by spawning its name
+  // as a template: names repeat across layers (two sk_HQs), and the template
+  // found by name can be another layer's object, not loaded here.
   function copyCommand(src, name, position, heading) {
-    if (src.name) return {op: 'spawn', template: src.name, name, position, heading: heading || 0};
-    return {op: 'copy', name: src.name, model: src.model, from: places(src), as: name, position, heading: heading || 0};
+    const by = src.liveSpawned ? liveName(src) : src.name;
+    return {op: 'copy', name: by, model: src.model, from: places(src), as: name, position, heading: heading || 0};
   }
 
   // Things the game can spawn by name (squad members, copies of named
