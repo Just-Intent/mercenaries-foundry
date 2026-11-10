@@ -889,6 +889,7 @@ const live = createLive({
   scene, threePos, heightAt, status, $, lookAt, heading,
   onLoaded: (names) => encs.setLoaded(names),
   target: () => gamePos(controls.target),
+  sourceOf: (rec) => state.byId.get(rec.source),
 });
 $('show-objects').addEventListener('change', (e) => {
   const on = e.target.checked;

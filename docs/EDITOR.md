@@ -104,8 +104,10 @@ toolkit bundle run it the same way: `foundry\python\python.exe foundry\mercfound
     spawn live too: the game finds the original as a live move does and spawns
     its properties under the copy's name (the copy borrows the original's
     properties, so it may not survive its area unloading; the saved mod has it
-    for good). Other mods' objects need a rebuild. The panel's **Game replies**
-    list keeps the game's last answers.
+    for good). Moving or turning a copy removes it in the game and spawns it
+    again where it now is (buildings moved by the game stop drawing). Other
+    mods' objects need a rebuild. The panel's **Game replies** list keeps the
+    game's last answers.
 - **The game's own encounters**: their spawn points can be dragged, typed in,
   added to their set or deleted. A game set keeps at least one point, since
   the game's squads name their sets. The edited encounter is saved whole as

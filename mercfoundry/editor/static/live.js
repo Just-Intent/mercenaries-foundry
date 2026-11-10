@@ -85,7 +85,7 @@ export function createLive(ctx) {
 
   function objectMoved(rec) {
     if (rec.context) return;
-    if (rec.copyName) return moveNamed(rec, rec.copyName, rec.position, ctx.heading(rec.rotation));
+    if (rec.copyName) return respawnCopy(rec);
     later(rec, () => {
       send([{op: 'move', name: rec.name, model: rec.model, from: places(rec),
              position: rec.position, heading: ctx.heading(rec.rotation)}]);
@@ -99,6 +99,19 @@ export function createLive(ctx) {
     send([{op: 'remove', name: rec.name, model: rec.model, from: places(rec)}]);
   }
 
+  // A moved copy is removed and spawned again where it now is: buildings
+  // spawned live stop drawing once the game moves them.
+  function respawnCopy(rec) {
+    const src = ctx.sourceOf && ctx.sourceOf(rec);
+    if (!src) return moveNamed(rec, rec.copyName, rec.position, ctx.heading(rec.rotation));
+    later(rec, () => send([{op: 'remove', name: rec.copyName, model: '', from: []}, copyCommand(src, rec.copyName,
+                                                                                               rec.position, ctx.heading(rec.rotation))]));
+  }
+  function copyCommand(src, name, position, heading) {
+    if (src.name) return {op: 'spawn', template: src.name, name, position, heading: heading || 0};
+    return {op: 'copy', name: src.name, model: src.model, from: places(src), as: name, position, heading: heading || 0};
+  }
+
   // Things the game can spawn by name (squad members, copies of named
   // objects): spawned live, then moved and removed by their new names.
   function spawn(template, name, position, heading) {
@@ -109,8 +122,7 @@ export function createLive(ctx) {
   // move would and spawns its properties under the new name.
   function copy(src, name, position, heading) {
     if (!name || /\s/.test(name) || src.context) return;
-    send([{op: 'copy', name: src.name, model: src.model, from: places(src), as: name,
-           position, heading: heading || 0}]);
+    send([copyCommand(src, name, position, heading)]);
   }
   function moveNamed(key, name, position, heading) {
     later(key, () => send([{op: 'move', name, model: '', from: [], position, heading: heading || 0}]));
