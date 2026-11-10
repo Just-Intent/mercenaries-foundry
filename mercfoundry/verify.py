@@ -77,12 +77,17 @@ def _check_record(kind, payload):
     return None
 
 
-def verify_archive(path, max_failures=50) -> Report:
+def verify_archive(path, max_failures=50, only=None) -> Report:
+    """Check an archive's layout and that its records decode and rebuild.
+    only: a set of (key, kind) to check (a build's changed and added
+    records; the rest are copies of the game's own)."""
     arc = dsk.Archive(path)
     rep = Report(arc.path.name, arc.count)
     rep.layout_ok = _rebuild_layout(arc)
     with arc.path.open("rb") as f:
         for r in arc.records:
+            if only is not None and r.ident not in only:
+                continue
             f.seek(r.offset)
             payload = f.read(r.size)
             try:

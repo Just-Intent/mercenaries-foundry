@@ -92,6 +92,28 @@ class EncounterTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             self.build({"boundaries": {"line": {"points": [[0, 0, 0], [1, 0, 0]]}}})
 
+    def test_regions(self):
+        doc = {"regions": {"site": {"type": "box", "position": [1, 2, 3], "size": [20, 10, 20], "yaw": 90},
+                           "ball": {"type": "sphere", "position": [0, 0, 0], "size": 5,
+                                    "properties": {"layer": "3"}}}}
+        recs = self.build(doc)
+        self.assertIn("[region]\n\nload my_layer\n", recs[encounters.LIST].decode())
+        rdoc = aidata.to_json(recs[encounters.REGION], "region")
+        self.assertEqual(aidata.from_json(rdoc), recs[encounters.REGION])
+        rgns = rdoc["tree"][0]["children"][0]
+        self.assertEqual(struct.unpack("<2I", bytes.fromhex(rgns["children"][0]["hex"])), (2, 5))
+        site, ball = rgns["children"][1:]
+        kids = {c["tag"]: c for c in site["children"]}
+        self.assertEqual([c["tag"] for c in site["children"]], ["INFO", "XFRM", "SIZE", "PROP"])
+        self.assertEqual(kids["PROP"]["pairs"], [["type", "box"], ["name", "site"]])
+        self.assertEqual(kids["XFRM"]["position"], [1.0, 2.0, 3.0])
+        self.assertAlmostEqual(kids["XFRM"]["rotation"][0][2], -1.0)
+        bkids = {c["tag"]: c for c in ball["children"]}
+        self.assertEqual(bkids["SIZE"]["size"], [5.0, 5.0, 5.0])
+        self.assertEqual(bkids["PROP"]["pairs"], [["type", "sphere"], ["name", "ball"], ["layer", "3"]])
+        with self.assertRaises(ValueError):
+            self.build({"regions": {"cone": {"type": "cone", "position": [0, 0, 0]}}})
+
     def test_junction_codec(self):
         body = struct.pack("<H", 2) + b"t_a\0" + struct.pack("<HH", 0, 11) + b"t_b\0" + struct.pack("<HH", 2, 1)
         node = aidata._decode_leaf(b"JNCT", body, b"path")

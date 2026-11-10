@@ -80,6 +80,7 @@ Get the originals to edit with `extract --decode`, `texture`, `model` and `sound
 class Result:
     written: list = field(default_factory=list)      # archive file names
     files: list = field(default_factory=list)        # loose game files, "DATAxbox/..."
+    records: dict = field(default_factory=dict)      # archive -> {(key, kind)} changed or added
     changes: list = field(default_factory=list)      # human-readable lines
     warnings: list = field(default_factory=list)
 
@@ -346,6 +347,22 @@ MATERIALS = ("wood", "solidmetal", "sheetmetal", "vehicle", "dirt", "concrete", 
              "snow", "glass", "rubber", "chain", "none")
 
 
+def _world_index(data, archives):
+    """Every world object in the game's archives, by name and (unnamed ones)
+    by model, in archive order; built once per build, since scanning all
+    objects takes seconds."""
+    if getattr(data, "world_index", None) is None:
+        from . import find
+        by_name, by_model = {}, {}
+        for obj in find.objects(archives):
+            if obj.get("name"):
+                by_name.setdefault(obj["name"].lower(), []).append(obj)
+            elif obj.get("model"):
+                by_model.setdefault(obj["model"].lower(), []).append(obj)
+        data.world_index = (by_name, by_model)
+    return data.world_index
+
+
 def _apply_encounters(data, folder, result):
     """encounters/<layer>.json: a new world layer (objects, encounter, list)."""
     from . import encounters, find
@@ -357,20 +374,19 @@ def _apply_encounters(data, folder, result):
     layers = {}
 
     current_map = [""]
+    by_name, by_model = _world_index(data, archives)
 
     def source_hit(name):
         """The object to copy: a named one, or for "model:<model>" the first
         unnamed scenery object with that model (preferring this map's layers)."""
         if name.lower().startswith("model:"):
             m = name[6:]
-            hits = [h for h in find.search(archives, model=m)
-                    if (h.get("model") or "").lower() == m.lower() and not h.get("name")]
-            hits.sort(key=lambda h: not h["layer"].lower().startswith(current_map[0]))
+            hits = sorted(by_model.get(m.lower(), []),
+                          key=lambda h: not h["layer"].lower().startswith(current_map[0]))
             if not hits:
                 raise ValueError(f"no world object with model {m!r} to copy")
         else:
-            hits = [h for h in find.search(archives, name=name)
-                    if (h.get("name") or "").lower() == name.lower()]
+            hits = by_name.get(name.lower(), [])
             if not hits:
                 raise ValueError(f"no world object named {name!r} to copy")
         return hits[0]
@@ -1130,6 +1146,7 @@ def build(projects, data_dir, out_dir, name=None, description=None) -> Result:
     for n in names:
         dsk.write_modified(data.archive(n), out / n, data.replace.get(n, {}), data.add.get(n, ()))
         result.written.append(n)
+        result.records[n] = set(data.replace.get(n, {})) | {(k, kind) for k, kind, _ in data.add.get(n, ())}
     # Archives written by an earlier build but no longer changed would
     # silently override the game; remove them.
     for n in ARCHIVES:

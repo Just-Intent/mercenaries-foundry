@@ -33,6 +33,13 @@ TRUE)) and switch (Boundary_Enable('zone', TRUE)).  Without properties a
 boundary is a plain trigger zone; retail types include killbox (restricted
 area), radiation, water, atmosphere, ambience and faction.
 
+"regions": {"foundry_site": {"type": "box", "position": [x, y, z],
+"size": [x, y, z], "yaw": 0}} are boxes and spheres (region > rgns > regn).
+Scripts read them as places: Region_GetPosition('foundry_site') (objective
+markers: util_SetupSingleTargetRegionObjective) and
+Event_ActorToLocationProximity(func, 'b', actor, 'foundry_site', radius,
+TRUE, TRUE), as delivery objectives do.
+
 Paths (path > NAME, INFO, PROP, [PSTM], PNTS, ORNT, JNCT) are what
 Ai_Command(actor, 'Patrol', '<path>', '1.0', 'loPri') and an object's own
 "path" property follow.  JNCT links join this path's point (default: its
@@ -99,6 +106,30 @@ def _boundary_node(name, spec):
         {"tag": "INFO", "hex": "000000000000", "auto": True},
         {"tag": "PROP", "pairs": pairs},
         {"tag": "PNTS", "points": points}]}
+
+
+REGION = name_hash("region")
+REGION_TYPES = ("box", "sphere")
+
+
+def _region_node(name, spec):
+    """A region (rgns > regn: INFO (u16 properties), XFRM, SIZE, PROP with
+    type and name first, as all 42 retail ones)."""
+    kind = str(spec.get("type", "box")).lower()
+    if kind not in REGION_TYPES:
+        raise ValueError(f"region {name}: type is box or sphere, not {kind!r}")
+    position = [float(v) for v in spec["position"]]
+    size = spec.get("size", [10.0, 10.0, 10.0])
+    size = [float(size)] * 3 if isinstance(size, (int, float)) else [float(v) for v in size]
+    if len(position) != 3 or len(size) != 3:
+        raise ValueError(f"region {name}: position and size are [x, y, z]")
+    pairs = [["type", kind], ["name", name]]
+    pairs += [[str(k), str(v)] for k, v in (spec.get("properties") or {}).items() if k.lower() not in ("type", "name")]
+    return {"tag": "regn", "children": [
+        {"tag": "INFO", "hex": struct.pack("<H", len(pairs)).hex(), "auto": True},
+        {"tag": "XFRM", "rotation": _rotation(float(spec.get("yaw", 0))), "position": position},
+        {"tag": "SIZE", "size": size},
+        {"tag": "PROP", "pairs": pairs}]}
 
 
 def _path_node(name, spec):
@@ -218,6 +249,12 @@ def build(layer, doc, find_source, source_loads=None):
                 "tree": [{"tag": "ucfb", "children": [_boundary_node(n, s) for n, s in doc["boundaries"].items()]}]}
         out[LINEREGION] = aidata.from_json(bdoc)
         sections["lineregion"] = [layer]
+    if doc.get("regions"):
+        rdoc = {"format": aidata.FORMAT, "kind": "region", "tree": [{"tag": "ucfb", "children": [
+            {"tag": "rgns", "children": [{"tag": "INFO", "hex": "0000000000000000", "auto": True}] +
+             [_region_node(n, s) for n, s in doc["regions"].items()]}]}]}
+        out[REGION] = aidata.from_json(rdoc)
+        sections["region"] = [layer]
     extra = []
     if source_loads is not None and doc.get("copy_loads", True):
         for name in sources(doc):

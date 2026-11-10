@@ -196,6 +196,47 @@ def colr_blobs(data, patch_count):
     return out
 
 
+FIT_VERSION = b"terrain-light-fit-1"
+
+
+def cache_dir():
+    """Where builds keep results worth reusing (never in game or mod folders):
+    MERCFOUNDRY_CACHE, else the user's local app data."""
+    import os
+    from pathlib import Path
+    base = os.environ.get("MERCFOUNDRY_CACHE")
+    if base:
+        return Path(base)
+    local = os.environ.get("LOCALAPPDATA")
+    return (Path(local) if local else Path.home() / ".cache") / "mercfoundry"
+
+
+def _cached_fit(chunks, compute):
+    """fit() for a terrain's heights and colours, from the cache when it was
+    worked out before: it depends only on them and takes seconds."""
+    import hashlib
+    import json
+    h = hashlib.sha256(FIT_VERSION)
+    for tag in sorted(chunks):
+        if tag in (b"INFO", b"HEXP", b"HGT8", b"COLR"):
+            h.update(tag + len(chunks[tag]).to_bytes(4, "little") + chunks[tag])
+    path = cache_dir() / "terrain-light" / (h.hexdigest() + ".json")
+    try:
+        d = json.loads(path.read_text(encoding="utf-8"))
+        return Light(d["sun"], d["ambient"], d["diffuse"], d["shadow"], d["rms"])
+    except (OSError, ValueError, KeyError):
+        pass
+    light = compute()
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(json.dumps({"sun": list(light.sun), "ambient": list(light.ambient),
+                                    "diffuse": list(light.diffuse), "shadow": light.shadow,
+                                    "rms": light.rms}), encoding="utf-8")
+    except OSError:
+        pass
+    return light
+
+
 def relight_chunks(chunks, new_height_chunks):
     """New COLR body for a terrain whose INFO/HEXP/HGT8 become
     new_height_chunks, or (None, note) if lighting is left alone.
@@ -213,7 +254,7 @@ def relight_chunks(chunks, new_height_chunks):
     new_m = [[u * step for u in row] for row in new_u]
     side = size // tl.PATCH
     colours = tl.decode_colr(chunks[b"COLR"], side * side)
-    light = fit(old_m, vertex_rgb(colours, size), size, spacing)
+    light = _cached_fit(chunks, lambda: fit(old_m, vertex_rgb(colours, size), size, spacing))
     if not light.usable:
         return None, "lighting left as is (its colours don't follow a sun this map's slopes explain)"
     new, count = relight(colours, old_m, new_m, size, spacing, light, changed)

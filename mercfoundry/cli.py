@@ -279,7 +279,7 @@ def cmd_mod_build(args):
     print(f"wrote {', '.join(result.written + result.files)} to {args.out}")
     bad = 0
     for name in result.written:
-        rep = verifier.verify_archive(Path(args.out) / name)
+        rep = verifier.verify_archive(Path(args.out) / name, only=result.records.get(name))
         bad += not rep.ok
         for index, label, error in rep.failures:
             print(f"  verify {name} record {index} ({label}): {error}")
@@ -330,7 +330,7 @@ def cmd_mod_sync(args):
         out = Path(args.game) / "mods" / sync.OUTPUT
         bad = 0
         for name in res.build.written:
-            rep = verifier.verify_archive(out / name)
+            rep = verifier.verify_archive(out / name, only=res.build.records.get(name))
             bad += not rep.ok
             for index, label, error in rep.failures:
                 print(f"  verify {name} record {index} ({label}): {error}")
