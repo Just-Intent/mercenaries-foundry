@@ -176,7 +176,8 @@ def make_handler(scene: Scene, mod_name: str, live: Live = None):
                         return self.send(200, scene.save_placed(doc["map"], doc.get("files", {})))
                 if path == "/api/encounters/save":
                     with objects_lock:
-                        return self.send(200, scene.save_encounters(doc["map"], doc.get("files", {})))
+                        return self.send(200, scene.save_encounters(doc["map"], doc.get("files", {}),
+                                                                    doc.get("game", [])))
                 if path == "/api/layout/save":
                     with objects_lock:
                         done = scene.save_layout(doc["map"], doc.get("game", []), doc.get("mod", {}))

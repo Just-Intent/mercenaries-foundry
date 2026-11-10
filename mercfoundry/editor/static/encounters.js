@@ -22,7 +22,11 @@ export function createEncounters(ctx) {
   const mat = (key) => (mats[key] ||= new THREE.MeshLambertMaterial(
     key === 'game-point' ? {color: COLOURS[key], transparent: true, opacity: 0.45, depthWrite: false}
                          : {color: COLOURS[key]}));
-  const st = {map: null, game: [], mod: [], templates: [], selected: null, dirty: new Set(), place: null, show: true};
+  const st = {map: null, game: [], mod: [], templates: [], selected: null, dirty: new Set(), gameDirty: new Set(),
+              place: null, show: true};
+  // What can be edited: everything of the mod's; of the game's, spawn points only
+  // (members are world objects, moved as objects; squads and encounters stay).
+  const editable = (sel) => sel && (sel.source === 'mod' || (sel.source === 'game' && !sel.member && sel.set !== undefined));
 
   // The squad picker: templates the running game has loaded here first (the
   // game can spawn those live), then the rest.
@@ -81,7 +85,7 @@ export function createEncounters(ctx) {
     if (st.selected && !st.selected.member) {
       st.selected.node = group.children.find((c) => same(c.userData.pick, st.selected));
     }
-    if (st.selected && st.selected.source === 'mod' && st.selected.node) {
+    if (editable(st.selected) && st.selected.node) {
       gizmo.setMode('translate');
       gizmo.showX = gizmo.showY = gizmo.showZ = true;
       gizmo.attach(st.selected.node);
@@ -102,6 +106,7 @@ export function createEncounters(ctx) {
     st.game = doc.game;
     st.mod = doc.mod;
     st.dirty.clear();
+    st.gameDirty.clear();
     rebuild();
     return st.game.length + st.mod.reduce((n, f) => n + f.encounters.length, 0);
   }
@@ -139,7 +144,7 @@ export function createEncounters(ctx) {
 
   function moved(node) {
     const sel = st.selected;
-    if (!sel || sel.source !== 'mod') return;
+    if (!editable(sel)) return;
     const p = gamePos(node.position);
     if (sel.member) {
       sel.member.position = p;
@@ -147,13 +152,17 @@ export function createEncounters(ctx) {
     } else {
       sel.enc.points[sel.set][sel.index] = p;
     }
-    edited(sel.file);
+    markEdited(sel);
     showPanel();
   }
 
   function edited(file) {
     st.dirty.add(file);
     ctx.setDirty(true);
+  }
+  function markEdited(sel) {
+    if (sel.source === 'game') { st.gameDirty.add(sel.enc); ctx.setDirty(true); }
+    else edited(sel.file);
   }
 
   // ---------------------------------------------------------------- panel
@@ -178,18 +187,21 @@ export function createEncounters(ctx) {
     [$('ex').value, $('ey').value, $('ez').value] = p.map((v) => (+v).toFixed(2));
     $('eh-row').hidden = !sel.member;
     if (sel.member) $('eh').value = (sel.member.yaw || 0).toFixed(1);
-    for (const id of ['ex', 'ey', 'ez', 'eh']) $(id).disabled = !mod;
+    for (const id of ['ex', 'ey', 'ez', 'eh']) $(id).disabled = !editable(sel);
     for (const id of ['enc-add-member', 'enc-add-point', 'enc-delete', 'enc-delete-squad', 'enc-delete-enc']) $(id).hidden = !mod;
+    if (editable(sel) && !mod) $('enc-add-point').hidden = $('enc-delete').hidden = false;
     $('enc-add-member').hidden = !mod || !sel.member;
     $('enc-delete-squad').hidden = !mod || !sel.squad;
     $('enc-note').textContent = mod
       ? `Saved in encounters/${sel.file}. A script loads the layer with Utility_ReadLevelFile('${sel.layer}') and sends squads with Squad_Command.`
-      : 'A game encounter (read only here). Its squads are usually spawned by mission scripts at these points.';
+      : sel.member ? 'A game squad member: move it as an object (click it with Squads hidden, or find it by name).'
+      : `A game encounter's spawn point: drag it, add points to set ${sel.set} or delete them. Saved as `
+        + `layout/${sel.layer}.encounter.changes.json. Squads move to these points when scripts send them.`;
   }
 
   function fromPanel() {
     const sel = st.selected;
-    if (!sel || sel.source !== 'mod') return;
+    if (!editable(sel)) return;
     const p = [$('ex').value, $('ey').value, $('ez').value].map((v) => (v.trim() === '' ? NaN : +v));
     if (p.some((v) => !Number.isFinite(v))) return showPanel();
     if (sel.member) {
@@ -200,7 +212,7 @@ export function createEncounters(ctx) {
     } else {
       sel.enc.points[sel.set][sel.index] = p;
     }
-    edited(sel.file);
+    markEdited(sel);
     select(sel);
   }
 
@@ -231,7 +243,15 @@ export function createEncounters(ctx) {
 
   function deleteSelected() {
     const sel = st.selected;
-    if (!sel || sel.source !== 'mod') return;
+    if (!editable(sel)) return;
+    if (sel.source === 'game') {
+      const pts = sel.enc.points[sel.set];
+      if (pts.length <= 1) return status(`Set ${sel.set} needs a point: the game's squads name it`, true);
+      pts.splice(sel.index, 1);
+      markEdited(sel);
+      select(null);
+      return;
+    }
     if (sel.member) {
       sel.squad.members = sel.squad.members.filter((m) => m !== sel.member);
       ctx.live().removeNamed(sel.member.name);
@@ -271,7 +291,7 @@ export function createEncounters(ctx) {
   // Click-to-place modes: a new spawn point, or a new squad.
   function startAddPoint() {
     const sel = st.selected;
-    if (!sel || sel.source !== 'mod') return;
+    if (!editable(sel)) return;
     const set = sel.set || (sel.squad && (sel.squad.points || [])[0]) || Object.keys(sel.enc.points || {})[0] || 'A';
     st.place = {kind: 'point', sel, set};
     status(`Click the ground to add a spawn point to set ${set}; Esc cancels.`);
@@ -330,8 +350,10 @@ export function createEncounters(ctx) {
       const enc = pl.sel.enc;
       enc.points = enc.points || {};
       (enc.points[pl.set] ||= []).push(at);
-      if (pl.sel.squad && !(pl.sel.squad.points || []).includes(pl.set)) (pl.sel.squad.points ||= []).push(pl.set);
-      edited(pl.sel.file);
+      if (pl.sel.source === 'mod' && pl.sel.squad && !(pl.sel.squad.points || []).includes(pl.set)) {
+        (pl.sel.squad.points ||= []).push(pl.set);
+      }
+      markEdited(pl.sel);
       select({...pl.sel, member: undefined, squad: pl.sel.squad, set: pl.set, index: enc.points[pl.set].length - 1});
       status('Spawn point added');
       return true;
@@ -378,16 +400,17 @@ export function createEncounters(ctx) {
 
   // ---------------------------------------------------------------- saving
   function saveBody() {
-    if (!st.dirty.size) return null;
+    if (!st.dirty.size && !st.gameDirty.size) return null;
     const files = {};
     for (const file of st.dirty) {
       const f = st.mod.find((x) => x.file === file);
       files[file] = f ? f.encounters : [];
     }
-    return {map: st.map, files};
+    const game = [...st.gameDirty].map((enc) => ({layer: enc.layer, name: enc.name, points: enc.points}));
+    return {map: st.map, files, game};
   }
 
-  function saved() { st.dirty.clear(); }
+  function saved() { st.dirty.clear(); st.gameDirty.clear(); }
 
   function find(q) {
     q = q.toLowerCase();

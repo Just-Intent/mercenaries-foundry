@@ -618,7 +618,12 @@ class Scene:
                 layer = self.names().get(r.key)
                 if not layer or not self._in_map(layer, m):
                     continue
-                for tag, name, node in aidata.items(aidata.to_json(a.read(r), "encounter")):
+                doc = aidata.to_json(a.read(r), "encounter")
+                ch = self._layout_changes(layer, "encounter")
+                if ch:
+                    from .. import modpack
+                    doc = modpack.apply_layout_changes(doc, ch)
+                for tag, name, node in aidata.items(doc):
                     if tag != "enc_" or not name:
                         continue
                     sets, squads = {}, []
@@ -732,9 +737,74 @@ class Scene:
         out.sort(key=lambda t: (t["type"] != "human", t["name"].lower()))
         return out
 
-    def save_encounters(self, map_name, files):
+    def save_game_encounters(self, edits):
+        """edits: [{layer, name, points: {set: [[x, y, z], ...]}}] for the
+        game's own encounters: their spawn point sets are replaced, and the
+        encounter goes into layout/<layer>.encounter.changes.json (the whole
+        encounter, matched by name, as the build applies layout changes).
+        Returns the files written."""
+        from .. import aidata, modpack
+        by_layer = {}
+        for e in edits:
+            by_layer.setdefault(e["layer"], []).append(e)
+        written = []
+        for layer, items in by_layer.items():
+            rec = next(((a, r) for a in self.archives for r in a.records
+                        if aidata.KINDS.get(r.kind) == "encounter" and (self.names().get(r.key) or "") == layer), None)
+            if rec is None:
+                raise ValueError(f"no encounter record for layer {layer!r}")
+            base = aidata.to_json(rec[0].read(rec[1]), "encounter")
+            doc = base
+            ch = self._layout_changes(layer, "encounter")
+            if ch:
+                doc = modpack.apply_layout_changes(base, ch)
+            import copy
+            doc = copy.deepcopy(doc)
+            for e in items:
+                node = next((n for t, nm, n in aidata.items(doc) if t == "enc_" and nm == e["name"]), None)
+                if node is None:
+                    raise ValueError(f"layer {layer} has no encounter {e['name']!r}")
+                kids = node["children"]
+                psts = next((c for c in kids if c["tag"] == "PSTS"), None)
+                if psts is None:
+                    psts = {"tag": "PSTS", "children": []}
+                    at = next((i for i, c in enumerate(kids) if c["tag"] == "SQDS"), len(kids))
+                    kids.insert(at, psts)
+                old = {next((c.get("text") for c in s["children"] if c["tag"] == "NAME"), ""): s
+                       for s in psts["children"] if s["tag"] == "PSET"}
+                sets = []
+                for set_name, pts in e["points"].items():
+                    if not pts:
+                        continue
+                    pts = [[round(float(v), 3) for v in p] for p in pts]
+                    s = old.get(set_name)
+                    if s is None:
+                        s = {"tag": "PSET", "children": [{"tag": "NAME", "text": set_name},
+                                                         {"tag": "INFO", "hex": "010000000000", "auto": True},
+                                                         {"tag": "PNTS", "points": pts}]}
+                    else:
+                        for c in s["children"]:
+                            if c["tag"] == "PNTS":
+                                c["points"] = pts
+                    sets.append(s)
+                psts["children"] = sets
+            changes = modpack.layout_changes(base, doc)
+            p = self.mod / "layout" / f"{layer}.encounter.changes.json"
+            if changes is None:
+                raise ValueError(f"layer {layer}'s encounters can't be told apart by name")
+            if changes["changed"] or changes["removed"]:
+                p.parent.mkdir(parents=True, exist_ok=True)
+                p.write_text(json.dumps(changes, indent=1) + "\n", encoding="utf-8")
+                written.append(f"layout/{p.name}")
+            elif p.exists():
+                p.unlink()
+        return written
+
+    def save_encounters(self, map_name, files, game=()):
         """files: {layer file name: [encounter, ...]}, replacing the
-        encounters of those mod layer files (new files are made for map_name)."""
+        encounters of those mod layer files (new files are made for map_name);
+        game: edits to the game's own encounters (see save_game_encounters)."""
+        game_files = self.save_game_encounters(game) if game else []
         import re
         taken = {o["name"].lower() for o in self.all_objects() if o["name"]}
         world_layers = {(self.names().get(r.key) or "").lower() for a in self.archives for r in a.records
@@ -776,7 +846,7 @@ class Scene:
                 doc.pop("encounters", None)
             p.parent.mkdir(parents=True, exist_ok=True)
             p.write_text(json.dumps(doc, indent=1) + "\n", encoding="utf-8")
-        return {"files": [f"encounters/{f}" for f in files]}
+        return {"files": [f"encounters/{f}" for f in files] + game_files}
 
     def _require(self, version):
         """Raise mod.json "requires" to at least version."""

@@ -79,6 +79,7 @@
 - Editor places templates: any vehicle, prop or character goes into the mod's map layer with its real model, and spawns live when the game has it loaded. Layers marked `"load": "map"` (all editor-made layers) load in free roam on their map through a generated `foundry_layers` script hooked into `LoadNoMissionState`, so editor work shows in the game with no script. Fixed: saving in the editor dropped other maps' object rules. Tested in game: a Humvee and a soldier placed in the editor appeared in free roam.
 - Editor water: the game's water areas (`type water` boundaries with a surface height, colour and texture) are drawn as surfaces, with their own toggle.
 - Editor path extras: the mod's own paths get pauses, animations (path events, with a chance) and links in the panel, kept on their points when points are added or deleted. Fixed: road decals one cell past the map's edge got NaN heights (the editor's console errors).
+- Editor edits the game's own encounters: spawn points move, are added and deleted, saved as a layout changes file (the whole encounter, replaced by name at build). Checked in the build (SW Allies 6's `A6_Shortcut` set Z: 6 points to 7, one moved); not played in game.
 - 252 tests pass.
 
 ## Fixed from retail data
@@ -126,7 +127,7 @@
 - Python 3.12.10 alongside 3.13. The port's `.venv` has its pinned CMake 3.31.6, Ninja 1.13.0 and Capstone 5.0.6.
 
 ## Next steps
-1. Editor: live copies of unnamed scenery, editing the game's own encounters.
+1. Editor: live copies of unnamed scenery; adding squads to the game's own encounters.
 2. Collision flags: what bit 4 does; why bullets pass through pines and some rock meshes; collision for edited existing pieces.
 3. Moving skin bones on characters (animations override bone translations); what animation-table priorities and flags do.
 4. Function map: name more engine functions (actors, AI commands, missions); find the path from a vehicle actor to its drivetrain, so plugins can change handling live with the setters.

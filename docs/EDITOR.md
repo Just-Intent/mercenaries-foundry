@@ -103,6 +103,12 @@ toolkit bundle run it the same way: `foundry\python\python.exe foundry\mercfound
     ("loaded here"); others appear after a rebuild. Copies of unnamed scenery and
     other mods' objects need a rebuild. The panel's **Game replies** list keeps
     the game's last answers.
+- **The game's own encounters**: their spawn points can be dragged, typed in,
+  added to their set or deleted. A game set keeps at least one point, since
+  the game's squads name their sets. The edited encounter is saved whole as
+  `layout/<layer>.encounter.changes.json`, which the build applies to the
+  game's layer by encounter name. Squad members are world objects: move them
+  as objects. Squads and encounters themselves aren't added or removed.
 - **Path pauses, animations and links** (the mod's own paths). Select a
   point to set:
   - a pause in seconds;
