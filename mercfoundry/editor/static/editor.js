@@ -213,10 +213,20 @@ function ensureNode(rec) {
   state.nodes.add(rec);
   placeBox(rec);
   if (rec.deleted) ghost(node);
-  loadModel(rec.geometry || rec.model).then((model) => {
+  loadModel(rec.geometry || rec.model).then(async (model) => {
     if (!model || rec.node !== node) return;
+    const body = model.clone(true);
+    // Gates: the doors are models of their own, hung on the gate's joints.
+    for (const [joint, part] of rec.parts || []) {
+      const at = body.getObjectByName(joint), door = await loadModel(part);
+      if (!at || !door) continue;
+      const d = door.clone(true);
+      d.scale.set(1, 1, 1);        // already inside the gate's (turned) model space
+      at.add(d);
+    }
+    if (rec.node !== node) return;
     node.remove(box);
-    node.add(model.clone(true));
+    node.add(body);
     if (rec.deleted) ghost(node);
   });
   return node;
@@ -490,7 +500,7 @@ function addCopy(src, name, position, rotation, select_ = true) {
   if (!src) return null;
   const rec = {
     id: `copy:${copySerial++}`, layer: src.layer, name: src.name, model: src.model,
-    geometry: src.geometry, type: src.type,
+    geometry: src.geometry, type: src.type, parts: src.parts,
     position, rotation, copyName: name, source: src.id,
   };
   addRecord(rec);

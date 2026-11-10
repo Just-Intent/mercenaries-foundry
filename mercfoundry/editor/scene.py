@@ -29,9 +29,15 @@ def from_three(m3):
 def look(o):
     """What the editor draws for an object: the model the game draws (its
     GeometryFile, which some objects' own model field doesn't name, e.g. night
-    lampposts and soldiers) and its kind (objectType)."""
+    lampposts and soldiers) and its kind (objectType); for gates, the door
+    models the game hangs on the gate's closed-door joints ("parts")."""
     props = {k.lower(): v for k, v in o["properties"]}
-    return {"geometry": props.get("geometryfile") or o["model"], "type": props.get("objecttype", "")}
+    out = {"geometry": props.get("geometryfile") or o["model"], "type": props.get("objecttype", "")}
+    parts = [[f"k_gateclosed{side}", props[f"geometrynamegate{side.lower()}"]]
+             for side in ("A", "B") if props.get(f"geometrynamegate{side.lower()}")]
+    if parts:
+        out["parts"] = parts
+    return out
 
 
 def heading(rows):
