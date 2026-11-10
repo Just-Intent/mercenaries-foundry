@@ -74,6 +74,21 @@ Retail boundaries all have the same chunks (`lrg_`: `NAME`, `INFO` = `u16` 0, `u
 
 Tested in game (2026-11-08): a trigger zone in the test mission's layer showed its message when the player entered it.
 
+Regions are boxes and spheres in a layer, written to its `region` record:
+
+```json
+"regions": {"foundry_m10_site": {"type": "box", "position": [1525, 31, 830], "size": [20, 10, 20], "yaw": 0}}
+```
+
+`size` is `[x, y, z]`, or one number for all three; `properties` adds more name/value pairs. Retail has 42 regions. Most are map-wide effect areas (`fx_leaves`, `fx_ash`) and sound areas. Missions use a few as places:
+
+- `Region_GetPosition('foundry_m10_site')` returns its centre. `util_SetupSingleTargetRegionObjective` uses it to put an objective marker there.
+- `Event_ActorToLocationProximity('Func', 'b', 'player0', 'foundry_m10_site', 25, TRUE, TRUE)` calls `Func` when the actor comes within 25 m. Delivery objectives use it this way.
+
+Scripts don't use regions as trigger zones; use a boundary for that.
+
+Tested in game (2026-11-09): a box in the test contract's layer. `Region_GetPosition` returned its position and the proximity event fired within 25 m.
+
 Load the layer and command it from a script (a mod's `scripts/<name>.lua`). For example, in a copy of `allies0`:
 
 ```lua

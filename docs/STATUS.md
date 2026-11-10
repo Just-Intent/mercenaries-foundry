@@ -72,7 +72,7 @@
 - Sound ([SOUND.md](SOUND.md)): the game's XACT wave banks and sound banks are read: all 133 wave banks (8,589 waves, Xbox ADPCM decoded) and every cue in the 100 registered sound banks, resolved to the waves it plays (simple, random variations and multi-track sounds). `sound list` and `sound export` write cues as `.wav`. Mods replace sounds with `sounds/<bank>/<cue>.wav`; the build encodes them to Xbox ADPCM at the wave's own rate and channels and rebuilds the wave bank as a loose file. Every retail bank rebuilds byte-for-byte with nothing replaced. Tested in game: a replaced voice line played.
 - New cues: `sounds/<bank>/new/<cue>.wav` adds a cue, its wave appended to the bank's wave bank, the cue and its sound appended to the sound bank, and the game's registry entries (`xcl_`/`xsl_` in assets.dsk) copied from one of the bank's simple cues. Sound banks carry a CRC-16/X.25 checksum and a cue name hash table (XACT's name hash, found at 0x27F5AE and matching all 5,252 retail cues); both are rewritten.
 - Faster builds: a full rebuild of the eight enabled test mods at launch went from 71 s to about 9 s, with identical output. Encounter layers looked up each copied object by scanning every world object in the game (69 scans); the build now indexes them once. The terrain sun fit, which depends only on the terrain, is cached in %LOCALAPPDATA%\mercfoundry. The check after writing decodes only the records the build changed or added. With nothing changed, the launch sync takes 0.2 s. The launcher's own step hashes all 2.4 GB of retail files and the enabled mods on every launch (about 2 s when the files are in memory) and merges archives after a change.
-- Regions in mod layers: `"regions"` in `encounters/<layer>.json` adds boxes and spheres (rebuilds all 12 retail region records exactly, rotation aside). Not yet tested in game.
+- Regions in mod layers: `"regions"` in `encounters/<layer>.json` adds boxes and spheres (rebuilds all 12 retail region records exactly, rotation aside). Tested in game: `Region_GetPosition` returned a new box's position and `Event_ActorToLocationProximity` fired within 25 m of it.
 - 247 tests pass.
 
 ## Fixed from retail data
@@ -122,7 +122,7 @@
 ## Next steps
 1. Editor: live copies of unnamed scenery, path pauses and links, editing the game's own encounters, placing objects from templates.
 2. Collision flags: what bit 4 does; why bullets pass through pines and some rock meshes; collision for edited existing pieces.
-3. Missions: regions (boxes) in mod layers, traffic zones, path animation events (`EVNT`).
+3. Missions: traffic zones, path animation events (`EVNT`).
 4. Moving skin bones on characters (animations override bone translations); what animation-table priorities and flags do.
 5. Function map: name more engine functions (actors, AI commands, missions); find the path from a vehicle actor to its drivetrain, so plugins can change handling live with the setters.
 6. Overlay: spawning and object editing from the in-game panel (now only in the window).
