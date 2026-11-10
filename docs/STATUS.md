@@ -77,6 +77,7 @@
 - Test range: `test-range` writes a mod with a flat 240 m pad on the south map, 220 m or more from all the game's traffic and AI. `Foundry_Range()` in Foundry Console takes you there and runs the mod's `range.lua`, so in-game tests have clean results.
 - Path events: `EVNT` decoded (all 857 retail path records round-trip). Mod paths take `"events"`: animation clips played at points, with a chance in percent. Tested in game on the test range: a patrolling soldier fidgeted at both ends with 100, and never with 0. So retail's one shipped event (chance 0) never plays.
 - Editor places templates: any vehicle, prop or character goes into the mod's map layer with its real model, and spawns live when the game has it loaded. Layers marked `"load": "map"` (all editor-made layers) load in free roam on their map through a generated `foundry_layers` script hooked into `LoadNoMissionState`, so editor work shows in the game with no script. Fixed: saving in the editor dropped other maps' object rules. Tested in game: a Humvee and a soldier placed in the editor appeared in free roam.
+- Editor water: the game's water areas (`type water` boundaries with a surface height, colour and texture) are drawn as surfaces, with their own toggle.
 - 252 tests pass.
 
 ## Fixed from retail data

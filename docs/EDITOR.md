@@ -103,6 +103,12 @@ toolkit bundle run it the same way: `foundry\python\python.exe foundry\mercfound
     ("loaded here"); others appear after a rebuild. Copies of unnamed scenery and
     other mods' objects need a rebuild. The panel's **Game replies** list keeps
     the game's last answers.
+- **Water** is drawn where the game has it: every boundary with `type water`
+  (the south map's coast, bays, rivers and ponds; the north map's oceans and
+  rivers) is filled at its `height`. The fill uses its `texture` (default
+  `oceanwater`) and its `red`/`green`/`blue`/`alpha` colour, leaned toward
+  blue so it reads as water. The **Water** box hides it. A mod's own water
+  zones are drawn the same way, and move with their points.
 - **Place** puts down any template: a vehicle, prop or character. Type or pick
   the template in the toolbar box, click **Place** (or press P), then click the
   ground.

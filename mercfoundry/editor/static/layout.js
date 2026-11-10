@@ -17,12 +17,18 @@ export function createLayout(ctx) {
   const {scene, gizmo, heightAt, threePos, gamePos, status, $} = ctx;
   const group = new THREE.Group();
   scene.add(group);
+  // Water: the game's "type water" boundaries, drawn as their surface (a flat
+  // fill at the boundary's "height", in its red/green/blue/alpha colour).
+  // Kept apart from the outlines so it has its own toggle and isn't picked.
+  const waterGroup = new THREE.Group();
+  scene.add(waterGroup);
   const handleGeo = new THREE.SphereGeometry(0.7, 12, 8);
   const handleMat = new THREE.MeshBasicMaterial({color: 0xffcc33, depthTest: false});
   const handlePick = new THREE.MeshBasicMaterial({color: 0xff5050, depthTest: false});
   const st = {
     map: null, items: [], files: [], selected: null, handles: [], point: null,
     gameEdits: new Map(), dirtyFiles: new Set(), deleted: [], draw: null, show: {path: true, boundary: true},
+    showWater: true,
   };
 
   const colourOf = (it) => (it === st.selected ? COLOURS.selected
@@ -30,7 +36,50 @@ export function createLayout(ctx) {
     : COLOURS[`${it.source}-${it.kind}`]);
 
   // ---------------------------------------------------------------- drawing
+  const WATER_BLUE = new THREE.Color(0x2f6f9f);
+  const waterTextures = new Map();
+  function waterTexture(name) {          // tiled every 16 m (the shape's UVs are in metres)
+    if (!waterTextures.has(name)) {
+      const tex = new THREE.TextureLoader().load(`/api/texture/${encodeURIComponent(name)}.png`);
+      tex.wrapS = tex.wrapT = THREE.RepeatWrapping;
+      tex.repeat.set(1 / 16, 1 / 16);
+      tex.colorSpace = THREE.SRGBColorSpace;
+      waterTextures.set(name, tex);
+    }
+    return waterTextures.get(name);
+  }
+  const isWater = (it) => it.kind === 'boundary' && /^water$/i.test((it.properties || {}).type || '');
+  function prop(it, key) {        // property names vary in case and spacing in the game's data
+    const want = key.toLowerCase();
+    for (const [k, v] of Object.entries(it.properties || {})) if (k.trim().toLowerCase() === want) return v;
+    return undefined;
+  }
+  function buildWater(it) {
+    if (it.water) { waterGroup.remove(it.water); it.water.geometry.dispose(); it.water = null; }
+    if (!isWater(it) || it.points.length < 3) return;
+    const shape = new THREE.Shape(it.points.map((p) => new THREE.Vector2(p[0], p[2])));
+    const geo = new THREE.ShapeGeometry(shape);
+    geo.rotateX(-Math.PI / 2);         // shape (x, z) -> three (x, 0, -z), the game's z flipped
+    const h = parseFloat(prop(it, 'height'));
+    const y = Number.isFinite(h) ? h : it.points.reduce((s, p) => s + p[1], 0) / it.points.length;
+    const byte = (k, d) => { const v = parseFloat(prop(it, k)); return Number.isFinite(v) ? v / 255 : d; };
+    const colour = new THREE.Color(byte('red', 0.24), byte('green', 0.38), byte('blue', 0.45));
+    if (prop(it, 'greeb') !== undefined && prop(it, 'green') === undefined) colour.g = byte('greeb', 0.38);
+    // The game's tints are greyish (it adds a texture and a sky reflection):
+    // lean them toward blue so water reads as water here.
+    colour.lerp(WATER_BLUE, 0.45);
+    const mat = new THREE.MeshLambertMaterial({color: colour, map: waterTexture(prop(it, 'texture') || 'oceanwater'),
+                                               transparent: true, opacity: Math.max(0.45, byte('alpha', 0.7)),
+                                               side: THREE.DoubleSide, depthWrite: false});
+    const mesh = new THREE.Mesh(geo, mat);
+    mesh.position.y = y;
+    mesh.renderOrder = 2;
+    mesh.visible = st.showWater;
+    it.water = mesh;
+    waterGroup.add(mesh);
+  }
   function buildVisual(it) {
+    buildWater(it);
     if (it.visual) group.remove(it.visual);
     const g = new THREE.Group();
     g.userData.item = it;
@@ -96,7 +145,10 @@ export function createLayout(ctx) {
 
   function clear() {
     select(null);
-    for (const it of st.items) if (it.visual) group.remove(it.visual);
+    for (const it of st.items) {
+      if (it.visual) group.remove(it.visual);
+      if (it.water) { waterGroup.remove(it.water); it.water.geometry.dispose(); it.water = null; }
+    }
     st.items = [];
     cancelDraw();
   }
@@ -220,6 +272,7 @@ export function createLayout(ctx) {
     if (!confirm(`Delete ${label(it)} ${it.name}? Scripts that use it by name will fail.`)) return;
     select(null);
     group.remove(it.visual);
+    if (it.water) { waterGroup.remove(it.water); it.water = null; }
     st.items = st.items.filter((x) => x !== it);
     st.dirtyFiles.add(it.file);
     ctx.setDirty(true);
@@ -405,6 +458,10 @@ export function createLayout(ctx) {
   for (const id of ['qx', 'qy', 'qz']) $(id).addEventListener('change', setPointFromPanel);
   $('show-paths').addEventListener('change', (e) => setVisible('path', e.target.checked));
   $('show-zones').addEventListener('change', (e) => setVisible('boundary', e.target.checked));
+  $('show-water').addEventListener('change', (e) => {
+    st.showWater = e.target.checked;
+    for (const it of st.items) if (it.water) it.water.visible = st.showWater;
+  });
 
   return {
     load, pick, select, handleMoved, hoverText, drawClick, finishDraw, cancelDraw, saveBody, saved, find,
