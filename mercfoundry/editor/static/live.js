@@ -139,5 +139,6 @@ export function createLive(ctx) {
   }
 
   return {objectMoved, objectRemoved, spawn, moveNamed, removeNamed, askLoaded,
+          player: () => (st.on && st.connected ? st.player : null),
           loaded: () => st.loaded || null, isOn: () => st.on && st.connected};
 }

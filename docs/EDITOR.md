@@ -121,6 +121,11 @@ toolkit bundle run it the same way: `foundry\python\python.exe foundry\mercfound
   point of another path, so characters can go on from there; links can be
   removed again. Adding or deleting points keeps pauses, animations and links
   on the same points.
+- **Minimap** (bottom left): the whole map from above, north (−z) up.
+  Terrain is hill-shaded and tinted by height, water areas are drawn in blue,
+  and a yellow dot with a wedge shows where the camera looks and which way.
+  With the live link on, a red dot shows the player and the way they face.
+  Click it to look there; M (or its ×) hides it.
 - **Water** is drawn where the game has it: every boundary with `type water`
   (the south map's coast, bays, rivers and ponds; the north map's oceans and
   rivers) is filled at its `height`. The fill uses its `texture` (default

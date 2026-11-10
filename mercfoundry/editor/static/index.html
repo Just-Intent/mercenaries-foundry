@@ -36,7 +36,11 @@
   <button id="save" disabled>Save</button>
 </header>
 <main>
-  <div id="view"><div id="tip" hidden></div></div>
+  <div id="view"><div id="tip" hidden></div>
+    <div id="minimap" hidden><canvas id="minimap-canvas" width="512" height="512"
+      title="The whole map (north up). Click to look there; M hides it."></canvas>
+      <button id="minimap-hide" title="Hide the map (M)">&times;</button></div>
+  </div>
   <aside id="panel">
     <p class="hint" id="hint">Click an object to select it. Drag to orbit, right-drag to pan, scroll to zoom.
       Double-click the ground to look there.</p>

@@ -11,6 +11,7 @@ import {createLayout} from './layout.js';
 import {createEncounters} from './encounters.js';
 import {createLive} from './live.js';
 import {applyGround} from './ground.js';
+import {createMinimap} from './minimap.js';
 
 const $ = (id) => document.getElementById(id);
 const NEAR_RADIUS = 220;      // metres around the view centre that show real models
@@ -277,6 +278,7 @@ async function loadMap(name) {
   state.map = name;
   state.terrain = {meta, heights: new Float32Array(buf)};
   terrainMesh = buildTerrain(meta, state.terrain.heights);
+  minimap.setTerrain(meta, state.terrain.heights);
   scene.add(terrainMesh);
   // The game's ground textures, in the background (plain shading until then).
   const ground = terrainMesh;
@@ -324,6 +326,7 @@ async function loadMap(name) {
   const start = state.records.find((r) => /playerstart|drop_start/i.test(r.name)) || state.records[0];
   if (start) lookAt(start.position, 60);
   const [items, encounters] = await Promise.all([layout.load(name), encs.load(name)]);
+  minimap.setWater(waterAreas ? waterAreas() : []);
   refreshChanges();
   setDirty(false);
   const summary = `${state.records.length} objects, ${items} paths and zones, ${encounters} encounters`;
@@ -835,6 +838,7 @@ window.addEventListener('keydown', (e) => {
   else if (k === 'g') $('ground').click();
   else if (k === 'c') copySelected();
   else if (k === 'p') startPlace();
+  else if (k === 'm') minimap.toggle();
   else if (k === 'enter' && layout.isDrawing()) layout.finishDraw();
   else if (k === 'insert' && layout.hasSelection()) layout.addPoint();
   else if (k === 'delete') {
@@ -858,7 +862,11 @@ $('map').addEventListener('change', async () => {
 // ------------------------------------------------------------------ paths and zones
 let modName = '';
 const slug = (s) => s.toLowerCase().replace(/[^a-z0-9]+/g, '_').replace(/^_|_$/g, '') || 'mod';
+// The minimap (water areas come from the layout module once it has loaded).
+let waterAreas = null;
+const minimap = createMinimap({$, heightAt, lookAt: (p, d) => lookAt(p, d)});
 const layout = createLayout({
+  onWater: (fn) => { waterAreas = fn; },
   scene, gizmo, heightAt, threePos, gamePos, status, $, setDirty, lookAt,
   deselectObject: () => { select(null); encs.select(null); },
   modName: () => modName,
@@ -889,9 +897,11 @@ $('show-objects').addEventListener('change', (e) => {
 
 // ------------------------------------------------------------------ start
 let lastStream = 0;
+let lastMinimap = 0;
 function frame(t) {
   controls.update();
   if (t - lastStream > 500) { lastStream = t; if (state.records.length) streamNearby(); }
+  if (t - lastMinimap > 100) { lastMinimap = t; minimap.draw(gamePos(controls.target), gamePos(camera.position), live.player()); }
   renderer.render(scene, camera);
   requestAnimationFrame(frame);
 }

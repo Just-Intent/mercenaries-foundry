@@ -572,6 +572,7 @@ export function createLayout(ctx) {
   for (const id of ['qx', 'qy', 'qz']) $(id).addEventListener('change', setPointFromPanel);
   $('show-paths').addEventListener('change', (e) => setVisible('path', e.target.checked));
   $('show-zones').addEventListener('change', (e) => setVisible('boundary', e.target.checked));
+  ctx.onWater && ctx.onWater(() => st.items.filter(isWater).map((it) => it.points));
   $('pt-pause').addEventListener('change', setPause);
   $('pt-anims').addEventListener('change', setAnims);
   $('link-add').onclick = addLink;

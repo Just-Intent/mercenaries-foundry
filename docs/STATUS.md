@@ -80,6 +80,7 @@
 - Editor water: the game's water areas (`type water` boundaries with a surface height, colour and texture) are drawn as surfaces, with their own toggle.
 - Editor path extras: the mod's own paths get pauses, animations (path events, with a chance) and links in the panel, kept on their points when points are added or deleted. Fixed: road decals one cell past the map's edge got NaN heights (the editor's console errors).
 - Editor edits the game's own encounters: spawn points move, are added and deleted, saved as a layout changes file (the whole encounter, replaced by name at build). Checked in the build (SW Allies 6's `A6_Shortcut` set Z: 6 points to 7, one moved); not played in game.
+- Editor minimap: the whole map from above (hill-shaded terrain, water, the camera's view, the player when live); click to jump there.
 - 252 tests pass.
 
 ## Fixed from retail data
