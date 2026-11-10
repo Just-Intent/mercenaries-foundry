@@ -675,6 +675,7 @@ def _apply_objects(data, folder, result, skip=()):
                 doc = world.to_json(data.current(a, r))
             want = (rule.get("name") or rule.get("template") or "").lower()
             chunks = doc["chunks"]
+            twins = []
             k = 0
             while k < len(chunks):
                 c = chunks[k]
@@ -690,19 +691,27 @@ def _apply_objects(data, folder, result, skip=()):
                         continue
                 hits[n] += 1
                 if rule.get("remove"):
-                    k -= 1
-                    del chunks[k]
-                    if c.get("template"):
-                        result.warnings.append(f"{fname}: removed the named object {c['template']!r}; "
+                    # Kept as an invisible location marker rather than deleted,
+                    # for the same reason copies go last: saved games know
+                    # objects by their place in the layer.
+                    named = c.get("template")
+                    c.update(model="global_location", template="",
+                             properties=[["GeometryFile", "global_humanmarker"], ["objectType", "location"]])
+                    if named:
+                        result.warnings.append(f"{fname}: removed the named object {named!r}; "
                                                "scripts that use it by name will fail")
                 elif rule.get("copy"):
+                    # Copies go at the end of the layer: saved games keep each
+                    # object's state by its place in the layer, so inserting
+                    # one mid-layer hands every later object the saved state
+                    # (position too) of the object before it.
                     twin = copy.deepcopy(c)
                     twin["template"] = rule["as"]
                     _apply_rule(twin, rule)
-                    chunks.insert(k, twin)
-                    k += 1
+                    twins.append(twin)
                 else:
                     _apply_rule(c, rule)
+            chunks += twins          # later rules can still move them
         if doc is not None:
             data.set(a, r, world.from_json(doc))
     for (fname, rule), n in zip(rules, hits):

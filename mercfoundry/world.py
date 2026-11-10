@@ -185,7 +185,14 @@ def from_json(doc: dict) -> bytes:
                 if c == "PROP":
                     return b"PROP", prop
                 if c == "INFO":
-                    return b"INFO", struct.pack("<H", len(item["properties"]) + item.get("info_offset", 1))
+                    # The game sizes each object's property slots from this:
+                    # the pairs, plus 1, plus 1 more for a name (every retail
+                    # inst follows that). A copy given a name needs the extra
+                    # slot, or the objects after it get shifted properties.
+                    offset = item.get("info_offset", 1)
+                    if offset in (1, 2):
+                        offset = 2 if item.get("template") else 1
+                    return b"INFO", struct.pack("<H", len(item["properties"]) + offset)
                 if c == "XFRM":
                     rows = [v for row in item["rotation"] for v in row]
                     return b"XFRM", struct.pack("<12f", *rows, *item["position"])

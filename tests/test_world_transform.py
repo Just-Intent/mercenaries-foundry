@@ -15,7 +15,8 @@ def inst(model, name, props, position, rotation=(1, 0, 0, 0, 1, 0, 0, 0, 1)):
     words = [name_hash(model), name_hash(name) if name else 0]
     for k, v in props:
         words += [name_hash(k), name_hash(v)]
-    body = chunk(b"INFO", struct.pack("<H", len(props) + 1))
+    # As in retail: the property pairs + 1, + 1 more for a name.
+    body = chunk(b"INFO", struct.pack("<H", len(props) + (2 if name else 1)))
     body += chunk(b"XFRM", struct.pack("<12f", *rotation, *position))
     body += chunk(b"PROP", struct.pack(f"<{len(words)}I", *words))
     return chunk(b"inst", body)
@@ -28,7 +29,7 @@ def layer():
         inst("lamp", "loc_start", [("Faction", "None"), ("Height", "3")], (0, 0, 0)),
         inst("rock", "", [("Faction", "None")], (50, 0, 50)),
     ]
-    total = sum(len(p) + 1 for p in ([1], [1, 2], [1]))
+    total = 2 + 4 + 2
     info = struct.pack("<4I", len(insts), total, 0, 0)
     body = chunk(b"NAME", b"base\0") + chunk(b"TNAM", b"Base\0") + chunk(b"INFO", info)
     body += chunk(b"TABL", table(strings)) + b"".join(insts)
@@ -42,7 +43,8 @@ class TransformTests(unittest.TestCase):
         insts = [c for c in doc["chunks"] if c["tag"] == "inst"]
         self.assertEqual(insts[0]["position"], [10, 0, 20])
         self.assertEqual(insts[0]["rotation"][0], [1, 0, 0])
-        self.assertEqual(insts[1]["info_offset"], 1)
+        self.assertEqual(insts[0]["info_offset"], 1)
+        self.assertEqual(insts[1]["info_offset"], 2)
         self.assertEqual(world.from_json(json.loads(json.dumps(doc))), rec)
 
     def test_counts_follow_edits(self):
@@ -52,8 +54,8 @@ class TransformTests(unittest.TestCase):
         doc["chunks"].append(json.loads(json.dumps(insts[2])))
         body = ucfb.unwrap(world.from_json(doc), b"wrld")
         info = dict(ucfb.iter_chunks(body))[b"INFO"]
-        # 4 objects; INFO values 3 (was 2) + 3 + 2 + 2.
-        self.assertEqual(struct.unpack("<4I", info), (4, 10, 0, 0))
+        # 4 objects; INFO values 3 (was 2) + 4 + 2 + 2.
+        self.assertEqual(struct.unpack("<4I", info), (4, 11, 0, 0))
 
     def test_turn(self):
         rows = modbuild._turn([[1, 0, 0], [0, 1, 0], [0, 0, 1]], 90)
@@ -92,10 +94,16 @@ class RuleTests(unittest.TestCase):
                            "position": [0, 0, 5], "turn": 90}])
         insts = self.insts(doc)
         self.assertEqual(len(insts), 4)
-        twin = [c for c in insts if c["template"] == "my_rock"][0]
+        # The game's objects keep their places; the copy goes last.
+        self.assertEqual([c["model"] for c in insts[:3]], ["rock", "lamp", "rock"])
+        twin = insts[3]
+        self.assertEqual(twin["template"], "my_rock")
         self.assertEqual(twin["position"], [0, 0, 5])
         self.assertAlmostEqual(twin["rotation"][0][2], -1.0, places=5)
         self.assertIn("my_rock", doc["strings"])
+        # Named now, so it takes the extra slot a name needs (else the game
+        # reads the objects after it with shifted properties).
+        self.assertEqual(twin["info_offset"], 2)
         info = [c for c in doc["chunks"] if c["tag"] == "INFO"][0]
         self.assertNotIn("hex", info)  # still the recomputed form
 

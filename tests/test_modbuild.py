@@ -122,7 +122,11 @@ class ModBuildTests(unittest.TestCase):
         self.assertIn("objects jeep_template: 1 instances removed", result.changes)
         self.assertTrue(any("scripts that use it by name" in w for w in result.warnings))
         doc = world.to_json(self.records("assets.dsk")[(name_hash("base_layer"), WORLD)])
-        self.assertFalse([c for c in doc["chunks"] if c.get("tag") == "inst"])
+        # Its place in the layer is kept (saved games know objects by place),
+        # as an invisible, unnamed location marker.
+        insts = [c for c in doc["chunks"] if c.get("tag") == "inst"]
+        self.assertEqual([(c["model"], c["template"]) for c in insts], [("global_location", "")])
+        self.assertIn(["objectType", "location"], insts[0]["properties"])
         self.write("objects/o.json", json.dumps({"template": "jeep_template", "remove": True, "turn": 5}))
         with self.assertRaises(ValueError):
             modbuild.build(self.project, self.data, self.out)
