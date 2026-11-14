@@ -302,7 +302,8 @@ class Scene:
             doc.setdefault("ini", {})["ContractFee"] = int(mission["fee"])
         if mission.get("bonus") is not None:
             doc.setdefault("ini", {})["BonusFee"] = int(mission["bonus"])
-        doc["objectives"] = [{k: v for k, v in o.items() if k in ("type", "text", "squad", "targets", "zone", "marker")}
+        doc["objectives"] = [{k: v for k, v in o.items() if k in ("type", "text", "squad", "targets", "zone", "marker", "bonus")
+                              and not (k == "bonus" and not v)}
                              for o in mission.get("objectives") or []]
         start = mission.get("start")
         if start and start.get("position"):

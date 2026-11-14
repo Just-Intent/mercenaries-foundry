@@ -197,15 +197,16 @@ A mission file with `"objectives"` and no `scripts/<id>.lua` gets its script fro
 }
 ```
 
-- Objectives run one after another, and then the contract completes. The script is Lua 5.0, as the game's are.
+- Main objectives run one after another, and then the contract completes. The script is Lua 5.0, as the game's are.
+- `"bonus": <dollars>` makes an objective a bonus objective, as retail's (`BON_OBJ_ADD`, `OBJECTIVE_TYPE_SECONDARY` and secondary markers): optional and active from the start alongside the main ones. When the main objectives are done, open bonus objectives show `BON_OBJ_FAIL`, and the script sets the payout (`Utility_WriteMissionData{ fBonusFee = ... }`, as `nw_allies2` and `nw_china2` do) to the flat bonus plus the rewards of those done. `mission.ini`'s `BonusFee` holds the most it can pay, the flat bonus plus every reward. A mission needs at least one main objective.
 - `destroy` takes a squad, as `"encounter:squad"` (or a squad's name when it is unique), or `"targets"`, a list of actor names. It uses `mission_ObjectiveDestroy`, which marks each target in the world and on the minimap, with a counter.
 - `goto` takes a zone (a boundary), done when the player enters it (`Event_ActorInBoundary`). The zone's centre gets a marker on the minimap and GPS, as `sw_sk2` marks its spots (`Objective_SetTargetVector` with `'location'`, not drawn in the world). `"marker": false` leaves it unmarked.
 - Squads and zones can sit in the mission's own layer or in the mod's map layers (`"load": "map"`). Map layers load only in free roam, so the script loads the ones its objectives use (`Utility_ReadLevelFile`).
 - `"start"` moves the player there at the start of the mission and turns them to `heading` (degrees; 0 faces +z), as retail missions do (`Actor_SetPosition`, `Actor_SetYaw`).
 - The objective texts become strings in the mission's text record (`<map>.<faction><n>.obj.foundry<k>`).
-- `mission.ini`'s section is copied from the faction's first mission on the map, and that one's `BonusFee` (10000 for `SW_China1`) is meant for retail optional objectives: scripts zero it when they're missed. A mission with objectives gets `BonusFee 0` unless its `"ini"` sets one (the editor's Bonus).
+- `mission.ini`'s section is copied from the faction's first mission on the map, and that one's `BonusFee` (10000 for `SW_China1`) is meant for retail optional objectives: scripts zero it when they're missed. A mission with objectives gets no copied bonus: its flat bonus is the `"ini"` `BonusFee` (the editor's Flat bonus), else 0.
 
-Tested in game (2026-11-14): `sw_china9`, made in the editor (a go-to zone in the mod's map layer, then 20 civilians, and in a second run 20 NK soldiers, in the mission's layer). The contract mail arrived, the player started at the set point, the zone's marker showed on the minimap, the destroy objective marked the squad and counted it down, and the contract completed and paid its fee.
+Tested in game (2026-11-14): `sw_china9`, made in the editor (a go-to zone in the mod's map layer, then 20 civilians, and in a second run 20 NK soldiers, in the mission's layer). The contract mail arrived, the player started at the set point, the zone's marker showed on the minimap, the destroy objective marked the squad and counted it down, and the contract completed and paid its fee. A bonus objective added later paid its reward on top when done.
 
 ### Offering the mission at the HQ
 

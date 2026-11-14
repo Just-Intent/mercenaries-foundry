@@ -114,9 +114,10 @@ def text_plan(asset_id, doc, section):
     strings = dict(doc.get("strings") or {})
     ini = {}
     if doc.get("objectives"):
-        # The copied section's bonus pays for retail optional objectives;
-        # built missions have none, so no bonus unless "ini" sets BonusFee.
-        ini["BonusFee"] = 0
+        # The copied section's bonus pays for retail optional objectives; a
+        # built mission's is its flat bonus ("ini" BonusFee, else none) plus
+        # its bonus objectives' rewards (the script pays those earned).
+        ini["BonusFee"] = bonus_fee(doc)
     if "title" in doc:
         strings[f"MissionInfo.MissionTitle.{key}"] = doc["title"]
         ini["MissionTitleDbKey"] = f"MissionInfo.MissionTitle.{key}"
@@ -149,44 +150,74 @@ def _lua_str(s):
 OBJECTIVE_TYPES = ("destroy", "goto")
 
 
+def bonus_amount(o):
+    """A bonus objective's reward in dollars (0: a main objective)."""
+    try:
+        return max(0, int(float(o.get("bonus") or 0)))
+    except (TypeError, ValueError):
+        return 0
+
+
+def bonus_fee(doc):
+    """mission.ini BonusFee for a mission with objectives: its flat bonus
+    ("ini" BonusFee, paid on completion) plus every bonus objective's reward,
+    the most the contract can pay. The script pays the flat bonus plus the
+    rewards of the bonus objectives done."""
+    flat = int(float((doc.get("ini") or {}).get("BonusFee", 0) or 0))
+    return flat + sum(bonus_amount(o) for o in doc.get("objectives") or [])
+
+
 def objectives_script(asset_id, doc, squad_members, layers=(), zone_centre=None):
-    """A mission script (Lua 5.0) for a mission file's "objectives", done one
-    after another, then the mission completes:
+    """A mission script (Lua 5.0) for a mission file's "objectives":
 
       {"type": "destroy", "text": ..., "targets": [names]} or "squad": "Squad1"
-          (the squad's members in the mission's layer, by squad_members(name));
-          marked in the world and on the minimap, with a counter;
-      {"type": "goto", "text": ..., "zone": name}: reach a zone (boundary)
-          drawn in the mission's layer.
+          (the squad's members, by squad_members(name)); marked in the world
+          and on the minimap, with a counter;
+      {"type": "goto", "text": ..., "zone": name}: reach a zone (boundary).
+
+    Main objectives are done one after another, then the mission completes.
+    An objective with "bonus": <dollars> is a bonus objective, as retail's
+    (BON_OBJ_*, secondary markers): optional, active from the start alongside
+    the main ones; when the contract completes it pays the flat bonus
+    (mission.ini BonusFee before the rewards) plus the rewards of the bonus
+    objectives done, and the rest are shown as failed.
 
     layers: other layers the objectives use (the mod's map layers, which
     otherwise load only in free roam); the script loads them at its start.
     zone_centre(name): the zone's centre [x, y, z], where a goto objective
-    puts its marker (GPS, minimap and in the world), or None for no marker.
+    puts its marker (GPS and minimap), or None for no marker.
     """
     objs = doc.get("objectives") or []
     if not objs:
         raise ValueError("a mission needs an objective")
-    rows = []
+    if not any(not bonus_amount(o) for o in objs):
+        raise ValueError("a mission needs a main objective (one without a bonus)")
+    main, bonus = [], []
     for i, o in enumerate(objs, 1):
         kind = o.get("type")
         if kind not in OBJECTIVE_TYPES:
             raise ValueError(f"objective {i}: type is one of {', '.join(OBJECTIVE_TYPES)}, not {kind!r}")
-        key = _lua_str(objective_key(asset_id, i))
+        head = f"kind = '{kind}', name = 'foundry{i}', key = {_lua_str(objective_key(asset_id, i))}"
+        reward = bonus_amount(o)
+        if reward:
+            head += f", bonus = {reward}"
         if kind == "destroy":
             targets = list(o.get("targets") or [])
             if o.get("squad"):
                 targets += squad_members(o["squad"])
             if not targets:
                 raise ValueError(f"objective {i}: nothing to destroy (give \"targets\" or \"squad\")")
-            rows.append(f"{{ kind = 'destroy', key = {key}, targets = {{ {', '.join(_lua_str(t) for t in targets)} }} }}")
+            row = f"{{ {head}, targets = {{ {', '.join(_lua_str(t) for t in targets)} }} }}"
         else:
             if not o.get("zone"):
                 raise ValueError(f"objective {i}: a goto objective needs a \"zone\"")
             at = zone_centre(o["zone"]) if zone_centre and o.get("marker", True) else None   # "marker": false: none
             mark = f", x = {at[0]:.2f}, y = {at[1]:.2f}, z = {at[2]:.2f}" if at else ""
-            rows.append(f"{{ kind = 'goto', key = {key}, zone = {_lua_str(o['zone'])}{mark} }}")
-    table = ",\n".join("  " + r for r in rows)
+            row = f"{{ {head}, zone = {_lua_str(o['zone'])}{mark} }}"
+        (bonus if reward else main).append(row)
+    main_table = ",\n".join("  " + r for r in main)
+    bonus_table = ",\n".join("  " + r for r in bonus)
+    flat = bonus_fee(doc) - sum(bonus_amount(o) for o in objs)
     loads = "".join(f"Utility_ReadLevelFile({_lua_str(n)})   -- its squads or zones\n" for n in layers)
     start = doc.get("start") or {}
     if start.get("position"):     # where the player begins (on foot, as retail missions move the player)
@@ -194,12 +225,16 @@ def objectives_script(asset_id, doc, squad_members, layers=(), zone_centre=None)
         loads += f"Actor_SetPosition('player0', {x:.2f}, {y:.2f}, {z:.2f})\n"
         loads += f"Actor_SetYaw('player0', {float(start.get('heading', 0)):.1f})\n"
     return f"""-- {asset_id}: written by mercfoundry from missions/{asset_id}.json "objectives".
-tFoundryObjectives = {{
-{table}
+tFoundryObjectives = {{    -- main objectives, in order
+{main_table}
 }}
+tFoundryBonus = {{         -- bonus objectives, active from the start
+{bonus_table}
+}}
+tFoundryActive = {{}}       -- started objectives by name
 iFoundryStep = 0
-iFoundryDown = 0
-sFoundryObj = ''
+iFoundryFlatBonus = {flat}
+iFoundryEarned = 0
 
 function ScriptInit()
 Utility_LoadUtilityScript('mission')
@@ -210,57 +245,94 @@ mission_GenericInit()
 {loads}end
 
 function post_InitialNotifications()   -- after the contract mail
+for i, o in ipairs(tFoundryBonus) do foundry_Start(o) end
 foundry_NextObjective()
-end
-
-function foundry_ObjectiveName()
-return 'foundry' .. iFoundryStep
 end
 
 function foundry_NextObjective()
 iFoundryStep = iFoundryStep + 1
 local o = tFoundryObjectives[iFoundryStep]
 if not o then
-mission_MissionComplete()
+foundry_Finish()
 return
 end
-sFoundryObj = Utility_GetStringById(o.key)
+foundry_Start(o)
+end
+
+-- Main objectives are primary (vIdx 1); bonus ones secondary (vIdx 2), as retail's.
+function foundry_Kind(o)
+if o.bonus then return 'BON_OBJ_', 2, 'OBJECTIVE_TYPE_SECONDARY', 'TARGET_TYPE_OBJECTIVE_SECONDARY' end
+return 'PRI_OBJ_', 1, 'OBJECTIVE_TYPE_PRIMARY', 'TARGET_TYPE_OBJECTIVE_PRIMARY'
+end
+
+function foundry_Start(o)
+o.text = Utility_GetStringById(o.key)
+o.down = 0
+tFoundryActive[o.name] = o
+local sMsg, iIdx, sObjType, sTargetType = foundry_Kind(o)
 if o.kind == 'destroy' then
-iFoundryDown = 0
-mission_ObjectiveDestroy{{ callbackFunc = foundry_TargetDown, objectiveName = foundry_ObjectiveName(),
-                          objectiveDesc = sFoundryObj, actorName = o.targets }}
-util_ObjMsgPrint{{ sMsg = sFoundryObj, sType = 'PRI_OBJ_ADD', vIdx = 1,
-                  tCounter = {{ vCurr = 0, vLim = table.getn(o.targets) }}, sObjective = foundry_ObjectiveName() }}
+mission_ObjectiveDestroy{{ callbackFunc = foundry_TargetDown, objectiveName = o.name, objectiveDesc = o.text,
+                          actorName = o.targets, objectiveType = sObjType, targetType = sTargetType }}
+util_ObjMsgPrint{{ sMsg = o.text, sType = sMsg .. 'ADD', vIdx = iIdx,
+                  tCounter = {{ vCurr = 0, vLim = table.getn(o.targets) }}, sObjective = o.name }}
 else
-util_ObjMsgPrint{{ sMsg = sFoundryObj, sType = 'PRI_OBJ_ADD', vIdx = 1, sObjective = foundry_ObjectiveName() }}
+util_ObjMsgPrint{{ sMsg = o.text, sType = sMsg .. 'ADD', vIdx = iIdx, sObjective = o.name }}
 if o.x then   -- a marker on the zone, as retail location objectives do (sw_sk2)
-Objective_SetShortDescription(foundry_ObjectiveName(), sFoundryObj)
-Objective_SetType(foundry_ObjectiveName(), 'OBJECTIVE_TYPE_PRIMARY')
-Objective_SetTargetVector(foundry_ObjectiveName(), o.zone, sFoundryObj, 'TARGET_TYPE_OBJECTIVE_PRIMARY', 'location',
+Objective_SetShortDescription(o.name, o.text)
+Objective_SetType(o.name, sObjType)
+Objective_SetTargetVector(o.name, o.zone, o.text, sTargetType, 'location',
                           o.x, o.y, o.z, true, true, false)   -- GPS and map; not in the world (as sw_sk2)
 end
 Event_ActorInBoundary('foundry_Arrived', 'b', 'player0', o.zone, true)
 end
 end
 
-function foundry_TargetDown(sActor, bComplete, sObjName)
-local o = tFoundryObjectives[iFoundryStep]
-local iAll = table.getn(o.targets)
-iFoundryDown = iFoundryDown + 1
-local sType = 'PRI_OBJ_UPD_POS'
-if iFoundryDown >= iAll then sType = 'PRI_OBJ_CMPL' end
-util_ObjMsgPrint{{ sMsg = sFoundryObj, sType = sType, vIdx = 1,
-                  tCounter = {{ vCurr = iFoundryDown, vLim = iAll }}, sObjective = foundry_ObjectiveName() }}
-if iFoundryDown >= iAll then
-mission_RemoveObjective(foundry_ObjectiveName())
+function foundry_Done(o)
+o.done = true
+local sMsg, iIdx = foundry_Kind(o)
+util_ObjMsgPrint{{ sMsg = o.text, sType = sMsg .. 'CMPL', vIdx = iIdx, sObjective = o.name }}
+mission_RemoveObjective(o.name)
+if o.bonus then
+iFoundryEarned = iFoundryEarned + o.bonus
+else
 foundry_NextObjective()
 end
 end
 
+function foundry_TargetDown(sActor, bComplete, sObjName)
+local o = tFoundryActive[sObjName]
+if not o or o.done then return end
+local iAll = table.getn(o.targets)
+o.down = o.down + 1
+if o.down >= iAll then
+foundry_Done(o)
+else
+local sMsg, iIdx = foundry_Kind(o)
+util_ObjMsgPrint{{ sMsg = o.text, sType = sMsg .. 'UPD_POS', vIdx = iIdx,
+                  tCounter = {{ vCurr = o.down, vLim = iAll }}, sObjective = o.name }}
+end
+end
+
 function foundry_Arrived(playerActor, boundaryName)
-util_ObjMsgPrint{{ sMsg = sFoundryObj, sType = 'PRI_OBJ_CMPL', vIdx = 1, sObjective = foundry_ObjectiveName() }}
-mission_RemoveObjective(foundry_ObjectiveName())
-foundry_NextObjective()
+-- the zone's started objectives (main or bonus) that aren't done yet
+for sName, o in pairs(tFoundryActive) do
+if o.kind == 'goto' and o.zone == boundaryName and not o.done then foundry_Done(o) end
+end
+end
+
+-- The main objectives are done: bonus objectives still open have failed, and
+-- the contract pays the flat bonus plus the rewards earned.
+function foundry_Finish()
+for i, o in ipairs(tFoundryBonus) do
+if not o.done then
+util_ObjMsgPrint{{ sMsg = o.text, sType = 'BON_OBJ_FAIL', vIdx = 2, sObjective = o.name }}
+mission_RemoveObjective(o.name)
+end
+end
+if table.getn(tFoundryBonus) > 0 then
+Utility_WriteMissionData( {{ fBonusFee = iFoundryFlatBonus + iFoundryEarned }} )
+end
+mission_MissionComplete()
 end
 """
 

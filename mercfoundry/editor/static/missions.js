@@ -111,9 +111,11 @@ export function createMissions(ctx) {
             `<option ${s === o.squad ? 'selected' : ''}>${esc(s)}</option>`).join('')}</select>`
         : `<select data-i="${i}" data-k="zone"><option value="">(zone)</option>${zones.map((z) =>
             `<option ${z === o.zone ? 'selected' : ''}>${esc(z)}</option>`).join('')}</select>`;
-      return `<div class="ms-obj"><b>${i + 1}. ${o.type === 'destroy' ? 'Destroy squad' : 'Go to zone'}</b>
+      return `<div class="ms-obj"><b>${i + 1}. ${o.type === 'destroy' ? 'Destroy squad' : 'Go to zone'}${+o.bonus > 0 ? ' (bonus)' : ''}</b>
         <input data-i="${i}" data-k="text" type="text" value="${esc(o.text)}" placeholder="What the player reads">
         ${pick}
+        <label class="ms-bonus" title="A reward makes this a bonus objective: optional, active from the start alongside the main ones, paid on completion if done">Bonus $
+          <input data-i="${i}" data-k="bonus" type="number" min="0" step="1000" value="${+o.bonus > 0 ? +o.bonus : ''}" placeholder="none"></label>
         <span class="buttons"><button data-i="${i}" data-a="show" title="Look at it on the map">Show</button>
         <button data-i="${i}" data-a="up">Up</button><button data-i="${i}" data-a="down">Down</button>
         <button data-i="${i}" data-a="del">Delete</button></span></div>`;
@@ -125,7 +127,11 @@ export function createMissions(ctx) {
   $('ms-objectives').addEventListener('input', (e) => {
     const i = e.target.dataset.i, k = e.target.dataset.k;
     if (i === undefined || !k) return;
-    st.objectives[+i][k] = e.target.value;
+    st.objectives[+i][k] = k === 'bonus' ? Math.max(0, +e.target.value || 0) : e.target.value;
+    if (k === 'bonus') {     // the heading says whether it's a bonus objective
+      const b = e.target.closest('.ms-obj').querySelector('b');
+      b.textContent = b.textContent.replace(/ \(bonus\)$/, '') + (st.objectives[+i].bonus > 0 ? ' (bonus)' : '');
+    }
     edited();
   });
   $('ms-objectives').addEventListener('click', (e) => {

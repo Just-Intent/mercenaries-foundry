@@ -97,11 +97,11 @@ class MissionTests(unittest.TestCase):
         self.assertEqual(strings["sw.allies11.obj.foundry1"], "Reach the bridge")
         self.assertEqual(missions.text_plan("sw_allies11", doc, "SW_Allies11")[1]["BonusFee"], 0)   # no copied bonus
         lua = missions.objectives_script("sw_allies11", doc, lambda squad: ["Nk1", "Nk2"])
-        self.assertIn("{ kind = 'goto', key = 'sw.allies11.obj.foundry1', zone = 'bridge_zone' }", lua)
+        self.assertIn("{ kind = 'goto', name = 'foundry1', key = 'sw.allies11.obj.foundry1', zone = 'bridge_zone' }", lua)
         marked = missions.objectives_script("sw_allies11", doc, lambda squad: ["Nk1"], (), lambda z: [1, 2.5, -3])
         self.assertIn("zone = 'bridge_zone', x = 1.00, y = 2.50, z = -3.00 }", marked)
-        self.assertIn("Objective_SetTargetVector(foundry_ObjectiveName(), o.zone, sFoundryObj, "
-                      "'TARGET_TYPE_OBJECTIVE_PRIMARY', 'location',", marked)
+        self.assertIn("Objective_SetTargetVector(o.name, o.zone, o.text, sTargetType, 'location',", marked)
+        self.assertIn("return 'PRI_OBJ_', 1, 'OBJECTIVE_TYPE_PRIMARY', 'TARGET_TYPE_OBJECTIVE_PRIMARY'", marked)
         unmarked = dict(doc, objectives=[dict(doc["objectives"][0], marker=False)])
         self.assertNotIn("x = 1.00", missions.objectives_script("sw_allies11", unmarked, lambda squad: [], (), lambda z: [1, 2.5, -3]))
         self.assertIn("targets = { 'Nk1', 'Nk2' }", lua)
@@ -112,9 +112,34 @@ class MissionTests(unittest.TestCase):
                                              lambda squad: ["Nk1"])
         self.assertIn("Actor_SetPosition('player0', 10.00, 20.50, -30.00)", started)
         self.assertIn("Actor_SetYaw('player0', 90.0)", started)
-        for bad in ([], [{"type": "fly"}], [{"type": "goto"}], [{"type": "destroy"}]):
+        for bad in ([], [{"type": "fly"}], [{"type": "goto"}], [{"type": "destroy"}],
+                    [{"type": "goto", "zone": "z", "bonus": 5000}]):        # only a bonus objective: nothing to complete
             with self.assertRaises(ValueError):
                 missions.objectives_script("sw_allies11", {"objectives": bad}, lambda squad: [])
+
+    def test_bonus_objectives(self):
+        # A bonus objective runs from the start beside the main ones and pays its
+        # reward on completion with the flat bonus; open ones fail at the end.
+        doc = {"ini": {"BonusFee": 10000},
+               "objectives": [{"type": "goto", "text": "Reach the bridge", "zone": "bridge_zone"},
+                              {"type": "destroy", "text": "Kill the officers", "squad": "Officers", "bonus": 25000},
+                              {"type": "goto", "text": "Scout the hill", "zone": "hill", "bonus": "5000"}]}
+        self.assertEqual(missions.bonus_fee(doc), 40000)
+        self.assertEqual(missions.text_plan("sw_allies11", doc, "SW_Allies11")[1]["BonusFee"], 40000)
+        lua = missions.objectives_script("sw_allies11", doc, lambda squad: ["Off1"])
+        main = lua[lua.index("tFoundryObjectives = {"):lua.index("tFoundryBonus = {")]
+        bonus = lua[lua.index("tFoundryBonus = {"):lua.index("tFoundryActive")]
+        self.assertIn("name = 'foundry1'", main)
+        self.assertNotIn("foundry2", main)
+        self.assertIn("{ kind = 'destroy', name = 'foundry2', key = 'sw.allies11.obj.foundry2', bonus = 25000, "
+                      "targets = { 'Off1' } }", bonus)
+        self.assertIn("name = 'foundry3', key = 'sw.allies11.obj.foundry3', bonus = 5000, zone = 'hill'", bonus)
+        self.assertIn("iFoundryFlatBonus = 10000", lua)
+        self.assertIn("for i, o in ipairs(tFoundryBonus) do foundry_Start(o) end\nfoundry_NextObjective()", lua)
+        self.assertIn("'BON_OBJ_', 2, 'OBJECTIVE_TYPE_SECONDARY', 'TARGET_TYPE_OBJECTIVE_SECONDARY'", lua)
+        self.assertIn("sType = 'BON_OBJ_FAIL'", lua)
+        self.assertIn("Utility_WriteMissionData( { fBonusFee = iFoundryFlatBonus + iFoundryEarned } )", lua)
+        self.assertNotIn("#", lua.split("\n", 1)[1])
 
     def test_add_mail(self):
         ini = "[Mail]\r\nId\t\tsw_allies3_initial\r\nSender\t\tx\r\n"

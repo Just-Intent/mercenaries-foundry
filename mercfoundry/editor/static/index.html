@@ -138,7 +138,7 @@
       <label class="field">Description (the contract offer) <textarea id="ms-description" rows="2"></textarea></label>
       <label class="field">Briefing (the contract mail) <textarea id="ms-briefing" rows="3"></textarea></label>
       <label class="field">Fee ($) <input id="ms-fee" type="number" min="0" step="1000"></label>
-      <label class="field">Bonus ($) <input id="ms-bonus" type="number" min="0" step="1000" title="Paid on completion on top of the fee"></label>
+      <label class="field">Flat bonus ($) <input id="ms-bonus" type="number" min="0" step="1000" title="Paid on completion on top of the fee. Bonus objectives add their own rewards when done."></label>
       <h3>Player start</h3>
       <p class="hint" id="ms-start-at">Where the contract leaves the player (the HQ).</p>
       <label class="field">Heading (degrees) <input id="ms-start-heading" type="number" step="5" value="0"></label>
@@ -223,7 +223,9 @@
         <button id="enc-add-point">Add spawn point</button>
         <button id="enc-delete">Delete</button>
         <button id="enc-delete-squad">Delete squad</button>
-        <span id="enc-turn-row"><input id="enc-turn" type="number" step="15" value="90" title="Degrees" style="width: 4.5em">
+        <span id="enc-turn-row"><label title="Move and turn (E) the whole squad with the gizmo; off moves one member"><input id="enc-whole" type="checkbox" checked> Whole squad</label>
+          <button id="enc-mode-move" class="on" title="Drag the arrows to move (W)">Move</button><button id="enc-mode-turn" title="Drag the ring to turn (E)">Turn</button>
+          <input id="enc-turn" type="number" step="15" value="90" title="Degrees" style="width: 4.5em">
           <button id="enc-turn-squad" title="Turn the whole squad (its formation and facing) about its middle">Turn squad</button></span>
         <button id="enc-delete-enc">Delete encounter</button>
       </div>

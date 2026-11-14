@@ -138,11 +138,14 @@ toolkit bundle run it the same way: `foundry\python\python.exe foundry\mercfound
   mission...** with a faction (it takes that faction's next free number on the
   map), then give it:
   - a title, a description (the contact's offer), a briefing (the contract
-    mail), a fee and a bonus (paid on completion on top of the fee; 0 unless
-    you set one);
-  - objectives, done in order: **Destroy squad** (pick a squad) and **Go to
-    zone** (pick a zone; the zone gets a marker on the minimap and GPS).
-    **Show** looks at an objective's squad or zone;
+    mail), a fee and a flat bonus (paid on completion on top of the fee; 0
+    unless you set one);
+  - objectives: **Destroy squad** (pick a squad) and **Go to zone** (pick a
+    zone; the zone gets a marker on the minimap and GPS). **Show** looks at
+    an objective's squad or zone. Main objectives are done in order. An
+    objective given a **Bonus $** is a bonus objective: optional, active from
+    the start alongside the main ones and marked as a bonus; the contract
+    pays its reward on top if it's done, and shows it failed if not;
   - a **Player start**: **Set here** puts it at the middle of the view (a
     yellow arrow pointing the way the player faces). Click the arrow to move
     it (it stays on the ground) or press E and drag the ring to turn it; or
@@ -157,8 +160,13 @@ toolkit bundle run it the same way: `foundry\python\python.exe foundry\mercfound
   its own, the build writes the mission's script (see ENCOUNTERS.md). The panel
   shows the Lua line that starts the mission (paste it in Foundry Console's Lua
   box); a contact at the faction's HQ offers it too.
-- **Turn squad** turns a selected squad of the mod's about its middle by the
-  given degrees: its formation and every member's facing.
+- **Whole squad** (on by default): selecting a member of one of the mod's
+  squads puts the gizmo at the squad's middle. **Move** (W) drags everyone
+  together, each kept on the ground; **Turn** (E) and the ring turn the
+  formation and every member's facing. The running game gets the moves when
+  the drag ends. Untick it to move one member. **Turn squad** turns the
+  squad by the given degrees. After a search finds something, the keys go
+  back to the view (W and E were typed into the search box before).
 - **Gates** draw with their doors: a gate's doors are models of their own
   (`geometryNameGateA`/`B`), hung on its `k_gateclosedA`/`B` joints. In the
   game they are separate objects too, which the game makes for each gate,

@@ -533,7 +533,10 @@ def _apply_missions(data, folder, result, files=None):
             (data.dir / "mission.ini").read_bytes().decode("latin-1")
         _, probe_section = missions.add_to_mission_ini(ini, asset_id)       # the section name only
         strings, ini_text, mail = missions.text_plan(asset_id, doc, probe_section)
-        ini, section = missions.add_to_mission_ini(ini, asset_id, {**ini_text, **(doc.get("ini") or {})})
+        overrides = {**ini_text, **(doc.get("ini") or {})}
+        if doc.get("objectives"):
+            overrides["BonusFee"] = ini_text["BonusFee"]     # flat bonus + bonus objectives' rewards
+        ini, section = missions.add_to_mission_ini(ini, asset_id, overrides)
         data.files[path] = ini.encode("latin-1")
         if mail:
             mpath = "DATAxbox/DATAPOD/emails.ini"

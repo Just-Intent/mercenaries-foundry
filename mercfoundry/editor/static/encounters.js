@@ -23,7 +23,7 @@ export function createEncounters(ctx) {
     key === 'game-point' ? {color: COLOURS[key], transparent: true, opacity: 0.45, depthWrite: false}
                          : {color: COLOURS[key]}));
   const st = {map: null, game: [], mod: [], templates: [], selected: null, dirty: new Set(), gameDirty: new Set(),
-              place: null, show: true};
+              place: null, show: true, wholeSquad: true};
   // What can be edited: everything of the mod's, including squads it adds to
   // the game's encounters ("added"); of the game's, spawn points only (members
   // are world objects, moved as objects; squads and encounters stay).
@@ -88,11 +88,57 @@ export function createEncounters(ctx) {
     if (st.selected && !st.selected.member) {
       st.selected.node = group.children.find((c) => same(c.userData.pick, st.selected));
     }
-    if (editable(st.selected) && st.selected.node) {
-      gizmo.setMode('translate');
-      gizmo.showX = gizmo.showY = gizmo.showZ = true;
-      gizmo.attach(st.selected.node);
+    const sel = st.selected;
+    if (wholeSquad(sel)) {
+      // The gizmo sits at the squad's middle: drag to move everyone, turn (E)
+      // to turn the formation and every member's facing.
+      const ms = sel.squad.members;
+      const pivot = new THREE.Object3D();
+      const mid = [0, 1, 2].map((k) => ms.reduce((s, m) => s + m.position[k], 0) / ms.length);
+      pivot.position.copy(threePos(mid));
+      pivot.userData.pick = sel;
+      pivot.userData.squadPivot = {centre: pivot.position.clone(),
+                                   members: ms.map((m) => ({m, at: threePos(m.position), yaw: m.yaw || 0}))};
+      group.add(pivot);
+      const turn = gizmo.getMode() === 'rotate';
+      gizmo.showX = gizmo.showZ = !turn; gizmo.showY = true;
+      gizmo.attach(pivot);
+    } else if (editable(sel) && sel.node) {
+      ctx.setMode('translate');
+      gizmo.attach(sel.node);
     }
+  }
+  // A member of one of the mod's squads, with "Whole squad" on.
+  const wholeSquad = (sel) => st.wholeSquad && ours(sel) && sel.member && sel.squad && (sel.squad.members || []).length > 1;
+
+  // The squad pivot moved or turned: place every member from where it was.
+  function squadMoved(pivot) {
+    const {centre, members} = pivot.userData.squadPivot;
+    const f = new THREE.Vector3(0, 0, 1).applyQuaternion(pivot.quaternion);
+    const turn = Math.atan2(f.x, f.z), c = Math.cos(turn), s = Math.sin(turn);
+    const shift = pivot.position.clone().sub(centre);
+    for (const {m, at, yaw} of members) {
+      const dx = at.x - centre.x, dz = at.z - centre.z;
+      const x = centre.x + shift.x + dx * c + dz * s, z = centre.z + shift.z + dz * c - dx * s;
+      const p = gamePos(new THREE.Vector3(x, 0, z));
+      p[1] = Math.round(heightAt(p[0], p[2]) * 1000) / 1000;
+      m.position = p;
+      let h = (yaw + THREE.MathUtils.radToDeg(turn)) % 360;
+      if (h < 0) h += 360;
+      m.yaw = Math.round(h * 10) / 10;
+      const node = group.children.find((g) => g.userData.pick && g.userData.pick.member === m && g !== pivot);
+      if (node) { node.position.copy(threePos(p)); node.rotation.y = THREE.MathUtils.degToRad(m.yaw); }
+    }
+    markEdited(st.selected);
+  }
+  // A drag ended: move the members in the running game, and put the gizmo
+  // back at the squad's (new) middle.
+  function dragEnded() {
+    const sel = st.selected;
+    if (!wholeSquad(sel) || !(gizmo.object && gizmo.object.userData.squadPivot)) return;
+    for (const m of sel.squad.members) ctx.live().moveNamed(m, m.name, m.position, m.yaw);
+    rebuild();
+    showPanel();
   }
 
   // ---------------------------------------------------------------- loading
@@ -148,6 +194,7 @@ export function createEncounters(ctx) {
   function moved(node) {
     const sel = st.selected;
     if (!editable(sel)) return;
+    if (node.userData.squadPivot) { squadMoved(node); return; }
     const p = gamePos(node.position);
     if (sel.member) {
       sel.member.position = p;
@@ -500,6 +547,9 @@ export function createEncounters(ctx) {
   $('sq-cancel').onclick = cancelPlace;
   $('enc-add-member').onclick = addMember;
   $('enc-turn-squad').onclick = turnSquad;
+  $('enc-whole').onchange = () => { st.wholeSquad = $('enc-whole').checked; rebuild(); };
+  $('enc-mode-move').onclick = () => ctx.setMode('translate');
+  $('enc-mode-turn').onclick = () => ctx.setMode('rotate');
   $('enc-add-point').onclick = startAddPoint;
   $('enc-delete').onclick = deleteSelected;
   $('enc-delete-squad').onclick = deleteSquad;
@@ -508,7 +558,7 @@ export function createEncounters(ctx) {
   $('show-squads').addEventListener('change', (e) => { st.show = e.target.checked; if (!st.show) select(null); rebuild(); });
 
   return {
-    load, pick, select, moved, placeClick, hoverText, cancelPlace, saveBody, saved, find, deleteSelected, setLoaded,
+    load, pick, select, moved, dragEnded, placeClick, hoverText, cancelPlace, saveBody, saved, find, deleteSelected, setLoaded,
     isPlacing: () => !!st.place,
     // Names search can find: encounters and their squads ("encounter:squad").
     names: () => all().flatMap((s) => [s.enc.name, ...(s.enc.squads || []).map((q) => `${s.enc.name}:${q.name}`)]),

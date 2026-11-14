@@ -39,7 +39,11 @@ controls.enableDamping = true;
 controls.maxPolarAngle = Math.PI * 0.495;
 const gizmo = new TransformControls(camera, renderer.domElement);
 scene.add(gizmo.getHelper());
-gizmo.addEventListener('dragging-changed', (e) => { controls.enabled = !e.value; });
+window.foundryEditor = {gizmo, camera, scene, renderer, controls};     // for debugging from the browser console
+gizmo.addEventListener('dragging-changed', (e) => {
+  controls.enabled = !e.value;
+  if (!e.value && gizmo.object && gizmo.object.userData.squadPivot) encs.dragEnded();
+});
 gizmo.addEventListener('objectChange', () => {
   if (gizmo.object && gizmo.object.userData.handle) layout.handleMoved(gizmo.object);
   else if (gizmo.object && gizmo.object.userData.pick) encs.moved(gizmo.object);
@@ -747,8 +751,8 @@ function setMode(mode) {
   gizmo.setMode(mode);
   const turn = mode === 'rotate';
   gizmo.showX = !turn; gizmo.showZ = !turn; gizmo.showY = true;
-  $('mode-move').classList.toggle('on', !turn);
-  $('mode-turn').classList.toggle('on', turn);
+  for (const id of ['mode-move', 'enc-mode-move']) $(id).classList.toggle('on', !turn);
+  for (const id of ['mode-turn', 'enc-mode-turn']) $(id).classList.toggle('on', turn);
 }
 
 // ------------------------------------------------------------------ input
@@ -889,7 +893,8 @@ function fillNames() {
   $('names').innerHTML = names.map((n) => `<option value="${n}">`).join('');
 }
 $('search').addEventListener('focus', fillNames);
-$('search').addEventListener('change', () => showByName($('search').value));
+// Found: give the keys back to the view (W / E, Delete...), which ignores typing in boxes.
+$('search').addEventListener('change', () => { if (showByName($('search').value)) $('search').blur(); });
 function showByName(name) {
   const q = (name || '').trim().toLowerCase();
   if (!q) return false;
@@ -983,6 +988,7 @@ const encs = createEncounters({
   scene, gizmo, heightAt, threePos, gamePos, status, $, setDirty, camera, slug,
   live: () => live,
   deselectOthers: () => { select(null); layout.select(null); },
+  setMode: (mode) => setMode(mode),
   modName: () => modName,
   terrain: () => terrainMesh,
   layoutFiles: () => layout.files(),
