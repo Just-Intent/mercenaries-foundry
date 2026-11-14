@@ -11,6 +11,7 @@ Mercenaries Foundry needs a few additions to the port's runtime. They live here 
 | `0005-Plugin-overlays.patch` | `set_overlay`: a plugin image drawn into the game's frames each present, after the F9 overlay (the port's host-overlay composite), so it shows in exclusive fullscreen. |
 | `0006-Plugin-text-input.patch` | `set_text_input` / `read_text_input`: a plugin takes the keyboard for an in-game console. The game ignores its input without a display change, and the window procedure hands typing to the plugin. |
 | `0007-Launcher-sync-hook.patch` | Before a modded launch, the launcher runs `foundry-sync.cmd` beside it (if present), then reads the mod selection again. `mod sync --install-hook` writes that file, so enabled source mods are built from the player's own game data every time the selection changes. |
+| `0008-Vehicle-mouse-gain.patch` | Mouse turning for tanks, mounted guns and helicopters: `[Controls] VehicleMouseGain` (percent, default 200) scales the mouse on top of `MouseSensitivity`, and movement past full stick in one update carries into the next ones (up to a quarter second of full turn) instead of being dropped. Their controls are a joystick capped at full deflection, so at the same sensitivity they turned far slower than the on-foot camera. Scopes are unchanged. |
 
 See [docs/PLUGINS.md](../docs/PLUGINS.md) for the API.
 

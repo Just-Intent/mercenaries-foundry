@@ -1,0 +1,81 @@
+From 7332a4d91fe23831f508db50454ccda4b8cef995 Mon Sep 17 00:00:00 2001
+From: Just-Intent <346791974+Just-Intent@users.noreply.github.com>
+Date: Sat, 14 Nov 2026 07:03:56 -0600
+Subject: [PATCH] Vehicle mouse gain
+
+Tanks, mounted guns and helicopters take the mouse as a joystick capped at full deflection, so at the same sensitivity they turned far slower than the on-foot camera. [Controls] VehicleMouseGain (percent, default 200) scales the mouse on top of MouseSensitivity for them, and movement past full stick in one update carries into the next ones (up to a quarter second of full turn) instead of being dropped. Scopes are unchanged.
+---
+ ports/mercenaries/src/recomp_controls.c | 21 +++++++++++++++++++--
+ tools/recomp/test_controls_native.py    |  7 +++++++
+ 2 files changed, 26 insertions(+), 2 deletions(-)
+
+diff --git a/ports/mercenaries/src/recomp_controls.c b/ports/mercenaries/src/recomp_controls.c
+index 0af3f90..fedc737 100644
+--- a/ports/mercenaries/src/recomp_controls.c
++++ b/ports/mercenaries/src/recomp_controls.c
+@@ -19,6 +19,10 @@ static volatile LONG g_hud_hidden;
+ static char g_path[MAX_PATH];
+ static unsigned short g_binds[2][CONTROL_CONTEXTS][CONTROL_ACTIONS];
+ static int g_initialized, g_mouse, g_sensitivity=5, g_invert, g_aim_assist=1;
++/* Mouse gain for vehicles and mounted guns, in percent of the on-foot scale
++ * ([Controls] VehicleMouseGain). Their controls are a joystick capped at full
++ * deflection, so the same mouse speed turned them far slower than the camera. */
++static int g_vehicle_gain=200;
+ static int g_shared_inputs=1;
+ static int g_in_game, g_shell_menu, g_modal, g_support, g_modal_back_y;
+ static unsigned char g_satellite_back_active[2];
+@@ -589,6 +593,8 @@ void recomp_controls_init(HWND window) {
+     g_mouse=GetPrivateProfileIntA("Controls","MouseAim",legacy_keyboard?0:1,g_path)==1;
+     g_sensitivity=(int)GetPrivateProfileIntA("Controls","MouseSensitivity",5,g_path);
+     if(g_sensitivity<1 || g_sensitivity>20)g_sensitivity=5;
++    g_vehicle_gain=(int)GetPrivateProfileIntA("Controls","VehicleMouseGain",200,g_path);
++    if(g_vehicle_gain<25 || g_vehicle_gain>1000)g_vehicle_gain=200;
+     g_invert=GetPrivateProfileIntA("Controls","InvertMouseY",0,g_path)==1;
+     g_aim_assist=GetPrivateProfileIntA("Controls","AimAssist",1,g_path)!=0;
+     g_shared_inputs=GetPrivateProfileIntA("Controls","AllowSharedInputs",1,g_path)!=0;
+@@ -968,11 +974,22 @@ float recomp_controls_mouse_axis(uint32_t hash,float original,float dt) {
+     if(g_test_mouse_path){if(axis)g_test_dy=0;else g_test_dx=0;
+         if(counts)fprintf(stderr,"[CONTROLS-TEST] consume axis=%u counts=%ld\n",axis,counts);}
+ 
+-    float value=(float)counts*(.0004f*g_sensitivity)/(dt*2.f);
++    const int scope=g_joystick_context==4 || g_joystick_context==9;
++    const float per_count=(.0004f*g_sensitivity)/(dt*2.f)*(scope?1.f:g_vehicle_gain/100.f);
++    float value=(float)counts*per_count;
++    if(!scope && !g_test_mouse_path && (value>1 || value< -1)){
++        /* Past full deflection: keep the counts this update can't use for the
++         * next ones (up to a quarter second of full turn), so a fast swipe
++         * still turns the whole way instead of being cut short. */
++        LONG used=(LONG)(1.f/per_count)*(counts<0?-1:1);
++        LONG left=counts-used, most=(LONG)(.25f/dt/per_count);
++        if(left>most)left=most;if(left< -most)left=-most;
++        if(left)InterlockedExchangeAdd(axis?&g_dy:&g_dx,left);
++    }
+     if(axis)value*=g_invert?1.f:-1.f;
+     if(value>1)value=1;if(value< -1)value=-1;
+     /* FreeAim is squared by the original human controller. */
+-    if(g_joystick_context==4 || g_joystick_context==9)value=copysignf(sqrtf(fabsf(value)),value);
++    if(scope)value=copysignf(sqrtf(fabsf(value)),value);
+     value+=original;if(value>1)value=1;if(value< -1)value=-1;
+     return value;
+ }
+diff --git a/tools/recomp/test_controls_native.py b/tools/recomp/test_controls_native.py
+index 9d7db8b..56cccaf 100644
+--- a/tools/recomp/test_controls_native.py
++++ b/tools/recomp/test_controls_native.py
+@@ -476,6 +476,13 @@ int main(int argc,char**argv){
+  /* Vehicle rate integrates to the same movement at 30 / 60 updates. */
+  play(1);update_mouse();g_dx=4;float a=recomp_controls_mouse_axis(0xEAA0CE27,0,1.f/30);
+  g_dx=2;float b=recomp_controls_mouse_axis(0xEAA0CE27,0,1.f/60);assert(fabsf(a-b)<.00001f);
++ /* Vehicles get VehicleMouseGain (percent) on top of the on-foot scale. */
++ g_vehicle_gain=100;g_dx=2;float c=recomp_controls_mouse_axis(0xEAA0CE27,0,1.f/60);
++ g_vehicle_gain=200;assert(fabsf(b-2*c)<.00001f);
++ /* A swipe past full deflection keeps its rest for the next updates (a tank). */
++ play(3);update_mouse();assert(g_joystick_context==2);g_dx=1000;
++ assert(recomp_controls_mouse_axis(0xEAA0CE27,0,1.f/60)==1.f);assert(g_dx>0 && g_dx<1000);
++ assert(recomp_controls_mouse_axis(0xEAA0CE27,0,1.f/60)==1.f);g_dx=0;
+  /* Sniper shares bindings but still uses the scope's mechanical mouse path. */
+  play(10);update_mouse();assert(g_context==SCOPE_CONTEXT && g_joystick_context==9);
+  g_dx=2;assert(recomp_controls_mouse_axis(0xEAA0CE27,0,1.f/60)>0);assert(!g_dx);
+-- 
+2.55.0.windows.5
+
