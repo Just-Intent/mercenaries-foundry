@@ -26,6 +26,8 @@ GET  /api/templates            objects a squad member can copy (template_*)
 POST /api/encounters/save      {"map", "files": {file: [encounter, ...]}}
 POST /api/placed/save          {"map", "files": {file: [{from, name, position, rotation}]}}: objects placed from templates
 POST /api/terrain/save         {"map", "samples": [[column, row, height units], ...]}: painted ground heights
+GET  /api/missions/<map>        the mod's missions on the map (+ their layer's squads and zones)
+POST /api/missions/save        {"map", "mission": {faction, number, title, description, briefing, fee, objectives}}
 POST /api/terrain/paint        {"map", "layers": {layer: {"texture", "pixels": [[col, row, opacity]]}}}
 POST /api/terrain/roads        {"map", "roads": [{"texture", "span", "points": [[x, z], ...]}]}
 POST /api/save                 {"moved": {...}, "copies": [...], "removed": [...]}
@@ -98,6 +100,9 @@ def make_handler(scene: Scene, mod_name: str, live: Live = None):
                 if path == "/api/info":
                     with objects_lock:
                         return self.send(200, {"mod": mod_name, "maps": scene.maps()})
+                if path.startswith("/api/missions/"):
+                    with objects_lock:
+                        return self.send(200, scene.missions(path[len("/api/missions/"):]))
                 if path.startswith("/api/look/"):          # ground textures: layers, paint, light
                     name, _, part = path[len("/api/look/"):].partition(".")
                     with terrain_lock:
@@ -177,6 +182,9 @@ def make_handler(scene: Scene, mod_name: str, live: Live = None):
                 if path == "/api/placed/save":
                     with objects_lock:
                         return self.send(200, scene.save_placed(doc["map"], doc.get("files", {})))
+                if path == "/api/missions/save":
+                    with objects_lock:
+                        return self.send(200, scene.save_mission(doc["map"], doc["mission"]))
                 if path == "/api/terrain/paint":
                     with objects_lock, terrain_lock:      # not while a ground read is building
                         return self.send(200, scene.save_paint(doc["map"], doc.get("layers", {})))

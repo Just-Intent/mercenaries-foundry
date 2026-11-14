@@ -561,13 +561,69 @@ def _apply_missions(data, folder, result, files=None):
                 text_list = missions.add_to_list(layer_list.decode("latin-1"), "registry", asset_id)
                 data.replace_added(name_hash(asset_id), name_hash("list"), text_list.encode("latin-1"))
         known = {r.key for _, r in data.records(SCRIPT)} | {k for k, kind, _ in data.added() if kind == SCRIPT}
+        drafts = [i for i, o in enumerate(doc.get("objectives") or [], 1)
+                  if (o.get("type") == "destroy" and not (o.get("squad") or o.get("targets")))
+                  or (o.get("type") == "goto" and not o.get("zone"))]
+        if drafts:
+            result.warnings.append(f"missions/{f.name}: objective {', '.join(map(str, drafts))} has no squad or "
+                                   "zone yet, so no script was written for it")
+        if doc.get("objectives") and not drafts and name_hash(asset_id) not in known:
+            # No script of the mod's own: one written from the objectives.
+            # Squads: in the mission's layer, or a layer of the mod that loads
+            # with the map (there during the mission too).
+            layers = []
+            for lf in sorted((folder / "encounters").glob("*.json")) if (folder / "encounters").is_dir() else []:
+                ldoc = json.loads(lf.read_text(encoding="utf-8"))
+                if lf.stem.lower() == asset_id or ((ldoc.get("map") or "").lower() == map_ and ldoc.get("load") == "map"):
+                    layers.append((lf.stem, ldoc))
+            # Map layers load only in free roam, not during a mission: the
+            # script loads the ones its objectives use.
+            used = set()
+
+            def squad_members(name):
+                # "encounter:squad", or a squad name alone (every squad of that name).
+                enc, _, sq = name.rpartition(":")
+                found = []
+                for stem, ldoc in layers:
+                    sqs = [(e["name"], s) for e in ldoc.get("encounters", []) for s in e.get("squads", [])]
+                    sqs += [(s.get("encounter", ""), s) for s in ldoc.get("game_squads", [])]
+                    got = [mm["name"] for en, s in sqs
+                           if s.get("name", "").lower() == sq.lower() and (not enc or en.lower() == enc.lower())
+                           for mm in s.get("members", [])]
+                    if got and stem.lower() != asset_id:
+                        used.add(stem)
+                    found += got
+                if not found:
+                    raise ValueError(f"missions/{f.name}: no squad {name!r} in encounters/{asset_id}.json "
+                                     "or a layer of this mod that loads with the map")
+                return found
+
+            for o in doc["objectives"]:
+                for stem, ldoc in layers:
+                    if o.get("zone") and o["zone"] in (ldoc.get("boundaries") or {}) and stem.lower() != asset_id:
+                        used.add(stem)
+            def zone_centre(name):
+                for _, ldoc in layers:
+                    zone = (ldoc.get("boundaries") or {}).get(name)
+                    pts = zone.get("points") if isinstance(zone, dict) else None
+                    if pts:
+                        return [sum(p[k] for p in pts) / len(pts) for k in range(3)]
+                return None
+
+            missions.objectives_script(asset_id, doc, squad_members)          # finds the layers used
+            body = missions.objectives_script(asset_id, doc, squad_members, sorted(used), zone_centre)
+            data.new("assets.dsk", name_hash(asset_id), SCRIPT, script.encode(script.new(asset_id, body)))
+            known.add(name_hash(asset_id))
+            extras_script = f"script written from {len(doc['objectives'])} objectives, "
+        else:
+            extras_script = ""
         if name_hash(asset_id) not in known:
             result.warnings.append(f"missions/{f.name}: no script {asset_id} (add scripts/{asset_id}.lua)")
         if not (folder / "encounters" / f"{asset_id}.json").exists():
             result.warnings.append(f"missions/{f.name}: no layer {asset_id} (mission_GenericInit loads it; "
                                    f"add encounters/{asset_id}.json)")
         arc = missions.arc(text, faction, map_)
-        extras = (f"{len(strings)} strings, " if strings else "") + ("opening mail, " if mail else "")
+        extras = (f"{len(strings)} strings, " if strings else "") + ("opening mail, " if mail else "") + extras_script
         if doc.get("contact", True) is not False:
             contact, contact_strings = missions.contract(
                 asset_id, doc, missions.section_value(ini, section, "MissionTitleDbKey"),
@@ -891,7 +947,7 @@ def _apply_animtables(data, folder, result):
 
 
 def _apply_terrain(data, folder, result):
-    from . import png, terrain, terrain_decals, terrain_light, terrain_paint
+    from . import png, terrain, terrain_decals, terrain_layers, terrain_light, terrain_paint
     tdir = folder / "terrain"
     work = {}       # terrain name -> {"heights": path, "table": path, "layers": {index: path}}
     for f in sorted(tdir.glob("*.png")):
@@ -997,6 +1053,12 @@ def _apply_terrain(data, folder, result):
                     notes.append(f"{len(table)} layers in the table")
                 if images:
                     notes.append(f"{patches} patches repainted")
+                    heavy = sum(1 for p in terrain_layers.decode_ptch(replace.get(b"PTCH", chunks[b"PTCH"]))
+                                if bin(p.layer_mask).count("1") > terrain_paint.RETAIL_MAX_PATCH_LAYERS)
+                    if heavy:
+                        result.warnings.append(
+                            f"terrain {name}: {heavy} patches use more than {terrain_paint.RETAIL_MAX_PATCH_LAYERS} "
+                            f"ground layers, more than any retail patch (paint fewer layers there if the ground looks wrong)")
             if "decals" in job:
                 doc = json.loads(job["decals"].read_text(encoding="utf-8"))
                 decal_replace, count = terrain_decals.apply({**chunks, **replace}, doc)

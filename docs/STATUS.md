@@ -1,4 +1,4 @@
-# Status (2026-11-08)
+# Status (2026-11-14)
 
 ## Done
 - Project set up: `mercfoundry/` Python tools, docs, MIT license, `.gitignore` that blocks game data.
@@ -88,7 +88,9 @@
 - Model exports unmirrored (0.67): glTF and OBJ exports used to negate only Z (the game was taken to be left-handed), which mirrored models; they now turn them half round (X and Z negated, winding kept), as the game draws them. Old exports are recognised by their glTF header and still import the old way. Checks: 45 models (6 named, 39 random) export, pass the vertex check and re-import byte-identical through glTF, 33 through OBJ; a Humvee's left seats come out on its left; a road sign reads correctly in the editor; the Terrain Hill mod's old Humvee changes file still raises the turret and places the new seat 0.8 m above the left front seat.
 - Collision follows edited pieces (0.67.1): model imports move and stretch the box-shape boxes of pieces whose outline changed, grouped by how they moved, keeping each box in its shape (flags kept); boxes shared with untouched parts stay. Tested in game: straight sandbag walls shifted 2 m were solid at their new place, not their old.
 - Editor terrain tools (0.68): brushes raise, lower, flatten and smooth height samples, paint and erase ground texture layers, and lay roads through clicked points; saved as the mod's heights changes, layer changes images and decals roads, which the build already applies. Fixed on the way: the editor drew ground textures mirrored (a leftover z flip in its ground shader). Tested in game: painted heights, a painted texture and a laid road all showed.
-- 257 tests pass.
+- Editor missions (0.69): a Missions panel makes contracts (title, offer, briefing mail, fee and bonus, objectives in order, the player's start point) with their squads and zones in the mission's own layer; the build writes the mission's script from its objectives (destroy a squad, reach a zone marked on the minimap and GPS), loads the map layers they use, and moves the player to the start. Search finds zones, paths and `encounter:squad`; squads turn as a whole. Fixed: built missions paid the $10,000 bonus copied from the faction's first mission (now 0 unless set). Tested in game: `sw_china9`, made in the editor, ran from contract mail to completion.
+- Terrain paint and roads no longer break the game (0.69.9): stacked road decals put 118 in one patch (the game holds 64, one per cell) and paint hidden under opaque scorch left draw passes with no cells; either crashed the game near them (in sound code, so it looked random) or hung it waiting on the GPU. Roads now replace decals on their cells (the build refuses more than 64 a patch) and hidden layers are dropped. Found with thread snapshots of the hung game mapped through the port's linker map, then by turning the mod's terrain parts off one at a time. Tested in game: `sw_china9` ran clean with all the terrain edits.
+- 261 tests pass.
 
 ## Fixed from retail data
 - Text values aren't NUL-terminated. The decoder had assumed they were and found no strings.

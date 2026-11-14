@@ -90,6 +90,32 @@ class MissionTests(unittest.TestCase):
                                 "mail.sw_allies9_initial.subject", "mail.sw_allies9_initial.body"))
         self.assertEqual(missions.text_plan("sw_allies9", {}, "SW_Allies9"), ({}, {}, None))
 
+    def test_objectives_script(self):
+        doc = {"objectives": [{"type": "goto", "text": "Reach the bridge", "zone": "bridge_zone"},
+                              {"type": "destroy", "text": "Kill the squad", "squad": "Squad1"}]}
+        strings, _, _ = missions.text_plan("sw_allies11", doc, "SW_Allies11")
+        self.assertEqual(strings["sw.allies11.obj.foundry1"], "Reach the bridge")
+        self.assertEqual(missions.text_plan("sw_allies11", doc, "SW_Allies11")[1]["BonusFee"], 0)   # no copied bonus
+        lua = missions.objectives_script("sw_allies11", doc, lambda squad: ["Nk1", "Nk2"])
+        self.assertIn("{ kind = 'goto', key = 'sw.allies11.obj.foundry1', zone = 'bridge_zone' }", lua)
+        marked = missions.objectives_script("sw_allies11", doc, lambda squad: ["Nk1"], (), lambda z: [1, 2.5, -3])
+        self.assertIn("zone = 'bridge_zone', x = 1.00, y = 2.50, z = -3.00 }", marked)
+        self.assertIn("Objective_SetTargetVector(foundry_ObjectiveName(), o.zone, sFoundryObj, "
+                      "'TARGET_TYPE_OBJECTIVE_PRIMARY', 'location',", marked)
+        unmarked = dict(doc, objectives=[dict(doc["objectives"][0], marker=False)])
+        self.assertNotIn("x = 1.00", missions.objectives_script("sw_allies11", unmarked, lambda squad: [], (), lambda z: [1, 2.5, -3]))
+        self.assertIn("targets = { 'Nk1', 'Nk2' }", lua)
+        self.assertIn("Event_ActorInBoundary('foundry_Arrived', 'b', 'player0', o.zone, true)", lua)
+        self.assertIn("mission_MissionComplete()", lua)
+        self.assertNotIn("#", lua.split("\n", 1)[1])          # Lua 5.0: table.getn, no # operator
+        started = missions.objectives_script("sw_allies11", {**doc, "start": {"position": [10, 20.5, -30], "heading": 90}},
+                                             lambda squad: ["Nk1"])
+        self.assertIn("Actor_SetPosition('player0', 10.00, 20.50, -30.00)", started)
+        self.assertIn("Actor_SetYaw('player0', 90.0)", started)
+        for bad in ([], [{"type": "fly"}], [{"type": "goto"}], [{"type": "destroy"}]):
+            with self.assertRaises(ValueError):
+                missions.objectives_script("sw_allies11", {"objectives": bad}, lambda squad: [])
+
     def test_add_mail(self):
         ini = "[Mail]\r\nId\t\tsw_allies3_initial\r\nSender\t\tx\r\n"
         out = missions.add_mail(ini, "sw_allies9_initial", "mail.senders.techgal", "s", "b")

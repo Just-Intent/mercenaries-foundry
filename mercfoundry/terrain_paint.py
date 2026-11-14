@@ -24,6 +24,7 @@ import struct
 from . import terrain_layers as tl
 
 MAX_LAYERS = 16
+RETAIL_MAX_PATCH_LAYERS = 9     # the most layers any retail patch uses (sw); more is untested
 
 
 def layer_file(name, index, texture):
@@ -111,6 +112,12 @@ def encode_patch(windows, layers):
     return out
 
 
+def drawn(grid):
+    """Whether a layer's 81-nibble grid draws any cell (the draw bit at a
+    cell's top-left vertex; the ninth row and column aren't read)."""
+    return any(grid[j * tl.VERTS + i] & 8 for j in range(tl.PATCH) for i in range(tl.PATCH))
+
+
 def _alph_blobs(data, patches):
     """Original ALPH blob bytes, by patch index (multi-layer patches only)."""
     out, pos = {}, 0
@@ -190,10 +197,19 @@ def apply(chunks, images=None, table=None):
             changed += 1
             windows = {l: window(images[l] if l in images else old.get(l, bytes(w * w))) for l in range(count)}
             layers = [l for l in range(count) if any(LEVEL[v] for v in windows[l])]
+            grids = encode_patch(windows, layers) if len(layers) > 1 else {}
+            # A layer that draws no cell (hidden under opaque paint) is left
+            # out: the game draws a patch in passes of four layers, and a pass
+            # that draws nothing hangs it (retail never has one).
+            while len(layers) > 1:
+                hidden = [l for l in layers if not drawn(grids[l])]
+                if not hidden:
+                    break
+                layers = [l for l in layers if l not in hidden]
+                grids = encode_patch(windows, layers) if len(layers) > 1 else {}
             mask = sum(1 << l for l in layers)
             new_patches.append(tl.Patch(mask, p.decal_count))
             if len(layers) > 1:
-                grids = encode_patch(windows, layers)
                 alph += tl.pack_blob(b"".join(tl._pack_layer(grids[l]) for l in layers))
     if changed:
         replace[b"PTCH"] = tl.encode_ptch(new_patches)

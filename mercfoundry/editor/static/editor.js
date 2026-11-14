@@ -14,6 +14,7 @@ import {createLive} from './live.js';
 import {applyGround} from './ground.js';
 import {createMinimap} from './minimap.js';
 import {createTerrainEditor} from './terrain_edit.js';
+import {createMissions} from './missions.js';
 
 const $ = (id) => document.getElementById(id);
 const NEAR_RADIUS = 220;      // metres around the view centre that show real models
@@ -42,6 +43,7 @@ gizmo.addEventListener('dragging-changed', (e) => { controls.enabled = !e.value;
 gizmo.addEventListener('objectChange', () => {
   if (gizmo.object && gizmo.object.userData.handle) layout.handleMoved(gizmo.object);
   else if (gizmo.object && gizmo.object.userData.pick) encs.moved(gizmo.object);
+  else if (gizmo.object && gizmo.object.userData.start) missions.startMoved();
   else if (state.selected) fromNode(state.selected);
 });
 
@@ -347,6 +349,7 @@ async function loadMap(name) {
   const start = state.records.find((r) => /playerstart|drop_start/i.test(r.name)) || state.records[0];
   if (start) lookAt(start.position, 60);
   const [items, encounters] = await Promise.all([layout.load(name), encs.load(name)]);
+  missions.load(name).catch((err) => console.warn('missions:', err));
   if (mine !== loadSerial) return;
   minimap.setWater(waterAreas ? waterAreas() : []);
   refreshChanges();
@@ -654,6 +657,8 @@ function refreshChanges() {
 }
 
 async function save() {
+  // A zone or path still being drawn is finished first, so Save keeps it.
+  if (layout.isDrawing()) layout.finishDraw();
   const body = {
     map: state.map,
     moved: state.moved,
@@ -683,6 +688,19 @@ async function save() {
       const done = await post('/api/placed/save', {map: state.map, files: placed});
       for (const f of Object.keys(placed)) state.placedFiles.add(f);
       note += `; placed objects in ${done.files.join(', ')}`;
+    }
+    // Missions first: a mission's layer file is made with it (and so isn't
+    // set to load with the map when squads are saved into it).
+    // A mission that can't be saved yet doesn't hold up the rest.
+    try {
+      const mission = missions.saveBody();
+      if (mission) {
+        const done = await post('/api/missions/save', mission);
+        await missions.saved(done);
+        note += `; mission ${done.id} in ${done.file}`;
+      }
+    } catch (e) {
+      note += `; mission not saved: ${e.message}`;
     }
     const terr = terrainEdit.saveBody(), paint = terrainEdit.paintBody(), roads = terrainEdit.roadsBody();
     if (terr) {
@@ -717,6 +735,7 @@ async function save() {
       note += parts.length ? `; ${parts.join('; ')}` : '';
     }
     const doc = await post('/api/save', body);
+    missions.load(state.map).catch(() => {});      // squads and zones just saved into a mission's layer
     setDirty(false);
     status(`Saved ${doc.rules} object rules to ${doc.file}${note}`);
   } catch (e) {
@@ -769,7 +788,7 @@ renderer.domElement.addEventListener('pointerup', (e) => {
       if (o) { objectHit = {distance: h.distance, rec: o.userData.rec}; break; }
     }
   }
-  const candidates = [layout.pick(ray), encs.pick(ray)].filter(Boolean);
+  const candidates = [layout.pick(ray), encs.pick(ray), missions.pick(ray)].filter(Boolean);
   if (objectHit) candidates.push({distance: objectHit.distance, apply: () => select(objectHit.rec)});
   candidates.sort((a, b) => a.distance - b.distance);
   if (candidates.length) return candidates[0].apply();
@@ -863,19 +882,36 @@ $('ph').addEventListener('change', () => {
   rec.node.rotateOnWorldAxis(new THREE.Vector3(0, 1, 0), THREE.MathUtils.degToRad(-delta));
   fromNode(rec);
 });
-$('search').addEventListener('change', () => {
-  const q = $('search').value.trim().toLowerCase();
-  if (!q) return;
+// Search suggestions: objects, zones and paths, encounters and squads.
+function fillNames() {
+  const names = [...new Set([...state.records.map((r) => r.copyName || r.name).filter(Boolean),
+                             ...layout.names(), ...encs.names()])].sort();
+  $('names').innerHTML = names.map((n) => `<option value="${n}">`).join('');
+}
+$('search').addEventListener('focus', fillNames);
+$('search').addEventListener('change', () => showByName($('search').value));
+function showByName(name) {
+  const q = (name || '').trim().toLowerCase();
+  if (!q) return false;
   const live = state.records.filter((r) => !r.removed);
   const rec = live.find((r) => (r.copyName || r.name || '').toLowerCase() === q)
     || live.find((r) => (r.name || '').toLowerCase().includes(q) || r.model.toLowerCase().includes(q));
-  if (rec) { lookAt(rec.position, 30); select(rec); status(''); return; }
+  // Exact names first (a zone named like part of an object's name wins over it).
   const item = layout.find(q);
-  if (item) { lookAt(item.points[0], 80); select(null); layout.select(item); status(''); return; }
-  const found = encs.find(q);
-  if (found) { lookAt(found.at, 30); select(null); layout.select(null); encs.select(found); status(''); return; }
+  const exactItem = item && item.name.toLowerCase() === q;
+  const squad = q.includes(':') ? encs.find(q) : null;
+  if (rec && !exactItem && !squad) { lookAt(rec.position, 30); select(rec); status(''); return true; }
+  if (item && !squad) {
+    // A zone or path: look at its middle, from far enough to see it whole.
+    const mid = [0, 1, 2].map((k) => item.points.reduce((s, p) => s + p[k], 0) / item.points.length);
+    const span = Math.max(...item.points.map((p) => Math.hypot(p[0] - mid[0], p[2] - mid[2])), 20);
+    lookAt(mid, span * 2.2); select(null); layout.select(item); status(''); return true;
+  }
+  const found = squad || encs.find(q);
+  if (found) { lookAt(found.at, 30); select(null); layout.select(null); encs.select(found); status(''); return true; }
   status(`Nothing matches "${q}"`, true);
-});
+  return false;
+}
 window.addEventListener('keydown', (e) => {
   if (e.target.tagName === 'INPUT') return;
   const k = e.key.toLowerCase();
@@ -919,6 +955,18 @@ const terrainEdit = createTerrainEditor({
   scene, threePos: (p) => threePos(p), heightAt: (x, z) => heightAt(x, z),
   terrain: () => ({mesh: terrainMesh, meta: state.terrain.meta, heights: state.terrain.heights}),
   onHeights: () => minimap.setTerrain(state.terrain.meta, state.terrain.heights),
+});
+// Missions: contracts, their objectives and their layer's squads and zones.
+const missions = createMissions({
+  $, status, setDirty: (v) => setDirty(v), show: (name) => showByName(name),
+  scene, threePos: (p) => threePos(p), lookAt: (p) => lookAt(p, 30),
+  viewCentre: () => { const g = gamePos(controls.target); g[1] = round(heightAt(g[0], g[2])); return g; },
+  newSquadIn: (file) => encs.startNewSquad(file),
+  drawZoneIn: (file) => layout.startDraw('boundary', file),
+  gamePos: (v) => gamePos(v), groundAt: (x, z) => heightAt(x, z),
+  // The start marker takes the gizmo (move along the ground, or turn).
+  grab: (node) => { select(null); layout.select(null); encs.select(null); gizmo.attach(node); setMode(gizmo.getMode()); },
+  release: (node) => { if (gizmo.object === node) gizmo.detach(); },
 });
 // The minimap (water areas come from the layout module once it has loaded).
 let waterAreas = null;

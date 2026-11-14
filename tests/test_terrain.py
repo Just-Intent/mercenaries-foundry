@@ -190,11 +190,28 @@ class TerrainTests(unittest.TestCase):
         new = terrain.tern_chunks(terrain.rebuild(rec, replace))
         patches = terrain_layers.decode_ptch(new[b"PTCH"])
         self.assertEqual(patches[5].layers, [0])
-        self.assertEqual(patches[15].layers, [0, 1])
-        alpha = terrain_layers.decode_alph(new[b"ALPH"], patches)
-        self.assertEqual(alpha[15][1][0], 15)              # opaque and drawn
-        self.assertEqual(alpha[15][0][0] & 8, 0)           # grass hidden under it: not drawn
+        # grass hidden under opaque rock draws no cell, so it's left out: a
+        # pass that draws nothing hangs the game
+        self.assertEqual(patches[15].layers, [1])
         self.assertEqual(terrain_paint.layer_images(new)[1][1], bytes(rock))
+
+    def test_no_empty_pass(self):
+        # Four layers under an opaque fifth: the first pass of four would draw
+        # nothing (the game hangs on it); the hidden layers are dropped.
+        windows = {l: [128] * 81 for l in range(4)}
+        windows[4] = [255] * 81
+        grids = terrain_paint.encode_patch(windows, [0, 1, 2, 3, 4])
+        self.assertFalse(any(terrain_paint.drawn(grids[l]) for l in range(4)))
+        self.assertTrue(terrain_paint.drawn(grids[4]))
+        rec = tern_record(sample_units(), paint=painted_chunks())
+        chunks = terrain.tern_chunks(rec)
+        table = terrain_paint.layer_table(chunks) + [{"texture": t, "scale": 16, "axis": 0} for t in ("a", "b", "c")]
+        w = SIZE + 1
+        images = {l: bytes([128] * (w * w)) for l in range(4)}
+        images[4] = bytes([255] * (w * w))
+        replace, n = terrain_paint.apply(chunks, images, table)
+        patches = terrain_layers.decode_ptch(replace[b"PTCH"])
+        self.assertTrue(all(p.layers == [4] for p in patches))
 
     def test_new_layer(self):
         chunks = terrain.tern_chunks(tern_record(sample_units(), paint=painted_chunks()))
@@ -293,6 +310,34 @@ class DecalTests(unittest.TestCase):
         cells = [d["cell"] for d in new["decals"]]
         self.assertIn([11, 12], cells)       # the map's own decals are still there
         self.assertIn([7, 10], cells)
+
+    def test_roads_replace_not_stack(self):
+        # Crossing roads, one doubling back, and one over a map decal: one decal
+        # per cell, so no patch passes the game's 64 (more corrupted its memory).
+        chunks = decal_chunks()
+        doc = {"roads": [{"texture": "asphalt", "points": [[-60, 0], [60, 0]]},
+                         {"texture": "asphalt", "points": [[0, -60], [0, 60]]},
+                         {"texture": "dirt", "points": [[-50, 8], [50, 8], [-50, 8]]},
+                         {"texture": "dirt", "points": [[-40, -24], [-30, -24]]}]}
+        replace, n = terrain_decals.apply(chunks, doc)
+        new = {**chunks, **replace}
+        out = terrain_decals.export(new)
+        cells = [tuple(d["cell"]) for d in out["decals"]]
+        self.assertEqual(len(cells), len(set(cells)))
+        self.assertEqual(len(cells), n)
+        self.assertLessEqual(max(p.decal_count for p in terrain_layers.decode_ptch(new[b"PTCH"])),
+                             terrain_decals.MAX_PER_PATCH)
+        at = {tuple(d["cell"]): d["texture"] for d in out["decals"]}
+        self.assertEqual(at[(11, 12)], "dirt")        # the road over the map's decal took its cell
+        self.assertIn((7, 10), at)                    # one it doesn't cover stays
+
+    def test_too_many_decals_in_a_patch(self):
+        chunks = decal_chunks()
+        doc = {"textures": ["road"],
+               "decals": [{"cell": [i % 8, i // 8], "texture": "road", "uv": [[0, 0]] * 4} for i in range(64)]
+               + [{"cell": [0, 0], "texture": "road", "uv": [[0, 0]] * 4}]}
+        with self.assertRaisesRegex(ValueError, "at most 64"):
+            terrain_decals.apply(chunks, doc)
 
 
 LEVELS_INI = "\n".join(["[LevelNamesList]", "LevelName\tLV_X", "", "[LV_X]", "Name\t\t\tSWN",

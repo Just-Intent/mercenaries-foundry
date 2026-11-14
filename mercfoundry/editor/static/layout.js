@@ -303,7 +303,7 @@ export function createLayout(ctx) {
   // ---------------------------------------------------------------- new paths and zones
   function slug(s) { return s.toLowerCase().replace(/[^a-z0-9]+/g, '_').replace(/^_|_$/g, '') || 'mod'; }
 
-  function startDraw(kind) {
+  function startDraw(kind, file) {
     ctx.deselectObject();
     select(null);
     cancelDraw();
@@ -315,9 +315,10 @@ export function createLayout(ctx) {
     $('draw-name').value = `${base}${k}`;
     const fresh = `${slug(ctx.modName())}_${st.map}.json`;
     for (const f of ctx.encounterFiles()) if (!st.files.includes(f)) st.files.push(f);
-    const files = [...new Set([...st.files, fresh])];
+    const want = typeof file === 'string' ? file : null;
+    const files = [...new Set([...st.files, fresh, ...(want ? [want] : [])])];
     $('draw-file').innerHTML = files.map((f) => `<option>${f}</option>`).join('');
-    $('draw-file').value = st.files[0] || fresh;
+    $('draw-file').value = want || st.files[0] || fresh;
     $('draw-type-row').hidden = kind !== 'boundary';
     $('draw').hidden = false;
     $('draw-title').textContent = kind === 'path' ? 'New path' : 'New zone';
@@ -584,6 +585,8 @@ export function createLayout(ctx) {
   return {
     load, pick, select, handleMoved, hoverText, drawClick, finishDraw, cancelDraw, saveBody, saved, find,
     isDrawing: () => !!st.draw,
+    names: () => st.items.map((x) => x.name),
+    startDraw,
     files: () => [...st.files],
     hasSelection: () => !!st.selected,
     deletePoint, addPoint,

@@ -28,6 +28,7 @@
          title="Any template: a vehicle, prop or character. Click Place, then the ground.">
   <button id="place" title="Place the template where you click (P)">Place</button>
   <button id="terrain-mode" title="Edit the ground's height (T)">Terrain</button>
+  <button id="missions-mode" title="Make and edit contracts">Missions</button>
   <datalist id="templates"></datalist>
   <span class="spacer"></span>
   <button id="live">Live (no game)</button>
@@ -124,6 +125,40 @@
       </div>
       <p id="item-note" class="hint"></p>
     </div>
+    <div id="missions" hidden>
+      <h2>Missions</h2>
+      <label class="field">Mission <select id="ms-list"></select></label>
+      <div id="ms-new">
+        <label class="field">Faction <select id="ms-faction">
+          <option value="allies">Allies</option><option value="china">China</option>
+          <option value="mafia">Mafia</option><option value="sk">South Korea</option></select></label>
+      </div>
+      <p class="hint">Asset ID: <b id="ms-number"></b></p>
+      <label class="field">Title <input id="ms-title" type="text"></label>
+      <label class="field">Description (the contract offer) <textarea id="ms-description" rows="2"></textarea></label>
+      <label class="field">Briefing (the contract mail) <textarea id="ms-briefing" rows="3"></textarea></label>
+      <label class="field">Fee ($) <input id="ms-fee" type="number" min="0" step="1000"></label>
+      <label class="field">Bonus ($) <input id="ms-bonus" type="number" min="0" step="1000" title="Paid on completion on top of the fee"></label>
+      <h3>Player start</h3>
+      <p class="hint" id="ms-start-at">Where the contract leaves the player (the HQ).</p>
+      <label class="field">Heading (degrees) <input id="ms-start-heading" type="number" step="5" value="0"></label>
+      <div class="buttons"><button id="ms-start-set" title="The point in the middle of the view">Set here</button>
+        <button id="ms-start-show">Show</button><button id="ms-start-clear">Clear</button></div>
+      <h3>Objectives, in order</h3>
+      <div id="ms-objectives"></div>
+      <div class="buttons"><button id="ms-add-destroy">+ Destroy squad</button><button id="ms-add-goto">+ Go to zone</button></div>
+      <div id="ms-layer-tools">
+        <p class="hint">The mission's soldiers and zones go in its layer (loaded only during the mission):</p>
+        <div class="buttons"><button id="ms-add-squad">Add squad</button><button id="ms-add-zone">Draw zone</button></div>
+      </div>
+      <p class="hint" id="ms-script-note" hidden>This mod has its own script for this mission, so the objectives
+        here aren't used.</p>
+      <p class="hint">Save writes the mission. On the next game start a contact at the faction's HQ offers it;
+        after the last objective the contract completes.</p>
+      <div id="ms-start-row" hidden><p class="hint">To start it straight away, run in Foundry Console's Lua box:</p>
+        <code id="ms-start" class="copyable"></code></div>
+      <div class="buttons"><button id="ms-close">Close</button></div>
+    </div>
     <div id="terrain" hidden>
       <h2>Terrain</h2>
       <div class="buttons">
@@ -188,6 +223,8 @@
         <button id="enc-add-point">Add spawn point</button>
         <button id="enc-delete">Delete</button>
         <button id="enc-delete-squad">Delete squad</button>
+        <span id="enc-turn-row"><input id="enc-turn" type="number" step="15" value="90" title="Degrees" style="width: 4.5em">
+          <button id="enc-turn-squad" title="Turn the whole squad (its formation and facing) about its middle">Turn squad</button></span>
         <button id="enc-delete-enc">Delete encounter</button>
       </div>
       <p id="enc-note" class="hint"></p>

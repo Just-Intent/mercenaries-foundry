@@ -44,7 +44,9 @@ toolkit bundle run it the same way: `foundry\python\python.exe foundry\mercfound
   selecting one says which mod changed it. This runs in the background after the
   map loads (about 20 seconds the first time).
 - Find objects by name or model (search box), or double-click the ground to look
-  there. Drag to orbit, right-drag to pan, scroll to zoom.
+  there. The box also finds zones and paths (it frames the whole zone),
+  encounters, and squads as `encounter:squad`, and suggests names as you type.
+  Drag to orbit, right-drag to pan, scroll to zoom.
 - Select an object to move it (W), turn it about the vertical (E), drop it to the
   ground (G) or copy it (C), or type its position and heading in the panel.
   Copies get a name you can change in the panel; names must be new.
@@ -129,6 +131,34 @@ toolkit bundle run it the same way: `foundry\python\python.exe foundry\mercfound
   (the view redraws the ground with them). Samples back at their loaded value
   aren't saved; a mod's whole-map heights or layer image takes precedence, so
   painting over it is refused. Objects keep their height: Drop to ground.
+  A road replaces whatever decal is on its cells (a patch holds one per cell;
+  more hung or crashed the game), and paint hidden under opaque paint is left
+  out of the patch (see dsk.md).
+- **Missions**: make a contract on the map. Pick a mission, or **New
+  mission...** with a faction (it takes that faction's next free number on the
+  map), then give it:
+  - a title, a description (the contact's offer), a briefing (the contract
+    mail), a fee and a bonus (paid on completion on top of the fee; 0 unless
+    you set one);
+  - objectives, done in order: **Destroy squad** (pick a squad) and **Go to
+    zone** (pick a zone; the zone gets a marker on the minimap and GPS).
+    **Show** looks at an objective's squad or zone;
+  - a **Player start**: **Set here** puts it at the middle of the view (a
+    yellow arrow pointing the way the player faces). Click the arrow to move
+    it (it stays on the ground) or press E and drag the ring to turn it; or
+    type a heading. Without one, the player starts where the contract leaves
+    them (the HQ).
+
+  **Add squad** and **Add zone** put a squad or zone in the mission's own
+  layer, `encounters/<id>.json`, which loads only during the mission; squads
+  and zones in the mod's map layers can be picked too (the mission loads those
+  layers). Save writes `missions/<id>.json` first; a mission that can't be
+  saved yet doesn't hold up saving the rest. With objectives and no script of
+  its own, the build writes the mission's script (see ENCOUNTERS.md). The panel
+  shows the Lua line that starts the mission (paste it in Foundry Console's Lua
+  box); a contact at the faction's HQ offers it too.
+- **Turn squad** turns a selected squad of the mod's about its middle by the
+  given degrees: its formation and every member's facing.
 - **Gates** draw with their doors: a gate's doors are models of their own
   (`geometryNameGateA`/`B`), hung on its `k_gateclosedA`/`B` joints. In the
   game they are separate objects too, which the game makes for each gate,

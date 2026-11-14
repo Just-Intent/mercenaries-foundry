@@ -52,7 +52,7 @@ python -m mercfoundry mod build my_mod --data game_files/DATAxbox --out "<port>/
 python -m mercfoundry edit my_mod --data game_files/DATAxbox
 ```
 
-Opens the Foundry editor in your browser (a local web app; nothing leaves your PC): a 3D view of a map's terrain, objects, paths and zones. Move, turn, copy and remove objects; raise, lower, flatten and smooth the ground, paint its textures and lay roads; drag the points of paths and zones; draw new patrol paths and trigger zones; place squads and their spawn points. With the game running, a live link moves, turns and removes objects in game as you edit and shows where the player is. Edits are saved as ordinary mod files (object rules, layout changes, encounter layers). See [docs/EDITOR.md](docs/EDITOR.md).
+Opens the Foundry editor in your browser (a local web app; nothing leaves your PC): a 3D view of a map's terrain, objects, paths and zones. Move, turn, copy and remove objects; raise, lower, flatten and smooth the ground, paint its textures and lay roads; drag the points of paths and zones; draw new patrol paths and trigger zones; place squads and their spawn points. Make missions: objectives, a start point, the briefing and the fee, with the script written for you. With the game running, a live link moves, turns and removes objects in game as you edit and shows where the player is. Edits are saved as ordinary mod files (object rules, layout changes, encounter layers). See [docs/EDITOR.md](docs/EDITOR.md).
 
 ### Sharing mods
 

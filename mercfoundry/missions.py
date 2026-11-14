@@ -113,12 +113,18 @@ def text_plan(asset_id, doc, section):
     key = section.replace("_", "")                     # SW_Allies9 -> SWAllies9, as retail keys
     strings = dict(doc.get("strings") or {})
     ini = {}
+    if doc.get("objectives"):
+        # The copied section's bonus pays for retail optional objectives;
+        # built missions have none, so no bonus unless "ini" sets BonusFee.
+        ini["BonusFee"] = 0
     if "title" in doc:
         strings[f"MissionInfo.MissionTitle.{key}"] = doc["title"]
         ini["MissionTitleDbKey"] = f"MissionInfo.MissionTitle.{key}"
     if "description" in doc:
         strings[f"MissionInfo.Description.{key}"] = doc["description"]
         ini["ShortDescriptionDbKey"] = f"MissionInfo.Description.{key}"
+    for i, o in enumerate(doc.get("objectives") or [], 1):
+        strings[objective_key(asset_id, i)] = o.get("text") or f"Objective {i}"
     mail = None
     if doc.get("mail"):
         m = doc["mail"]
@@ -128,6 +134,135 @@ def text_plan(asset_id, doc, section):
         strings[body] = m.get("body", "")
         mail = (mail_id, m.get("sender", "mail.senders.techgal"), subject, body)
     return strings, ini, mail
+
+
+def objective_key(asset_id, i):
+    """The string key of a generated objective's text: sw.allies9.obj.foundry1."""
+    map_, faction, number = parse_id(asset_id)
+    return f"{map_}.{faction}{number}.obj.foundry{i}"
+
+
+def _lua_str(s):
+    return "'" + str(s).replace("\\", "\\\\").replace("'", "\\'") + "'"
+
+
+OBJECTIVE_TYPES = ("destroy", "goto")
+
+
+def objectives_script(asset_id, doc, squad_members, layers=(), zone_centre=None):
+    """A mission script (Lua 5.0) for a mission file's "objectives", done one
+    after another, then the mission completes:
+
+      {"type": "destroy", "text": ..., "targets": [names]} or "squad": "Squad1"
+          (the squad's members in the mission's layer, by squad_members(name));
+          marked in the world and on the minimap, with a counter;
+      {"type": "goto", "text": ..., "zone": name}: reach a zone (boundary)
+          drawn in the mission's layer.
+
+    layers: other layers the objectives use (the mod's map layers, which
+    otherwise load only in free roam); the script loads them at its start.
+    zone_centre(name): the zone's centre [x, y, z], where a goto objective
+    puts its marker (GPS, minimap and in the world), or None for no marker.
+    """
+    objs = doc.get("objectives") or []
+    if not objs:
+        raise ValueError("a mission needs an objective")
+    rows = []
+    for i, o in enumerate(objs, 1):
+        kind = o.get("type")
+        if kind not in OBJECTIVE_TYPES:
+            raise ValueError(f"objective {i}: type is one of {', '.join(OBJECTIVE_TYPES)}, not {kind!r}")
+        key = _lua_str(objective_key(asset_id, i))
+        if kind == "destroy":
+            targets = list(o.get("targets") or [])
+            if o.get("squad"):
+                targets += squad_members(o["squad"])
+            if not targets:
+                raise ValueError(f"objective {i}: nothing to destroy (give \"targets\" or \"squad\")")
+            rows.append(f"{{ kind = 'destroy', key = {key}, targets = {{ {', '.join(_lua_str(t) for t in targets)} }} }}")
+        else:
+            if not o.get("zone"):
+                raise ValueError(f"objective {i}: a goto objective needs a \"zone\"")
+            at = zone_centre(o["zone"]) if zone_centre and o.get("marker", True) else None   # "marker": false: none
+            mark = f", x = {at[0]:.2f}, y = {at[1]:.2f}, z = {at[2]:.2f}" if at else ""
+            rows.append(f"{{ kind = 'goto', key = {key}, zone = {_lua_str(o['zone'])}{mark} }}")
+    table = ",\n".join("  " + r for r in rows)
+    loads = "".join(f"Utility_ReadLevelFile({_lua_str(n)})   -- its squads or zones\n" for n in layers)
+    start = doc.get("start") or {}
+    if start.get("position"):     # where the player begins (on foot, as retail missions move the player)
+        x, y, z = (float(v) for v in start["position"])
+        loads += f"Actor_SetPosition('player0', {x:.2f}, {y:.2f}, {z:.2f})\n"
+        loads += f"Actor_SetYaw('player0', {float(start.get('heading', 0)):.1f})\n"
+    return f"""-- {asset_id}: written by mercfoundry from missions/{asset_id}.json "objectives".
+tFoundryObjectives = {{
+{table}
+}}
+iFoundryStep = 0
+iFoundryDown = 0
+sFoundryObj = ''
+
+function ScriptInit()
+Utility_LoadUtilityScript('mission')
+Utility_LoadUtilityScript('mission_objective')
+Utility_LoadUtilityScript('mission_objectiveverb')
+Utility_LoadUtilityScript('util_misc')
+mission_GenericInit()
+{loads}end
+
+function post_InitialNotifications()   -- after the contract mail
+foundry_NextObjective()
+end
+
+function foundry_ObjectiveName()
+return 'foundry' .. iFoundryStep
+end
+
+function foundry_NextObjective()
+iFoundryStep = iFoundryStep + 1
+local o = tFoundryObjectives[iFoundryStep]
+if not o then
+mission_MissionComplete()
+return
+end
+sFoundryObj = Utility_GetStringById(o.key)
+if o.kind == 'destroy' then
+iFoundryDown = 0
+mission_ObjectiveDestroy{{ callbackFunc = foundry_TargetDown, objectiveName = foundry_ObjectiveName(),
+                          objectiveDesc = sFoundryObj, actorName = o.targets }}
+util_ObjMsgPrint{{ sMsg = sFoundryObj, sType = 'PRI_OBJ_ADD', vIdx = 1,
+                  tCounter = {{ vCurr = 0, vLim = table.getn(o.targets) }}, sObjective = foundry_ObjectiveName() }}
+else
+util_ObjMsgPrint{{ sMsg = sFoundryObj, sType = 'PRI_OBJ_ADD', vIdx = 1, sObjective = foundry_ObjectiveName() }}
+if o.x then   -- a marker on the zone, as retail location objectives do (sw_sk2)
+Objective_SetShortDescription(foundry_ObjectiveName(), sFoundryObj)
+Objective_SetType(foundry_ObjectiveName(), 'OBJECTIVE_TYPE_PRIMARY')
+Objective_SetTargetVector(foundry_ObjectiveName(), o.zone, sFoundryObj, 'TARGET_TYPE_OBJECTIVE_PRIMARY', 'location',
+                          o.x, o.y, o.z, true, true, false)   -- GPS and map; not in the world (as sw_sk2)
+end
+Event_ActorInBoundary('foundry_Arrived', 'b', 'player0', o.zone, true)
+end
+end
+
+function foundry_TargetDown(sActor, bComplete, sObjName)
+local o = tFoundryObjectives[iFoundryStep]
+local iAll = table.getn(o.targets)
+iFoundryDown = iFoundryDown + 1
+local sType = 'PRI_OBJ_UPD_POS'
+if iFoundryDown >= iAll then sType = 'PRI_OBJ_CMPL' end
+util_ObjMsgPrint{{ sMsg = sFoundryObj, sType = sType, vIdx = 1,
+                  tCounter = {{ vCurr = iFoundryDown, vLim = iAll }}, sObjective = foundry_ObjectiveName() }}
+if iFoundryDown >= iAll then
+mission_RemoveObjective(foundry_ObjectiveName())
+foundry_NextObjective()
+end
+end
+
+function foundry_Arrived(playerActor, boundaryName)
+util_ObjMsgPrint{{ sMsg = sFoundryObj, sType = 'PRI_OBJ_CMPL', vIdx = 1, sObjective = foundry_ObjectiveName() }}
+mission_RemoveObjective(foundry_ObjectiveName())
+foundry_NextObjective()
+end
+"""
 
 
 CONTRACTS_SCRIPT = "foundry_contracts"

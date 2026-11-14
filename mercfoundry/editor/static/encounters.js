@@ -195,6 +195,7 @@ export function createEncounters(ctx) {
     if (editable(sel) && !mod) $('enc-add-point').hidden = $('enc-delete').hidden = false;
     $('enc-add-member').hidden = !mod || !sel.member;
     $('enc-delete-squad').hidden = !mod || !sel.squad;
+    $('enc-turn-row').hidden = !mod || !sel.squad;
     $('enc-delete-enc').hidden = sel.source !== 'mod';
     $('enc-note').textContent = sel.added
       ? `The mod's squad in the game's encounter ${sel.enc.name}: its members are saved in encounters/${sel.file} `
@@ -275,6 +276,29 @@ export function createEncounters(ctx) {
     select(null);
   }
 
+  // Turn a whole squad about its middle: the formation and every member's
+  // facing (game heading: forward is (sin h, cos h) in x, z).
+  function turnSquad() {
+    const sel = st.selected;
+    const d = +$('enc-turn').value;
+    if (!ours(sel) || !sel.squad || !Number.isFinite(d) || !d) return;
+    const ms = sel.squad.members || [];
+    if (!ms.length) return;
+    const cx = ms.reduce((s, m) => s + m.position[0], 0) / ms.length;
+    const cz = ms.reduce((s, m) => s + m.position[2], 0) / ms.length;
+    const r = THREE.MathUtils.degToRad(d), c = Math.cos(r), s = Math.sin(r);
+    for (const m of ms) {
+      const dx = m.position[0] - cx, dz = m.position[2] - cz;
+      const x = cx + dx * c + dz * s, z = cz + dz * c - dx * s;
+      m.position = [Math.round(x * 1000) / 1000, Math.round(heightAt(x, z) * 1000) / 1000, Math.round(z * 1000) / 1000];
+      m.yaw = Math.round((((m.yaw || 0) + d) % 360) * 10) / 10;
+      ctx.live().moveNamed(m, m.name, m.position, m.yaw);
+    }
+    markEdited(sel);
+    select(sel);
+    status(`${sel.squad.name} turned ${d} degrees`);
+  }
+
   function deleteSquad() {
     const sel = st.selected;
     if (!ours(sel) || !sel.squad) return;
@@ -305,16 +329,17 @@ export function createEncounters(ctx) {
     status(`Click the ground to add a spawn point to set ${set}; Esc cancels.`);
   }
 
-  function startNewSquad() {
+  function startNewSquad(file) {
     // With one of the game's encounters selected, the squad can join it.
     const sel = st.selected;
     st.newFor = sel && sel.source === 'game' ? sel.enc : null;
     ctx.deselectOthers();
     select(null);
     const fresh = `${ctx.slug(ctx.modName())}_${st.map}.json`;
-    const files = [...new Set([...st.mod.map((f) => f.file), ...ctx.layoutFiles(), fresh])];
+    const want = typeof file === 'string' ? file : null;
+    const files = [...new Set([...st.mod.map((f) => f.file), ...ctx.layoutFiles(), fresh, ...(want ? [want] : [])])];
     $('sq-file').innerHTML = files.map((f) => `<option>${f}</option>`).join('');
-    $('sq-file').value = files[0];
+    $('sq-file').value = want || files[0];
     fillEncounters();
     $('sq-name').value = 'Squad1';
     $('sq-count').value = 3;
@@ -444,6 +469,13 @@ export function createEncounters(ctx) {
 
   function find(q) {
     q = q.toLowerCase();
+    // A squad: "encounter:squad", or a squad's name.
+    const [qe, qs] = q.includes(':') ? q.split(':', 2) : [null, q];
+    for (const s of all()) {
+      if (qe !== null && s.enc.name.toLowerCase() !== qe) continue;
+      const sq = (s.enc.squads || []).find((x) => x.name.toLowerCase() === qs && (x.members || []).length);
+      if (sq) return {...s, ...(sq.file ? {file: sq.file, added: true} : {}), squad: sq, member: sq.members[0], at: sq.members[0].position};
+    }
     for (const s of all()) {
       if (s.enc.name.toLowerCase().includes(q)) {
         const sq = (s.enc.squads || []).find((x) => (x.members || []).length);
@@ -467,6 +499,7 @@ export function createEncounters(ctx) {
   $('sq-place').onclick = placeSquad;
   $('sq-cancel').onclick = cancelPlace;
   $('enc-add-member').onclick = addMember;
+  $('enc-turn-squad').onclick = turnSquad;
   $('enc-add-point').onclick = startAddPoint;
   $('enc-delete').onclick = deleteSelected;
   $('enc-delete-squad').onclick = deleteSquad;
@@ -477,6 +510,9 @@ export function createEncounters(ctx) {
   return {
     load, pick, select, moved, placeClick, hoverText, cancelPlace, saveBody, saved, find, deleteSelected, setLoaded,
     isPlacing: () => !!st.place,
+    // Names search can find: encounters and their squads ("encounter:squad").
+    names: () => all().flatMap((s) => [s.enc.name, ...(s.enc.squads || []).map((q) => `${s.enc.name}:${q.name}`)]),
+    startNewSquad,
     files: () => st.mod.map((f) => f.file),
     hasSelection: () => !!st.selected,
     templates: () => st.templates,

@@ -182,6 +182,31 @@ A mod mission is three files named after its asset ID, `<map>_<faction><number>`
 
 The build warns about any new script that no list names: the game silently ignores those.
 
+### Objectives without a script
+
+A mission file with `"objectives"` and no `scripts/<id>.lua` gets its script from the build (the editor's Missions panel writes these files):
+
+```json
+{
+ "title": "Clear the crossing", "description": "...", "mail": {...}, "ini": {"ContractFee": 150000},
+ "objectives": [
+  {"type": "goto", "text": "Go to the marked area", "zone": "foundry_zone1"},
+  {"type": "destroy", "text": "Destroy the squad", "squad": "sw_china9encounter1:sw_china9squad1"}
+ ],
+ "start": {"position": [-1312.45, 20.27, 1109.05], "heading": 0}
+}
+```
+
+- Objectives run one after another, and then the contract completes. The script is Lua 5.0, as the game's are.
+- `destroy` takes a squad, as `"encounter:squad"` (or a squad's name when it is unique), or `"targets"`, a list of actor names. It uses `mission_ObjectiveDestroy`, which marks each target in the world and on the minimap, with a counter.
+- `goto` takes a zone (a boundary), done when the player enters it (`Event_ActorInBoundary`). The zone's centre gets a marker on the minimap and GPS, as `sw_sk2` marks its spots (`Objective_SetTargetVector` with `'location'`, not drawn in the world). `"marker": false` leaves it unmarked.
+- Squads and zones can sit in the mission's own layer or in the mod's map layers (`"load": "map"`). Map layers load only in free roam, so the script loads the ones its objectives use (`Utility_ReadLevelFile`).
+- `"start"` moves the player there at the start of the mission and turns them to `heading` (degrees; 0 faces +z), as retail missions do (`Actor_SetPosition`, `Actor_SetYaw`).
+- The objective texts become strings in the mission's text record (`<map>.<faction><n>.obj.foundry<k>`).
+- `mission.ini`'s section is copied from the faction's first mission on the map, and that one's `BonusFee` (10000 for `SW_China1`) is meant for retail optional objectives: scripts zero it when they're missed. A mission with objectives gets `BonusFee 0` unless its `"ini"` sets one (the editor's Bonus).
+
+Tested in game (2026-11-14): `sw_china9`, made in the editor (a go-to zone in the mod's map layer, then 20 civilians, and in a second run 20 NK soldiers, in the mission's layer). The contract mail arrived, the player started at the set point, the zone's marker showed on the minimap, the destroy objective marked the squad and counted it down, and the contract completed and paid its fee.
+
 ### Offering the mission at the HQ
 
 The HQ's own contract order can't reach a new mission. The bouncers (`bouncer` script) offer the current arc position only while it is within the chapter's range (`util_GetLastMissionNumberInChapterArc`). Positions are also fixed in several other places: ace missions at 3 and 6 for allies (`util_IsAceMission`), chapter starts, the final mission, and gameflow's layer rules. So appending a mission puts it after the province's last contract, and inserting one would shift all of those.

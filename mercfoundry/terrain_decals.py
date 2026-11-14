@@ -28,6 +28,7 @@ import struct
 from . import terrain_layers as tl
 
 MAX_TEXTURES = 16
+MAX_PER_PATCH = 64      # retail's most, one per cell of an 8 x 8 patch; past it the game crashes or hangs
 EXTRA = b"\0\xff\xff\xff\xff"   # bytes 3..7 of every retail decal
 CORNERS = ((1, 0), (1, 1), (0, 0), (0, 1))   # (dz, dx) of each stored corner
 
@@ -140,8 +141,15 @@ def apply(chunks, doc):
         doc = {"textures": base["textures"], "decals": base["decals"], **doc}
     names = list(doc.get("textures") or [])
     entries = list(doc.get("decals", []))
+    # A road replaces what's on its cells (the map's own decals or an earlier
+    # road's): stacked decals would overflow a patch (the game holds at most
+    # MAX_PER_PATCH, one per cell) and corrupt the game's memory.
+    laid = {}
     for road in doc.get("roads", []):
-        entries += road_decals(road, size, spacing)
+        for e in road_decals(road, size, spacing):
+            laid[tuple(int(v) for v in e["cell"])] = e
+    if laid:
+        entries = [e for e in entries if tuple(int(v) for v in e["cell"]) not in laid] + list(laid.values())
 
     def index(t):
         if isinstance(t, int):
@@ -172,6 +180,13 @@ def apply(chunks, doc):
                                                   [(_wrap16(u), _wrap16(v)) for u, v in uv]))
     if len(names) > MAX_TEXTURES:
         raise ValueError(f"a map has at most {MAX_TEXTURES} decal textures")
+    for n, ds in enumerate(per_patch):
+        if len(ds) > MAX_PER_PATCH:
+            px, pz = n % side, n // side
+            x0, z0 = px * tl.PATCH * spacing - size * spacing / 2, pz * tl.PATCH * spacing - (size * spacing / 2 - spacing)
+            raise ValueError(f"{len(ds)} decals in the patch at world x {x0:.0f}..{x0 + tl.PATCH * spacing:.0f}, "
+                             f"z {z0:.0f}..{z0 + tl.PATCH * spacing:.0f}: the game holds at most {MAX_PER_PATCH} "
+                             f"(one per cell); more corrupt its memory")
     decals = [d for ds in per_patch for d in ds]
     patches = [tl.Patch(p.layer_mask, len(ds)) for p, ds in zip(tl.decode_ptch(chunks[b"PTCH"]), per_patch)]
     info = bytearray(chunks[b"INFO"])

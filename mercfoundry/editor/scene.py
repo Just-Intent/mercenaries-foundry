@@ -203,6 +203,126 @@ class Scene:
         self._forget_terrain(map_name)
         return {"file": f"terrain/{p.name}", "roads": len(doc["roads"])}
 
+    # ------------------------------------------------------------ missions
+    # A mission is missions/<map>_<faction><n>.json; its soldiers, objects and
+    # zones are in its layer, encounters/<same name>.json, which the mission
+    # loads (mission_GenericInit). "objectives" make the build write its script.
+
+    def _arc_numbers(self, map_name):
+        """{faction: numbers taken}: the game's arcs and every source mod's missions."""
+        from .. import missions as ms, script as sc
+        taken = {f: set() for f in ms.FACTIONS}
+        if not hasattr(self, "_arcs"):
+            text = ""
+            for a in self.archives:
+                for r in a.records:
+                    if r.kind == name_hash("script") and r.key == name_hash("util_misc"):
+                        text = sc.decode(a.read(r)).source
+            self._arcs = text
+        for f in ms.FACTIONS:
+            try:
+                taken[f].update(ms.arc(self._arcs, f, map_name))
+            except ValueError:
+                pass
+        for folder in list(self.context) + [self.mod]:
+            for p in sorted((Path(folder) / "missions").glob("*.json")) if (Path(folder) / "missions").is_dir() else []:
+                try:
+                    m, f, n = ms.parse_id(p.stem)
+                except ValueError:
+                    continue
+                if m == map_name.lower():
+                    taken[f].add(n)
+        return taken
+
+    def missions(self, map_name):
+        """The mod's missions on this map, each with its layer's squads and
+        zones, and the next free number per faction."""
+        from .. import missions as ms
+        m = map_name.lower()
+        out = []
+        mdir = self.mod / "missions"
+
+        def layer_names(doc):
+            # "encounter:squad": squad names repeat across encounters.
+            squads = [f"{e['name']}:{s['name']}" for e in doc.get("encounters", []) for s in e.get("squads", [])]
+            squads += [f"{s['encounter']}:{s['name']}" for s in doc.get("game_squads", [])]
+            return squads, sorted((doc.get("boundaries") or {}).keys())
+
+        # The mod's layers that load with the map: their squads and zones are
+        # there during any mission on it too.
+        shared_squads, shared_zones = [], []
+        edir = self.mod / "encounters"
+        for lp in sorted(edir.glob("*.json")) if edir.is_dir() else []:
+            ldoc = json.loads(lp.read_text(encoding="utf-8"))
+            if (ldoc.get("map") or "").lower() == m and ldoc.get("load") == "map":
+                sq, zn = layer_names(ldoc)
+                shared_squads += sq
+                shared_zones += zn
+        for p in sorted(mdir.glob("*.json")) if mdir.is_dir() else []:
+            try:
+                mp, faction, number = ms.parse_id(p.stem)
+            except ValueError:
+                continue
+            if mp != m:
+                continue
+            doc = json.loads(p.read_text(encoding="utf-8"))
+            lp = self.mod / "encounters" / f"{p.stem}.json"
+            squads, zones = layer_names(json.loads(lp.read_text(encoding="utf-8")) if lp.exists() else {})
+            out.append({"id": p.stem, "faction": faction, "number": number, "doc": doc,
+                        "squads": squads + [s for s in shared_squads if s not in squads],
+                        "zones": zones + [z for z in shared_zones if z not in zones],
+                        "script": (self.mod / "scripts" / f"{p.stem}.lua").exists()})
+        taken = self._arc_numbers(m)
+        nxt = {f: max([8] + sorted(taken[f])) + 1 for f in ms.FACTIONS}
+        return {"missions": out, "next": nxt, "factions": list(ms.FACTIONS),
+                "squads": shared_squads, "zones": shared_zones}
+
+    def save_mission(self, map_name, mission):
+        """Write missions/<id>.json from the editor's fields (title,
+        description, briefing, fee, objectives), keeping anything else the file
+        has, and make sure the mission has its layer file."""
+        from .. import missions as ms
+        asset_id = f"{map_name.lower()}_{mission['faction']}{int(mission['number'])}"
+        ms.parse_id(asset_id)
+        for i, o in enumerate(mission.get("objectives") or [], 1):
+            if o.get("type") not in ms.OBJECTIVE_TYPES:
+                raise ValueError(f"objective {i}: unknown type {o.get('type')!r}")
+            # An objective without its squad or zone yet is kept as a draft;
+            # the build skips writing the script until it's complete.
+        p = self.mod / "missions" / f"{asset_id}.json"
+        doc = json.loads(p.read_text(encoding="utf-8")) if p.exists() else {}
+        for key in ("title", "description"):
+            if mission.get(key) is not None:
+                doc[key] = mission[key]
+        if mission.get("briefing") is not None:
+            mail = doc.setdefault("mail", {"sender": "mail.senders.techgal"})
+            mail["subject"] = f"Contract: '{doc.get('title', asset_id)}'"
+            mail["body"] = mission["briefing"]
+        if mission.get("fee") is not None:
+            doc.setdefault("ini", {})["ContractFee"] = int(mission["fee"])
+        if mission.get("bonus") is not None:
+            doc.setdefault("ini", {})["BonusFee"] = int(mission["bonus"])
+        doc["objectives"] = [{k: v for k, v in o.items() if k in ("type", "text", "squad", "targets", "zone", "marker")}
+                             for o in mission.get("objectives") or []]
+        start = mission.get("start")
+        if start and start.get("position"):
+            doc["start"] = {"position": [round(float(v), 2) for v in start["position"]],
+                            "heading": round(float(start.get("heading", 0)), 1)}
+        elif "start" in mission:
+            doc.pop("start", None)
+        p.parent.mkdir(parents=True, exist_ok=True)
+        p.write_text(json.dumps(doc, indent=1) + "\n", encoding="utf-8")
+        lp = self.mod / "encounters" / f"{asset_id}.json"
+        if not lp.exists():
+            lp.parent.mkdir(parents=True, exist_ok=True)
+            lp.write_text(json.dumps({"map": map_name.upper()}, indent=1) + "\n", encoding="utf-8")
+        else:
+            ldoc = json.loads(lp.read_text(encoding="utf-8"))
+            if ldoc.pop("load", None) is not None:      # made before the mission: it loads with the mission now
+                lp.write_text(json.dumps(ldoc, indent=1) + "\n", encoding="utf-8")
+        self._require("0.69")
+        return {"id": asset_id, "file": f"missions/{p.name}"}
+
     def save_terrain(self, map_name, samples):
         """Height samples painted in the editor ([column, row, height units])
         merged into the mod's terrain/<map>.heights.changes.json (the build
@@ -949,7 +1069,9 @@ class Scene:
             else:
                 if p.stem.lower() in world_layers:
                     raise ValueError(f"the game already has a layer named {p.stem!r}")
-                doc = {"map": map_name.upper(), "load": "map"}       # editor layers load with their map
+                doc = {"map": map_name.upper()}
+                if not (self.mod / "missions" / f"{p.stem}.json").exists():
+                    doc["load"] = "map"          # editor layers load with their map; a mission's with it
                 self._require("0.65")
             if fname.lower() == self.editor_layer_file(map_name).lower() and "load" not in doc:
                 doc["load"] = "map"
