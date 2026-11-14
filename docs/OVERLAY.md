@@ -22,6 +22,10 @@ Script commands it adds, for the Lua box or any script:
   `range.lua` in the calling script state. It looks for the file in
   `mods\Foundry Test Range` first, then in the launcher's runtime copy, where
   each mod's top-level files are copied.
+- `Foundry_Sample(1)` / `Foundry_Sample(0)` turns the function sampler on or
+  off (`Foundry_Sample()` reports), and `Foundry_Label('tank')` labels its
+  samples (`''` goes back to `gameplay` / `menu`). See
+  [FUNCTION_MAP.md](FUNCTION_MAP.md#finding-candidates-by-playing-passive-function-mapper).
 
 ## Install
 

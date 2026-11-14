@@ -19,6 +19,11 @@
  *                carries out its live edits: move, turn or remove objects and
  *                teleport the player (see mercfoundry/editor/live.py). A
  *                thread polls the editor, so the game never waits on it.
+ *   Sampler    - off unless asked for (foundry-console.ini, or
+ *                Foundry_Sample(1) in the Lua box): a thread reads the port's
+ *                current-function variable thousands of times a second and
+ *                writes hit counts per label (Foundry_Label('tank')) to
+ *                samples\<session>.tsv, for `funcmap profile`.
  *
  * While the console has focus it tells the game a tool window is open (as
  * the F9 panel does): the game leaves exclusive fullscreen so the window
@@ -89,6 +94,13 @@ typedef struct Template {
 } Template;
 
 static const MercPluginHost *host;
+/* The function sampler (near the end of the file). */
+static volatile LONG sample_playing;      /* in_gameplay, for the function sampler's thread */
+static int sampler_status(char *out, size_t size);
+static void sampler_init(void);
+static void sampler_shutdown(void);
+static int MERC_PLUGIN_CALL cmd_sample(void *ud, uint32_t L);
+static int MERC_PLUGIN_CALL cmd_label(void *ud, uint32_t L);
 static CRITICAL_SECTION lock;
 static Template templates[MAX_TEMPLATES];
 static unsigned template_count;
@@ -424,6 +436,7 @@ static void inspect(void)
     int n = 0;
     int playing = host->in_gameplay(host->context);
     n += snprintf(text + n, sizeof(text) - n, "Gameplay: %s\r\n", playing ? "running" : "not running");
+    n += sampler_status(text + n, sizeof(text) - n);
     uint32_t player = playing ? find_player() : 0;
     if (player) {
         float m[16], money = 0, hp = 0;
@@ -956,6 +969,7 @@ static void live_report_loaded(void);
 static int MERC_PLUGIN_CALL on_update(void *ud, const MercPluginUpdate *u)
 {
     (void)ud;
+    InterlockedExchange(&sample_playing, host->in_gameplay(host->context) != 0);
     live_update(u->wall_delta_seconds);
     /* F7 toggles the window while this game (or the console) has focus. */
     DWORD pid = 0;
@@ -1711,6 +1725,7 @@ static void MERC_PLUGIN_CALL on_shutdown(void *ud)
 {
     (void)ud;
     InterlockedExchange(&live_stop, 1);
+    sampler_shutdown();
     if (window_thread_id) PostThreadMessageW(window_thread_id, WM_QUIT, 0, 0);
 }
 
@@ -1859,6 +1874,374 @@ static int MERC_PLUGIN_CALL cmd_range(void *ud, uint32_t L)
     return 1;
 }
 
+/* ---------- passive function sampler ---------- */
+
+/* The port stores the guest address of every function it enters in a host
+ * global, g_recomp_current_func. A thread of ours reads it a few thousand
+ * times a second and counts hits per (label, address); every FlushSeconds
+ * the counts go to <settings>\samples\<session>.tsv as label, address and
+ * count lines, for `python -m mercfoundry funcmap profile`. The game thread
+ * only caches in_gameplay for it (once a frame) and sets the label.
+ *
+ * Where the variable is comes from sampler-address.ini, written by
+ * `mercfoundry mod sync` from the exe's linker map. It is used only when the
+ * running exe's PE timestamp equals the map's and the address lies in a
+ * writable data section of the exe; otherwise sampling stays off. */
+#define SAMPLE_SLOTS (1u << 16)
+#define SAMPLE_LABELS 32
+#define SAMPLE_LABEL_LEN 48
+#define SAMPLE_BURST_MAX 256
+typedef struct SampleSlot { uint32_t address, count; uint16_t label, used; } SampleSlot;
+static SampleSlot *sample_table;
+static unsigned sample_used;
+static char sample_labels[SAMPLE_LABELS][SAMPLE_LABEL_LEN];
+static unsigned sample_label_count;
+static const volatile uint32_t *sample_var;     /* NULL: sampling unavailable */
+static char sample_off_reason[200] = "sampler not set up";
+static volatile LONG sample_on, sample_stop, sample_playing;
+static volatile LONG sample_rate = 8000, sample_flush = 10, sample_achieved;
+static CRITICAL_SECTION sample_lock;            /* manual_label, sample_file */
+static char manual_label[SAMPLE_LABEL_LEN];
+static wchar_t sample_file[MAX_PATH * 2];
+static char sample_file_utf8[MAX_PATH * 3];
+static HANDLE sample_thread;
+
+static int widen(const char *utf8, wchar_t *out, int size)
+{
+    return MultiByteToWideChar(CP_UTF8, 0, utf8, -1, out, size) > 0;
+}
+
+/* Find g_recomp_current_func from the hand-off file, checked against this exe. */
+static void sampler_resolve(void)
+{
+    wchar_t path[MAX_PATH * 2], dir[MAX_PATH * 2], buf[64];
+    if (!host->settings_directory || !widen(host->settings_directory, dir, MAX_PATH * 2)) {
+        snprintf(sample_off_reason, sizeof(sample_off_reason), "no plugin settings folder");
+        return;
+    }
+    _snwprintf_s(path, MAX_PATH * 2, _TRUNCATE, L"%s\\sampler-address.ini", dir);
+    if (GetFileAttributesW(path) == INVALID_FILE_ATTRIBUTES) {
+        snprintf(sample_off_reason, sizeof(sample_off_reason),
+                 "no sampler-address.ini (run python -m mercfoundry mod sync or funcmap sampler-setup)");
+        return;
+    }
+    GetPrivateProfileStringW(L"CurrentFunc", L"Symbol", L"", buf, 64, path);
+    if (wcscmp(buf, L"g_recomp_current_func")) {
+        snprintf(sample_off_reason, sizeof(sample_off_reason), "sampler-address.ini names no g_recomp_current_func");
+        return;
+    }
+    GetPrivateProfileStringW(L"CurrentFunc", L"Rva", L"", buf, 64, path);
+    unsigned long long rva = wcstoull(buf, NULL, 16);
+    GetPrivateProfileStringW(L"CurrentFunc", L"Timestamp", L"", buf, 64, path);
+    unsigned long long stamp = buf[0] ? wcstoull(buf, NULL, 16) : 0x100000000ull;
+    const BYTE *image = (const BYTE *)GetModuleHandleW(NULL);
+    const IMAGE_DOS_HEADER *dos = (const IMAGE_DOS_HEADER *)image;
+    if (!image || dos->e_magic != IMAGE_DOS_SIGNATURE) {
+        snprintf(sample_off_reason, sizeof(sample_off_reason), "can't read this exe's header");
+        return;
+    }
+    const IMAGE_NT_HEADERS64 *nt = (const IMAGE_NT_HEADERS64 *)(image + dos->e_lfanew);
+    if (nt->Signature != IMAGE_NT_SIGNATURE || nt->OptionalHeader.Magic != IMAGE_NT_OPTIONAL_HDR64_MAGIC) {
+        snprintf(sample_off_reason, sizeof(sample_off_reason), "can't read this exe's header");
+        return;
+    }
+    if (stamp != nt->FileHeader.TimeDateStamp) {
+        snprintf(sample_off_reason, sizeof(sample_off_reason),
+                 "sampling off: sampler-address.ini is for exe 0x%08llX but this exe is 0x%08lX "
+                 "(the port was rebuilt; run mod sync again)", stamp, (unsigned long)nt->FileHeader.TimeDateStamp);
+        return;
+    }
+    /* The variable must be in a writable, non-code section of this image. */
+    const IMAGE_SECTION_HEADER *sec = IMAGE_FIRST_SECTION(nt);
+    int ok = 0;
+    for (unsigned i = 0; i < nt->FileHeader.NumberOfSections; i++, sec++) {
+        DWORD size = sec->Misc.VirtualSize > sec->SizeOfRawData ? sec->Misc.VirtualSize : sec->SizeOfRawData;
+        if (rva >= sec->VirtualAddress && rva + 4 <= (unsigned long long)sec->VirtualAddress + size)
+            ok = (sec->Characteristics & IMAGE_SCN_MEM_WRITE) && !(sec->Characteristics & IMAGE_SCN_MEM_EXECUTE) &&
+                 (rva & 3) == 0;
+    }
+    if (!ok || rva + 4 > nt->OptionalHeader.SizeOfImage) {
+        snprintf(sample_off_reason, sizeof(sample_off_reason),
+                 "sampling off: RVA 0x%llX isn't in a data section of this exe", rva);
+        return;
+    }
+    sample_var = (const volatile uint32_t *)(image + rva);
+    sample_off_reason[0] = 0;
+}
+
+static unsigned sample_label_index(const char *name)
+{
+    for (unsigned i = 0; i < sample_label_count; i++)
+        if (!strcmp(sample_labels[i], name)) return i;
+    if (sample_label_count < SAMPLE_LABELS - 1) {
+        snprintf(sample_labels[sample_label_count], SAMPLE_LABEL_LEN, "%s", name);
+        return sample_label_count++;
+    }
+    snprintf(sample_labels[SAMPLE_LABELS - 1], SAMPLE_LABEL_LEN, "other");   /* too many labels */
+    return SAMPLE_LABELS - 1;
+}
+
+/* The automatic label: "menu" outside gameplay; in gameplay the manual label
+ * (Foundry_Label) or "gameplay". */
+static unsigned sample_current_label(void)
+{
+    char name[SAMPLE_LABEL_LEN];
+    if (!InterlockedCompareExchange(&sample_playing, 0, 0)) return sample_label_index("menu");
+    EnterCriticalSection(&sample_lock);
+    snprintf(name, sizeof(name), "%s", manual_label[0] ? manual_label : "gameplay");
+    LeaveCriticalSection(&sample_lock);
+    return sample_label_index(name);
+}
+
+static void sample_flush_now(double seconds, unsigned long long samples, unsigned long long wakes)
+{
+    if (!sample_used) return;
+    wchar_t path[MAX_PATH * 2];
+    EnterCriticalSection(&sample_lock);
+    memcpy(path, sample_file, sizeof(path));
+    LeaveCriticalSection(&sample_lock);
+    FILE *f = path[0] ? _wfopen(path, L"ab") : NULL;
+    if (f) {
+        fseek(f, 0, SEEK_END);
+        if (ftell(f) == 0)
+            fprintf(f, "# Foundry Console function samples (python -m mercfoundry funcmap profile)\n"
+                       "label\taddress\tcount\n");
+        fprintf(f, "# %.0f s sampled, %llu samples (%.0f/s), %llu wakes (%.0f/s)\n", seconds, samples,
+                seconds > 0 ? samples / seconds : 0.0, wakes, seconds > 0 ? wakes / seconds : 0.0);
+        for (unsigned i = 0; i < SAMPLE_SLOTS; i++)
+            if (sample_table[i].used)
+                fprintf(f, "%s\t0x%08X\t%u\n", sample_labels[sample_table[i].label], sample_table[i].address,
+                        sample_table[i].count);
+        fclose(f);
+    }
+    memset(sample_table, 0, SAMPLE_SLOTS * sizeof(SampleSlot));
+    sample_used = 0;
+}
+
+static void sample_count(uint32_t address, unsigned label)
+{
+    unsigned h = ((address >> 2) * 2654435761u ^ label * 0x9E3779B9u) & (SAMPLE_SLOTS - 1);
+    for (;;) {
+        SampleSlot *s = &sample_table[h];
+        if (!s->used) {
+            s->used = 1;
+            s->address = address;
+            s->label = (uint16_t)label;
+            s->count = 1;
+            sample_used++;
+            return;
+        }
+        if (s->address == address && s->label == label) { s->count++; return; }
+        h = (h + 1) & (SAMPLE_SLOTS - 1);
+    }
+}
+
+#ifndef CREATE_WAITABLE_TIMER_HIGH_RESOLUTION
+#define CREATE_WAITABLE_TIMER_HIGH_RESOLUTION 0x00000002
+#endif
+
+static DWORD WINAPI sampler_thread(void *arg)
+{
+    (void)arg;
+    HANDLE timer = CreateWaitableTimerExW(NULL, NULL, CREATE_WAITABLE_TIMER_HIGH_RESOLUTION, TIMER_ALL_ACCESS);
+    if (!timer) timer = CreateWaitableTimerExW(NULL, NULL, 0, TIMER_ALL_ACCESS);
+    LARGE_INTEGER freq, now, last, flushed, spin;
+    QueryPerformanceFrequency(&freq);
+    const LONGLONG spacing = freq.QuadPart / 500000;      /* 2 us between reads of a burst */
+    double owed = 0;
+    int was_on = 0;
+    unsigned long long samples = 0, wakes = 0;
+    int logged = 0;
+    QueryPerformanceCounter(&last);
+    flushed = last;
+    while (!InterlockedCompareExchange(&sample_stop, 0, 0)) {
+        int on = InterlockedCompareExchange(&sample_on, 0, 0) != 0;
+        QueryPerformanceCounter(&now);
+        double since_flush = (double)(now.QuadPart - flushed.QuadPart) / freq.QuadPart;
+        if (was_on && (!on || since_flush >= InterlockedCompareExchange(&sample_flush, 0, 0) ||
+                       sample_used > SAMPLE_SLOTS * 3 / 4)) {
+            sample_flush_now(since_flush, samples, wakes);
+            InterlockedExchange(&sample_achieved, since_flush > 0 ? (LONG)(samples / since_flush) : 0);
+            if (!logged && samples) {
+                char text[200];
+                snprintf(text, sizeof(text), "sampler: %.0f reads/s (%.0f wakes/s) of %ld asked",
+                         samples / since_flush, wakes / since_flush, (long)sample_rate);
+                host->log(host->context, text);
+                logged = 1;
+            }
+            samples = wakes = 0;
+            flushed = now;
+        }
+        if (!on) {
+            was_on = 0;
+            Sleep(100);
+            continue;
+        }
+        if (!was_on) { last = flushed = now; owed = 0; was_on = 1; }
+        LONG rate = InterlockedCompareExchange(&sample_rate, 0, 0);
+        if (timer) {
+            LARGE_INTEGER due;
+            due.QuadPart = -(LONGLONG)(10000000 / rate);     /* relative, 100 ns units */
+            if (SetWaitableTimer(timer, &due, 0, NULL, NULL, FALSE)) WaitForSingleObject(timer, 50);
+            else Sleep(1);
+        } else {
+            Sleep(1);
+        }
+        QueryPerformanceCounter(&now);
+        owed += (double)(now.QuadPart - last.QuadPart) * rate / freq.QuadPart;
+        last = now;
+        unsigned n = owed >= SAMPLE_BURST_MAX ? SAMPLE_BURST_MAX : (unsigned)owed;
+        owed = owed >= SAMPLE_BURST_MAX ? 0 : owed - n;
+        if (!n) continue;
+        unsigned label = sample_current_label();
+        wakes++;
+        for (unsigned i = 0; i < n; i++) {
+            sample_count(*sample_var, label);
+            if (i + 1 < n) {
+                QueryPerformanceCounter(&spin);
+                LONGLONG until = spin.QuadPart + spacing;
+                do { YieldProcessor(); QueryPerformanceCounter(&spin); } while (spin.QuadPart < until);
+            }
+        }
+        samples += n;
+    }
+    QueryPerformanceCounter(&now);
+    if (was_on) sample_flush_now((double)(now.QuadPart - flushed.QuadPart) / freq.QuadPart, samples, wakes);
+    if (timer) CloseHandle(timer);
+    return 0;
+}
+
+/* Turn sampling on or off. Returns a line saying what happened. */
+static void sampler_set(int on, char *out, size_t size)
+{
+    if (!sample_var) { snprintf(out, size, "%s", sample_off_reason); return; }
+    if (on && !sample_file[0]) {
+        wchar_t dir[MAX_PATH * 2], path[MAX_PATH * 2];
+        SYSTEMTIME t;
+        GetLocalTime(&t);
+        widen(host->settings_directory, dir, MAX_PATH * 2);
+        _snwprintf_s(path, MAX_PATH * 2, _TRUNCATE, L"%s\\samples", dir);
+        CreateDirectoryW(path, NULL);
+        EnterCriticalSection(&sample_lock);
+        _snwprintf_s(sample_file, MAX_PATH * 2, _TRUNCATE, L"%s\\%04u%02u%02u-%02u%02u%02u.tsv", path, t.wYear,
+                     t.wMonth, t.wDay, t.wHour, t.wMinute, t.wSecond);
+        snprintf(sample_file_utf8, sizeof(sample_file_utf8), "samples\\%04u%02u%02u-%02u%02u%02u.tsv", t.wYear,
+                 t.wMonth, t.wDay, t.wHour, t.wMinute, t.wSecond);
+        LeaveCriticalSection(&sample_lock);
+    }
+    if (on && !sample_thread) {
+        sample_table = (SampleSlot *)calloc(SAMPLE_SLOTS, sizeof(SampleSlot));
+        if (sample_table) sample_thread = CreateThread(NULL, 0, sampler_thread, NULL, 0, NULL);
+        if (!sample_thread) { snprintf(out, size, "couldn't start the sampler thread"); return; }
+        SetThreadPriority(sample_thread, THREAD_PRIORITY_ABOVE_NORMAL);
+    }
+    InterlockedExchange(&sample_on, on);
+    if (on) snprintf(out, size, "sampling on: %ld/s into plugin-settings\\foundry-console\\%s", (long)sample_rate,
+                     sample_file_utf8);
+    else snprintf(out, size, "sampling off");
+    host->log(host->context, out);
+}
+
+/* "Sampler: on, label tank, 7,950 reads/s" for the inspector. */
+static int sampler_status(char *out, size_t size)
+{
+    char label[SAMPLE_LABEL_LEN];
+    EnterCriticalSection(&sample_lock);
+    snprintf(label, sizeof(label), "%s", manual_label[0] ? manual_label : "auto");
+    LeaveCriticalSection(&sample_lock);
+    if (!sample_var) return snprintf(out, size, "Sampler: unavailable\r\n");
+    if (!InterlockedCompareExchange(&sample_on, 0, 0)) return snprintf(out, size, "Sampler: off (label %s)\r\n", label);
+    return snprintf(out, size, "Sampler: on, label %s, %ld reads/s\r\n", label,
+                    (long)InterlockedCompareExchange(&sample_achieved, 0, 0));
+}
+
+static int lua_arg_text(uint32_t L, int n, char *out, size_t size)
+{
+    uint32_t args[2] = {L, (uint32_t)n};
+    out[0] = 0;
+    if ((int)lua_call(MF_FN_lua_gettop, 1, args) < n || !lua_call(MF_FN_lua_isstring, 2, args)) return 0;
+    read_text(lua_call(MF_FN_lua_tostring, 2, args), out, size);
+    return 1;
+}
+
+/* Foundry_Sample(on): 1/true/'on' starts sampling, 0/false/'off' stops it;
+ * no argument just reports. Returns a status line. */
+static int MERC_PLUGIN_CALL cmd_sample(void *ud, uint32_t L)
+{
+    (void)ud;
+    char text[64], out[400];
+    uint32_t args[2] = {L, 1};
+    int on;
+    if ((int)lua_call(MF_FN_lua_gettop, 1, args) < 1) {
+        sampler_status(out, sizeof(out));
+        out[strcspn(out, "\r\n")] = 0;
+        if (!sample_var) snprintf(out, sizeof(out), "%s", sample_off_reason);
+        push_text(L, out);
+        return 1;
+    }
+    if (lua_arg_text(L, 1, text, sizeof(text)))
+        on = !(!text[0] || !strcmp(text, "0") || !_stricmp(text, "off") || !_stricmp(text, "false") ||
+               !_stricmp(text, "no"));
+    else
+        on = lua_call(MF_FN_Lua_ArgBool, 2, args) != 0;
+    sampler_set(on, out, sizeof(out));
+    push_text(L, out);
+    return 1;
+}
+
+/* Foundry_Label('tank'): the label for samples while in gameplay; '' or no
+ * argument goes back to the automatic "gameplay". */
+static int MERC_PLUGIN_CALL cmd_label(void *ud, uint32_t L)
+{
+    (void)ud;
+    char text[SAMPLE_LABEL_LEN], out[96];
+    lua_arg_text(L, 1, text, sizeof(text));
+    for (char *p = text; *p; p++)
+        if ((unsigned char)*p < 33 || *p == '#') *p = '_';      /* one TSV field */
+    EnterCriticalSection(&sample_lock);
+    snprintf(manual_label, sizeof(manual_label), "%s", text);
+    LeaveCriticalSection(&sample_lock);
+    snprintf(out, sizeof(out), text[0] ? "label %s" : "label automatic (gameplay / menu)", text);
+    host->log(host->context, out);
+    push_text(L, out);
+    return 1;
+}
+
+static void sampler_init(void)
+{
+    wchar_t dir[MAX_PATH * 2], path[MAX_PATH * 2];
+    InitializeCriticalSection(&sample_lock);
+    sampler_resolve();
+    int enabled = 0;
+    if (host->settings_directory && widen(host->settings_directory, dir, MAX_PATH * 2)) {
+        _snwprintf_s(path, MAX_PATH * 2, _TRUNCATE, L"%s\\foundry-console.ini", dir);
+        enabled = GetPrivateProfileIntW(L"Sampler", L"Enabled", 0, path) != 0;
+        int rate = (int)GetPrivateProfileIntW(L"Sampler", L"Rate", 8000, path);
+        int flush = (int)GetPrivateProfileIntW(L"Sampler", L"FlushSeconds", 10, path);
+        sample_rate = rate < 100 ? 100 : rate > 20000 ? 20000 : rate;
+        sample_flush = flush < 1 ? 1 : flush > 3600 ? 3600 : flush;
+    }
+    if (!sample_var) {
+        char text[260];
+        snprintf(text, sizeof(text), "function sampler unavailable: %s", sample_off_reason);
+        host->log(host->context, text);
+        return;
+    }
+    if (enabled) {
+        char out[400];
+        sampler_set(1, out, sizeof(out));
+    }
+}
+
+static void sampler_shutdown(void)
+{
+    if (!sample_thread) return;
+    InterlockedExchange(&sample_stop, 1);
+    WaitForSingleObject(sample_thread, 2000);   /* writes the last counts */
+    CloseHandle(sample_thread);
+    sample_thread = NULL;
+}
+
 MERC_PLUGIN_EXPORT int MERC_PLUGIN_CALL MercenariesPlugin_Init(
     const MercPluginHost *h, MercPlugin *plugin, char *error, uint32_t error_size)
 {
@@ -1876,8 +2259,12 @@ MERC_PLUGIN_EXPORT int MERC_PLUGIN_CALL MercenariesPlugin_Init(
         h->log(h->context, "script hook unavailable (run port-hooks); the Lua console can't find scripts");
     if (!MERC_PLUGIN_HOST_HAS(h, add_lua_command) ||
         !h->add_lua_command(h->context, "Foundry_TrafficZone", cmd_traffic_zone, NULL) ||
-        !h->add_lua_command(h->context, "Foundry_Range", cmd_range, NULL))
-        h->log(h->context, "script commands unavailable; Foundry_TrafficZone and Foundry_Range won't exist");
+        !h->add_lua_command(h->context, "Foundry_Range", cmd_range, NULL) ||
+        !h->add_lua_command(h->context, "Foundry_Sample", cmd_sample, NULL) ||
+        !h->add_lua_command(h->context, "Foundry_Label", cmd_label, NULL))
+        h->log(h->context, "script commands unavailable; Foundry_TrafficZone, Foundry_Range, Foundry_Sample "
+                           "and Foundry_Label may not exist");
+    sampler_init();
     plugin->on_update = on_update;
     plugin->on_shutdown = on_shutdown;
     HANDLE t = CreateThread(NULL, 0, window_thread, NULL, 0, &window_thread_id);

@@ -319,6 +319,8 @@ def cmd_mod_sync(args):
         sys.exit(f"sync failed: {err}")
     if not res.sources:
         print("no enabled source mods" + (f"; removed mods/{sync.OUTPUT}" if res.removed else ""))
+        for n in res.notes:
+            print(f"note: {n}")
         return
     print(f"source mods, in load order: {', '.join(res.sources)}")
     if res.up_to_date:
@@ -502,9 +504,18 @@ def cmd_funcmap(args):
         if doc.get("unclassified_tables"):
             print("  new Lua tables to classify:", ", ".join(doc["unclassified_tables"]))
         return
+    if args.map_cmd == "sampler-setup":
+        from . import funcprofile
+        line = funcprofile.write_handoff(args.game)
+        print(line)
+        if "sampler off" in line:
+            sys.exit(1)
+        return
     if not Path(args.map).exists():
         sys.exit(f"{args.map} not found; run `funcmap build` first")
     doc = funcmap.load(args.map)
+    if args.map_cmd == "profile":
+        return cmd_funcmap_profile(args, doc)
     if args.map_cmd == "find":
         hits = funcmap.find(doc, args.text)
         for e in hits[:args.limit]:
@@ -525,6 +536,43 @@ def cmd_funcmap(args):
     elif args.map_cmd == "names":
         Path(args.out).write_text(_json.dumps(funcmap.ghidra_names(doc), indent=1) + "\n", encoding="utf-8")
         print(f"wrote {args.out} ({len(funcmap.ghidra_names(doc))} names, the port's ghidra_names.json format)")
+
+
+def cmd_funcmap_profile(args, doc):
+    from . import funcmap, funcprofile
+    files = []
+    for f in args.files:
+        p = Path(f)
+        files += sorted(p.glob("*.tsv")) if p.is_dir() else [p]
+    if not files:
+        sys.exit("no sample files")
+    try:
+        samples = funcprofile.read_samples(files)
+    except (OSError, ValueError) as err:
+        sys.exit(f"profile: {err}")
+    if args.labels or not args.label:
+        for lab in sorted(samples, key=lambda k: -sum(samples[k].values())):
+            c = samples[lab]
+            print(f"{lab}: {sum(c.values()):,} samples, {len(c):,} addresses")
+        if not args.label:
+            return
+    analysis = funcprofile.load_analysis(args.analysis)
+    xbe = None
+    if args.xbe and Path(args.xbe).exists():
+        xbe = funcmap.Xbe(args.xbe)
+    describer = funcprofile.Describer(doc, analysis, xbe)
+    try:
+        rows, n_mine, n_theirs = funcprofile.rank(samples, args.label, args.against, args.min_count, args.only,
+                                                  fold=describer.function_start if analysis else None)
+    except ValueError as err:
+        sys.exit(f"profile: {err}")
+    against = " + ".join(args.against) if args.against else "every other label"
+    for line in funcprofile.report(rows, describer, args.label, against, n_mine, n_theirs, args.limit):
+        print(line)
+    if not analysis:
+        print(f"(no {args.analysis}/functions.json: callers and callees not shown)")
+    if xbe is None:
+        print(f"(no {args.xbe}: sections from the analysis, if any)")
 
 
 PORT_GEN = "external/Mercenaries-Recompiled/ports/mercenaries/src/recomp/gen"
@@ -845,6 +893,22 @@ def main(argv=None):
     f = fsub.add_parser("names", help="{address: name} JSON for the port's recompiler (ghidra_names.json format)")
     f.add_argument("-o", "--out", default="ghidra_names.json")
     f.add_argument("--map", default="map/functions.json")
+    f.set_defaults(fn=cmd_funcmap)
+    f = fsub.add_parser("sampler-setup",
+                        help="tell Foundry Console where the port's current-function variable is (mod sync does this too)")
+    f.add_argument("game", help="the folder holding mercenaries_recomp.exe and mercenaries_recomp.map")
+    f.set_defaults(fn=cmd_funcmap)
+    f = fsub.add_parser("profile", help="rank functions sampled more often under one label than others")
+    f.add_argument("files", nargs="+", help="sample .tsv files, or folders of them (plugin-settings/foundry-console/samples)")
+    f.add_argument("--label", help="the label to explain (e.g. tank); without it, list the labels")
+    f.add_argument("--against", nargs="+", metavar="LABEL", help="compare with these labels (default: all others)")
+    f.add_argument("--only", action="store_true", help="only functions never sampled under the other labels")
+    f.add_argument("--min-count", type=int, default=20, help="fewest samples under the label (default 20)")
+    f.add_argument("--limit", type=int, default=40)
+    f.add_argument("--labels", action="store_true", help="also list the labels and their sample counts")
+    f.add_argument("--map", default="map/functions.json")
+    f.add_argument("--analysis", default=PORT_ANALYSIS, help="the port's analysis/disasm folder (callers, callees)")
+    f.add_argument("--xbe", default="game_files/default.xbe", help="for the section of library code")
     f.set_defaults(fn=cmd_funcmap)
     s = add("port-hooks", cmd_port_hooks, "make the map's named functions hookable by plugins in the port's generated code")
     s.add_argument("--gen", default=PORT_GEN, help="the port's src/recomp/gen folder")
