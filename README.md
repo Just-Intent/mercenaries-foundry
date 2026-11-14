@@ -169,6 +169,14 @@ glTF works the same way (`model-import allies_veh_humvee.glb ...`, or a `.glb` i
 
 Format details: [docs/formats/dsk.md](docs/formats/dsk.md). Related Battlefront tools and docs: [docs/RESOURCES.md](docs/RESOURCES.md).
 
+### When the game freezes
+
+```bash
+python -m mercfoundry hangsnap
+```
+
+With the game frozen ("Not Responding"), prints every thread's stack and the guest's recent functions, named from the port's linker map and the function map. See [docs/DIAGNOSTICS.md](docs/DIAGNOSTICS.md), which also covers keeping the port's `[CRASH]` reports.
+
 ## Tests
 
 ```bash
@@ -179,4 +187,5 @@ python -m unittest discover -s tests -t .
 
 - `mercfoundry/`: Python tools
 - `docs/`: formats and project rules
+- `tools/`: small native helpers (`hangsnap`, built on first use)
 - `external/`: local checkout of the port (ignored by git)

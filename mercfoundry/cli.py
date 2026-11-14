@@ -699,6 +699,51 @@ def cmd_test_range(args):
     print("enable it in the launcher, then in game (south map, free roam) run Foundry_Range() in Foundry Console")
 
 
+def cmd_hangsnap(args):
+    from . import hangsnap
+    exe = exe_dir = None
+    if args.load:
+        text = Path(args.load).read_text(encoding="utf-8")
+        if not args.port_map:
+            sys.exit("--load needs --port-map (the mercenaries_recomp.map of the build that was snapshotted)")
+    else:
+        if args.pid:
+            pid = args.pid
+        else:
+            pids = hangsnap.find_game_pids()
+            if not pids:
+                sys.exit(f"{hangsnap.EXE_NAME} is not running")
+            if len(pids) > 1:
+                sys.exit(f"several {hangsnap.EXE_NAME} processes ({', '.join(map(str, pids))}); pick one with --pid")
+            pid = pids[0]
+        exe = hangsnap.process_path(pid)
+        exe_dir = exe.parent if exe else None
+    if args.port_map:
+        map_path = Path(args.port_map)
+        matches = exe is None or hangsnap.map_timestamp(map_path) == hangsnap.pe_timestamp(exe)
+    elif exe:
+        map_path, matches = hangsnap.find_port_map(exe)
+    else:
+        map_path, matches = None, False
+    if not map_path or not map_path.exists():
+        sys.exit(f"{hangsnap.MAP_NAME} not found next to {exe} or above it; pass --port-map")
+    if not matches:
+        print(f"warning: {map_path} is not from the build that is running; names will be wrong",
+              file=sys.stderr)
+    lmap = hangsnap.LinkerMap.load(map_path)
+    if not args.load:
+        print(f"{hangsnap.EXE_NAME} pid {pid}  ({exe})")
+        text = hangsnap.run(pid, lmap, args.tool)
+        if args.save:
+            Path(args.save).write_text(text, encoding="utf-8")
+            print(f"raw snapshot saved to {args.save}")
+    xbe = Path(args.xbe) if args.xbe else hangsnap.find_xbe(exe_dir)
+    if not xbe or not xbe.exists():
+        print("note: default.xbe not found (pass --xbe); library sections won't be shown", file=sys.stderr)
+    guest = hangsnap.GuestNames.load(args.map, xbe, lmap)
+    print("\n".join(hangsnap.report(hangsnap.parse_snapshot(text), lmap, guest, recent=args.recent)))
+
+
 def cmd_hash(args):
     for s in args.names:
         print(f"{name_hash(s):08X}  {s}")
@@ -875,6 +920,15 @@ def main(argv=None):
     t.add_argument("data", help="DATAxbox folder"); t.add_argument("bank", help="sound bank, e.g. fio")
     t.add_argument("cues", nargs="*", help="only these cues (default: all)")
     t.add_argument("-o", "--out", default="sounds")
+    s = add("hangsnap", cmd_hangsnap, "snapshot a frozen game: every thread's stack and the guest's recent functions, named")
+    s.add_argument("--pid", type=int, help=f"process id (default: the one running mercenaries_recomp.exe)")
+    s.add_argument("--port-map", help="the port's linker map (default: mercenaries_recomp.map next to the running exe)")
+    s.add_argument("--map", default="map/functions.json", help="function map for guest names")
+    s.add_argument("--xbe", help="default.xbe, for library section names (default: game_files/ here or next to the exe)")
+    s.add_argument("--recent", type=int, default=32, help="how many recent game functions to show (default 32)")
+    s.add_argument("--save", metavar="FILE", help="also save hangsnap.exe's raw output")
+    s.add_argument("--load", metavar="FILE", help="read a saved raw snapshot instead of running (needs --port-map)")
+    s.add_argument("--tool", help="hangsnap.exe to run (default: tools/hangsnap/out/hangsnap.exe, built on first use)")
     s = add("hash", cmd_hash, "hash names the way the game does"); s.add_argument("names", nargs="+")
 
     args = p.parse_args(argv)
