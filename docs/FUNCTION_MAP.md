@@ -59,6 +59,54 @@ There is no RTTI or symbol table in the retail executable; every name is earned.
 | `Ai` | +0x54 command queue |
 | `Vehicle` | +0x8BC driver seat, +0x8C8 rider count |
 
+## Finding candidates by playing (passive function mapper)
+
+Foundry Console can record which game functions run while you play, labelled with what you were doing. Comparing labels then points at functions specific to a situation: tank-only functions against on-foot ones, helicopter against car, and so on. It finds candidates to look at, not names.
+
+How it works: the port stores the guest address of every translated function it enters in a host variable, `g_recomp_current_func`. A thread in Foundry Console reads that variable about 8,000 times a second (it never touches the game thread) and counts hits per address and label. Every 10 seconds it appends the counts to `plugin-settings/foundry-console/samples/<date>-<time>.tsv` (one file per game run; lines of label, address and count).
+
+**Setup.** The variable's address changes with every port build, so `mod sync` (which the launcher runs before every modded launch) reads it from the exe's linker map, `mercenaries_recomp.map`, and writes it with the map's timestamp to `plugin-settings/foundry-console/sampler-address.ini`. Foundry Console reads that file at startup and samples only if the running exe's PE timestamp matches; otherwise it logs why sampling is off (`plugin-settings/plugins.log`). Without a modded launch, run it by hand:
+
+```bash
+python -m mercfoundry funcmap sampler-setup <port>/build/mercenaries/bin/Release
+```
+
+**Turning it on.** Sampling is off by default. Set `Enabled=1` in `plugin-settings/foundry-console/foundry-console.ini` (written with defaults by the first sync; `Rate` and `FlushSeconds` are there too) to sample from the start, or type in Foundry Console's Lua box (F7):
+
+```lua
+Foundry_Sample(1)      -- on (also true or 'on'); Foundry_Sample(0) stops; Foundry_Sample() reports
+```
+
+The Inspector shows `Sampler: on, label ..., N reads/s`.
+
+**Labels.** Outside gameplay (menus, loading, the pause menu: the host's `in_gameplay`) samples are labelled `menu`. In gameplay they are labelled `gameplay` unless you set a label:
+
+```lua
+Foundry_Label('tank')    -- now driving a tank
+Foundry_Label('onfoot')
+Foundry_Label('')        -- back to the automatic label
+```
+
+There is no automatic on-foot or vehicle label yet: the map has no evidenced field for "the player's current vehicle" (`Lua_Utility_GetActorsVehicle` is the lead). Set labels by hand, and switch them as soon as you change what you're doing; the few seconds around a switch blur the two.
+
+**Reading the report.**
+
+```bash
+python -m mercfoundry funcmap profile <...>/plugin-settings/foundry-console/samples        # the labels and their counts
+python -m mercfoundry funcmap profile <samples folder or .tsv files> --label tank --against onfoot
+python -m mercfoundry funcmap profile <samples> --label tank --against onfoot --only        # never seen on foot
+```
+
+Each line is a function (sampled addresses are folded to the function holding them, from the port's analysis): its address, how often it appeared per 1,000 samples under the label and under the others, the ratio (`only` when the others never saw it), its name if the map has one, its source file (`between` when that is the weaker evidence), and the XBE section for library code (`D3D`, `DSOUND`, `XACTENG`, ...; from `game_files/default.xbe`). Below it, the named functions that call it and that it calls. Functions with fewer than `--min-count` samples (default 20) under the label are left out, as are those no more frequent per sample under it than under the others. Without `--against` the label is compared with all others together. Record several minutes of each label: more samples give steadier ratios.
+
+**Limits.**
+
+- A sample is the function entered *last*, on whichever guest thread entered one last, not the one running then: a function that returned still counts until another is entered. Short leaf functions called in loops show up under their callers' time as well as their own.
+- Sampling misses brief one-off events (a single explosion, entering a vehicle): it sees what runs often or long. Hook a candidate to catch the rare ones.
+- Library code (`D3D`, `DSOUND`) and the Lua core rank high whenever the situation draws or plays more; that is real but rarely the code you're after.
+- It finds candidates, not names. A name still needs evidence under [Adding a name](#adding-a-name): read the candidate's code, its strings, its callers, or test it live. "Runs more in a tank" is not evidence of what a function does.
+- Sample files hold addresses and counts of your own play; they stay in the game folder and are never committed.
+
 ## Adding a name
 
 Add an entry to `map/manual.json` with `address` (a function start in the port's `functions.json`), `name`, optional `signature` and `notes`, and `evidence`. Keep names neutral and follow the evidence; prefer `Thing_Verb` style. Then run `funcmap build`. `build` refuses addresses that aren't function starts.

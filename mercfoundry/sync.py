@@ -204,8 +204,14 @@ def sync(game, data_dir=None, force=False, enable=False) -> SyncResult:
     mods_dir = game / "mods"
     if not mods_dir.is_dir():
         raise FileNotFoundError(f"{mods_dir} not found; pass the folder holding Mercenaries Recompiled.exe")
-    data_dir = Path(data_dir) if data_dir else retail_data(game)
     result = SyncResult()
+    # The function sampler's address for this exe build (Foundry Console).
+    from . import funcprofile
+    try:
+        result.notes.append(funcprofile.write_handoff(game))
+    except OSError as err:
+        result.notes.append(f"function sampler: couldn't write its address file: {err}")
+    data_dir = Path(data_dir) if data_dir else retail_data(game)
     loader = read_loader(game)
     sources = [mods_dir / m.folder for m in loader
                if m.enabled and m.folder != OUTPUT and is_source(mods_dir / m.folder)]
