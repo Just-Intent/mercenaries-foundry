@@ -180,6 +180,11 @@ class MissionTests(unittest.TestCase):
                       "'num_std_missions_cmpl_' .. f", lua)
         self.assertIn("Utility_WriteStringToScribbleMemory('foundry_active_contract', 'sw_allies9')", lua)
         self.assertIn("Utility_WriteNumberToScribbleMemory('foundry_done_' .. id, 1)", lua)
+        # not while a retry is queued: the retried mission reads the arc position
+        # again (mission_GenericInit), and an erased one stopped its script
+        ret = lua[lua.index("function foundry_ReturnFromContract()"):]
+        self.assertLess(ret.index("if Utility_ReadNumberFromScribbleMemory('SkipTo_MissionNumber') then return end"),
+                        ret.index("for i, key in foundry_Kept(f) do"))
         self.assertIn("repeatable = FALSE", lua)
         self.assertIn("repeatable = TRUE", missions.contracts_script(
             [missions.contract("sw_allies9", {"repeatable": True}, "a", "b")[0]]))
