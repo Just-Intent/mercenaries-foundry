@@ -129,7 +129,8 @@ toolkit bundle run it the same way: `foundry\python\python.exe foundry\mercfound
   saved mod files still decide what the game has when it next starts.
   - Live terrain and Lua (with a Foundry Console built from 0.123's source,
     not yet tested in game): with Live on, each Raise, Lower, Flatten or
-    Smooth stroke (and its undo) changes the running game's ground as well,
+    Smooth stroke, and from 0.132's source each Paint and Erase paint stroke
+    (and their undos) change the running game's ground as well,
     when the game is on the map being edited; **Lua in the game** (under
     Game replies) runs a line of Lua there, e.g.
     `Utility_ReadLevelFile('editor_test_sw')` to load a built layer.

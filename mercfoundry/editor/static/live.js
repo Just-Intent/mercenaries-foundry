@@ -188,8 +188,13 @@ export function createLive(ctx) {
     return send([{op: 'heights', samples, check}]);
   }
   function lua(line) { return send([{op: 'lua', line}]); }
+  // Ground paint, patch by patch (the server encodes each as the build does).
+  function paint(patches, check) {
+    if (!patches.length || !check || !st.player) return false;
+    return send([{op: 'paint', patches, check}]);
+  }
 
-  return {objectMoved, objectRemoved, spawn, copy, moveNamed, removeNamed, askLoaded, heights, lua,
+  return {objectMoved, objectRemoved, spawn, copy, moveNamed, removeNamed, askLoaded, heights, lua, paint,
           player: () => (st.on && st.connected ? st.player : null),
           loaded: () => st.loaded || null, isOn: () => st.on && st.connected};
 }

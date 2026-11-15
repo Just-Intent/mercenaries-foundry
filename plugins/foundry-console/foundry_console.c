@@ -1342,7 +1342,7 @@ static DWORD WINAPI window_thread(void *arg)
 
 #define LIVE_PORT 8740
 #define LIVE_LINES 64
-#define LIVE_LINE 640
+#define LIVE_LINE 1600     /* a "paint" line carries a patch's alpha as hex: 90 characters a layer */
 static char live_cmds[LIVE_LINES][LIVE_LINE];
 static unsigned live_cmd_count;
 static char live_state[256];          /* player and gameplay lines, from the game thread */
@@ -1535,6 +1535,31 @@ static double teleport_check;        /* seconds until checking a teleport stuck 
 #define CACHE_SLOTS 64
 #define MAX_HEIGHT_EDITS 64
 
+/* The check that starts a heights or paint line: a cell and its height (in
+ * height units) as the editor's map has it. The game reports no map name,
+ * so this is how an edit made on another map is refused here (within the
+ * block's rounding). Returns 1 when the game's ground has that height. */
+static int live_check(const char *what, char **next, uint32_t heights, uint32_t blocks, int size, int block)
+{
+    char *c = strtok_s(NULL, " ", next), *r = c ? strtok_s(NULL, " ", next) : NULL,
+         *u = r ? strtok_s(NULL, " ", next) : NULL;
+    if (!u) { live_result("%s: no check sample", what); return 0; }
+    int cc = atoi(c) & (size - 1), cr = atoi(r) & (size - 1), want = atoi(u);
+    int blk = (cr / block) * (size / block) + cc / block;
+    uint8_t byte = 0, shift = 0;
+    int16_t base = 0;
+    host->read_guest(host->context, heights + (uint32_t)(blk * block * block + (cr % block) * block + cc % block), &byte, 1);
+    host->read_guest(host->context, blocks + (uint32_t)blk * 4, &shift, 1);
+    host->read_guest(host->context, blocks + (uint32_t)blk * 4 + 2, &base, 2);
+    int have = ((int)byte << (shift & 31)) + base;
+    if (abs(have - want) > (1 << (shift & 31))) {
+        live_result("%s: the game's ground isn't the editor's map here (cell %d,%d is %d, the editor has %d); "
+                    "nothing changed", what, cc, cr, have, want);
+        return 0;
+    }
+    return 1;
+}
+
 static void live_heights(char **next)
 {
     uint32_t heights = 0, blocks = 0;
@@ -1547,27 +1572,7 @@ static void live_heights(char **next)
         live_result("heights: no terrain loaded here");
         return;
     }
-    /* The check: a cell and its height before the change, as the editor's map
-     * has it. The game reports no map name, so this is how a stroke on another
-     * map is refused here (within the block's rounding). */
-    {
-        char *c = strtok_s(NULL, " ", next), *r = c ? strtok_s(NULL, " ", next) : NULL,
-             *u = r ? strtok_s(NULL, " ", next) : NULL;
-        if (!u) { live_result("heights: no check sample"); return; }
-        int cc = atoi(c) & (size - 1), cr = atoi(r) & (size - 1), want = atoi(u);
-        int blk = (cr / block) * (size / block) + cc / block;
-        uint8_t byte = 0, shift = 0;
-        int16_t base = 0;
-        host->read_guest(host->context, heights + (uint32_t)(blk * block * block + (cr % block) * block + cc % block), &byte, 1);
-        host->read_guest(host->context, blocks + (uint32_t)blk * 4, &shift, 1);
-        host->read_guest(host->context, blocks + (uint32_t)blk * 4 + 2, &base, 2);
-        int have = ((int)byte << (shift & 31)) + base;
-        if (abs(have - want) > (1 << (shift & 31))) {
-            live_result("heights: the game's ground isn't the editor's map here (cell %d,%d is %d, the editor has %d); "
-                        "nothing changed", cc, cr, have, want);
-            return;
-        }
-    }
+    if (!live_check("heights", next, heights, blocks, size, block)) return;
     int cols[MAX_HEIGHT_EDITS], rows[MAX_HEIGHT_EDITS], units[MAX_HEIGHT_EDITS], n = 0;
     for (char *t; n < MAX_HEIGHT_EDITS && (t = strtok_s(NULL, " ", next)) != NULL; n++) {
         char *r = strtok_s(NULL, " ", next), *u = strtok_s(NULL, " ", next);
@@ -1643,6 +1648,120 @@ static void live_heights(char **next)
                 n, done_blocks, redrawn);
 }
 
+/* ---------- live ground paint ----------
+ * Each 8 x 8-cell patch has a 16-byte record (Terrain_Load, 0x1F07A0): the
+ * array at *0x64314C, *0x6432F8 of them, row by row. +0: a pointer to the
+ * patch's ALPH blob (0 when it has one layer or none); +8: its layer mask
+ * (PTCH). A blob is u16 stored, u16 unpacked, then the data: raw when stored
+ * == unpacked (Terrain_BuildPatch 0x21D650 copies it), 45 bytes a layer in
+ * ascending bit order (9 rows of 5 bytes of nibbles). The editor sends a
+ * patch's new mask and raw data, encoded as the build encodes paint
+ * (terrain_paint.encode_patch on its server). The blob goes where the old one
+ * was when it fits, else in a block from the game's allocator (0x1F7230, the
+ * main heap, as Terrain_Load's own); then the mask, then the patch's drawn
+ * cache slot is emptied. Only layers the map's ground already uses anywhere
+ * are taken: a layer its LTEX doesn't define might crash the drawing.
+ * Untested in game. */
+#define TERRAIN_PATCH_RECORDS 0x0064314Cu
+#define TERRAIN_PATCH_COUNT 0x006432F8u
+#define GAME_ALLOC 0x001F7230u
+#define GAME_ALLOC_TAG 0x002FC9D4u        /* the tag string Terrain_Load's ALPH buffer uses */
+
+static int hexval(char ch)
+{
+    return ch >= '0' && ch <= '9' ? ch - '0' : ch >= 'a' && ch <= 'f' ? ch - 'a' + 10 :
+           ch >= 'A' && ch <= 'F' ? ch - 'A' + 10 : -1;
+}
+
+static void live_paint(char **next)
+{
+    uint32_t heights = 0, blocks = 0, records = 0, count = 0, patches = 0, cache = 0;
+    int16_t size = 0, block = 0;
+    host->read_guest(host->context, TERRAIN_HEIGHTS, &heights, 4);
+    host->read_guest(host->context, TERRAIN_BLOCKS, &blocks, 4);
+    host->read_guest(host->context, TERRAIN_SIZE, &size, 2);
+    host->read_guest(host->context, TERRAIN_BLOCK, &block, 2);
+    host->read_guest(host->context, TERRAIN_PATCH_RECORDS, &records, 4);
+    host->read_guest(host->context, TERRAIN_PATCH_COUNT, &count, 4);
+    host->read_guest(host->context, TERRAIN_PATCHES, &patches, 4);
+    if (!heights || !blocks || !records || size <= 0 || block <= 0 || block > 64 || size % block ||
+        !patches || patches > 256 || count != patches * patches) {
+        live_result("paint: no terrain loaded here");
+        return;
+    }
+    if (!live_check("paint", next, heights, blocks, size, block)) return;
+    char *c = strtok_s(NULL, " ", next), *r = c ? strtok_s(NULL, " ", next) : NULL,
+         *m = r ? strtok_s(NULL, " ", next) : NULL, *hex = m ? strtok_s(NULL, " ", next) : NULL;
+    if (!m) { live_result("paint: col row mask [alpha] expected"); return; }
+    uint32_t col = (uint32_t)atoi(c), row = (uint32_t)atoi(r), mask = (uint32_t)strtoul(m, NULL, 16) & 0xFFFF;
+    if (col >= patches || row >= patches) { live_result("paint: no patch %u,%u", col, row); return; }
+    /* the layers the ground uses anywhere (each defined by its LTEX) */
+    static uint32_t used_for, used;
+    if (used_for != records) {
+        used = 0;
+        static uint8_t recs[256 * 16];
+        for (uint32_t i = 0; i < count; i += 256) {
+            uint32_t n = count - i < 256 ? count - i : 256;
+            host->read_guest(host->context, records + i * 16, recs, n * 16);
+            for (uint32_t k = 0; k < n; k++) used |= (uint32_t)recs[k * 16 + 8] | (uint32_t)recs[k * 16 + 9] << 8;
+        }
+        used_for = records;
+    }
+    if (mask & ~used) {
+        live_result("paint: layer(s) %04X aren't on the game's ground yet (an added layer shows after the next start)",
+                    mask & ~used);
+        return;
+    }
+    int layers = 0;
+    for (int b = 0; b < 16; b++) layers += (mask >> b) & 1;
+    uint32_t rec = records + (row * patches + col) * 16;
+    uint32_t blob = 0;
+    if (layers > 1) {
+        static uint8_t data[4 + 45 * 16];
+        size_t want = (size_t)45 * layers, len = hex ? strlen(hex) / 2 : 0;
+        if (len != want) { live_result("paint: patch %u,%u: %u bytes of alpha for %d layers", col, row, (unsigned)len, layers); return; }
+        for (size_t i = 0; i < len; i++) {
+            int hi = hexval(hex[2 * i]), lo = hexval(hex[2 * i + 1]);
+            if (hi < 0 || lo < 0) { live_result("paint: bad alpha"); return; }
+            data[4 + i] = (uint8_t)(hi << 4 | lo);
+        }
+        uint16_t n16 = (uint16_t)len;
+        memcpy(data, &n16, 2);
+        memcpy(data + 2, &n16, 2);
+        uint32_t old = 0;
+        uint16_t stored = 0;
+        host->read_guest(host->context, rec, &old, 4);
+        if (old) host->read_guest(host->context, old, &stored, 2);
+        if (old && (size_t)stored + 4 >= len + 4) {
+            blob = old;                       /* fits where the old one was */
+        } else {
+            MercGuestCall call;
+            uint32_t args[3] = {(uint32_t)len + 4, 0, GAME_ALLOC_TAG};
+            if (!guest(GAME_ALLOC, 0, 3, args, &call) || !call.eax) { live_result("paint: no memory for patch %u,%u", col, row); return; }
+            blob = call.eax;                  /* (kept until the level unloads; a little each time a patch grows) */
+        }
+        host->write_guest(host->context, blob, data, len + 4);
+    }
+    host->write_guest(host->context, rec, &blob, 4);
+    uint16_t m16 = (uint16_t)mask;
+    host->write_guest(host->context, rec + 8, &m16, 2);
+    /* its drawn patch, built again next frame */
+    uint16_t keys[CACHE_SLOTS];
+    int redrawn = 0;
+    host->read_guest(host->context, TERRAIN_CACHE_PTR, &cache, 4);
+    if (cache && host->read_guest(host->context, cache + 8, keys, sizeof(keys))) {
+        for (int k = 0; k < CACHE_SLOTS; k++) {
+            if (keys[k] != (uint16_t)((col << 8) | row) && keys[k] != (uint16_t)((row << 8) | col)) continue;
+            uint16_t empty = 0xFFFF;
+            uint8_t clean = 0;
+            host->write_guest(host->context, cache + 8 + (uint32_t)k * 2, &empty, 2);
+            host->write_guest(host->context, cache + 0xC8 + (uint32_t)k, &clean, 1);
+            redrawn++;
+        }
+    }
+    live_result("paint: patch %u,%u, %d layer(s)%s", col, row, layers, redrawn ? ", drawn again" : "");
+}
+
 static void live_run(char *line)
 {
     char *next = NULL;
@@ -1659,6 +1778,7 @@ static void live_run(char *line)
         return;
     }
     if (!strcmp(op, "heights")) { live_heights(&next); return; }
+    if (!strcmp(op, "paint")) { live_paint(&next); return; }
     if (!strcmp(op, "teleport")) {
         float p[3];
         for (int i = 0; i < 3; i++) { char *t = strtok_s(NULL, " ", &next); p[i] = t ? (float)atof(t) : 0; }

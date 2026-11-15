@@ -129,6 +129,26 @@ def _alph_blobs(data, patches):
     return out
 
 
+def patch_alpha(windows):
+    """(layer mask, ALPH data unpacked: 45 bytes a layer, or b"" for one
+    layer or none) for one patch from each layer's 9 x 9 opacities
+    ({layer: [81 values, row by row]}), as the build writes it."""
+    layers = [l for l in sorted(windows) if any(LEVEL[v] for v in windows[l])]
+    grids = encode_patch(windows, layers) if len(layers) > 1 else {}
+    # A layer that draws no cell (hidden under opaque paint) is left out:
+    # the game draws a patch in passes of four layers, and a pass that draws
+    # nothing hangs it (retail never has one).
+    while len(layers) > 1:
+        hidden = [l for l in layers if not drawn(grids[l])]
+        if not hidden:
+            break
+        layers = [l for l in layers if l not in hidden]
+        grids = encode_patch(windows, layers) if len(layers) > 1 else {}
+    mask = sum(1 << l for l in layers)
+    raw = b"".join(tl._pack_layer(grids[l]) for l in layers) if len(layers) > 1 else b""
+    return mask, raw
+
+
 def apply(chunks, images=None, table=None):
     """New tern chunk bodies for painted layers.
 
@@ -196,21 +216,10 @@ def apply(chunks, images=None, table=None):
                 continue
             changed += 1
             windows = {l: window(images[l] if l in images else old.get(l, bytes(w * w))) for l in range(count)}
-            layers = [l for l in range(count) if any(LEVEL[v] for v in windows[l])]
-            grids = encode_patch(windows, layers) if len(layers) > 1 else {}
-            # A layer that draws no cell (hidden under opaque paint) is left
-            # out: the game draws a patch in passes of four layers, and a pass
-            # that draws nothing hangs it (retail never has one).
-            while len(layers) > 1:
-                hidden = [l for l in layers if not drawn(grids[l])]
-                if not hidden:
-                    break
-                layers = [l for l in layers if l not in hidden]
-                grids = encode_patch(windows, layers) if len(layers) > 1 else {}
-            mask = sum(1 << l for l in layers)
+            mask, raw = patch_alpha(windows)
             new_patches.append(tl.Patch(mask, p.decal_count))
-            if len(layers) > 1:
-                alph += tl.pack_blob(b"".join(tl._pack_layer(grids[l]) for l in layers))
+            if raw:
+                alph += tl.pack_blob(raw)
     if changed:
         replace[b"PTCH"] = tl.encode_ptch(new_patches)
         replace[b"ALPH"] = bytes(alph)

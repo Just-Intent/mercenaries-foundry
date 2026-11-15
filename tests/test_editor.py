@@ -524,3 +524,21 @@ class TiltTests(unittest.TestCase):
             self.assertAlmostEqual(objs[1]["yaw"], 30.0, places=3)
             back = sc.load_placed("sw")
             self.assertAlmostEqual(back[0]["rotation"][4], math.cos(a), places=5)
+
+
+class LivePaintTests(unittest.TestCase):
+    def test_paint_lines_encode_as_the_build(self):
+        from mercfoundry import terrain_layers as tl, terrain_paint
+        from mercfoundry.editor.live import command_line
+        windows = {0: [255] * 81, 1: [255 if i % 9 >= 4 else 0 for i in range(81)], 2: [0] * 81}
+        mask, raw = terrain_paint.patch_alpha(windows)
+        self.assertEqual(mask, 0b11)                                  # layer 2 unpainted: left out
+        self.assertEqual(len(raw), 2 * tl.ALPHA_LAYER)
+        line = command_line({"op": "paint", "check": [8, 16, 56], "patches": [
+            {"col": 1, "row": 2, "windows": windows}, {"col": 0, "row": 0, "windows": {0: [255] * 81}}]})
+        a, b = line.split("\n")
+        self.assertEqual(a, f"paint 8 16 56 1 2 0003 {raw.hex()}")
+        self.assertEqual(b, "paint 8 16 56 0 0 0001")               # one layer: no alpha
+        self.assertLess(len(a), 1600)
+        with self.assertRaises(ValueError):
+            command_line({"op": "paint", "check": [1, 2], "patches": []})

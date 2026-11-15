@@ -204,8 +204,42 @@ export function createTerrainEditor(ctx) {
     const [first, old] = before.entries().next().value || [];
     return {samples, check: first === undefined ? null : cell(first, old)};
   }
+  // Painted pixels (keys layer * w * w + pixel) as the game's live link takes
+  // them: every patch whose 9 x 9 grid holds one (a patch's edge is its
+  // neighbour's too), each with all its layers' opacities, and a height check
+  // (the game reports no map name: a cell's height says it's this map).
+  function livePatches(keys) {
+    const g = terrain().mesh.userData.ground, t = terrain();
+    if (!g) return null;
+    const w = g.w, per = w * w, side = (w - 1) / 8, count = g.layers.length;
+    const touched = new Set();
+    for (const k of keys) {
+      const i = k % per, X = i % w, Y = Math.floor(i / w);
+      const xs = [Math.min(Math.floor(X / 8), side - 1)], ys = [Math.min(Math.floor(Y / 8), side - 1)];
+      if (X % 8 === 0 && X > 0 && X < w - 1) xs.push(X / 8 - 1);
+      if (Y % 8 === 0 && Y > 0 && Y < w - 1) ys.push(Y / 8 - 1);
+      for (const px of xs) for (const py of ys) touched.add(py * side + px);
+    }
+    const patches = [...touched].map((n) => {
+      const col = n % side, row = Math.floor(n / side), windows = {};
+      for (let L = 0; L < count; L++) {
+        const vals = [];
+        for (let j = 0; j < 9; j++) for (let i = 0; i < 9; i++) vals.push(g.paint[L * per + (row * 8 + j) * w + col * 8 + i]);
+        windows[L] = vals;
+      }
+      return {col, row, windows};
+    });
+    if (!patches.length) return null;
+    const {size, step} = t.meta;
+    const c = patches[0].col * 8, r = patches[0].row * 8;
+    return {patches, check: [c, r, Math.round(t.heights[r * size + c] / step)]};
+  }
   function up() {
     if (!st.stroke) return st.on && st.tool === 'road';
+    if (st.stroke.paint.size && ctx.livePaint) {
+      const lp = livePatches(st.stroke.paint.keys());
+      if (lp) ctx.livePaint(lp);
+    }
     if (st.stroke.heights.size || st.stroke.paint.size) st.undo.push(st.stroke);
     if (st.undo.length > 50) st.undo.shift();
     if (st.stroke.heights.size) ctx.onHeights && ctx.onHeights();
@@ -227,7 +261,11 @@ export function createTerrainEditor(ctx) {
       ctx.onHeights && ctx.onHeights();
       if (ctx.liveHeights) ctx.liveHeights(liveSamples(before));
     }
-    if (s.paint.size) refreshPaint();
+    if (s.paint.size) {
+      refreshPaint();
+      const lp = ctx.livePaint && livePatches(s.paint.keys());
+      if (lp) ctx.livePaint(lp);
+    }
     setDirty(true);
     $('terrain-undo').disabled = !st.undo.length;
     status('Undid a terrain stroke');

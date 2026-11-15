@@ -13,6 +13,9 @@ lines keep the plugin's side (C) simple:
                      remove <name|-> <model|-> <n> <x y z> * n
                      teleport <x> <y> <z>
                      lua <a line of Lua>      (run in the newest script's state)
+                     paint <check col> <row> <units> <patch col> <row> <mask hex> [<alpha hex>]
+                                              (a ground patch's paint: terrain_paint.patch_alpha;
+                                              refused off the editor's map, as heights)
                      heights <check col> <row> <units> <col row units> * up to 40
                                               (terrain heights, in height units;
                                               refused unless the game has the check
@@ -132,6 +135,20 @@ def command_line(c: dict) -> str:
         if len(line) > 600:
             raise ValueError("a live Lua line is 600 characters at most")
         return "lua " + line
+    if op == "paint":
+        from .. import terrain_paint
+        check = [int(v) for v in c["check"]]
+        if len(check) != 3:
+            raise ValueError("paint: check is [column, row, units]")
+        lines = []
+        for p in c.get("patches") or []:
+            windows = {int(k): [int(v) for v in vals] for k, vals in (p.get("windows") or {}).items()}
+            if any(len(v) != 81 for v in windows.values()):
+                raise ValueError("paint: a patch's windows are 81 values a layer")
+            mask, raw = terrain_paint.patch_alpha(windows)
+            lines.append(f"paint {check[0]} {check[1]} {check[2]} {int(p['col'])} {int(p['row'])} {mask:04X}"
+                         + (f" {raw.hex()}" if raw else ""))
+        return "\n".join(lines)
     if op == "heights":
         check = [int(v) for v in c["check"]]
         samples = [[int(v) for v in s] for s in c.get("samples") or []]

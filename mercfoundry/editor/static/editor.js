@@ -1587,6 +1587,7 @@ const terrainEdit = createTerrainEditor({
   reloadGround: () => applyGround(terrainMesh, state.map, scene.fog, {...state.terrain.meta, heights: state.terrain.heights}),
   // a stroke's heights to the running game, when it's on this map (Foundry Console's "heights")
   liveHeights: ({samples, check}) => live.heights(samples, check),
+  livePaint: ({patches, check}) => live.paint(patches, check),
 });
 // Missions: contracts, their objectives and their layer's squads and zones.
 const missions = createMissions({
