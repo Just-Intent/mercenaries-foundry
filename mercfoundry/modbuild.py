@@ -492,7 +492,11 @@ def _apply_encounters(data, folder, result):
                 raise ValueError(f"encounters/{f.name}: \"load\" is \"map\" (load with its map in free roam)")
             from . import missions
             m = (doc.get("map") or "").lower()
-            if m not in missions.FREE_ROAM_MAPS:
+            if m in getattr(data, "new_maps", ()):
+                # a mod's new map: its master script loads the layer (_apply_maps)
+                data.new_map_layers = getattr(data, "new_map_layers", {})
+                data.new_map_layers.setdefault(m, []).append(layer)
+            elif m not in missions.FREE_ROAM_MAPS:
                 result.warnings.append(f"encounters/{f.name}: \"load\": \"map\" works on the free-roam maps "
                                        f"({', '.join(missions.FREE_ROAM_MAPS).upper()}), not {m.upper() or 'no map'}; "
                                        f"load this layer from a script")
@@ -503,6 +507,8 @@ def _apply_encounters(data, folder, result):
         n = len(encounters.member_names(doc))
         loads = (f"loads with the {(doc.get('map') or '').upper()} map in free roam" if doc.get("load") == "map"
                  and (doc.get("map") or "").lower() in ("sw", "nw")
+                 else f"loads with the new map {(doc.get('map') or '').lower()} (its master script)"
+                 if doc.get("load") == "map" and (doc.get("map") or "").lower() in getattr(data, "new_maps", ())
                  else f"load it from a script with Utility_ReadLevelFile('{layer}')")
         result.changes.append(f"layer {layer}: {n} objects, {len(doc.get('encounters', []))} encounters ({loads})")
     for layer, doc in givers:
@@ -1243,6 +1249,27 @@ def _renamed_record(body, new):
     return ucfb.wrap(tag, ucfb.pack_children(items, pad_last), (outer_pad, inner_pad))
 
 
+def map_script(name, doc, layers):
+    """A new map's master script (run as the map loads): blank's set-up, its
+    layers, where the player arrives and a message."""
+    from .missions import _lua_str
+    lines = [f"-- {name}: written by mercfoundry from maps/{name}.json (scripts/{name}.lua replaces it)",
+             "function ScriptInit()",
+             "Debug_EnableCallStack(false)",
+             "bDebugOutput = false",
+             "bHudOutput = false",
+             "Utility_ReadLevelFile('\\\\TEMPLATE\\\\template_vehicles_ch2')   -- vehicle templates, as blank's"]
+    lines += [f"Utility_ReadLevelFile({_lua_str(l)})" for l in layers]
+    start = doc.get("start") or {}
+    if start.get("position"):
+        x, y, z = (float(v) for v in start["position"])
+        lines.append(f"Actor_SetPosition('player0', {x:.2f}, {y:.2f}, {z:.2f})")
+        lines.append(f"Actor_SetYaw('player0', {float(start.get('heading', 0)):.1f})")
+    if doc.get("message"):
+        lines.append(f"Ui_PrintHudMessage({_lua_str(str(doc['message']))})")
+    return "\n".join(lines + ["end", ""])
+
+
 def _apply_maps(data, folder, result):
     """maps/<name>.json {"from": "blank"}: a new map, a copy of a game map
     under a new name: its terrain, world layer, encounters, regions, zones,
@@ -1287,12 +1314,25 @@ def _apply_maps(data, folder, result):
         # own name (blank's loads 'blank'), and the game hangs loading a
         # script that isn't there. A mod's scripts/<name>.lua (added by the
         # scripts step) wins; otherwise a copy of the source map's.
+        # The map's file can say where the player arrives and what shows; its
+        # layers ("load": "map") load with it.
+        mdoc = json.loads(f.read_text(encoding="utf-8"))
+        layers = getattr(data, "new_map_layers", {}).get(name.lower(), [])
         if not any(r.key == key for _, r in data.records(SCRIPT)) and data.find_added(key, SCRIPT) is None:
-            hit = [(a, r) for a, r in data.records(SCRIPT) if r.key == name_hash(src)]
-            source = script.decode(data.current(*hit[0])).source if hit else \
-                f"function ScriptInit()\nUi_PrintHudMessage( '{name}' )\nend\n"
+            if mdoc.get("start") or mdoc.get("message") or layers:
+                source = map_script(name, mdoc, layers)
+                made.append("script (" + ", ".join(
+                    (["where you arrive"] if (mdoc.get("start") or {}).get("position") else [])
+                    + ([f"loads {', '.join(layers)}"] if layers else [])
+                    + (["a message"] if mdoc.get("message") else [])) + ")")
+            else:
+                hit = [(a, r) for a, r in data.records(SCRIPT) if r.key == name_hash(src)]
+                source = script.decode(data.current(*hit[0])).source if hit else map_script(name, mdoc, [])
+                made.append(f"script (a copy of {src}'s)" if hit else "script")
             data.new("assets.dsk", key, SCRIPT, script.encode(script.new(name, source.replace("\r\n", "\n"))))
-            made.append(f"script (a copy of {src}'s)" if hit else "script")
+        elif layers:
+            result.warnings.append(f"{where}: scripts/{name}.lua is its master script, so load "
+                                   f"{', '.join(layers)} from it (Utility_ReadLevelFile)")
         # its level: a levels.ini section (as the source's) and a copy of its config
         lpath = "DATAxbox/levels.ini"
         levels = data.files[lpath].decode("latin-1") if lpath in data.files else \
@@ -1837,6 +1877,8 @@ def build(projects, data_dir, out_dir, name=None, description=None) -> Result:
     if len(set(mod_names)) != len(mod_names):
         raise ValueError("two mods have the same name: " + ", ".join(mod_names))
     data = _Data(data_dir)
+    # the mods' new maps (maps/<name>.json), for layers that load with them
+    data.new_maps = {f.stem.lower() for p in projects if (p / "maps").is_dir() for f in (p / "maps").glob("*.json")}
     result = Result()
     contracts = []
     for step in STEPS:

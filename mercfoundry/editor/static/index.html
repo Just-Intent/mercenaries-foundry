@@ -31,6 +31,7 @@
   <button id="missions-mode" title="Make and edit contracts">Missions</button>
   <button id="sky-mode" title="The map's sky and weather presets">Sky</button>
   <button id="factions-mode" title="Give a faction new names in the game's text">Factions</button>
+  <button id="mapset-mode" title="Make a new map, or set where you arrive on one and what loads with it">Map</button>
   <datalist id="templates"></datalist>
   <span class="spacer"></span>
   <button id="live">Live (no game)</button>
@@ -302,6 +303,11 @@
       <div class="buttons"><button id="fx-preview">Preview</button></div>
       <div id="fx-out"></div>
       <div class="buttons"><button id="fx-close">Close</button></div>
+    </div>
+    <div id="mapset" hidden>
+      <h2>Map <span id="mapset-map" class="hint"></span></h2>
+      <div id="mapset-body"></div>
+      <div class="buttons"><button id="mapset-close">Close</button></div>
     </div>
     <div id="sky" hidden>
       <h2>Sky &amp; weather <span id="sky-map" class="hint"></span></h2>

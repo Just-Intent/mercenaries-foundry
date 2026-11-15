@@ -235,3 +235,42 @@ class VoiceLineTests(unittest.TestCase):
             for bad in ("fio", "fio./../x", "nobank"):
                 with self.assertRaises(ValueError):
                     sc.voice_wav(bad)
+
+
+class NewMapTests(unittest.TestCase):
+    """The Map panel: make a new map, set where you arrive and what loads."""
+
+    def test_new_map_and_settings(self):
+        import json
+        import tempfile
+        from pathlib import Path
+        from mercfoundry.editor.scene import Scene
+        with tempfile.TemporaryDirectory() as d:
+            root = Path(d)
+            sc = Scene.__new__(Scene)
+            sc.mod = root
+            sc.context = [root]
+            sc.maps = lambda: ["blank", "sw"] + sorted(f.stem for f in (root / "maps").glob("*.json"))
+            self.assertEqual(sc.new_map("Fiefdom"), {"name": "fiefdom"})
+            self.assertEqual(json.loads((root / "maps" / "fiefdom.json").read_text(encoding="utf-8")), {"from": "blank"})
+            for bad in ("fiefdom", "sw", "bad name"):
+                with self.assertRaises(ValueError):
+                    sc.new_map(bad)
+            with self.assertRaises(ValueError):
+                sc.new_map("isle", "fiefdom")                 # copies game maps only
+            self.assertEqual(sc.game_maps(), ["blank", "sw"])
+            self.assertEqual(sc.map_settings("sw"), {"new": False})
+            (root / "encounters").mkdir()
+            (root / "encounters" / "camp.json").write_text(json.dumps({"map": "FIEFDOM", "objects": []}))
+            (root / "encounters" / "other.json").write_text(json.dumps({"map": "SW", "objects": []}))
+            got = sc.map_settings("fiefdom")
+            self.assertEqual(got["layers"], [{"name": "camp", "loads": False}])
+            got = sc.save_map_settings("fiefdom", {"start": {"position": [1, 2.345, 3], "heading": 90},
+                                                   "message": " Hi ", "layers": {"camp": True, "other": True}})
+            self.assertEqual(got["start"], {"position": [1.0, 2.35, 3.0], "heading": 90.0})
+            self.assertEqual(got["message"], "Hi")
+            self.assertEqual(got["layers"], [{"name": "camp", "loads": True}])
+            self.assertNotIn("load", json.loads((root / "encounters" / "other.json").read_text(encoding="utf-8")))
+            got = sc.save_map_settings("fiefdom", {"start": None, "message": "", "layers": {"camp": False}})
+            self.assertEqual(json.loads((root / "maps" / "fiefdom.json").read_text(encoding="utf-8")), {"from": "blank"})
+            self.assertFalse(got["layers"][0]["loads"])

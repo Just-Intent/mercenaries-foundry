@@ -17,6 +17,7 @@ import {createTerrainEditor} from './terrain_edit.js';
 import {createMissions} from './missions.js';
 import {createSky} from './sky.js';
 import {createFactions} from './factions.js';
+import {createMapSettings} from './mapset.js';
 
 const $ = (id) => document.getElementById(id);
 const NEAR_RADIUS = 220;      // metres around the view centre that show real models
@@ -153,6 +154,17 @@ function status(text, error = false) {
   $('status').textContent = text;
   $('status').classList.toggle('error', error);
 }
+// The Map list: the free-roam maps first, then the rest (a mod's new maps too).
+async function fillMaps() {
+  const info = await getJSON('/api/info');
+  $('mod').textContent = info.mod;
+  modName = info.mod;
+  const maps = info.maps.filter((m) => ['swn', 'sw', 'nw'].includes(m)).concat(
+    info.maps.filter((m) => !['swn', 'sw', 'nw'].includes(m)));
+  $('map').innerHTML = maps.map((m) => `<option>${m}</option>`).join('');
+  return maps;
+}
+
 async function getJSON(url) {
   const r = await fetch(url);
   const doc = await r.json();
@@ -381,9 +393,11 @@ async function loadMap(name) {
   $('names').innerHTML = names.map((n) => `<option value="${n}">`).join('');
   const start = state.records.find((r) => /playerstart|drop_start/i.test(r.name)) || state.records[0];
   if (start) lookAt(start.position, 60);
+  else lookAt([0, heightAt(0, 0), 0], 400);         // an empty map (a new one): its middle
   const [items, encounters] = await Promise.all([layout.load(name), encs.load(name)]);
   missions.load(name).catch((err) => console.warn('missions:', err));
   sky.load(name).catch((err) => console.warn('sky:', err));
+  mapset.load(name).catch((err) => console.warn('map settings:', err));
   if (mine !== loadSerial) return;
   minimap.setWater(waterAreas ? waterAreas() : []);
   refreshChanges();
@@ -1153,6 +1167,23 @@ const missions = createMissions({
 // Sky and weather: the map's base sky and atmosphere presets (sky/<map>.json).
 const sky = createSky({$, status, setDirty: (v) => setDirty(v)});
 const factions = createFactions({$, status, setDirty: (v) => setDirty(v)});
+// New maps: make one, and a new map's arrival point, message and layers.
+const mapset = createMapSettings({
+  $, status,
+  post: async (url, body) => {
+    const r = await fetch(url, {method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(body)});
+    const doc = await r.json();
+    if (!r.ok) throw new Error(doc.error || r.statusText);
+    return doc;
+  },
+  viewCentre: () => { const g = gamePos(controls.target); g[1] = round(heightAt(g[0], g[2])); return g; },
+  switchToMap: async (name) => {
+    if (state.dirty && !confirm('Discard unsaved changes?')) return;
+    await fillMaps();
+    $('map').value = name;
+    await loadMap(name);
+  },
+});
 // The minimap (water areas come from the layout module once it has loaded).
 let waterAreas = null;
 const minimap = createMinimap({$, heightAt, lookAt: (p, d) => lookAt(p, d)});
@@ -1206,12 +1237,7 @@ async function start() {
   resize();
   requestAnimationFrame(frame);
   try {
-    const info = await getJSON('/api/info');
-    $('mod').textContent = info.mod;
-    modName = info.mod;
-    const maps = info.maps.filter((m) => ['swn', 'sw', 'nw'].includes(m)).concat(
-      info.maps.filter((m) => !['swn', 'sw', 'nw'].includes(m)));
-    $('map').innerHTML = maps.map((m) => `<option>${m}</option>`).join('');
+    const maps = await fillMaps();
     $('map').value = maps.includes('swn') ? 'swn' : maps[0];
     await loadMap($('map').value);
   } catch (err) {

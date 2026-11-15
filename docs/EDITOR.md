@@ -134,13 +134,18 @@ toolkit bundle run it the same way: `foundry\python\python.exe foundry\mercfound
   A road replaces whatever decal is on its cells (a patch holds one per cell;
   more hung or crashed the game), and paint hidden under opaque paint is left
   out of the patch (see dsk.md).
-- **New maps**: a mod's `maps/<name>.json` (`{"from": "blank"}`) appears in
-  the Map list like the game's maps, with the copied map's ground to reshape
-  and paint (Terrain), its sky (Sky), and objects, squads and zones to add.
-  Layers that "load with the map" only do so on the free-roam maps (SW, NW):
-  on a new map, load them from a script (`Utility_ReadLevelFile`).
-  Its master script (run as it loads) is a copy of the source map's (blank's
-  prints "Hello World!"); write `scripts/<name>.lua` to make your own.
+- **New maps**: **Map** > New map makes one: `maps/<name>.json`, a copy
+  of a game map (blank: flat and nearly empty), and switches to it. It
+  appears in the Map list like the game's maps, with the copied map's ground
+  to reshape and paint (Terrain), its sky (Sky), and objects, squads and
+  zones to add. On a new map, the Map panel sets where the player arrives
+  (the middle of the view, and a heading), a message on arrival, and which
+  of the mod's layers on it load with it (objects placed in the editor go in
+  one that does). The build writes its master script (run as it loads)
+  from these; with none of them set, it's a copy of the source map's
+  (blank's prints "Hello World!"). Write `scripts/<name>.lua` to make your
+  own instead. Enter it with `Utility_ResetToBaseLayerOnly('<name>')` from
+  Foundry Console.
 - **Factions**: new names for the four employers (`factions.json`): name,
   adjective, short form and people, per faction; **Everywhere** for mission
   text too, and voiced lines' subtitles if wanted. **Preview** lists the

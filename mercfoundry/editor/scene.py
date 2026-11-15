@@ -7,6 +7,7 @@ three rows, the object's own axes in world space.
 """
 import json
 import math
+import re
 import struct
 from pathlib import Path
 
@@ -126,6 +127,83 @@ class Scene:
             mdir = Path(p) / "maps"
             out += [f.stem.lower() for f in mdir.glob("*.json")] if mdir.is_dir() else []
         return sorted(set(out))
+
+    def new_map(self, name, src="blank"):
+        """A new map: maps/<name>.json, a copy of a game map (blank: flat,
+        nearly empty). The build makes its records, level and master script."""
+        name = str(name or "").strip()
+        if not re.fullmatch(r"[A-Za-z0-9_]+", name):
+            raise ValueError("a map name is letters, digits and _")
+        if name.lower() in self.maps():
+            raise ValueError(f"there's already a map named {name}")
+        src = str(src or "blank").lower()
+        if src not in self.game_maps():
+            raise ValueError(f"{src} isn't a game map")
+        (self.mod / "maps").mkdir(parents=True, exist_ok=True)
+        (self.mod / "maps" / f"{name.lower()}.json").write_text(json.dumps({"from": src}, indent=1) + "\n",
+                                                                encoding="utf-8")
+        return {"name": name.lower()}
+
+    def game_maps(self):
+        """The game's own maps (ones a new map can copy)."""
+        new = {f.stem.lower() for p in self.context if (Path(p) / "maps").is_dir()
+               for f in (Path(p) / "maps").glob("*.json")}
+        return [m for m in self.maps() if m not in new]
+
+    def map_settings(self, name):
+        """A mod's new map: what it copies, where the player arrives, its
+        message, the layers that load with it, and whether the mod has its
+        own master script. {"new": false} for the game's maps."""
+        p = self.mod / "maps" / f"{name.lower()}.json"
+        if not p.exists():
+            return {"new": False}
+        doc = json.loads(p.read_text(encoding="utf-8"))
+        layers = []
+        for f in sorted((self.mod / "encounters").glob("*.json")) if (self.mod / "encounters").is_dir() else []:
+            try:
+                ld = json.loads(f.read_text(encoding="utf-8"))
+            except ValueError:
+                continue
+            if str(ld.get("map") or "").lower() == name.lower():
+                layers.append({"name": f.stem, "loads": ld.get("load") == "map"})
+        return {"new": True, "name": name.lower(), "from": doc.get("from") or "blank",
+                "start": doc.get("start") or {}, "message": doc.get("message") or "",
+                "layers": layers, "own_script": (self.mod / "scripts" / f"{name.lower()}.lua").exists()}
+
+    def save_map_settings(self, name, doc):
+        """Write a new map's arrival point and message (maps/<name>.json), and
+        which of its layers load with it (their "load": "map")."""
+        p = self.mod / "maps" / f"{name.lower()}.json"
+        if not p.exists():
+            raise ValueError(f"{name} isn't one of this mod's new maps")
+        out = json.loads(p.read_text(encoding="utf-8"))
+        start = doc.get("start") or {}
+        if start.get("position"):
+            pos = [round(float(v), 2) for v in start["position"]]
+            if len(pos) != 3:
+                raise ValueError("start position is [x, y, z]")
+            out["start"] = {"position": pos, "heading": round(float(start.get("heading") or 0), 1)}
+        else:
+            out.pop("start", None)
+        msg = str(doc.get("message") or "").strip()
+        if msg:
+            out["message"] = msg
+        else:
+            out.pop("message", None)
+        p.write_text(json.dumps(out, indent=1) + "\n", encoding="utf-8")
+        for layer, on in (doc.get("layers") or {}).items():
+            lp = self.mod / "encounters" / f"{layer}.json"
+            if not lp.exists():
+                continue
+            ld = json.loads(lp.read_text(encoding="utf-8"))
+            if str(ld.get("map") or "").lower() != name.lower() or bool(ld.get("load") == "map") == bool(on):
+                continue
+            if on:
+                ld["load"] = "map"
+            else:
+                ld.pop("load", None)
+            lp.write_text(json.dumps(ld, indent=1) + "\n", encoding="utf-8")
+        return self.map_settings(name)
 
     def _modded_terrain(self):
         """The context mods' terrain steps, applied as a build would (once,

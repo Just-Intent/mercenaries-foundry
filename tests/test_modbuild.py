@@ -131,6 +131,20 @@ class ModBuildTests(unittest.TestCase):
         self.write("scripts/island.lua", "function ScriptInit()\nUi_PrintHudMessage( 'Island' )\nend\n")
         modbuild.build(self.project, self.data, self.out)
         self.assertIn("'Island'", script.decode(self.records("assets.dsk")[(name_hash("island"), SCRIPT)]).source)
+        # where you arrive, a message, and the layers that load with it
+        (self.project / "scripts" / "island.lua").unlink()
+        self.write("maps/island.json", json.dumps({"from": "blank", "start": {"position": [10, 5, -20], "heading": 90},
+                                                  "message": "Welcome to the island"}))
+        self.write("encounters/isle_camp.json", json.dumps({"map": "island", "load": "map", "objects": []}))
+        result = modbuild.build(self.project, self.data, self.out)
+        source = script.decode(self.records("assets.dsk")[(name_hash("island"), SCRIPT)]).source
+        self.assertIn("Utility_ReadLevelFile('isle_camp')\nActor_SetPosition('player0', 10.00, 5.00, -20.00)\n"
+                      "Actor_SetYaw('player0', 90.0)\nUi_PrintHudMessage('Welcome to the island')\nend\n", source)
+        self.assertIn("Utility_ReadLevelFile('\\\\TEMPLATE\\\\template_vehicles_ch2')", source)
+        from mercfoundry import luacheck
+        self.assertEqual(luacheck.check(source), [])
+        self.assertFalse(any("isle_camp" in w for w in result.warnings))
+        self.assertTrue(any("loads with the new map island" in c for c in result.changes))
         self.write("maps/blank.json", json.dumps({"from": "blank"}))
         with self.assertRaisesRegex(ValueError, "already a map"):
             modbuild.build(self.project, self.data, self.out)

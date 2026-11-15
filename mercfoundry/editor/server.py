@@ -25,6 +25,9 @@ GET  /api/encounters/<map>     encounters: the game's (read only) and the mod's
 GET  /api/sky/<map>            its base sky and atmosphere presets, and the mod's changes (sky/<map>.json)
 POST /api/models/new           {"name", "base", "glb" (base64)}: a new object's model (models/<name>.glb + .new.json)
 POST /api/sky/save             {"map", "doc"}: writes sky/<map>.json
+GET  /api/mapsettings/<map>      a mod's new map: what it copies, arrival point, message, its layers
+POST /api/maps/new               {"name", "from"}: a new map (maps/<name>.json) -> {"name"}
+POST /api/maps/save             {"map", "doc"}: a new map's arrival point, message and loading layers
 GET  /api/properties/<ref>     an object's properties: id:<layer>:<index>, or from:<name> / from:model:<model>
 GET  /api/factions             the mod's factions.json (faction re-skins) and the game's names
 POST /api/factions/preview     {"doc"}: what it would change ({count, samples})
@@ -164,6 +167,11 @@ def make_handler(scene: Scene, mod_name: str, live: Live = None):
                 if path == "/api/animations":
                     with objects_lock:
                         return self.send(200, scene.animation_names())
+                if path.startswith("/api/mapsettings/"):
+                    with objects_lock:
+                        doc = scene.map_settings(path[len("/api/mapsettings/"):])
+                        doc["game_maps"] = scene.game_maps()
+                        return self.send(200, doc)
                 if path.startswith("/api/sky/"):
                     with objects_lock:
                         return self.send(200, scene.sky(path[len("/api/sky/"):]))
@@ -228,6 +236,12 @@ def make_handler(scene: Scene, mod_name: str, live: Live = None):
                 if path == "/api/factions/save":
                     with objects_lock:
                         return self.send(200, scene.save_factions(doc.get("doc") or {}))
+                if path == "/api/maps/new":
+                    with objects_lock:
+                        return self.send(200, scene.new_map(doc["name"], doc.get("from") or "blank"))
+                if path == "/api/maps/save":
+                    with objects_lock:
+                        return self.send(200, scene.save_map_settings(doc["map"], doc.get("doc") or {}))
                 if path == "/api/sky/save":
                     with objects_lock:
                         return self.send(200, scene.save_sky(doc["map"], doc.get("doc") or {}))
