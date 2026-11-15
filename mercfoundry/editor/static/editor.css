@@ -4,7 +4,10 @@ html, body { margin: 0; height: 100%; }
 body { display: flex; flex-direction: column; font: 13px/1.4 system-ui, sans-serif; color: #e8e8e8; background: #1d2024; }
 header { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px; padding: 6px 10px; background: #2a2e34; border-bottom: 1px solid #3a3f46; }
 header .spacer { flex: 1; }
-#mod { color: #9fb3c8; }
+#mod { color: #cfe0f2; font-weight: 600; }
+.mod-row { border: 1px solid #3a3f46; border-radius: 4px; padding: 6px 8px; margin: 6px 0; }
+.mod-row.mod-current { border-color: #5a82b5; background: #2b3542; }
+.mod-row .buttons { margin-top: 4px; }
 #search { width: 260px; }
 input, select, button { font: inherit; color: inherit; background: #33383f; border: 1px solid #4a5059; border-radius: 4px; padding: 3px 6px; }
 button { cursor: pointer; }

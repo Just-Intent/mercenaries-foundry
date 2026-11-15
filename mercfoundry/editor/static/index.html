@@ -12,7 +12,7 @@
 <body>
 <header>
   <strong>Foundry editor</strong>
-  <span id="mod"></span>
+  <label>Saving to <button id="mod" title="The mod everything you save goes into: click to switch to another, make one, rename it or delete one"></button></label>
   <label>Map <select id="map"></select></label>
   <input id="search" type="search" placeholder="Find object by name or model" list="names">
   <datalist id="names"></datalist>
@@ -304,6 +304,11 @@
       <div class="buttons"><button id="fx-preview">Preview</button></div>
       <div id="fx-out"></div>
       <div class="buttons"><button id="fx-close">Close</button></div>
+    </div>
+    <div id="mods" hidden>
+      <h2>Mods</h2>
+      <div id="mods-body"></div>
+      <div class="buttons"><button id="mods-close">Close</button></div>
     </div>
     <div id="mapset" hidden>
       <h2>Map <span id="mapset-map" class="hint"></span></h2>

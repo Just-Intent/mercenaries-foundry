@@ -27,6 +27,11 @@ POST /api/models/new           {"name", "base", "glb" (base64)}: a new object's 
 POST /api/sky/save             {"map", "doc"}: writes sky/<map>.json
 GET  /api/mapsettings/<map>      a mod's new map: what it copies, arrival point, message, its layers
 POST /api/maps/new               {"name", "from"}: a new map (maps/<name>.json) -> {"name"}
+GET  /api/mods                  the game's source mods (folder, name, description, enabled, current)
+POST /api/mods/switch          {"folder"}: edit and save to that mod
+POST /api/mods/create          {"name", "description"?}: a new source mod (enabled), switched to
+POST /api/mods/update          {"folder", "name"?, "description"?, "enabled"?}
+POST /api/mods/delete          {"folder"}: moved to the game's foundry-trash folder, off the launcher's list
 GET  /api/marks/<map>           travel pilots and arrival points the mod's maps/*.json put on this map
 POST /api/marks/save            {"marks": [{kind, to, index, position, rotation}]}: moved marks
 POST /api/maps/travel           {"op": "add"|"remove", "to", "on", "position"?, "heading"?, "index"?}: travel pilots
@@ -124,7 +129,12 @@ def make_handler(scene: Scene, mod_name: str, live: Live = None):
                     return self.send(200, data, TYPES.get(ext) or mimetypes.guess_type(path)[0] or "application/octet-stream")
                 if path == "/api/info":
                     with objects_lock:
-                        return self.send(200, {"mod": mod_name, "maps": scene.maps()})
+                        from ..modbuild import project_name
+                        return self.send(200, {"mod": project_name(scene.mod), "folder": scene.mod.name,
+                                               "maps": scene.maps()})
+                if path == "/api/mods":
+                    with objects_lock:
+                        return self.send(200, scene.mods())
                 if path.startswith("/api/missions/check/"):     # the build's checks for one mission
                     with objects_lock:
                         return self.send(200, scene.check_mission(path[len("/api/missions/check/"):]))
@@ -257,6 +267,21 @@ def make_handler(scene: Scene, mod_name: str, live: Live = None):
                 if path == "/api/maps/new":
                     with objects_lock:
                         return self.send(200, scene.new_map(doc["name"], doc.get("from") or "blank"))
+                if path.startswith("/api/mods/"):
+                    # switching, making or deleting a mod changes what every
+                    # other request reads: none run meanwhile
+                    with objects_lock, terrain_lock, context_lock:
+                        op = path[len("/api/mods/"):]
+                        if op == "switch":
+                            return self.send(200, scene.switch_mod(doc["folder"]))
+                        if op == "create":
+                            return self.send(200, scene.create_mod(doc["name"], doc.get("description") or ""))
+                        if op == "update":
+                            return self.send(200, scene.update_mod(doc["folder"], doc.get("name"),
+                                                                   doc.get("description"), doc.get("enabled")))
+                        if op == "delete":
+                            return self.send(200, scene.delete_mod(doc["folder"]))
+                        return self.fail(404, "not found")
                 if path == "/api/marks/save":
                     with objects_lock:
                         return self.send(200, scene.save_map_marks(doc.get("marks") or []))

@@ -19,6 +19,7 @@ import {createMissions} from './missions.js';
 import {createSky} from './sky.js';
 import {createFactions} from './factions.js';
 import {createMapSettings} from './mapset.js';
+import {createMods} from './mods.js';
 
 const $ = (id) => document.getElementById(id);
 const NEAR_RADIUS = 220;      // metres around the view centre that show real models
@@ -159,6 +160,7 @@ function status(text, error = false) {
 async function fillMaps() {
   const info = await getJSON('/api/info');
   $('mod').textContent = info.mod;
+  $('mod').title = `Everything you save goes into mods/${info.folder}: click to switch to another mod, make one, rename it or delete one`;
   modName = info.mod;
   const maps = info.maps.filter((m) => ['swn', 'sw', 'nw'].includes(m)).concat(
     info.maps.filter((m) => !['swn', 'sw', 'nw'].includes(m)));
@@ -1248,6 +1250,26 @@ const missions = createMissions({
 // Sky and weather: the map's base sky and atmosphere presets (sky/<map>.json).
 const sky = createSky({$, status, setDirty: (v) => setDirty(v)});
 const factions = createFactions({$, status, setDirty: (v) => setDirty(v)});
+// Mods: the one saved to (the toolbar button), switching, making, editing, deleting.
+createMods({
+  $, status,
+  post: async (url, body) => {
+    const r = await fetch(url, {method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(body)});
+    const doc = await r.json();
+    if (!r.ok) throw new Error(doc.error || r.statusText);
+    return doc;
+  },
+  isDirty: () => state.dirty,
+  // after a switch (the map again, from the new mod), or just its new name
+  afterSwitch: async (nameOnly) => {
+    const maps = await fillMaps();
+    const want = maps.includes(state.map) ? state.map : (maps.includes('swn') ? 'swn' : maps[0]);
+    $('map').value = want;
+    if (nameOnly) return;
+    setDirty(false);
+    await loadMap(want);
+  },
+});
 // New maps: make one, and a new map's arrival point, message and layers.
 const mapset = createMapSettings({
   $, status,

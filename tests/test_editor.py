@@ -407,3 +407,43 @@ class GroundLayerEditTests(unittest.TestCase):
             self.assertEqual(out["layers"][1]["texture"], "sand")
             self.assertTrue((root / "terrain" / "isle.layer01.sand.changes.png").exists())
             self.assertEqual(json.loads((root / "terrain" / "isle.layers.json").read_text())["layers"][1]["texture"], "sand")
+
+
+class ModManagementTests(unittest.TestCase):
+    def test_list_make_switch_edit_delete(self):
+        import json
+        import tempfile
+        from pathlib import Path
+        from mercfoundry import modbuild, sync
+        from mercfoundry.editor.scene import Scene
+        with tempfile.TemporaryDirectory() as d:
+            game = Path(d)
+            (game / "mods").mkdir()
+            sync.write_loader(game, [])
+            modbuild.new_project(game / "mods" / "First", "First mod")
+            sc = Scene.__new__(Scene)
+            sc.mod = game / "mods" / "First"
+            sc.context = [sc.mod]
+            sc._terrain = None
+            sc._looks = {"x": 1}                          # a cache that belongs to the mod: dropped on a switch
+            sc._names = "kept"                            # the game's: kept
+            got = sc.mods()
+            self.assertEqual([(m["folder"], m["name"], m["current"]) for m in got["mods"]], [("First", "First mod", True)])
+            got = sc.create_mod("Second Mod", "a test")
+            self.assertEqual(sc.mod.name, "Second Mod")
+            self.assertFalse(hasattr(sc, "_looks"))
+            self.assertEqual(sc._names, "kept")
+            self.assertEqual([m["current"] for m in got["mods"]], [False, True])
+            self.assertEqual({m.folder: m.enabled for m in sync.read_loader(game)}, {"Second Mod": True})
+            sc.update_mod("Second Mod", name="Renamed", enabled=False)
+            self.assertEqual(json.loads((game / "mods" / "Second Mod" / "mod.json").read_text())["name"], "Renamed")
+            self.assertEqual({m.folder: m.enabled for m in sync.read_loader(game)}, {"Second Mod": False})
+            with self.assertRaisesRegex(ValueError, "being edited"):
+                sc.delete_mod("Second Mod")
+            sc.switch_mod("First")
+            out = sc.delete_mod("Second Mod")
+            self.assertFalse((game / "mods" / "Second Mod").exists())
+            self.assertTrue((game / out["moved_to"]).is_dir())
+            self.assertEqual(sync.read_loader(game), [])
+            with self.assertRaises(ValueError):
+                sc.switch_mod("../x")

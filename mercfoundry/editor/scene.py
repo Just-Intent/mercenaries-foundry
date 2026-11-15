@@ -95,6 +95,127 @@ class Scene:
         self._names = None
         self._terrain = None
 
+    # ------------------------------------------------------------ mods
+    # The mod the editor saves to is self.mod; in a game's mods folder the
+    # editor lists the folder's source mods to switch to, make, edit or
+    # delete (moved to the game's foundry-trash folder, not erased).
+    _GAME_CACHES = {"archives", "data", "_names", "_objects", "_placeables", "_pngs", "_carry_tables",
+                    "_sound_lib", "_voices", "_sky_textures", "_lua_names", "_terrain_gen"}
+
+    def game_dir(self):
+        """The game folder when the mod sits in its mods folder, else None."""
+        p = self.mod.resolve()
+        game = p.parent.parent
+        return game if p.parent.name.lower() == "mods" and (game / "mod-loader.ini").exists() else None
+
+    def mods(self):
+        """[{folder, name, description, enabled, current}] for the game's
+        source mods (just this one outside a game folder)."""
+        from .. import sync
+        game = self.game_dir()
+        current = self.mod.resolve()
+        if game is None:
+            folders = [current]
+            enabled = {}
+        else:
+            folders = sorted((p for p in (game / "mods").iterdir() if p.is_dir() and sync.is_source(p)),
+                             key=lambda p: p.name.lower())
+            enabled = {m.folder: m.enabled for m in sync.read_loader(game)}
+        out = []
+        for p in folders:
+            meta = p / "mod.json"
+            doc = json.loads(meta.read_text(encoding="utf-8")) if meta.exists() else {}
+            out.append({"folder": p.name, "name": doc.get("name") or p.name, "description": doc.get("description") or "",
+                        "enabled": enabled.get(p.name), "current": p.resolve() == current})
+        return {"mods": out, "game": game is not None}
+
+    def _mod_folder(self, folder):
+        game = self.game_dir()
+        if game is None:
+            raise ValueError("the editor isn't in a game's mods folder, so it has only this mod")
+        if not folder or "/" in folder or "\\" in folder or folder in (".", ".."):
+            raise ValueError(f"bad mod folder {folder!r}")
+        return game / "mods" / folder
+
+    def switch_mod(self, folder):
+        """Edit (and save to) another of the game's source mods."""
+        from .. import sync
+        p = self._mod_folder(folder)
+        if not sync.is_source(p):
+            raise ValueError(f"mods/{folder} isn't a source mod (a mod.json and source folders)")
+        self.mod = p
+        self.context = context_mods(p)
+        for k in [k for k in vars(self) if k.startswith("_") and k not in self._GAME_CACHES]:
+            delattr(self, k)
+        self._terrain = None
+        self._models = {}
+        self.terrain_errors = []
+        return self.mods()
+
+    def create_mod(self, name, description=""):
+        """A new source mod in the game's mods folder, enabled in the
+        launcher's list (so it's built), and the editor switched to it."""
+        from .. import modbuild, sync
+        name = str(name or "").strip()
+        folder = re.sub(r"[^A-Za-z0-9 _-]+", "", name).strip()
+        if not folder:
+            raise ValueError("a mod needs a name (letters, digits, spaces, _ and -)")
+        p = self._mod_folder(folder)
+        if p.exists():
+            raise ValueError(f"mods/{folder} already exists")
+        modbuild.new_project(p, name)
+        if description:
+            meta = p / "mod.json"
+            doc = json.loads(meta.read_text(encoding="utf-8"))
+            doc["description"] = str(description)
+            meta.write_text(json.dumps(doc, indent=1) + "\n", encoding="utf-8")
+        sync.set_enabled(self.game_dir(), folder, True)
+        return self.switch_mod(folder)
+
+    def update_mod(self, folder, name=None, description=None, enabled=None):
+        """A mod's name and description (its mod.json) and whether the
+        launcher builds it (enabled in its list)."""
+        from .. import sync
+        p = self._mod_folder(folder)
+        meta = p / "mod.json"
+        if not meta.exists():
+            raise ValueError(f"mods/{folder} has no mod.json")
+        doc = json.loads(meta.read_text(encoding="utf-8"))
+        if name is not None:
+            if not str(name).strip():
+                raise ValueError("a mod needs a name")
+            doc["name"] = str(name).strip()
+        if description is not None:
+            doc["description"] = str(description)
+        meta.write_text(json.dumps(doc, indent=1) + "\n", encoding="utf-8")
+        if enabled is not None:
+            sync.set_enabled(self.game_dir(), folder, bool(enabled))
+        return self.mods()
+
+    def delete_mod(self, folder):
+        """Move a mod out of the mods folder (to the game's foundry-trash,
+        from where it can be moved back) and off the launcher's list. Not
+        the one being edited."""
+        import shutil
+        import time
+        from .. import sync
+        p = self._mod_folder(folder)
+        if p.resolve() == self.mod.resolve():
+            raise ValueError("that's the mod being edited: switch to another first")
+        if not sync.is_source(p):
+            raise ValueError(f"mods/{folder} isn't a source mod")
+        game = self.game_dir()
+        listed = sync.read_loader(game)
+        if any(m.folder == folder for m in listed):
+            sync.write_loader(game, [m for m in listed if m.folder != folder], sync._separate_saves(game))
+        trash = game / "foundry-trash"
+        trash.mkdir(exist_ok=True)
+        dest = trash / f"{folder} {time.strftime('%Y%m%d-%H%M%S')}"
+        shutil.move(str(p), str(dest))
+        out = self.mods()
+        out["moved_to"] = str(dest.relative_to(game))
+        return out
+
     # ------------------------------------------------------------ maps
     def names(self):
         if self._names is None:

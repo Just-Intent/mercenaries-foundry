@@ -14,6 +14,16 @@ toolkit bundle run it the same way: `foundry\python\python.exe foundry\mercfound
 
 ## What it does
 
+- **Saving to** (top left) names the mod everything you save goes into.
+  Click it for the Mods panel: the game's source mods, **Edit this mod** to
+  switch to another (the map reloads from it), **Built by the launcher**
+  (its place in the launcher's list), the mod's name and description
+  (`mod.json`), **Make the mod** (a new source mod in the mods folder,
+  built by the launcher, switched to) and **Delete** (the folder moves to
+  the game's `foundry-trash` folder and off the launcher's list; move it
+  back to restore it). The mod being edited can't be deleted. The view
+  still shows what the other enabled mods add; saving only writes to the
+  one named.
 - Shows a map's terrain and objects. Pick the map at the top (`swn` is the
   opening mission, `sw` and `nw` the two free-roam maps). Objects near the view
   show their real models with textures (the model the game draws: an object's
