@@ -380,9 +380,16 @@ toolkit bundle run it the same way: `foundry\python\python.exe foundry\mercfound
   `oceanwater`) and its `red`/`green`/`blue`/`alpha` colour, leaned toward
   blue so it reads as water. The **Water** box hides it. A mod's own water
   zones are drawn the same way, and move with their points.
-- **Place** puts down any template: a vehicle, prop or character. Type or pick
-  the template in the toolbar box, click **Place** (or press P), then click the
-  ground.
+- **Place** puts down anything from any map: a template (a vehicle, prop or
+  character), one of the game's other named objects, or `model:<model>`, a
+  copy of a building or prop that has no name. Type or pick it in the toolbar
+  box (the list shows each one's kind and where it's from), click **Place**
+  (or press P), then click the ground.
+  - Its layer loads what it needs: its home layer's loads, or, for one from a
+    map's own layer (SW, NW), just its model, ruin model and textures.
+  - On a new map, characters, vehicles and weapons work too: a new map loads
+    what SW loads (its animations and models), apart from SW's own ground and
+    layers. `"loads_like": null` in `maps/<name>.json` turns that off.
   - A placed object shows its real model. It moves, turns, renames, copies and
     removes like a copy.
   - With the live link on, it spawns in the running game if the game has that

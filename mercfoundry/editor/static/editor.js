@@ -375,6 +375,8 @@ async function loadMap(name) {
   // Objects placed from templates, in the mod's layers for this map.
   state.layerFile = objs.edits.layer_file;
   if (objs.edits.placed.length && !state.templates) state.templates = await getJSON('/api/templates');
+  // placed copies of objects from other maps draw their model
+  if (objs.edits.placed.some((p) => !/^template_/i.test(p.from))) await loadPlaceables();
   if (mine !== loadSerial) return;
   for (const p of objs.edits.placed) {
     addPlaced(p.from, p.name, p.file, p.position, p.rotation, false, p.set);
@@ -666,6 +668,8 @@ function placedLook(from) {
   const low = from.toLowerCase();
   const t = (state.templates || encs.templates() || []).find((x) => x.name.toLowerCase() === low);
   if (t) return {model: t.model, geometry: t.geometry || t.model, type: t.type};
+  const p = placeables && placeables.get(low);      // an object or model from any map
+  if (p) return {model: p.model, geometry: p.geometry || p.model, type: p.type};
   if (low.startsWith('model:')) return {model: from.slice(6), geometry: from.slice(6), type: ''};
   const r = state.records.find((x) => !x.removed && (x.name || '').toLowerCase() === low);
   return r ? {model: r.model, geometry: r.geometry, type: r.type} : {model: from, geometry: from, type: ''};
@@ -733,13 +737,28 @@ function freshPlacedName(from) {
   return `${base}_${k}`;
 }
 
-function startPlace() {
+// Everything Place can copy, from any map (templates, named objects, models
+// as model:<name>), fetched once: the Place list and what each draws.
+let placeables = null;
+async function loadPlaceables() {
+  if (placeables) return placeables;
+  const list = await getJSON('/api/placeables');
+  placeables = new Map(list.map((p) => [p.name.toLowerCase(), p]));
+  const label = (p) => p.kind === 'template' ? `${p.type || 'template'} (${p.model})`
+    : p.kind === 'object' ? `${p.type || 'object'} on ${p.layer} (${p.model})` : `model, as on ${p.layer}`;
+  $('placeables').innerHTML = list.map((p) => `<option value="${p.name}">${label(p)}</option>`).join('');
+  return placeables;
+}
+$('place-template').addEventListener('focus', () => { loadPlaceables().catch((e) => status(e.message, true)); });
+
+async function startPlace() {
   const from = $('place-template').value.trim();
-  if (!from) return status('Type or pick a template to place first', true);
+  if (!from) return status('Type or pick something to place first: a template, a named object, or model:<model>', true);
   const low = from.toLowerCase();
-  const known = (encs.templates() || []).some((t) => t.name.toLowerCase() === low) ||
+  try { await loadPlaceables(); } catch (e) { return status(e.message, true); }
+  const known = placeables.has(low) ||
     state.records.some((r) => !r.removed && (r.name || '').toLowerCase() === low);
-  if (!known) return status(`No template or named object called ${from}`, true);
+  if (!known) return status(`Nothing called ${from} on any map (a template, a named object, or model:<model>)`, true);
   select(null); layout.select(null); encs.select(null);
   state.placing = from;
   status(`Click the ground to place ${from} (in encounters/${state.layerFile}, which loads with the map); Esc cancels.`);

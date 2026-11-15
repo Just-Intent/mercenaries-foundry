@@ -104,6 +104,8 @@ class ModBuildTests(unittest.TestCase):
             (name_hash("blank"), SCRIPT, script.encode(script.new("blank", "function ScriptInit()\nend\n"))),
             (name_hash("blank"), name_hash("Terrain"), tern), (name_hash("blank"), WORLD, wrld),
             (name_hash("blank"), name_hash("list"), b"\n[terrain]\n\nload blank\n\n[world]\n\nload blank\n\n[model]\n\nload blankish\n"),
+            (name_hash("sw"), name_hash("list"), b"\n[animation]\n\nload walk\n\n[terrain]\n\nload sw\n\n[world]\n\nload sw\n\n"
+                                                 b"[model]\n\nload blankish\nload jeep\n"),
         ])
         (self.data / "levels.ini").write_text("[LevelNamesList]\n\nLevelName\tLV_blank\n\n[LV_blank]\nName\t\t\tblank\n"
                                               "Path\t\t\t\\TEST\\\nConfigFile\t\t\\TEST\\blank.ini\n", encoding="latin-1")
@@ -117,8 +119,10 @@ class ModBuildTests(unittest.TestCase):
         self.assertIn(b"NAME\x07\x00\x00\x00island\x00\x00INFO", recs[(name_hash("island"), name_hash("Terrain"))])   # padded
         self.assertIn(b"TNAM", recs[(name_hash("island"), WORLD)])
         self.assertNotIn(b"blank", recs[(name_hash("island"), WORLD)])
+        # its own layers, and what free roam (sw) loads but sw's terrain and layers: any template works on it
         self.assertEqual(recs[(name_hash("island"), name_hash("list"))],
-                         b"\n[terrain]\n\nload island\n\n[world]\n\nload island\n\n[model]\n\nload blankish\n")
+                         b"\n[terrain]\n\nload island\n\n[world]\n\nload island\n\n[model]\n\nload blankish\nload jeep\n"
+                         b"\n[animation]\n\nload walk\n")
         levels = (self.out / "DATAxbox" / "levels.ini").read_text(encoding="latin-1")
         self.assertIn("LevelName\tLV_blank\nLevelName\tLV_island\n", levels)
         self.assertIn("[LV_island]\nName\t\t\tisland\n", levels)
@@ -396,3 +400,13 @@ class PackTests(unittest.TestCase):
         self.assertFalse((packed / "textures" / "tex.png").exists())
         self.assertEqual(len(report["converted"]), 2)
         self.assertEqual(modpack.check(b.project, packed, b.data), [])
+
+
+class ObjectLoadsTests(unittest.TestCase):
+    def test_only_what_one_object_needs_from_a_map_list(self):
+        # an object copied from a map's own layer: not that map's whole list (its terrain above all)
+        full = {"terrain": ["nw"], "model": ["shed", "shed_ruin", "barn"], "animtable": ["large_class", "nk_civilian"],
+                "texture": ["shed_wall", "barn_wall"], "script": ["global"]}
+        obj = {"model": "shed", "properties": [("GeometryNameRuined", "shed_ruin"), ("AnimationTable", "large_class")]}
+        self.assertEqual(modbuild._object_loads(obj, full, []),
+                         {"model": ["shed", "shed_ruin"], "animtable": ["large_class"]})

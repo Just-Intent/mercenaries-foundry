@@ -274,3 +274,21 @@ class NewMapTests(unittest.TestCase):
             got = sc.save_map_settings("fiefdom", {"start": None, "message": "", "layers": {"camp": False}})
             self.assertEqual(json.loads((root / "maps" / "fiefdom.json").read_text(encoding="utf-8")), {"from": "blank"})
             self.assertFalse(got["layers"][0]["loads"])
+
+
+class PlaceablesTests(unittest.TestCase):
+    def test_templates_objects_and_models_from_any_map(self):
+        from mercfoundry.editor.scene import Scene
+        sc = Scene.__new__(Scene)
+        obj = lambda layer, name, model, props=(): {"layer": layer, "name": name, "model": model, "properties": list(props)}
+        sc.all_objects = lambda: [
+            obj("sw_poi", "", "house01"), obj("nw_poi", "", "house01"), obj("nw_poi", "", "barn"),
+            obj("template_humans", "template_NK_Soldier", "nk_hum", [("ObjectType", "human")]),
+            obj("sw_mafia6", "mafia6_crate", "crate", [("GeometryFile", "crate_b")]),
+            obj("nw_mafia6", "Mafia6_Crate", "crate")]
+        got = sc.placeables()
+        self.assertEqual([(p["name"], p["kind"]) for p in got],
+                         [("template_NK_Soldier", "template"), ("mafia6_crate", "object"),
+                          ("model:barn", "model"), ("model:house01", "model")])
+        self.assertEqual(got[1]["geometry"], "crate_b")
+        self.assertEqual(got[0]["type"], "human")

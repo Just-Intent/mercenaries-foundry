@@ -372,6 +372,35 @@ def _world_index(data, archives):
     return data.world_index
 
 
+def _object_loads(obj, full, archives):
+    """What one object needs from a load list that loads much more (a map's):
+    entries its model or properties name (its model, ruin model, animation
+    table...), and the textures those models draw (by the texture hashes in
+    their materials, with each one's _nm normal map)."""
+    from . import model as model_mod
+    wanted = {str(obj.get("model") or "").lower()} | {str(v).lower() for _, v in obj.get("properties") or []}
+    out = {}
+    for kind, names in full.items():
+        if kind.lower() in ("texture", "terrain"):
+            continue
+        keep = [n for n in names if n.lower() in wanted]
+        if keep:
+            out[kind] = keep
+    hashes = set()
+    for m in out.get("model", []):
+        try:
+            for p in model_mod.decode(*model_mod.find(archives, m)).pieces:
+                hashes.add(p.texture)
+                hashes.update(w for w in p.material if w)
+        except (KeyError, ValueError, IndexError):
+            continue
+    tex = [n for n in full.get("texture", []) if name_hash(n) in hashes
+           or (n.lower().endswith("_nm") and name_hash(n[:-3]) in hashes)]
+    if tex:
+        out["texture"] = tex
+    return out
+
+
 def _add_traffic(data, f, layer, doc, result):
     """A layer's "traffic" zones, declared in its map's level config (a loose
     DATAxbox file, like terrain surfaces)."""
@@ -458,11 +487,18 @@ def _apply_encounters(data, folder, result):
 
     lists = {}
 
+    map_keys = {r.key for _, r in data.records(name_hash("Terrain"))}
+
     def source_loads(name):
-        layer = source_hit(name)["layer"]
+        obj = source_hit(name)
+        layer = obj["layer"]
         if layer not in lists:
             hit = [(a, r) for a, r in data.records(name_hash("list")) if r.key == name_hash(layer)]
             lists[layer] = encounters.parse_list(data.current(*hit[0]).decode("latin-1")) if hit else {}
+        if name_hash(layer) in map_keys:
+            # a map's own layer (sw, nw): its list loads the whole map, terrain
+            # and all; take only what this object needs
+            return _object_loads(obj, lists[layer], archives)
         return lists[layer]
 
     for f in files:
@@ -1288,7 +1324,13 @@ def _apply_maps(data, folder, result):
         if any(r.key == key for _, r in data.records(name_hash("Terrain"))) or \
                 data.find_added(key, name_hash("Terrain")) is not None:
             raise ValueError(f"{where}: there's already a map named {name!r}")
-        src = str(json.loads(f.read_text(encoding="utf-8")).get("from") or "blank")
+        mdoc = json.loads(f.read_text(encoding="utf-8"))
+        src = str(mdoc.get("from") or "blank")
+        # What else it loads: everything a free-roam map's list loads but that
+        # map's own terrain and layers (characters' animations, vehicles,
+        # weapons, effects...), so any template placed on it works. blank's
+        # own list has next to none of it. null: only the source's.
+        like = mdoc.get("loads_like", "sw")
         made = []
         for kind in MAP_KINDS:
             hit = [(a, r) for a, r in data.records(name_hash(kind)) if r.key == name_hash(src)]
@@ -1302,6 +1344,19 @@ def _apply_maps(data, folder, result):
                 # the copy loads its own layer records, not the source's
                 text = body.decode("latin-1")
                 text = re.sub(rf"(?im)^load {re.escape(src)}[ \t]*(?=\r?$)", f"load {name}", text)
+                if like and str(like).lower() != src.lower():
+                    from . import encounters
+                    lhit = [(la, lr) for la, lr in data.records(name_hash("list")) if lr.key == name_hash(str(like))]
+                    if not lhit:
+                        raise ValueError(f"{where}: \"loads_like\" names no game map ({like!r} has no load list)")
+                    skip = {k.lower() for k in encounters.LAYER_KINDS} | {"terrain"}
+                    more = {k: v for k, v in encounters.parse_list(data.current(*lhit[0]).decode("latin-1")).items()
+                            if k.lower() not in skip}
+                    from .missions import add_to_list
+                    for kind_, names_ in more.items():
+                        for n_ in names_:
+                            text = add_to_list(text, kind_, n_)
+                    made.append(f"loads what {like} loads")
                 body = text.encode("latin-1")
             else:
                 body = _renamed_record(body, name)
@@ -1316,7 +1371,6 @@ def _apply_maps(data, folder, result):
         # scripts step) wins; otherwise a copy of the source map's.
         # The map's file can say where the player arrives and what shows; its
         # layers ("load": "map") load with it.
-        mdoc = json.loads(f.read_text(encoding="utf-8"))
         layers = getattr(data, "new_map_layers", {}).get(name.lower(), [])
         if not any(r.key == key for _, r in data.records(SCRIPT)) and data.find_added(key, SCRIPT) is None:
             if mdoc.get("start") or mdoc.get("message") or layers:

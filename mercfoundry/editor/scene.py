@@ -1857,6 +1857,31 @@ class Scene:
         out.sort(key=lambda t: (t["type"] != "human", t["name"].lower()))
         return out
 
+    def placeables(self):
+        """Everything Place can copy, on any map: templates, the game's other
+        named objects, and each model an unnamed object draws ("model:<model>",
+        buildings and props). [{name, kind, model, geometry, type, layer}]."""
+        if getattr(self, "_placeables", None) is None:
+            out, seen, models = [], set(), set()
+            for o in self.all_objects():
+                props = {k.lower(): v for k, v in o["properties"]}
+                look = {"model": o["model"], "geometry": props.get("geometryfile", o["model"]),
+                        "type": props.get("objecttype", ""), "layer": o["layer"]}
+                if o["name"]:
+                    low = o["name"].lower()
+                    if low in seen:
+                        continue
+                    seen.add(low)
+                    out.append({"name": o["name"], "kind": "template" if low.startswith("template_") else "object",
+                                **look})
+                elif o["model"] and o["model"].lower() not in models:
+                    models.add(o["model"].lower())
+                    out.append({"name": f"model:{o['model']}", "kind": "model", **look})
+            order = {"template": 0, "object": 1, "model": 2}
+            out.sort(key=lambda p: (order[p["kind"]], p["name"].lower()))
+            self._placeables = out
+        return self._placeables
+
     def save_game_encounters(self, edits):
         """edits: [{layer, name, points: {set: [[x, y, z], ...]}}] for the
         game's own encounters: their spawn point sets are replaced, and the

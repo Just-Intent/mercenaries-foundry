@@ -36,6 +36,7 @@ GET  /api/music                the game's music tracks, for music lines
 GET  /api/voices               the game's voiced lines with subtitles, for radio lines: [{cue, text}]
 GET  /api/voice/<bank>.<cue>.wav  a voice line to listen to
 GET  /api/templates            objects a squad member can copy (template_*)
+GET  /api/placeables           everything Place can copy, any map: templates, named objects, model:<model>
 POST /api/encounters/save      {"map", "files": {file: [encounter, ...]}}
 POST /api/placed/save          {"map", "files": {file: [{from, name, position, rotation}]}}: objects placed from templates
 POST /api/terrain/save         {"map", "samples": [[column, row, height units], ...]}: painted ground heights
@@ -191,6 +192,9 @@ def make_handler(scene: Scene, mod_name: str, live: Live = None):
                 if path == "/api/templates":
                     with objects_lock:
                         return self.send(200, scene.templates())
+                if path == "/api/placeables":
+                    with objects_lock:
+                        return self.send(200, scene.placeables())
                 if path.startswith("/api/layout/"):
                     with objects_lock:
                         return self.send(200, scene.layout(path[len("/api/layout/"):]))
