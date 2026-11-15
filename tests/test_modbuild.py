@@ -101,6 +101,7 @@ class ModBuildTests(unittest.TestCase):
         wrld = ucfb.wrap(b"wrld", ucfb.pack_chunk(b"NAME", b"blank\0") + ucfb.pack_chunk(b"TNAM", b"blank\0"))
         build(self.data / "assets.dsk", [
             (name_hash("mission"), SCRIPT, script.encode(script.new("mission", "x = 1\n"))),
+            (name_hash("blank"), SCRIPT, script.encode(script.new("blank", "function ScriptInit()\nend\n"))),
             (name_hash("blank"), name_hash("Terrain"), tern), (name_hash("blank"), WORLD, wrld),
             (name_hash("blank"), name_hash("list"), b"\n[terrain]\n\nload blank\n\n[world]\n\nload blank\n\n[model]\n\nload blankish\n"),
         ])
@@ -123,6 +124,13 @@ class ModBuildTests(unittest.TestCase):
         self.assertIn("[LV_island]\nName\t\t\tisland\n", levels)
         self.assertIn("ConfigFile\t\t\\TEST\\island.ini", levels)
         self.assertEqual((self.out / "DATAxbox" / "TEST" / "island.ini").read_text(encoding="latin-1"), "SkyTexture\t\tsky\n")
+        # its master script (its load list loads one of its own name; a missing one hangs the game)
+        self.assertEqual(script.decode(recs[(name_hash("island"), SCRIPT)]).source, "function ScriptInit()\nend\n")
+        # a mod's own scripts/island.lua wins
+        (self.project / "scripts").mkdir(exist_ok=True)
+        self.write("scripts/island.lua", "function ScriptInit()\nUi_PrintHudMessage( 'Island' )\nend\n")
+        modbuild.build(self.project, self.data, self.out)
+        self.assertIn("'Island'", script.decode(self.records("assets.dsk")[(name_hash("island"), SCRIPT)]).source)
         self.write("maps/blank.json", json.dumps({"from": "blank"}))
         with self.assertRaisesRegex(ValueError, "already a map"):
             modbuild.build(self.project, self.data, self.out)

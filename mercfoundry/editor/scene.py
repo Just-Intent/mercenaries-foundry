@@ -128,7 +128,13 @@ class Scene:
         return sorted(set(out))
 
     def _modded_terrain(self):
-        """The context mods' terrain steps, applied as a build would (once)."""
+        """The context mods' terrain steps, applied as a build would (once,
+        again when a mod's maps/*.json is added, changed or removed)."""
+        stamp = self._maps_stamp()
+        if stamp != getattr(self, "_terrain_stamp", None):
+            self._terrain = None
+            if hasattr(self, "_looks"):
+                self._looks.clear()
         if self._terrain is None:
             from .. import modbuild
             gen = getattr(self, "_terrain_gen", 0)
@@ -143,7 +149,17 @@ class Scene:
             if gen != getattr(self, "_terrain_gen", 0):
                 return data
             self._terrain = data
+            self._terrain_stamp = stamp
         return self._terrain
+
+    def _maps_stamp(self):
+        """The context mods' new-map files and when each last changed."""
+        out = []
+        for p in self.context:
+            mdir = Path(p) / "maps"
+            if mdir.is_dir():
+                out += [(str(f), f.stat().st_mtime_ns) for f in sorted(mdir.glob("*.json"))]
+        return tuple(out)
 
     def _forget_terrain(self, map_name):
         """After a terrain save: read the mods' terrain files again next time."""

@@ -139,6 +139,8 @@ toolkit bundle run it the same way: `foundry\python\python.exe foundry\mercfound
   and paint (Terrain), its sky (Sky), and objects, squads and zones to add.
   Layers that "load with the map" only do so on the free-roam maps (SW, NW):
   on a new map, load them from a script (`Utility_ReadLevelFile`).
+  Its master script (run as it loads) is a copy of the source map's (blank's
+  prints "Hello World!"); write `scripts/<name>.lua` to make your own.
 - **Factions**: new names for the four employers (`factions.json`): name,
   adjective, short form and people, per faction; **Everywhere** for mission
   text too, and voiced lines' subtitles if wanted. **Preview** lists the

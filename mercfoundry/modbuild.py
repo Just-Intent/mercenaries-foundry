@@ -1283,6 +1283,16 @@ def _apply_maps(data, folder, result):
             if kind == "Terrain":
                 data.new_map_terrain = getattr(data, "new_map_terrain", {})
                 data.new_map_terrain[key] = body
+        # Its master script: the copied load list loads a script of the map's
+        # own name (blank's loads 'blank'), and the game hangs loading a
+        # script that isn't there. A mod's scripts/<name>.lua (added by the
+        # scripts step) wins; otherwise a copy of the source map's.
+        if not any(r.key == key for _, r in data.records(SCRIPT)) and data.find_added(key, SCRIPT) is None:
+            hit = [(a, r) for a, r in data.records(SCRIPT) if r.key == name_hash(src)]
+            source = script.decode(data.current(*hit[0])).source if hit else \
+                f"function ScriptInit()\nUi_PrintHudMessage( '{name}' )\nend\n"
+            data.new("assets.dsk", key, SCRIPT, script.encode(script.new(name, source.replace("\r\n", "\n"))))
+            made.append(f"script (a copy of {src}'s)" if hit else "script")
         # its level: a levels.ini section (as the source's) and a copy of its config
         lpath = "DATAxbox/levels.ini"
         levels = data.files[lpath].decode("latin-1") if lpath in data.files else \
