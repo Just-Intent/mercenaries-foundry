@@ -191,7 +191,7 @@ def new_project(folder, name=None):
     folder = Path(folder)
     name = name or folder.resolve().name
     for sub in ("text", "scripts", "objects", "encounters", "missions", "textures", "models", "layout", "animations",
-                "animtables", "terrain", "sounds"):
+                "animtables", "terrain", "sounds", "sky"):
         (folder / sub).mkdir(parents=True, exist_ok=True)
     meta = folder / "mod.json"
     if not meta.exists():
@@ -557,7 +557,7 @@ def mission_drafts(doc):
               or (o.get("type") in ("goto", "escort", "deliver", "hold") and not o.get("zone"))
               or (o.get("type") in ("hold", "fast") and not o.get("seconds"))
               or (o.get("type") == "deliver" and not o.get("vehicle"))
-              or str(o.get("reveal") or "") == "zone:"]
+              or str(o.get("reveal") or "") in ("zone:", "dead:")]
     drafts += [f"wave {k}" for k, w in enumerate(doc.get("waves") or [], 1) if not w.get("squad")]
     drafts += [f"fail condition {k}" for k, c in enumerate(doc.get("fail") or [], 1)
                if (c.get("type") in ("dies", "hostile") and not (c.get("squad") or c.get("targets")))
@@ -565,7 +565,7 @@ def mission_drafts(doc):
                or (c.get("type") == "spotted" and not c.get("faction"))
                or (c.get("type") == "leave" and not c.get("zone"))
                or (c.get("type") == "timer" and not c.get("seconds"))
-               or str(c.get("from") or "") == "zone:"]
+               or str(c.get("from") or "") in ("zone:", "dead:")]
     return drafts
 
 
@@ -693,6 +693,9 @@ def check_mission(folder, asset_id, known=None):
             hqsequence.plan(asset_id, doc, missions.parse_id)
         except ValueError as e:
             problems.append(str(e))
+    if doc.get("test_from"):
+        notes.append(f"TESTING: it starts at objective {doc['test_from']} (the ones before are skipped); "
+                     "set it back to the first before sharing the mod")
     if contact is False and not doc.get("hq"):
         notes.append("no mission giver: it starts only from its Lua line")
     return {"problems": problems, "notes": notes}
@@ -1396,8 +1399,125 @@ def _obj_settings(text):
     return (int(m.group(1)) if m else 0), ("damaged" in first)
 
 
+def _glb_textures(data, name, f, result):
+    """A glTF model's own textures (materials that aren't the game's
+    textures) added as <model>_<material>, and loaded wherever the model is.
+    Returns the import's material -> texture hash."""
+    from . import encounters, glb_textures
+    have = getattr(data, "texture_keys", None)
+    if have is None:
+        have = data.texture_keys = {r.key for _, r in data.records(texture.TEXTURE)}
+    have = have | {k for k, kind, _ in data.added() if kind == texture.TEXTURE}
+    made, warnings = glb_textures.textures(f, name, lambda h: h in have)
+    result.warnings += [f"model {name}: {w}" for w in warnings]
+    for material, tex_name, w, h, rgba in made:
+        key = name_hash(tex_name)
+        body = texture.encode(texture.new(tex_name, w, h, rgba))
+        if not data.replace_added(key, texture.TEXTURE, body):
+            hit = [(a, r) for a, r in data.records(texture.TEXTURE) if r.key == key]
+            if hit:
+                for a, r in hit:
+                    data.set(a, r, body)
+            else:
+                data.new("streamed.dsk", key, texture.TEXTURE, body)
+    if made:
+        names = [t for _, t, *_ in made]
+        result.changes.append(f"model {name}: textures from {f.name}: " + ", ".join(
+            f"{t} ({w}x{h})" for _, t, w, h, _ in made))
+        # every load list that loads the model loads them too (the mod's
+        # layers, built earlier, and the game's own lists)
+        LIST = name_hash("list")
+
+        def with_textures(text):
+            sections = encounters.parse_list(text)
+            if name.lower() not in {m.lower() for m in sections.get("model", [])}:
+                return None
+            have_t = {t.lower() for t in sections.get("texture", [])}
+            add = [t for t in names if t.lower() not in have_t]
+            if not add:
+                return None
+            nl = "\r\n" if "\r\n" in text else "\n"
+            if "texture" in sections:
+                i = text.lower().index("[texture]") + len("[texture]")
+                return text[:i] + nl + "".join(f"load {t}{nl}" for t in add) + text[i:]
+            return text.rstrip() + f"{nl}{nl}[texture]{nl}{nl}" + "".join(f"load {t}{nl}" for t in add)
+        for key, kind, archive in data.added():
+            if kind == LIST:
+                new = with_textures(data.find_added(key, LIST).decode("latin-1"))
+                if new is not None:
+                    data.replace_added(key, LIST, new.encode("latin-1"))
+        for a, r in data.records(LIST):
+            new = with_textures(data.current(a, r).decode("latin-1"))
+            if new is not None:
+                data.set(a, r, new.encode("latin-1"))
+    return glb_textures.material_hash(made)
+
+
+def _new_models(data, folder, result):
+    """models/<name>.new.json {"base": "<a game model>"} with models/<name>.glb
+    (or .gltf / .obj): a model under a new name. It starts as a copy of the
+    base model (its skeleton and vertex format) without its collision; the
+    file's pieces go in (pieces named p<n>, as an exported model's are, take
+    the base's piece n's place; the base's other pieces go), with collision
+    boxes fitted to them.
+    Returns the names made (models/ then skips their files)."""
+    made = set()
+    for spec in sorted((folder / "models").glob("*.new.json")) if (folder / "models").is_dir() else []:
+        name = spec.name[:-len(".new.json")]
+        where = f"models/{spec.name}"
+        if not re.fullmatch(r"[A-Za-z0-9_\-]+", name):
+            raise ValueError(f"{where}: a model name is letters, digits, _ and -")
+        key = name_hash(name)
+        if any(r.key == key and r.kind == model.MODEL for _, r in data.records(model.MODEL)):
+            raise ValueError(f"{where}: the game already has a model named {name!r} (replace it with models/{name}.glb)")
+        base = str(json.loads(spec.read_text(encoding="utf-8")).get("base") or "")
+        src = None
+        for a in ("streamed.dsk", "locked.dsk"):
+            if not (data.dir / a).exists():
+                continue
+            recs = {r.kind: r for r in data.archive(a).records
+                    if r.key == name_hash(base) and r.kind in (model.MODEL, model.SEGMENTS)}
+            if len(recs) == 2:
+                src = (a, recs)
+                break
+        if not src:
+            raise ValueError(f"{where}: \"base\" names no game model ({base!r})")
+        files = [f for f in (folder / "models").glob(f"{name}.*") if f.suffix.lower() in (".glb", ".gltf", ".obj")]
+        if not files:
+            raise ValueError(f"{where}: no models/{name}.glb (or .gltf, .obj) with its pieces")
+        f = files[0]
+        a, recs = src
+        mr = model.renamed(data.archive(a).read(recs[model.MODEL]), name)
+        sr = model.without_collision(data.archive(a).read(recs[model.SEGMENTS]))
+        # none of the base's pieces stay: the file's pieces are all new
+        empty = model.decode(mr, sr)
+        if f.suffix.lower() == ".obj":
+            text = f.read_text(encoding="utf-8", errors="replace")
+            lod, damaged = _obj_settings(text)
+            nm, ns, report = model_import.import_obj(mr, sr, text, lod, damaged)
+        else:
+            from . import gltf_model
+            nm, ns, report = gltf_model.import_gltf(mr, sr, f, material_hash=_glb_textures(data, name, f, result))
+        # the base's pieces the file didn't take over (other levels of detail
+        # or damage states the import left alone) go too; originals stay
+        # first, in order, the file's new pieces after them
+        kept = [i for i in range(len(empty.pieces)) if i not in set(report.removed)]
+        leftover = [j for j, i in enumerate(kept) if i not in set(report.edited)]
+        if leftover:
+            nm, ns = model.drop_pieces(nm, ns, leftover)
+        data.new("streamed.dsk", key, model.MODEL, nm)
+        data.new("streamed.dsk", key, model.SEGMENTS, ns)
+        made.add(name.lower())
+        result.changes.append(f"model {name}: new, from {f.name} on {base}'s skeleton: {len(report.added)} pieces, "
+                              f"{report.collision_boxes} collision boxes ({len(empty.pieces) - len(report.edited)} of the base's pieces left out)")
+        result.warnings += [f"model {name}: {w}" for w in report.warnings]
+    return made
+
+
 def _apply_models(data, folder, result):
-    files = sorted(f for f in (folder / "models").glob("*") if f.suffix.lower() in (".obj", ".glb", ".gltf"))
+    made = _new_models(data, folder, result)
+    files = sorted(f for f in (folder / "models").glob("*") if f.suffix.lower() in (".obj", ".glb", ".gltf")
+                   and f.stem.lower() not in made)
     for f in files:
         name = f.stem
         is_changes = name.lower().endswith(".changes")     # mod pack output
@@ -1417,6 +1537,7 @@ def _apply_models(data, folder, result):
         if not found:
             raise ValueError(f"models/{f.name}: no model named {name!r}")
         report = None
+        hashes = None
         for a, recs in found.items():
             mr = data.archive(a).read(recs[model.MODEL])
             sr = data.archive(a).read(recs[model.SEGMENTS])
@@ -1425,7 +1546,9 @@ def _apply_models(data, folder, result):
                 nm, ns, report = model_changes.import_changes(mr, sr, f)
             elif is_gltf:
                 from . import gltf_model
-                nm, ns, report = gltf_model.import_gltf(mr, sr, f, lod, damaged)
+                if hashes is None:
+                    hashes = _glb_textures(data, name, f, result)
+                nm, ns, report = gltf_model.import_gltf(mr, sr, f, lod, damaged, material_hash=hashes)
             else:
                 nm, ns, report = model_import.import_obj(mr, sr, text, lod, damaged)
             data.set(a, recs[model.MODEL], nm)
@@ -1507,9 +1630,33 @@ def _apply_game_squads(data, folder, result):
                                   f"{len(sq.get('members', []))} members")
 
 
+def _sky_texts(data, map_name):
+    """{"DATAxbox/SW/SW.ini": text, ...}: a map's level config files as the
+    build has them so far (another step may have changed them)."""
+    from . import sky
+    return sky.level_texts(data.dir, map_name, data.files)
+
+
+def _apply_sky(data, folder, result):
+    """sky/<map>.json: the map's base sky and its atmosphere presets (edited
+    or new), written into its level config files (loose DATAxbox files)."""
+    from . import sky
+    for f in sorted((folder / "sky").glob("*.json")) if (folder / "sky").is_dir() else []:
+        texts = _sky_texts(data, f.stem)
+        if not texts:
+            raise ValueError(f"sky/{f.name}: no level named {f.stem!r} (its file is named after the map, e.g. sw.json)")
+        doc = json.loads(f.read_text(encoding="utf-8"))
+        new, changes = sky.apply(texts, doc, f"sky/{f.name}")
+        for path, text in new.items():
+            if text != texts[path]:
+                data.files[path] = text.encode("latin-1")
+        if changes:
+            result.changes.append(f"sky {f.stem}: " + "; ".join(changes))
+
+
 STEPS = (_apply_text, _apply_scripts, _apply_objects, _apply_encounters, _apply_missions,
          _apply_textures, _apply_models, _apply_collision_flags, _apply_layout, _apply_game_squads,
-         _apply_animations, _apply_animtables, _apply_terrain, _apply_sounds)
+         _apply_animations, _apply_animtables, _apply_terrain, _apply_sounds, _apply_sky)
 
 
 def build(projects, data_dir, out_dir, name=None, description=None) -> Result:

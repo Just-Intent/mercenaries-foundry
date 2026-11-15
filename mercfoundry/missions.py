@@ -235,7 +235,9 @@ def when_of(text, count, what, own=0):
         return (when, k)
     if when == "zone" and rest:
         return ("zone", rest)
-    raise ValueError(f"{what}: when is start, starts:<n>, done:<n> or zone:<name>, not {r!r}")
+    if when == "dead" and rest:
+        return ("dead", rest)          # every member of the squad ("encounter:squad") is dead
+    raise ValueError(f"{what}: when is start, starts:<n>, done:<n>, zone:<name> or dead:<squad>, not {r!r}")
 
 
 def radio_key(asset_id, k):
@@ -262,7 +264,9 @@ def reveal_of(o, count, i):
         return (when, k)
     if when == "zone" and what:
         return ("zone", what)
-    raise ValueError(f"objective {i}: \"reveal\" is start, starts:<n>, done:<n> or zone:<name>, not {r!r}")
+    if when == "dead" and what:
+        return ("dead", what)
+    raise ValueError(f"objective {i}: \"reveal\" is start, starts:<n>, done:<n>, zone:<name> or dead:<squad>, not {r!r}")
 
 
 def support_table(doc):
@@ -355,6 +359,30 @@ def objectives_script(asset_id, doc, squad_members, layers=(), zone_centre=None)
     if len(fast) > 1:
         raise ValueError(f"objectives {', '.join(map(str, fast))}: a mission has one \"finish fast\" bonus")
     main, bonus = [], []
+    main_at = {}            # objective number -> its place among the main objectives
+    later_cbs = []          # the callbacks of delayed radio lines, waves and orders
+
+    def delay_of(item, what, table, call, k, letter):
+        """', delay = N, cb = ...' for an item with "delay" (seconds after its
+        moment; Event_RelativeTimer calls its own callback, which then does it)."""
+        if not item.get("delay"):
+            return ""
+        try:
+            d = float(item["delay"])
+        except (TypeError, ValueError):
+            d = -1
+        if d <= 0:
+            raise ValueError(f"{what}: \"delay\" is a number of seconds, not {item['delay']!r}")
+        cb = f"foundry_Later{letter}{k}"
+        later_cbs.append(f"function {cb}() local x = {table}[{k}] x.due = true {call}(x) end")
+        return f", delay = {d:g}, cb = '{cb}'"
+    dead_sets = {}          # "encounter:squad" a moment waits on -> its members
+
+    def dead_after(name):
+        """', after = <squad>' for a "dead:" moment (foundry_Moment('dead', squad))."""
+        if name not in dead_sets:
+            dead_sets[name] = squad_members(name)
+        return f", after = {_lua_str(name)}"
     for i, o in enumerate(objs, 1):
         kind = o.get("type")
         if kind not in OBJECTIVE_TYPES:
@@ -368,6 +396,8 @@ def objectives_script(asset_id, doc, squad_members, layers=(), zone_centre=None)
                 head += f", reveal = '{when[0]}', after = 'foundry{when[1]}'"
             elif when[0] == "zone":
                 head += f", reveal = 'zone', rzone = {_lua_str(when[1])}"
+            elif when[0] == "dead":
+                head += f", reveal = 'dead'" + dead_after(when[1])
         if kind in ("destroy", "escort", "subdue", "use", "verify"):
             targets = list(o.get("targets") or [])
             if o.get("squad"):
@@ -439,6 +469,8 @@ def objectives_script(asset_id, doc, squad_members, layers=(), zone_centre=None)
             # starts with the main objective before it; the next waits for both
             row = row[:-1].rstrip() + ", together = true }"
         (bonus if reward else main).append(row)
+        if not reward:
+            main_at[i] = len(main)
     fails = []
     for k, c in enumerate(doc.get("fail") or [], 1):
         kind = c.get("type")
@@ -476,6 +508,8 @@ def objectives_script(asset_id, doc, squad_members, layers=(), zone_centre=None)
             when = when_of(c["from"], len(objs), f"fail condition {k}")
             if when[0] in ("starts", "done"):
                 row += f", from = '{when[0]}', after = 'foundry{when[1]}'"
+            elif when[0] == "dead":
+                row += ", from = 'dead'" + dead_after(when[1])
             else:
                 row += f", from = 'zone', fzone = {_lua_str(when[1])}"
                 if zone_centre:
@@ -496,6 +530,8 @@ def objectives_script(asset_id, doc, squad_members, layers=(), zone_centre=None)
         row = f"when = '{when[0]}'"
         if when[0] in ("starts", "done"):
             row += f", after = 'foundry{when[1]}'"
+        elif when[0] == "dead":
+            row += dead_after(when[1])
         elif when[0] == "zone":
             row += f", zone = {_lua_str(when[1])}"
             if zone_centre:
@@ -509,8 +545,53 @@ def objectives_script(asset_id, doc, squad_members, layers=(), zone_centre=None)
             row += f", text = {_lua_str(radio_key(asset_id, k))}"
         else:
             raise ValueError(f"radio line {k}: give a \"sound\", a \"text\" or both")
+        if when[0] != "end":
+            row += delay_of(line, f"radio line {k}", "tFoundryRadio", "foundry_Say", k, "R")
         radio.append(f"{{ {row} }}")
     radio_table = ",\n".join("  " + r for r in radio)
+    music = []
+    for k, line in enumerate(doc.get("music") or [], 1):
+        what = f"music {k}"
+        play = str(line.get("play") or "").strip()
+        if play != "normal" and not re.fullmatch(r"[A-Za-z0-9_]+\.[A-Za-z0-9_]+", play):
+            raise ValueError(f"{what}: \"play\" is a track (music.Card_Ace) or \"normal\", not {play!r}")
+        when = ("end",) if line.get("when") == "end" else when_of(line.get("when"), len(objs), what)
+        row = f"when = '{when[0]}'"
+        if when[0] in ("starts", "done"):
+            row += f", after = 'foundry{when[1]}'"
+        elif when[0] == "dead":
+            row += dead_after(when[1])
+        elif when[0] == "zone":
+            row += f", zone = {_lua_str(when[1])}"
+            if zone_centre:
+                zone_centre(when[1])
+        row += f", play = {_lua_str(play)}"
+        if when[0] != "end":
+            row += delay_of(line, what, "tFoundryMusic", "foundry_PlayMusic", k, "M")
+        music.append(f"{{ {row} }}")
+    music_table = ",\n".join("  " + r for r in music)
+    weather = []
+    for k, line in enumerate(doc.get("weather") or [], 1):
+        what = f"weather {k}"
+        preset = str(line.get("preset") or "").strip()
+        if not re.fullmatch(r"[A-Za-z0-9_\-]+", preset):
+            raise ValueError(f"{what}: \"preset\" is one of the map's atmosphere presets (summer1) or \"normal\", "
+                             f"not {preset!r}")
+        when = ("end",) if line.get("when") == "end" else when_of(line.get("when"), len(objs), what)
+        row = f"when = '{when[0]}'"
+        if when[0] in ("starts", "done"):
+            row += f", after = 'foundry{when[1]}'"
+        elif when[0] == "dead":
+            row += dead_after(when[1])
+        elif when[0] == "zone":
+            row += f", zone = {_lua_str(when[1])}"
+            if zone_centre:
+                zone_centre(when[1])
+        row += f", preset = {_lua_str(preset)}"
+        if when[0] != "end":
+            row += delay_of(line, what, "tFoundryWeather", "foundry_SetWeather", k, "S")
+        weather.append(f"{{ {row} }}")
+    weather_table = ",\n".join("  " + r for r in weather)
     # Squads that appear later: their own layers, loaded at "when".
     waves, wave_of = [], {}
     for k, w in enumerate(doc.get("waves") or [], 1):
@@ -522,11 +603,14 @@ def objectives_script(asset_id, doc, squad_members, layers=(), zone_centre=None)
         row = f"when = '{when[0]}'"
         if when[0] in ("starts", "done"):
             row += f", after = 'foundry{when[1]}'"
+        elif when[0] == "dead":
+            row += dead_after(when[1])
         elif when[0] == "zone":
             row += f", zone = {_lua_str(when[1])}"
             if zone_centre:
                 zone_centre(when[1])
         row += f", layer = {_lua_str(wave_layer(asset_id, k))}"
+        row += delay_of(w, what, "tFoundryWaves", "foundry_Wave", k, "W")
         waves.append(f"{{ {row} }}")
         wave_of[(enc.lower(), sq.lower())] = (wave_encounter(enc, k), wave_layer(asset_id, k))
     wave_table = ",\n".join("  " + r for r in waves)
@@ -544,6 +628,8 @@ def objectives_script(asset_id, doc, squad_members, layers=(), zone_centre=None)
         row = f"when = '{when[0]}'"
         if when[0] in ("starts", "done"):
             row += f", after = 'foundry{when[1]}'"
+        elif when[0] == "dead":
+            row += dead_after(when[1])
         elif when[0] == "zone":
             row += f", zone = {_lua_str(when[1])}"
             if zone_centre:
@@ -560,12 +646,32 @@ def objectives_script(asset_id, doc, squad_members, layers=(), zone_centre=None)
             row += f", to = {_lua_str(o['to'])}"
         if act == "path":
             row += f", members = {{ {', '.join(_lua_str(m) for m in members)} }}"
+        row += delay_of(o, what, "tFoundryOrders", "foundry_Order", k, "O")
         orders.append(f"{{ {row} }}")
     order_table = ",\n".join("  " + r for r in orders)
+    later_lua = "".join(c + "\n" for c in later_cbs)
+    dead_rows = []
+    for name, members in dead_sets.items():
+        enc, _, sq = name.rpartition(":")
+        wave = wave_of.get((enc.lower(), sq.lower()))
+        dead_rows.append(f"{{ squad = {_lua_str(name)}, members = {{ {', '.join(_lua_str(m) for m in members)} }}"
+                         + (f", wave = {_lua_str(wave[1])}" if wave else "") + " }")
+    dead_table = ",\n".join("  " + r for r in dead_rows)
     main_table = ",\n".join("  " + r for r in main)
     bonus_table = ",\n".join("  " + r for r in bonus)
     flat = bonus_fee(doc) - sum(bonus_amount(o) + alive_amount(o) for o in objs)
     pays = "true" if bonus or any(alive_amount(o) for o in objs) else "false"   # writes fBonusFee
+    # testing: start at a later main objective (the ones before are skipped)
+    test_from = "nil"
+    if doc.get("test_from"):
+        try:
+            n = int(doc["test_from"])
+        except (TypeError, ValueError):
+            n = 0
+        if n not in main_at:
+            raise ValueError(f"\"test_from\": {doc['test_from']!r} isn't a main objective "
+                             f"({', '.join(map(str, main_at)) or 'none'})")
+        test_from = str(main_at[n])
     unlocks = [str(u) for u in doc.get("unlocks") or [] if u]
     for u in unlocks:
         if not u.lower().startswith("template_"):
@@ -594,6 +700,12 @@ tFoundryFail = {{          -- the mission fails if one happens (until its object
 {radio_table}
 }}
 iFoundryRadioPending = 0   -- voiced lines queued and not yet played
+tFoundryMusic = {{         -- music: one of the game's tracks, or back to the faction's own ("normal")
+{music_table}
+}}
+tFoundryWeather = {{       -- weather: one of the map's atmosphere presets, forced, or back to normal
+{weather_table}
+}}
 tFoundryWaves = {{         -- squads that appear later: their layers, loaded when their moment comes
 {wave_table}
 }}
@@ -601,6 +713,10 @@ tFoundryWaveUp = {{}}       -- a wave's layer -> its squad is there
 tFoundryOrders = {{        -- squad orders, given when their moment comes
 {order_table}
 }}
+{later_lua}tFoundryDead = {{          -- squads a moment waits on ("dead:"): watched from the start, or once their wave is there
+{dead_table}
+}}
+tFoundryDeadOf = {{}}       -- actor (as int) -> the squad it counts for
 tFoundryActive = {{}}       -- started objectives by name
 tFoundryWatch = {{}}        -- actor (as int) -> the fail condition or escort objective watching it
 bFoundryOver = false
@@ -610,6 +726,8 @@ iFoundryFlatBonus = {flat}
 iFoundryEarned = 0
 {mood_lua(asset_id, doc)}bFoundryPays = {pays}
 bFoundryDebug = {"true" if doc.get("debug") else "false"}     -- each step shown on screen too (for testing)
+iFoundryTestFrom = {test_from}      -- testing: the main objective it starts at (nil: the first)
+bFoundryKeepHostile = {"true" if doc.get("keep_if_hostile") else "false"}   -- the contract goes on if its faction turns hostile
 tFoundryLog = {{}}          -- the last steps, kept in scribble memory as foundry_log (foundry_Log() reads it)      -- the payout depends on what's done (bonus objectives, targets taken alive)
 tFoundryVerify = {{}}       -- verify target (actor name) -> its objective
 tFoundryUnlocks = {{ {", ".join(_lua_str(u) for u in unlocks)} }}   -- shop items unlocked on completion
@@ -627,31 +745,72 @@ mission_GenericInit()
 {loads}end
 
 -- The mission's steps, for finding out what happened in a test run: the last
--- dozen are kept in scribble memory (they outlive the mission, failed or
+-- eight are kept in scribble memory (they outlive the mission, failed or
 -- done); foundry_Log() in Foundry Console's Lua box returns them, and with
 -- "debug" each shows on screen as it happens.
 function foundry_Note(s)
 iFoundryNote = (iFoundryNote or 0) + 1
 local line = iFoundryNote .. ': ' .. s
 table.insert(tFoundryLog, line)
-if table.getn(tFoundryLog) > 12 then table.remove(tFoundryLog, 1) end
-local sAll = '{asset_id}: ' .. table.concat(tFoundryLog, ' | ')
-while string.len(sAll) > 400 and table.getn(tFoundryLog) > 1 do   -- short, as retail's scribble strings are
-table.remove(tFoundryLog, 1)
-sAll = '{asset_id}: ' .. table.concat(tFoundryLog, ' | ')
-end
-Utility_WriteStringToScribbleMemory('foundry_log', sAll)
+if table.getn(tFoundryLog) > 8 then table.remove(tFoundryLog, 1) end   -- short, as retail's scribble strings are
+-- (only what retail scripts use: the game's Lua has no string library)
+Utility_WriteStringToScribbleMemory('foundry_log', '{asset_id}: ' .. table.concat(tFoundryLog, ' | '))
 if bFoundryDebug then util_ObjMsgPrint{{ sMsg = '[{asset_id}] ' .. line, sType = 'GENERAL' }} end
 end
 function foundry_Log()
 return Utility_ReadStringFromScribbleMemory('foundry_log') or 'no mission log yet'
 end
 
+-- The contract's faction turned hostile (mission.lua's
+-- mission_FactionAttitudeChange calls this instead of cancelling the
+-- contract, when it's there): with "keep_if_hostile" the contract goes on.
+if bFoundryKeepHostile then
+function custom_FactionAttitudeChange()
+foundry_Note('the faction turned hostile: the contract goes on')
+end
+end
+
+-- A squad is wiped out (every member dead): the things set for that moment.
+function foundry_WatchSquads(sWave)
+for i, d in ipairs(tFoundryDead) do
+if d.wave == sWave and not d.watching then
+d.watching = true
+d.left = table.getn(d.members)
+for j, a in ipairs(d.members) do
+tFoundryDeadOf[Utility_GetActorAsInt(a)] = d
+Event_ActorHitPointsLessThan('foundry_SquadMemberDown', 'b', a, 1)
+end
+end
+end
+end
+function foundry_SquadMemberDown(aActor)
+local d = tFoundryDeadOf[Utility_GetActorAsInt(aActor)]
+if not d or d.gone then return end
+d.left = d.left - 1
+if d.left > 0 then return end
+d.gone = true
+foundry_Note('squad wiped out: ' .. d.squad)
+foundry_Reveal('dead', d.squad)
+foundry_Waves('dead', d.squad)
+foundry_FailsFrom('dead', d.squad)
+foundry_Radio('dead', d.squad)
+foundry_Musics('dead', d.squad)
+foundry_Weathers('dead', d.squad)
+foundry_Orders('dead', d.squad)
+end
+
 function post_InitialNotifications()   -- after the contract mail
 foundry_Note('started')
+foundry_WatchSquads(nil)
 foundry_SetupFail()
 for i, r in ipairs(tFoundryRadio) do
 if r.when == 'zone' then Event_ActorInBoundary('foundry_RadioZone', 'b', 'player0', r.zone, true) end
+end
+for i, m in ipairs(tFoundryMusic) do
+if m.when == 'zone' then Event_ActorInBoundary('foundry_MusicZone', 'b', 'player0', m.zone, true) end
+end
+for i, w in ipairs(tFoundryWeather) do
+if w.when == 'zone' then Event_ActorInBoundary('foundry_WeatherZone', 'b', 'player0', w.zone, true) end
 end
 for i, o in ipairs(tFoundryOrders) do
 if o.when == 'zone' then Event_ActorInBoundary('foundry_OrderZone', 'b', 'player0', o.zone, true) end
@@ -661,10 +820,16 @@ if w.when == 'zone' then Event_ActorInBoundary('foundry_WaveZone', 'b', 'player0
 end
 foundry_Waves('start')
 foundry_Radio('start')
+foundry_Musics('start')
+foundry_Weathers('start')
 foundry_Orders('start')
 for i, o in ipairs(tFoundryBonus) do
 if not o.reveal then foundry_Start(o)
 elseif o.reveal == 'zone' then Event_ActorInBoundary('foundry_RevealZone', 'b', 'player0', o.rzone, true) end
+end
+if iFoundryTestFrom then           -- testing: the main objectives before it are skipped
+iFoundryStep = iFoundryTestFrom - 1
+foundry_Note('testing: starts at main objective ' .. iFoundryTestFrom)
 end
 foundry_NextObjective()
 end
@@ -691,6 +856,67 @@ function foundry_Radio(sWhen, sName)
 for i, r in ipairs(tFoundryRadio) do
 if not r.said and r.when == sWhen and r.after == sName then foundry_Say(r) end
 end
+end
+-- Music: Audio_PlayMusic as retail missions switch to a card or action
+-- theme; "normal" goes back to the faction's own (Audio_PlayFactionMusic, as
+-- retail's StopCardMusic). The contract ending puts it back too.
+function foundry_Musics(sWhen, sName)
+for i, m in ipairs(tFoundryMusic) do
+if not m.played and m.when == sWhen and m.after == sName then foundry_PlayMusic(m) end
+end
+end
+function foundry_MusicZone(playerActor, boundaryName)
+for i, m in ipairs(tFoundryMusic) do
+if not m.played and m.when == 'zone' and m.zone == boundaryName then foundry_PlayMusic(m) end
+end
+end
+function foundry_PlayMusic(m)
+if m.delay and not m.due then
+if not m.waiting then m.waiting = true Event_RelativeTimer(m.cb, 'b', m.delay) end
+return
+end
+m.played = true
+foundry_Note('music ' .. m.play)
+if m.play == 'normal' then foundry_NormalMusic()
+else
+bFoundryMusic = true
+Audio_PlayMusic(m.play)
+end
+end
+function foundry_NormalMusic()
+bFoundryMusic = nil
+local sFaction = Utility_ReadStringFromScribbleMemory('current_faction')
+if sFaction ~= nil then Audio_PlayFactionMusic(sFaction) else Audio_PlayFactionMusic('none') end
+end
+-- Weather: one of the map's [Atmosphere] presets, forced as retail missions
+-- do (Mission_EnableAtmosphere, as the prison and the C-17); "normal" lets
+-- the map's own zones decide again. The contract ending does that too.
+function foundry_Weathers(sWhen, sName)
+for i, w in ipairs(tFoundryWeather) do
+if not w.set and w.when == sWhen and w.after == sName then foundry_SetWeather(w) end
+end
+end
+function foundry_WeatherZone(playerActor, boundaryName)
+for i, w in ipairs(tFoundryWeather) do
+if not w.set and w.when == 'zone' and w.zone == boundaryName then foundry_SetWeather(w) end
+end
+end
+function foundry_SetWeather(w)
+if w.delay and not w.due then
+if not w.waiting then w.waiting = true Event_RelativeTimer(w.cb, 'b', w.delay) end
+return
+end
+w.set = true
+foundry_Note('weather ' .. w.preset)
+foundry_NormalWeather()
+if w.preset ~= 'normal' then
+sFoundryWeather = w.preset
+Mission_EnableAtmosphere(w.preset, true)
+end
+end
+function foundry_NormalWeather()
+if sFoundryWeather then Mission_EnableAtmosphere(sFoundryWeather, false) end
+sFoundryWeather = nil
 end
 function foundry_RadioZone(playerActor, boundaryName)
 for i, r in ipairs(tFoundryRadio) do
@@ -722,6 +948,10 @@ if not w.loaded and w.when == 'zone' and w.zone == boundaryName then foundry_Wav
 end
 end
 function foundry_Wave(w)
+if w.delay and not w.due then             -- "delay" seconds after its moment
+if not w.waiting then w.waiting = true Event_RelativeTimer(w.cb, 'b', w.delay) end
+return
+end
 w.loaded = true
 foundry_Note('squad arrives (' .. w.layer .. ')')
 Utility_ReadLevelFile(w.layer)
@@ -729,13 +959,20 @@ Event_RelativeTimer('foundry_WavesUp', 'b', 2.0)
 end
 function foundry_WavesUp()
 for i, w in ipairs(tFoundryWaves) do
-if w.loaded then tFoundryWaveUp[w.layer] = true end
+if w.loaded and not tFoundryWaveUp[w.layer] then
+tFoundryWaveUp[w.layer] = true
+foundry_WatchSquads(w.layer)          -- its squad, if a moment waits on it
+end
 end
 for i, o in ipairs(tFoundryOrders) do
 if o.pending and tFoundryWaveUp[o.wave] then o.pending = nil foundry_Order(o) end
 end
 end
 function foundry_Order(o)
+if o.delay and not o.due then
+if not o.waiting then o.waiting = true Event_RelativeTimer(o.cb, 'b', o.delay) end
+return
+end
 o.given = true
 if o.wave and not tFoundryWaveUp[o.wave] then o.pending = true return end   -- not there yet
 foundry_Note('order ' .. o.act .. ' to ' .. o.enc .. ':' .. o.squad)
@@ -750,6 +987,10 @@ end
 end
 end
 function foundry_Say(r)
+if r.delay and not r.due then
+if not r.waiting then r.waiting = true Event_RelativeTimer(r.cb, 'b', r.delay) end
+return
+end
 r.said = true
 foundry_Note('radio ' .. (r.sound or r.text))
 if r.sound then
@@ -812,6 +1053,8 @@ if bFoundryOver then return end
 bFoundryOver = true
 foundry_Note('FAILED: ' .. tostring(sReason))
 foundry_StopTimer()
+if bFoundryMusic then foundry_NormalMusic() end
+foundry_NormalWeather()
 sReasonForFailure = sReason
 mission_MissionFailure()
 end
@@ -1056,6 +1299,8 @@ foundry_Reveal('starts', o.name)
 foundry_Waves('starts', o.name)
 foundry_FailsFrom('starts', o.name)
 foundry_Radio('starts', o.name)
+foundry_Musics('starts', o.name)
+foundry_Weathers('starts', o.name)
 foundry_Orders('starts', o.name)
 end
 
@@ -1070,6 +1315,8 @@ foundry_Reveal('done', o.name)
 foundry_Waves('done', o.name)
 foundry_FailsFrom('done', o.name)
 foundry_Radio('done', o.name)
+foundry_Musics('done', o.name)
+foundry_Weathers('done', o.name)
 foundry_Orders('done', o.name)
 if o.bonus then
 iFoundryEarned = iFoundryEarned + o.bonus
@@ -1084,7 +1331,7 @@ local o = tFoundryActive[sObjName]
 if not o or o.done then return end
 local iAll = o.need or table.getn(o.targets)        -- "need": done after that many
 o.down = o.down + 1
-foundry_Note(o.name .. ': ' .. tostring(sActor) .. ' (' .. o.down .. ' of ' .. iAll .. ')')
+foundry_Note(o.name .. ': ' .. o.down .. ' of ' .. iAll .. ' down')
 if o.down >= iAll then
 foundry_Done(o)
 else
@@ -1116,13 +1363,15 @@ end
 -- After the contract completes (mission.lua calls it, as retail missions
 -- unlock shop items there): the shop unlocks and the follow-up mail.
 function post_MissionComplete()
+if bFoundryMusic then foundry_NormalMusic() end
+foundry_NormalWeather()
 for i, s in ipairs(tFoundryUnlocks) do Shop_UnlockItem(s) end
 if sFoundryDoneMail then Mail_Post(sFoundryDoneMail) end
 end
 
 function foundry_Finish()
 if bFoundryOver then return end
-if not bFoundryEndSaid then bFoundryEndSaid = true foundry_Radio('end') end   -- the lines for the end
+if not bFoundryEndSaid then bFoundryEndSaid = true foundry_Radio('end') foundry_Musics('end') foundry_Weathers('end') end   -- the lines for the end
 if iFoundryRadioPending > 0 then bFoundryFinishing = true return end   -- after the last radio line
 local o = tFoundryFast
 if o and not o.done then          -- finished in time
@@ -1322,6 +1571,12 @@ def contract(asset_id, doc, title_key, description_key):
             "side": str(c.get("side") or "civ"),
             # Missions that must be done before this one is offered.
             "requires": [str(r).lower() for r in doc.get("requires") or []],
+            # A placed giver's rules: stays where it's put (Ai_CommandQueue
+            # 'Wait'), can't be hurt (Actor_SetInvincible), and whether killing
+            # it loses the contract for good.
+            "stay": bool(c.get("stay")) and bool(c.get("position")),
+            "invincible": bool(c.get("invincible")) and bool(c.get("position")),
+            "lose": bool(c.get("lose_if_killed")) and bool(c.get("position")),
             "title_key": title_key, "description_key": description_key}, strings
 
 
@@ -1356,7 +1611,8 @@ def contracts_script(contracts, insertions=()):
                        _lua(c["desc_key"]), _lua(c["target_type"]) if c["target_type"] else "nil", _lua(c["blip"]),
                        (", px = %.2f, py = %.2f, pz = %.2f, heading = %.1f, side = %s" % (
                            *c["position"], c["heading"], _lua(c["side"])) if c["position"] else "")
-                       + (", requires = { %s }" % ", ".join(_lua(r) for r in c["requires"]) if c["requires"] else "")))
+                       + (", requires = { %s }" % ", ".join(_lua(r) for r in c["requires"]) if c["requires"] else "")
+                       + "".join(f", {k} = true" for k in ("stay", "invincible", "lose") if c.get(k))))
     out.append("}")
     out += [
         "Utility_LoadUtilityScript('util_objectives')",
@@ -1380,18 +1636,34 @@ def contracts_script(contracts, insertions=()):
         "-- (dormant) until the player comes near, and a side set while it sleeps",
         "-- doesn't hold: set it again each time it wakes (as nw_sk4 does for its",
         "-- mole: Event_ActorIsDormant(..., FALSE)).",
-        "function foundry_GiverSide(name, c)",
+        "-- Its rules: never a card to verify (an Ace template is verifiable),",
+        "-- and, as set, it stays put (Wait with no time, as retail holds its",
+        "-- helicopters) and can't be hurt.",
+        "function foundry_GiverRules(name, c)",
         "Ai_SetFaction(name, c.side)",
         "Ai_SetHostileRange(name, 0.0)",
+        "Actor_SetVerifiable(name, FALSE)",
+        "if c.stay then Ai_CommandQueue(name, 'Wait', 'hiPri') end",
+        "if c.invincible then Actor_SetInvincible(name, true) end",
+        "end",
+        "function foundry_GiverSide(name, c)",
+        "foundry_GiverRules(name, c)",
         "tFoundryGivers[Utility_GetActorAsInt(name)] = c",
         "Event_ActorIsDormant('foundry_GiverAwake', 'b', name, FALSE)",
+        "if c.lose then Event_ActorHitPointsLessThan('foundry_GiverKilled', 'b', name, 1) end",
+        "end",
+        "-- Killed, with \"lose_if_killed\": the contract is gone for good.",
+        "function foundry_GiverKilled(aActor)",
+        "local c = tFoundryGivers[Utility_GetActorAsInt(aActor)]",
+        "if not c or not c.lose then return end",
+        "Utility_WriteNumberToScribbleMemory('foundry_lost_' .. c.id, 1)",
+        "Objective_Remove(foundry_ContactName(c))",
         "end",
         "function foundry_GiverAwake(aActor)",
         "local c = tFoundryGivers[Utility_GetActorAsInt(aActor)]",
         "if not c then return end",
         "local name = foundry_ContactName(c)",
-        "Ai_SetFaction(name, c.side)",
-        "Ai_SetHostileRange(name, 0.0)",
+        "foundry_GiverRules(name, c)",
         "Event_ActorIsDormant('foundry_GiverAsleep', 'b', name, TRUE)",
         "end",
         "function foundry_GiverAsleep(aActor)",
@@ -1448,7 +1720,8 @@ def contracts_script(contracts, insertions=()):
         "local bWaiting = false",
         "for i, c in tFoundryContracts do",
         "local name = foundry_ContactName(c)",
-        "if c.map == map and ((foundry_IsDone(c) and not c.repeatable) or not foundry_Unlocked(c)) then",
+        "if c.map == map and ((foundry_IsDone(c) and not c.repeatable) or not foundry_Unlocked(c)",
+        "or Utility_ReadNumberFromScribbleMemory('foundry_lost_' .. c.id)) then",
         "if Utility_DoesActorExist(name) then Objective_Remove(name) Actor_Remove(name) end",
         "elseif c.map == map then",
         "if not Utility_DoesActorExist(name) then",

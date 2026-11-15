@@ -22,6 +22,10 @@ POST /api/live/poll            the running game's plugin: its state in, commands
 GET  /api/live/state           connected?, the player's position, command results
 POST /api/live/send            {"commands": [...]} for the game (see live.py)
 GET  /api/encounters/<map>     encounters: the game's (read only) and the mod's
+GET  /api/sky/<map>            its base sky and atmosphere presets, and the mod's changes (sky/<map>.json)
+POST /api/models/new           {"name", "base", "glb" (base64)}: a new object's model (models/<name>.glb + .new.json)
+POST /api/sky/save             {"map", "doc"}: writes sky/<map>.json
+GET  /api/music                the game's music tracks, for music lines
 GET  /api/voices               the game's voiced lines with subtitles, for radio lines: [{cue, text}]
 GET  /api/voice/<bank>.<cue>.wav  a voice line to listen to
 GET  /api/templates            objects a squad member can copy (template_*)
@@ -155,6 +159,11 @@ def make_handler(scene: Scene, mod_name: str, live: Live = None):
                 if path == "/api/animations":
                     with objects_lock:
                         return self.send(200, scene.animation_names())
+                if path.startswith("/api/sky/"):
+                    with objects_lock:
+                        return self.send(200, scene.sky(path[len("/api/sky/"):]))
+                if path == "/api/music":
+                    return self.send(200, scene.music_tracks())
                 if path == "/api/voices":
                     with objects_lock:
                         return self.send(200, scene.voice_lines())
@@ -198,6 +207,13 @@ def make_handler(scene: Scene, mod_name: str, live: Live = None):
                 if path == "/api/missions/save":
                     with objects_lock:
                         return self.send(200, scene.save_mission(doc["map"], doc["mission"]))
+                if path == "/api/models/new":
+                    import base64
+                    with objects_lock:
+                        return self.send(200, scene.new_model(doc["name"], doc["base"], base64.b64decode(doc["glb"])))
+                if path == "/api/sky/save":
+                    with objects_lock:
+                        return self.send(200, scene.save_sky(doc["map"], doc.get("doc") or {}))
                 if path == "/api/missions/duplicate":
                     with objects_lock:
                         return self.send(200, scene.duplicate_mission(doc["id"], doc.get("faction")))

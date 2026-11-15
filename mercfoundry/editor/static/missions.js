@@ -65,6 +65,9 @@ export function createMissions(ctx) {
     $('ms-giver-template').value = g.template || '';
     $('ms-giver-side').value = g.side || 'civ';
     $('ms-giver-marker').value = g.marker || 'gold';
+    $('ms-giver-stay').checked = !!g.stay;
+    $('ms-giver-invincible').checked = !!g.invincible;
+    $('ms-giver-lose').checked = !!g.lose_if_killed;
     $('ms-giver-requires').hidden = g.mode === 'none' || g.mode === 'sequence';   // the sequence decides when
     // Other missions of this map, as "Available after" ticks.
     const others = st.list.filter((x) => !st.current || x.id !== st.current.id);
@@ -160,6 +163,7 @@ export function createMissions(ctx) {
     const c = contact && typeof contact === 'object' ? contact : {};
     return {mode: c.position ? 'placed' : 'hq', template: c.template || '', name: c.name || '', prompt: c.prompt || '',
             side: c.side || 'civ', marker: c.marker || 'gold',
+            stay: !!c.stay, invincible: !!c.invincible, lose_if_killed: !!c.lose_if_killed,
             position: c.position || null, heading: c.heading || 0};
   }
 
@@ -203,10 +207,14 @@ export function createMissions(ctx) {
       $('ms-fee').value = 50000;
       $('ms-bonus').value = 0;
       $('ms-debug').checked = false;
+      $('ms-keep-hostile').checked = false;
+      st.testFrom = 0;
       for (const f of MOOD_FACTIONS) $(`ms-mood-${f}`).value = f === $('ms-faction').value ? 20 : '';
       st.objectives = [];
       st.fails = [];
       st.radio = [];
+      st.music = [];
+      st.weather = [];
       st.orders = [];
       st.waves = [];
       st.support = [];
@@ -225,10 +233,14 @@ export function createMissions(ctx) {
       $('ms-fee').value = (m.doc.ini || {}).ContractFee ?? 50000;
       $('ms-bonus').value = (m.doc.ini || {}).BonusFee ?? 0;
       $('ms-debug').checked = !!m.doc.debug;
+      $('ms-keep-hostile').checked = !!m.doc.keep_if_hostile;
+      st.testFrom = +m.doc.test_from || 0;
       for (const f of MOOD_FACTIONS) $(`ms-mood-${f}`).value = (m.doc.mood || {})[f] || '';
       st.objectives = (m.doc.objectives || []).map((o) => ({...o}));
       st.fails = (m.doc.fail || []).map((c) => ({...c}));
       st.radio = (m.doc.radio || []).map((r) => ({...r}));
+      st.music = (m.doc.music || []).map((x) => ({...x}));
+      st.weather = (m.doc.weather || []).map((x) => ({...x}));
       st.orders = (m.doc.orders || []).map((o) => ({...o}));
       st.waves = (m.doc.waves || []).map((w) => ({...w}));
       st.support = (m.doc.support || []).map((s) => ({...s}));
@@ -248,7 +260,7 @@ export function createMissions(ctx) {
     $('ms-script-note').hidden = !(m && m.script);
     drawObjectives();
     drawFails();
-    drawRadio();
+    drawRadio(); drawMusic(); drawWeather();
     drawOrders();
     drawWaves();
     drawOutline();
@@ -267,6 +279,26 @@ export function createMissions(ctx) {
                      deliver: 'Deliver vehicle to zone', subdue: 'Capture alive (subdue)', hold: 'Hold zone',
                      use: 'Use object', fast: 'Finish fast', verify: 'Verify target (kill and photograph, or capture)'};
   const BLIPS = {human: 'Person', scope: 'Scope', blip: 'Dot', clubs: 'Clubs', diamond: 'Diamonds', hearts: 'Hearts', spades: 'Spades'};
+  // Folded cards: one line each. Which are open is kept by the objective
+  // itself (so it survives moving them up and down).
+  const openObjs = new WeakSet();
+  function objSummary(o) {
+    const what = [o.squad, ...(o.targets || []), o.vehicle].filter(Boolean);
+    const bits = [o.text ? `"${o.text}"` : '(no text)'];
+    if (what.length) bits.push(what.length > 2 ? `${what[0]} +${what.length - 1}` : what.join(', '));
+    else if (['destroy', 'subdue', 'use', 'verify', 'escort'].includes(o.type)) bits.push('(nothing picked)');
+    if (o.zone) bits.push(`to ${o.zone}`);
+    else if (['goto', 'escort', 'deliver', 'hold'].includes(o.type)) bits.push('(no zone)');
+    if (+o.seconds > 0) bits.push(clock(+o.seconds));
+    if (+o.need > 0) bits.push(o.type === 'escort' ? `at least ${o.need}` : `${o.need} of them`);
+    if (+o.bonus > 0) bits.push(money(o.bonus));
+    if (o.together) bits.push('with the one before');
+    return bits.join(' · ');
+  }
+  function pushObjective(o) {           // a new objective, open to fill in
+    st.objectives.push(o);
+    openObjs.add(o);
+  }
   function drawObjectives() {
     const m = st.current;
     const squads = m ? m.squads : (st.shared || {}).squads || [], zones = m ? m.zones : (st.shared || {}).zones || [];
@@ -311,7 +343,12 @@ export function createMissions(ctx) {
         : o.type === 'escort' ? squadPick + zonePick
         : o.type === 'deliver' ? vehicle + zonePick
         : o.type === 'fast' ? seconds : zonePick + seconds;
-      return `<div class="ms-obj"><b>${i + 1}. ${OBJ_NAMES[o.type] || o.type}${+o.bonus > 0 ? ' (bonus)' : ''}</b>
+      const head = `<b class="ms-fold" data-i="${i}" data-a="fold" title="${openObjs.has(o) ? 'Fold' : 'Open'}">`
+        + `${openObjs.has(o) ? '▾' : '▸'} ${i + 1}. ${OBJ_NAMES[o.type] || o.type}${+o.bonus > 0 ? ' (bonus)' : ''}</b>`;
+      if (!openObjs.has(o)) {
+        return `<div class="ms-obj ms-folded">${head} <span class="ms-summary" data-i="${i}" data-a="fold">${esc(objSummary(o))}</span></div>`;
+      }
+      return `<div class="ms-obj">${head}
         <input data-i="${i}" data-k="text" type="text" value="${esc(o.text)}" placeholder="What the player reads">
         ${pick} ${need} ${together}
         <label class="ms-bonus" title="A reward makes this a bonus objective: optional, active from the start alongside the main ones, paid on completion if done">Bonus $
@@ -332,12 +369,12 @@ export function createMissions(ctx) {
       if (j === i) return;
       opts.push([`starts:${j + 1}`, `When objective ${j + 1} starts`], [`done:${j + 1}`, `When objective ${j + 1} is done`]);
     });
-    opts.push(['zone', 'When the player enters a zone']);
-    const isZone = r.startsWith('zone:');
-    const sel = (v) => (isZone ? v === 'zone' : v === r) ? 'selected' : '';
+    opts.push(['zone', 'When the player enters a zone'], ['dead', 'When a squad is wiped out']);
+    const isZone = r.startsWith('zone:'), isDead = r.startsWith('dead:');
+    const sel = (v) => (isZone ? v === 'zone' : isDead ? v === 'dead' : v === r) ? 'selected' : '';
     const zone = isZone ? r.slice(5) : '';
     return `<label class="ms-reveal">Shown <select data-i="${i}" data-k="reveal">${opts.map(([v, t]) =>
-        `<option value="${v}" ${sel(v)}>${t}</option>`).join('')}</select></label>${isZone
+        `<option value="${v}" ${sel(v)}>${t}</option>`).join('')}</select></label>${deadPick(r, `data-i="${i}"`, 'revealSquad')}${isZone
       ? `<select data-i="${i}" data-k="revealZone"><option value="">(zone)</option>${zones.map((z) =>
           `<option ${z === zone ? 'selected' : ''}>${esc(z)}</option>`).join('')}</select>` : ''}`;
   }
@@ -351,11 +388,15 @@ export function createMissions(ctx) {
       const k = order.indexOf(+m[2] - 1);
       o.reveal = k < 0 ? 'start' : `${m[1]}:${k + 1}`;
     }
-    for (const r of [...st.radio, ...st.orders, ...st.waves]) {
+    for (const r of [...st.radio, ...st.music, ...st.weather, ...st.orders, ...st.waves]) {
       const m = /^(starts|done):(\d+)$/.exec(r.when || '');
       if (!m) continue;
       const k = order.indexOf(+m[2] - 1);
       r.when = k < 0 ? 'start' : `${m[1]}:${k + 1}`;
+    }
+    if (st.testFrom) {
+      const k = order.indexOf(st.testFrom - 1);
+      st.testFrom = k < 0 ? 0 : k + 1;
     }
     for (const c of st.fails) {
       const m = /^(starts|done):(\d+)$/.exec(c.from || '');
@@ -372,6 +413,35 @@ export function createMissions(ctx) {
   }
 
   function edited() { st.dirty = true; setDirty(true); queueOutline(); }
+
+  // ---------------------------------------------------------------- tabs
+  // The panel's parts, one at a time; the one last open is opened again.
+  // Each tab's label counts what's in it.
+  let msTab = 'overview';
+  try { msTab = localStorage.getItem('foundry.missionsTab') || 'overview'; } catch (e) { /* no storage */ }
+  function showTab(t) {
+    if (!document.querySelector(`#missions .ms-tab[data-tab="${t}"]`)) t = 'overview';
+    msTab = t;
+    try { localStorage.setItem('foundry.missionsTab', t); } catch (e) { /* no storage */ }
+    for (const d of document.querySelectorAll('#missions .ms-tab')) d.hidden = d.dataset.tab !== t;
+    for (const b of document.querySelectorAll('#ms-tabs button')) b.classList.toggle('on', b.dataset.tab === t);
+  }
+  const TAB_NAMES = {overview: 'Overview', contract: 'Contract', giver: 'Giver & start', objectives: 'Objectives',
+                     events: 'Events', fail: 'Fail', rewards: 'Rewards'};
+  function tabCounts() {
+    const mail = $('ms-done-subject').value.trim() || $('ms-done-body').value.trim() ? 1 : 0;
+    const n = {objectives: st.objectives.length, events: st.waves.length + st.orders.length + st.radio.length + st.music.length + st.weather.length,
+               fail: st.fails.length, rewards: st.support.length + st.unlocks.length + mail};
+    for (const b of document.querySelectorAll('#ms-tabs button')) {
+      const k = b.dataset.tab;
+      b.innerHTML = esc(TAB_NAMES[k]) + (n[k] ? ` <span class="ms-count">${n[k]}</span>` : '');
+    }
+  }
+  $('ms-tabs').addEventListener('click', (e) => {
+    const b = e.target.closest('button');
+    if (b && b.dataset.tab) showTab(b.dataset.tab);
+  });
+  showTab(msTab);
 
   // ---------------------------------------------------------------- outline
   // The mission as a timeline, in words: what happens at the start, when each
@@ -395,6 +465,8 @@ export function createMissions(ctx) {
   function drawOutline() {
     const box = $('ms-outline');
     if (!box) return;
+    tabCounts();
+    drawTestFrom();
     const objs = st.objectives;
     const objName = (i) => `${i + 1}. ${OBJ_NAMES[objs[i].type] || objs[i].type}: "${objs[i].text || ''}"`
       + (+objs[i].need > 0 ? (objs[i].type === 'escort' ? ` (at least ${objs[i].need} must arrive)` : ` (${objs[i].need} of them)`) : '')
@@ -407,9 +479,12 @@ export function createMissions(ctx) {
       add(c.from || 'start', `Fails if ${failWords(c)}${c.until ? ` (until objective ${c.until.slice(5)} is done)` : ''}`);
       if (c.until) add(c.until, `No longer fails if ${failWords(c)}`);
     });
-    st.waves.forEach((w) => add(w.when, `Squad ${w.squad || '(none picked)'} arrives`));
-    st.orders.forEach((o) => add(o.when, `${o.squad || '(no squad)'}: ${(ORDER_NAMES[o.do] || o.do || '').toLowerCase()}${o.to ? ` (${o.to})` : ''}`));
-    st.radio.forEach((r) => add(r.when, `Radio: ${r.text ? `"${r.text}"` : ''}${r.sound ? ` [${r.sound}]` : ''}`));
+    const later = (x) => (+x.delay > 0 ? ` (${x.delay} s later)` : '');
+    st.waves.forEach((w) => add(w.when, `Squad ${w.squad || '(none picked)'} arrives${later(w)}`));
+    st.orders.forEach((o) => add(o.when, `${o.squad || '(no squad)'}: ${(ORDER_NAMES[o.do] || o.do || '').toLowerCase()}${o.to ? ` (${o.to})` : ''}${later(o)}`));
+    st.weather.forEach((x) => add(x.when, `Weather: ${x.preset === 'normal' ? 'back to normal' : x.preset}${later(x)}`));
+    st.music.forEach((x) => add(x.when, `Music: ${x.play === 'normal' ? 'back to normal' : String(x.play || '').replace(/^music\./, '')}${later(x)}`));
+    st.radio.forEach((r) => add(r.when, `Radio: ${r.text ? `"${r.text}"` : ''}${r.sound ? ` [${r.sound}]` : ''}${later(r)}`));
     const used = new Set();
     const block = (title, key, extra = []) => {
       used.add(key);
@@ -418,7 +493,9 @@ export function createMissions(ctx) {
     };
     const main = objs.map((o, i) => i).filter((i) => !(+objs[i].bonus > 0));
     const bonus = objs.map((o, i) => i).filter((i) => +objs[i].bonus > 0);
-    let html = block('Mission starts', 'start', st.start ? ['The player starts at the set point'] : []);
+    let html = st.testFrom ? `<li class="ms-problem">TESTING: starts at objective ${st.testFrom}; the main objectives before it are skipped</li>` : '';
+    html += block('Mission starts', 'start', [...(st.start ? ['The player starts at the set point'] : []),
+      ...($('ms-keep-hostile').checked ? ['The contract goes on even if its faction turns hostile'] : [])]);
     // main objectives in groups: one, then any "together" after it
     const groups = [];
     for (const i of main) {
@@ -437,6 +514,7 @@ export function createMissions(ctx) {
     }
     for (const key of Object.keys(at)) {
       if (key.startsWith('zone:')) html += block(`The player enters zone ${key.slice(5) || '(none picked)'}`, key);
+      if (key.startsWith('dead:')) html += block(`Squad ${key.slice(5) || '(none picked)'} is wiped out`, key);
     }
     const flat = +$('ms-bonus').value || 0;
     const extras = objs.reduce((n, o) => n + (+o.bonus > 0 ? +o.bonus : 0), 0);
@@ -460,10 +538,11 @@ export function createMissions(ctx) {
     const o = st.objectives[+i];
     if (k === 'reveal') {
       const zones = st.current ? st.current.zones : (st.shared || {}).zones || [];
-      o.reveal = e.target.value === 'zone' ? `zone:${zones[0] || ''}` : e.target.value;
+      o.reveal = momentOf(e.target.value);
       drawObjectives(); edited(); return;
     }
     if (k === 'revealZone') { o.reveal = `zone:${e.target.value}`; edited(); return; }
+    if (k === 'revealSquad') { o.reveal = `dead:${e.target.value}`; edited(); return; }
     const wasBonus = +o.bonus > 0;
     if (k === 'extract' || k === 'together') {
       if (e.target.checked) o[k] = true; else delete o[k];
@@ -488,6 +567,11 @@ export function createMissions(ctx) {
     const i = +e.target.dataset.i, a = e.target.dataset.a;
     if (!a) return;
     const o = st.objectives;
+    if (a === 'fold') {
+      if (openObjs.has(o[i])) openObjs.delete(o[i]); else openObjs.add(o[i]);
+      drawObjectives();
+      return;
+    }
     if (a === 'target' || a === 'vehicle') {
       const sel = ctx.selectedObject();
       if (!sel) return status('Select an object on the map first', true);
@@ -515,40 +599,40 @@ export function createMissions(ctx) {
     renumber(order);
     drawObjectives();
     drawFails();
-    drawRadio();
+    drawRadio(); drawMusic(); drawWeather();
     drawOrders();
     drawWaves();
     edited();
   });
-  $('ms-add-destroy').onclick = () => { st.objectives.push({type: 'destroy', text: 'Destroy the squad', squad: ''}); drawObjectives(); drawFails(); drawRadio(); drawOrders(); drawWaves(); edited(); };
-  $('ms-add-goto').onclick = () => { st.objectives.push({type: 'goto', text: 'Go to the marked area', zone: ''}); drawObjectives(); drawFails(); drawRadio(); drawOrders(); drawWaves(); edited(); };
+  $('ms-add-destroy').onclick = () => { pushObjective({type: 'destroy', text: 'Destroy the squad', squad: ''}); drawObjectives(); drawFails(); drawRadio(); drawMusic(); drawWeather(); drawOrders(); drawWaves(); edited(); };
+  $('ms-add-goto').onclick = () => { pushObjective({type: 'goto', text: 'Go to the marked area', zone: ''}); drawObjectives(); drawFails(); drawRadio(); drawMusic(); drawWeather(); drawOrders(); drawWaves(); edited(); };
   $('ms-add-fast').onclick = () => {
-    st.objectives.push({type: 'fast', text: 'Finish the contract within 5 minutes', seconds: 300, bonus: 20000});
-    drawObjectives(); drawFails(); drawRadio(); drawOrders(); drawWaves(); edited();
+    pushObjective({type: 'fast', text: 'Finish the contract within 5 minutes', seconds: 300, bonus: 20000});
+    drawObjectives(); drawFails(); drawRadio(); drawMusic(); drawWeather(); drawOrders(); drawWaves(); edited();
   };
   $('ms-add-verify').onclick = () => {
-    st.objectives.push({type: 'verify', text: 'Verify the target', squad: '', targets: [], blip: 'human'});
-    drawObjectives(); drawFails(); drawRadio(); drawOrders(); drawWaves(); edited();
+    pushObjective({type: 'verify', text: 'Verify the target', squad: '', targets: [], blip: 'human'});
+    drawObjectives(); drawFails(); drawRadio(); drawMusic(); drawWeather(); drawOrders(); drawWaves(); edited();
   };
   $('ms-add-use').onclick = () => {
-    st.objectives.push({type: 'use', text: 'Use the marked object', prompt: 'Use', targets: []});
-    drawObjectives(); drawFails(); drawRadio(); drawOrders(); drawWaves(); edited();
+    pushObjective({type: 'use', text: 'Use the marked object', prompt: 'Use', targets: []});
+    drawObjectives(); drawFails(); drawRadio(); drawMusic(); drawWeather(); drawOrders(); drawWaves(); edited();
   };
   $('ms-add-subdue').onclick = () => {
-    st.objectives.push({type: 'subdue', text: 'Capture the target alive', squad: '', targets: []});
-    drawObjectives(); drawFails(); drawRadio(); drawOrders(); drawWaves(); edited();
+    pushObjective({type: 'subdue', text: 'Capture the target alive', squad: '', targets: []});
+    drawObjectives(); drawFails(); drawRadio(); drawMusic(); drawWeather(); drawOrders(); drawWaves(); edited();
   };
   $('ms-add-hold').onclick = () => {
-    st.objectives.push({type: 'hold', text: 'Hold the area', zone: '', seconds: 60});
-    drawObjectives(); drawFails(); drawRadio(); drawOrders(); drawWaves(); edited();
+    pushObjective({type: 'hold', text: 'Hold the area', zone: '', seconds: 60});
+    drawObjectives(); drawFails(); drawRadio(); drawMusic(); drawWeather(); drawOrders(); drawWaves(); edited();
   };
   $('ms-add-deliver').onclick = () => {
-    st.objectives.push({type: 'deliver', text: 'Deliver the vehicle to the marked area', vehicle: '', zone: ''});
-    drawObjectives(); drawFails(); drawRadio(); drawOrders(); drawWaves(); edited();
+    pushObjective({type: 'deliver', text: 'Deliver the vehicle to the marked area', vehicle: '', zone: ''});
+    drawObjectives(); drawFails(); drawRadio(); drawMusic(); drawWeather(); drawOrders(); drawWaves(); edited();
   };
   $('ms-add-escort').onclick = () => {
-    st.objectives.push({type: 'escort', text: 'Escort them to the marked area', squad: '', zone: ''});
-    drawObjectives(); drawFails(); drawRadio(); drawOrders(); drawWaves(); edited();
+    pushObjective({type: 'escort', text: 'Escort them to the marked area', squad: '', zone: ''});
+    drawObjectives(); drawFails(); drawRadio(); drawMusic(); drawWeather(); drawOrders(); drawWaves(); edited();
   };
 
   // ---------------------------------------------------------------- fail conditions
@@ -593,9 +677,10 @@ export function createMissions(ctx) {
     else if (key === 'from') {
       const zones = (st.current || st.shared || {}).zones || [];
       if (e.target.value === 'start') delete c.from;
-      else c.from = e.target.value === 'zone' ? `zone:${zones[0] || ''}` : e.target.value;
+      else c.from = momentOf(e.target.value);
       drawFails();
     } else if (key === 'fromZone') c.from = `zone:${e.target.value}`;
+    else if (key === 'fromSquad') c.from = `dead:${e.target.value}`;
     else if (e.target.value) c[key] = e.target.value;
     else delete c[key];
     edited();
@@ -621,17 +706,43 @@ export function createMissions(ctx) {
   // A line plays when the mission starts, an objective starts or is done, or
   // the player enters a zone: a voice ("<bank>.<cue>", with the text as its
   // subtitle) or, with no voice, the text as an on-screen message.
+  // A moment's value from its picker: "zone" and "dead" take the first zone /
+  // squad (their own picker beside it changes it).
+  function momentOf(v) {
+    const pool = st.current || st.shared || {};
+    if (v === 'zone') return `zone:${(pool.zones || [])[0] || ''}`;
+    if (v === 'dead') return `dead:${(pool.squads || [])[0] || ''}`;
+    return v;
+  }
+  // the squad picker for a "dead:" moment
+  function deadPick(r, attrs, key) {
+    if (!String(r || '').startsWith('dead:')) return '';
+    const squads = (st.current || st.shared || {}).squads || [], sq = r.slice(5);
+    return `<select ${attrs} data-k="${key}"><option value="">(squad)</option>${squads.map((s) =>
+      `<option ${s === sq ? 'selected' : ''}>${esc(s)}</option>`).join('')}</select>`;
+  }
+  // "N seconds after" its moment (radio lines, squads that appear later, orders)
+  function delayPick(x, attrs) {
+    return `<label class="ms-delay" title="Seconds after its moment (blank: straight away)">after
+      <input ${attrs} data-k="delay" type="number" min="0" step="5" value="${+x.delay > 0 ? +x.delay : ''}" placeholder="0"> s</label>`;
+  }
+  // a delay typed in: a number of seconds, or none
+  function setDelay(x, v) {
+    const n = Math.max(0, +v || 0);
+    if (n > 0) x.delay = n; else delete x.delay;
+  }
   function whenPick(value, attrs, zones, key = 'when', withEnd = false) {
     const r = value || 'start';
     const opts = [['start', 'When the mission starts']];
     if (withEnd) opts.push(['end', 'When the contract completes']);
     st.objectives.forEach((x, j) => opts.push([`starts:${j + 1}`, `When objective ${j + 1} starts`],
                                               [`done:${j + 1}`, `When objective ${j + 1} is done`]));
-    opts.push(['zone', 'When the player enters a zone']);
-    const isZone = r.startsWith('zone:');
+    opts.push(['zone', 'When the player enters a zone'], ['dead', 'When a squad is wiped out']);
+    const isZone = r.startsWith('zone:'), isDead = r.startsWith('dead:');
     const zone = isZone ? r.slice(5) : '';
     return `<select ${attrs} data-k="${key}">${opts.map(([v, t]) =>
-        `<option value="${v}" ${(isZone ? v === 'zone' : v === r) ? 'selected' : ''}>${t}</option>`).join('')}</select>${isZone
+        `<option value="${v}" ${(isZone ? v === 'zone' : isDead ? v === 'dead' : v === r) ? 'selected' : ''}>${t}</option>`).join('')}</select>`
+      + deadPick(r, attrs, `${key}Squad`) + `${isZone
       ? `<select ${attrs} data-k="${key}Zone"><option value="">(zone)</option>${zones.map((z) =>
           `<option ${z === zone ? 'selected' : ''}>${esc(z)}</option>`).join('')}</select>` : ''}`;
   }
@@ -680,16 +791,92 @@ export function createMissions(ctx) {
       st.radio[voiceFor].sound = use;
       $('ms-voice-find').hidden = true;
       $('ms-radio').after($('ms-voice-find'));
-      drawRadio(); edited();
+      drawRadio(); drawMusic(); drawWeather(); edited();
     }
   });
+
+  // ---------------------------------------------------------------- music
+  // A track at a moment (the game's own: card themes, faction action and
+  // explore themes), or back to normal; ▶ plays it here.
+  let tracks = null, trackAudio = null;
+  async function drawMusic() {
+    if (!tracks) {
+      try { tracks = await (await fetch('/api/music')).json(); } catch (e) { tracks = []; }
+    }
+    const zones = (st.current || st.shared || {}).zones || [];
+    $('ms-music').innerHTML = st.music.map((x, k) => `<div class="ms-obj"><b>Music ${k + 1}</b>
+        ${whenPick(x.when, `data-m="${k}"`, zones, 'when', true)}${x.when === 'end' ? '' : delayPick(x, `data-m="${k}"`)}
+        <select data-m="${k}" data-k="play"><option value="normal" ${x.play === 'normal' ? 'selected' : ''}>Back to normal (the faction's music)</option>
+          ${tracks.map((t) => `<option value="${esc(t)}" ${t.toLowerCase() === String(x.play || '').toLowerCase() ? 'selected' : ''}>${esc(t.replace(/^music\./, ''))}</option>`).join('')}</select>
+        <span class="buttons">${x.play && x.play !== 'normal' ? `<button data-m="${k}" data-a="play" title="Listen (a long track takes a moment)">▶</button>` : ''}
+          <button data-m="${k}" data-a="del">Delete</button></span></div>`).join('')
+      || '<p class="hint">No music changes: the faction\'s own plays.</p>';
+  }
+  $('ms-music').addEventListener('input', (e) => {
+    const k = e.target.dataset.m, key = e.target.dataset.k;
+    if (k === undefined || !key) return;
+    const x = st.music[+k];
+    if (key === 'delay') { setDelay(x, e.target.value); edited(); return; }
+    if (key === 'when') x.when = momentOf(e.target.value);
+    else if (key === 'whenZone') x.when = `zone:${e.target.value}`;
+    else if (key === 'whenSquad') x.when = `dead:${e.target.value}`;
+    else x[key] = e.target.value;
+    drawMusic(); edited();
+  });
+  $('ms-music').addEventListener('click', (e) => {
+    const k = e.target.dataset.m, a = e.target.dataset.a;
+    if (k === undefined || !a) return;
+    if (a === 'del') { st.music.splice(+k, 1); drawMusic(); edited(); return; }
+    if (a === 'play') {
+      if (trackAudio) trackAudio.pause();
+      status('Loading the track...');
+      trackAudio = new Audio(`/api/voice/${encodeURIComponent(st.music[+k].play)}.wav`);
+      trackAudio.play().then(() => status('')).catch((err) => status(`Couldn't play it: ${err.message}`, true));
+    }
+  });
+  // ---------------------------------------------------------------- weather
+  // One of the map's atmosphere presets at a moment (forced, as retail's
+  // prison), or back to normal (the map's weather zones decide again).
+  function drawWeather() {
+    const zones = (st.current || st.shared || {}).zones || [];
+    const presets = (ctx.skyPresets && ctx.skyPresets()) || [];
+    $('ms-weather').innerHTML = st.weather.map((x, k) => `<div class="ms-obj"><b>Weather ${k + 1}</b>
+        ${whenPick(x.when, `data-s="${k}"`, zones, 'when', true)}${x.when === 'end' ? '' : delayPick(x, `data-s="${k}"`)}
+        <select data-s="${k}" data-k="preset"><option value="normal" ${x.preset === 'normal' ? 'selected' : ''}>Back to normal (the map's own)</option>
+          ${presets.map((p) => `<option ${String(p).toLowerCase() === String(x.preset || '').toLowerCase() ? 'selected' : ''}>${esc(p)}</option>`).join('')}
+          ${x.preset && x.preset !== 'normal' && !presets.some((p) => p.toLowerCase() === x.preset.toLowerCase()) ? `<option selected>${esc(x.preset)}</option>` : ''}</select>
+        <span class="buttons"><button data-s="${k}" data-a="del">Delete</button></span></div>`).join('')
+      || '<p class="hint">No weather changes: the map\'s own (its weather zones) decides.</p>';
+  }
+  $('ms-weather').addEventListener('input', (e) => {
+    const k = e.target.dataset.s, key = e.target.dataset.k;
+    if (k === undefined || !key) return;
+    const x = st.weather[+k];
+    if (key === 'delay') { setDelay(x, e.target.value); edited(); return; }
+    if (key === 'when') x.when = momentOf(e.target.value);
+    else if (key === 'whenZone') x.when = `zone:${e.target.value}`;
+    else if (key === 'whenSquad') x.when = `dead:${e.target.value}`;
+    else x[key] = e.target.value;
+    drawWeather(); edited();
+  });
+  $('ms-weather').addEventListener('click', (e) => {
+    if (e.target.dataset.a !== 'del') return;
+    st.weather.splice(+e.target.dataset.s, 1);
+    drawWeather(); edited();
+  });
+  $('ms-add-weather').onclick = () => {
+    const presets = (ctx.skyPresets && ctx.skyPresets()) || [];
+    st.weather.push({when: 'start', preset: presets[0] || 'normal'});
+    drawWeather(); edited();
+  };
+  $('ms-add-music').onclick = () => { st.music.push({when: 'start', play: 'music.Card_miniboss'}); drawMusic(); edited(); };
 
   function drawRadio() {
     if ($('ms-voice-find').parentElement === $('ms-radio')) $('ms-radio').after($('ms-voice-find'));
     const m = st.current;
     const zones = m ? m.zones : (st.shared || {}).zones || [];
     $('ms-radio').innerHTML = st.radio.map((r, k) => `<div class="ms-obj"><b>Line ${k + 1}</b>
-        ${whenPick(r.when, `data-r="${k}"`, zones, 'when', true)}
+        ${whenPick(r.when, `data-r="${k}"`, zones, 'when', true)}${r.when === 'end' ? '' : delayPick(r, `data-r="${k}"`)}
         <input data-r="${k}" data-k="sound" type="text" value="${esc(r.sound)}" placeholder="Voice (optional): fio.S10START"
           title="A voice cue as bank.cue: the game's own, or one your mod adds as sounds/<bank>/new/<cue>.wav">
         <button data-r="${k}" data-a="voice" title="Search the game's voice lines">Find voice</button>
@@ -702,12 +889,14 @@ export function createMissions(ctx) {
     const k = e.target.dataset.r, key = e.target.dataset.k;
     if (k === undefined || !key) return;
     const r = st.radio[+k];
+    if (key === 'delay') { setDelay(r, e.target.value); edited(); return; }
     if (key === 'when') {
       const zones = st.current ? st.current.zones : (st.shared || {}).zones || [];
-      r.when = e.target.value === 'zone' ? `zone:${zones[0] || ''}` : e.target.value;
-      drawRadio(); edited(); return;
+      r.when = momentOf(e.target.value);
+      drawRadio(); drawMusic(); drawWeather(); edited(); return;
     }
     if (key === 'whenZone') r.when = `zone:${e.target.value}`;
+    else if (key === 'whenSquad') r.when = `dead:${e.target.value}`;
     else r[key] = e.target.value.trim();
     edited();
   });
@@ -717,7 +906,7 @@ export function createMissions(ctx) {
     if (!a) return;
     if (a === 'del') st.radio.splice(k, 1);
     else if (a === 'up' && k > 0) [st.radio[k - 1], st.radio[k]] = [st.radio[k], st.radio[k - 1]];
-    drawRadio(); edited();
+    drawRadio(); drawMusic(); drawWeather(); edited();
   });
   // ---------------------------------------------------------------- squads that appear later
   // Only the mission's own squads (its layer is split at build time).
@@ -728,7 +917,7 @@ export function createMissions(ctx) {
     $('ms-waves').innerHTML = st.waves.map((w, k) => `<div class="ms-obj"><b>Squad ${k + 1}</b>
         <select data-w="${k}" data-k="squad"><option value="">(squad)</option>${own.map((s) =>
           `<option ${s === w.squad ? 'selected' : ''}>${esc(s)}</option>`).join('')}</select>
-        appears ${whenPick(w.when, `data-w="${k}"`, zones)}
+        appears ${whenPick(w.when, `data-w="${k}"`, zones)}${delayPick(w, `data-w="${k}"`)}
         <span class="buttons"><button data-w="${k}" data-a="del">Delete</button></span></div>`)
       .join('') || '<p class="hint">None: every squad is there from the start.</p>';
   }
@@ -736,10 +925,12 @@ export function createMissions(ctx) {
     const k = e.target.dataset.w, key = e.target.dataset.k;
     if (k === undefined || !key) return;
     const w = st.waves[+k];
+    if (key === 'delay') { setDelay(w, e.target.value); edited(); return; }
     if (key === 'when') {
       const zones = (st.current || st.shared || {}).zones || [];
-      w.when = e.target.value === 'zone' ? `zone:${zones[0] || ''}` : e.target.value;
+      w.when = momentOf(e.target.value);
     } else if (key === 'whenZone') w.when = `zone:${e.target.value}`;
+    else if (key === 'whenSquad') w.when = `dead:${e.target.value}`;
     else w[key] = e.target.value;
     drawWaves(); edited();
   });
@@ -821,7 +1012,7 @@ export function createMissions(ctx) {
           ? `<select data-o="${k}" data-k="to"><option value="">(path)</option>${paths.map((x) =>
               `<option ${x === o.to ? 'selected' : ''}>${esc(x)}</option>`).join('')}</select>` : '';
       return `<div class="ms-obj"><b>Order ${k + 1}</b>
-        ${whenPick(o.when, `data-o="${k}"`, zones)}
+        ${whenPick(o.when, `data-o="${k}"`, zones)}${delayPick(o, `data-o="${k}"`)}
         <select data-o="${k}" data-k="squad"><option value="">(squad)</option>${squads.map((s) =>
           `<option ${s === o.squad ? 'selected' : ''}>${esc(s)}</option>`).join('')}</select>
         <select data-o="${k}" data-k="do">${Object.entries(ORDER_NAMES).map(([v, t]) =>
@@ -834,10 +1025,12 @@ export function createMissions(ctx) {
     const k = e.target.dataset.o, key = e.target.dataset.k;
     if (k === undefined || !key) return;
     const o = st.orders[+k];
+    if (key === 'delay') { setDelay(o, e.target.value); edited(); return; }
     if (key === 'when') {
       const zones = (st.current || st.shared || {}).zones || [];
-      o.when = e.target.value === 'zone' ? `zone:${zones[0] || ''}` : e.target.value;
+      o.when = momentOf(e.target.value);
     } else if (key === 'whenZone') o.when = `zone:${e.target.value}`;
+    else if (key === 'whenSquad') o.when = `dead:${e.target.value}`;
     else {
       o[key] = e.target.value;
       if (key === 'do' || key === 'squad') delete o.to;     // a different list of places
@@ -851,7 +1044,7 @@ export function createMissions(ctx) {
   });
   $('ms-add-order').onclick = () => { st.orders.push({when: 'start', squad: '', do: 'attack'}); drawOrders(); edited(); };
 
-  $('ms-add-radio').onclick = () => { st.radio.push({when: 'start', sound: '', text: ''}); drawRadio(); edited(); };
+  $('ms-add-radio').onclick = () => { st.radio.push({when: 'start', sound: '', text: ''}); drawRadio(); drawMusic(); drawWeather(); edited(); };
 
   $('ms-add-protect').onclick = () => { st.fails.push({type: 'dies', squad: ''}); drawFails(); edited(); };
   $('ms-add-timer').onclick = () => { st.fails.push({type: 'timer', seconds: 300}); drawFails(); edited(); };
@@ -866,6 +1059,17 @@ export function createMissions(ctx) {
   }
   $('ms-outline-box').addEventListener('toggle', drawOutline);
   $('ms-debug').addEventListener('change', edited);
+  $('ms-keep-hostile').addEventListener('change', edited);
+  $('ms-test-from').addEventListener('change', () => { st.testFrom = +$('ms-test-from').value || 0; edited(); });
+  // the main objectives it can start at (testing); redrawn with the outline
+  function drawTestFrom() {
+    const main = st.objectives.map((o, i) => [o, i]).filter(([o]) => !(+o.bonus > 0));
+    if (st.testFrom && !main.some(([, i]) => i + 1 === st.testFrom)) st.testFrom = 0;   // gone, or now a bonus
+    $('ms-test-from').innerHTML = '<option value="0">The first objective (normal)</option>'
+      + main.slice(1).map(([o, i]) => `<option value="${i + 1}" ${st.testFrom === i + 1 ? 'selected' : ''}>`
+        + `Objective ${i + 1}: ${esc(o.text || OBJ_NAMES[o.type] || o.type)}</option>`).join('');
+    $('ms-test-from').classList.toggle('ms-warn', !!st.testFrom);
+  }
   // A new mission's faction picks its number only; what's typed stays.
   $('ms-faction').onchange = () => {
     // a new mission's own-faction mood (20 by default) goes with the faction
@@ -908,6 +1112,9 @@ export function createMissions(ctx) {
   }
   $('ms-giver-side').onchange = () => { st.giver.side = $('ms-giver-side').value; edited(); };
   $('ms-giver-marker').onchange = () => { st.giver.marker = $('ms-giver-marker').value; edited(); };
+  for (const [id, k] of [['ms-giver-stay', 'stay'], ['ms-giver-invincible', 'invincible'], ['ms-giver-lose', 'lose_if_killed']]) {
+    $(id).onchange = () => { st.giver[k] = $(id).checked; edited(); };
+  }
   $('ms-requires').addEventListener('change', (e) => {
     const id = e.target.dataset.req;
     if (!id) return;
@@ -997,9 +1204,9 @@ export function createMissions(ctx) {
     if (st.giver.mode === 'placed' && !st.giver.position) throw new Error('Place the mission giver (Set here), or pick another giver');
     return {map: st.map, mission: {
       faction, number, title: $('ms-title').value.trim(), description: $('ms-description').value.trim(),
-      briefing: $('ms-briefing').value.trim(), fee: +$('ms-fee').value || 0, bonus: +$('ms-bonus').value || 0, debug: $('ms-debug').checked,
+      briefing: $('ms-briefing').value.trim(), fee: +$('ms-fee').value || 0, bonus: +$('ms-bonus').value || 0, debug: $('ms-debug').checked, keep_if_hostile: $('ms-keep-hostile').checked, test_from: st.testFrom || 0,
       mood: Object.fromEntries(MOOD_FACTIONS.map((f) => [f, Math.max(-100, Math.min(100, Math.round(+$(`ms-mood-${f}`).value || 0)))])), objectives: st.objectives,
-      start: st.start, giver: st.giver, requires: st.requires || [], fail: st.fails, radio: st.radio, orders: st.orders, waves: st.waves, support: st.support, unlocks: st.unlocks,
+      start: st.start, giver: st.giver, requires: st.requires || [], fail: st.fails, radio: st.radio, music: st.music, weather: st.weather, orders: st.orders, waves: st.waves, support: st.support, unlocks: st.unlocks,
       done_mail: {subject: $('ms-done-subject').value.trim(), body: $('ms-done-body').value.trim()},
     }};
   }

@@ -320,6 +320,7 @@ export function createLayout(ctx) {
     $('draw-file').innerHTML = files.map((f) => `<option>${f}</option>`).join('');
     $('draw-file').value = want || st.files[0] || fresh;
     $('draw-type-row').hidden = kind !== 'boundary';
+    drawWeatherRow();
     $('draw').hidden = false;
     $('draw-title').textContent = kind === 'path' ? 'New path' : 'New zone';
     showPanel();
@@ -342,9 +343,31 @@ export function createLayout(ctx) {
     return true;
   }
 
+  // A weather zone (type atmosphere) is named after the preset it shows: the
+  // game matches them by name.
+  function drawWeatherRow() {
+    const on = !$('draw-type-row').hidden && $('draw-type').value === 'atmosphere';
+    $('draw-weather-row').hidden = !on;
+    if (!on) return;
+    const presets = (ctx.skyPresets && ctx.skyPresets()) || [];
+    const cur = $('draw-weather').value;
+    $('draw-weather').innerHTML = presets.map((p) => `<option ${p === cur ? 'selected' : ''}>${p}</option>`).join('')
+      || '<option value="">(no presets on this map)</option>';
+    if ($('draw-weather').value) $('draw-name').value = $('draw-weather').value;
+  }
+  $('draw-type').addEventListener('change', drawWeatherRow);
+  $('draw-weather').addEventListener('change', () => { $('draw-name').value = $('draw-weather').value; });
+
   function finishDraw() {
     const d = st.draw;
     if (!d) return;
+    if (d.kind === 'boundary' && $('draw-type').value === 'atmosphere') {
+      const presets = (ctx.skyPresets && ctx.skyPresets()) || [];
+      const n = $('draw-name').value.trim().toLowerCase();
+      if (!presets.some((p) => p.toLowerCase() === n)) {
+        return status('A weather zone is named after one of the map\'s presets (pick it above, or make one in Sky)', true);
+      }
+    }
     const need = d.kind === 'path' ? 2 : 3;
     if (d.points.length < need) return status(`A ${label(d)} needs at least ${need} points`, true);
     const name = $('draw-name').value.trim();

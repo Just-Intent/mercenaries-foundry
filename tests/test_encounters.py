@@ -21,6 +21,16 @@ class EncounterTests(unittest.TestCase):
     def build(self, doc=DOC):
         return encounters.build("my_layer", doc, lambda name: SOURCE)
 
+    def test_new_model_copy(self):
+        # a copy given another model (a new object's GeometryFile) draws and loads it
+        doc = {"map": "swn", "objects": [{"from": "RoadblockRunner", "name": "Crate", "position": [0, 0, 0],
+                                           "set": {"GeometryFile": "foundry_crate", "geometrynameruined": "foundry_crate_ruin"}}]}
+        recs = self.build(doc)
+        inst = [c for c in world.to_json(recs[encounters.WORLD])["chunks"] if c.get("tag") == "inst"][0]
+        self.assertEqual(inst["model"], "foundry_crate")
+        models = encounters.parse_list(recs[encounters.LIST].decode("latin-1"))["model"]
+        self.assertEqual(models, ["foundry_crate", "foundry_crate_ruin"])
+
     def test_world(self):
         rec = self.build()[encounters.WORLD]
         doc = world.to_json(rec)

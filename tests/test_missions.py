@@ -371,8 +371,10 @@ class MissionTests(unittest.TestCase):
         doc = {"objectives": [{"type": "goto", "text": "A", "zone": "a"}]}
         lua = missions.objectives_script("sw_allies11", doc, lambda squad: [])
         self.assertIn("bFoundryDebug = false", lua)
-        self.assertIn("Utility_WriteStringToScribbleMemory('foundry_log', sAll)", lua)
-        self.assertIn("while string.len(sAll) > 400 and table.getn(tFoundryLog) > 1 do", lua)
+        self.assertIn("Utility_WriteStringToScribbleMemory('foundry_log', 'sw_allies11: ' .. table.concat(tFoundryLog, ' | '))", lua)
+        self.assertIn("if table.getn(tFoundryLog) > 8 then table.remove(tFoundryLog, 1) end", lua)
+        # only Lua the game's scripts use: string.len stopped sw_china9's start (its Lua has no string library)
+        self.assertNotIn("string.", lua.replace("tostring", ""))
         self.assertIn("if bFoundryDebug then util_ObjMsgPrint{ sMsg = '[sw_allies11] ' .. line, sType = 'GENERAL' } end", lua)
         for step in ("foundry_Note('started')", "foundry_Note('FAILED: ' .. tostring(sReason))",
                      "foundry_Note(o.name .. ' done')", "foundry_Note('fail condition on: ' .. f.kind)"):
@@ -416,7 +418,8 @@ class MissionTests(unittest.TestCase):
                "unlocks": ["template_support_deliverH2"], "done_mail": {"subject": "Thanks", "body": "Good work."}}
         lua = missions.objectives_script("sw_allies11", doc, lambda squad: [])
         self.assertIn("{ when = 'end', sound = 'fio.S10DONE' }", lua)
-        self.assertIn("if not bFoundryEndSaid then bFoundryEndSaid = true foundry_Radio('end') end", lua)
+        self.assertIn("if not bFoundryEndSaid then bFoundryEndSaid = true foundry_Radio('end') foundry_Musics('end') "
+                      "foundry_Weathers('end') end", lua)
         self.assertIn("tFoundryUnlocks = { 'template_support_deliverH2' }", lua)
         self.assertIn("sFoundryDoneMail = 'sw_allies11_done'", lua)
         self.assertIn("for i, s in ipairs(tFoundryUnlocks) do Shop_UnlockItem(s) end", lua)
@@ -431,6 +434,110 @@ class MissionTests(unittest.TestCase):
         self.assertIn("sFoundryDoneMail = nil", plain)
         with self.assertRaises(ValueError):
             missions.objectives_script("sw_allies11", {**doc, "unlocks": ["gunship"]}, lambda squad: [])
+
+    def test_test_from(self):
+        # testing: start at a later main objective (here objective 4, the third main one)
+        doc = {"objectives": [{"type": "goto", "text": "A", "zone": "a"},
+                              {"type": "goto", "text": "Bonus", "zone": "b", "bonus": 100},
+                              {"type": "goto", "text": "C", "zone": "c"},
+                              {"type": "goto", "text": "D", "zone": "d"}], "test_from": 4}
+        lua = missions.objectives_script("sw_allies11", doc, lambda squad: [])
+        self.assertIn("iFoundryTestFrom = 3      -- testing", lua)
+        self.assertIn("if iFoundryTestFrom then           -- testing: the main objectives before it are skipped\n"
+                      "iFoundryStep = iFoundryTestFrom - 1", lua)
+        self.assertIn("iFoundryTestFrom = nil", missions.objectives_script("sw_allies11", {**doc, "test_from": 0}, lambda squad: []))
+        for bad in (2, 9, "x"):                       # a bonus objective, none, not a number
+            with self.assertRaises(ValueError):
+                missions.objectives_script("sw_allies11", {**doc, "test_from": bad}, lambda squad: [])
+
+    def test_keep_if_hostile(self):
+        doc = {"objectives": [{"type": "goto", "text": "A", "zone": "a"}]}
+        self.assertIn("bFoundryKeepHostile = false", missions.objectives_script("sw_allies11", doc, lambda squad: []))
+        lua = missions.objectives_script("sw_allies11", {**doc, "keep_if_hostile": True}, lambda squad: [])
+        self.assertIn("bFoundryKeepHostile = true", lua)
+        # mission.lua calls custom_FactionAttitudeChange instead of cancelling, when it's defined
+        self.assertIn("if bFoundryKeepHostile then\nfunction custom_FactionAttitudeChange()", lua)
+
+    def test_squad_wiped_out(self):
+        layer = {"map": "SW", "encounters": [{"name": "camp", "points": {"A": [[0, 0, 0]]},
+                                               "squads": [{"name": "Guards", "points": ["A"], "members": [{"name": "G1"}]},
+                                                          {"name": "Ambush", "points": ["A"], "members": [{"name": "X1"}]}]}]}
+        members = {"camp:Guards": ["g1", "g2"], "camp:Ambush": ["x1"]}
+        doc = {"objectives": [{"type": "goto", "text": "A", "zone": "a"},
+                              {"type": "goto", "text": "Bonus", "zone": "b", "bonus": 100, "reveal": "dead:camp:Guards"}],
+               "waves": [{"when": "dead:camp:Guards", "squad": "camp:Ambush"}],
+               "radio": [{"when": "dead:camp:Ambush", "text": "Clear."}],
+               "orders": [{"when": "dead:camp:Guards", "squad": "camp:Ambush", "do": "attack"}],
+               "fail": [{"type": "timer", "seconds": 60, "from": "dead:camp:Guards"}]}
+        lua = missions.objectives_script("sw_allies11", doc, lambda squad: members[squad])
+        self.assertIn("reveal = 'dead', after = 'camp:Guards'", lua)
+        self.assertIn("{ when = 'dead', after = 'camp:Guards', layer = 'sw_allies11_w1' }", lua)
+        self.assertIn("from = 'dead', after = 'camp:Guards'", lua)
+        self.assertIn("{ squad = 'camp:Guards', members = { 'g1', 'g2' } }", lua)
+        self.assertIn("{ squad = 'camp:Ambush', members = { 'x1' }, wave = 'sw_allies11_w1' }", lua)   # watched once it's there
+        self.assertIn("foundry_WatchSquads(w.layer)", lua)
+        self.assertIn("foundry_Note('started')\nfoundry_WatchSquads(nil)", lua)
+        rest, _ = missions.split_waves("sw_allies11", doc, layer)
+        self.assertEqual(missions.when_of("dead:camp:Guards", 2, "x"), ("dead", "camp:Guards"))
+        with self.assertRaises(ValueError):
+            missions.when_of("dead:", 2, "x")
+
+    def test_delays(self):
+        doc = {"objectives": [{"type": "goto", "text": "A", "zone": "a"}],
+               "radio": [{"when": "done:1", "text": "Later", "delay": 10}, {"when": "end", "text": "Bye", "delay": 5}],
+               "waves": [{"when": "starts:1", "squad": "camp:Ambush", "delay": "30"}],
+               "orders": [{"when": "starts:1", "squad": "camp:Ambush", "do": "attack", "delay": 32}]}
+        lua = missions.objectives_script("sw_allies11", doc, lambda squad: ["x1"])
+        self.assertIn("text = 'sw.allies11.radio.foundry1', delay = 10, cb = 'foundry_LaterR1' }", lua)
+        self.assertIn("{ when = 'end', text = 'sw.allies11.radio.foundry2' }", lua)              # no delay at the end
+        self.assertIn("layer = 'sw_allies11_w1', delay = 30, cb = 'foundry_LaterW1' }", lua)
+        self.assertIn("delay = 32, cb = 'foundry_LaterO1' }", lua)
+        self.assertIn("function foundry_LaterR1() local x = tFoundryRadio[1] x.due = true foundry_Say(x) end", lua)
+        self.assertIn("function foundry_LaterW1() local x = tFoundryWaves[1] x.due = true foundry_Wave(x) end", lua)
+        self.assertIn("if not r.waiting then r.waiting = true Event_RelativeTimer(r.cb, 'b', r.delay) end", lua)
+        with self.assertRaises(ValueError):
+            missions.objectives_script("sw_allies11", {**doc, "radio": [{"text": "x", "delay": "soon"}]}, lambda squad: ["x1"])
+
+    def test_music(self):
+        doc = {"objectives": [{"type": "goto", "text": "A", "zone": "a"}],
+               "music": [{"when": "starts:1", "play": "music.Card_Ace"}, {"when": "zone:z", "play": "normal", "delay": 5},
+                         {"when": "end", "play": "music.Faction_Suc"}]}
+        lua = missions.objectives_script("sw_allies11", doc, lambda squad: [])
+        self.assertIn("{ when = 'starts', after = 'foundry1', play = 'music.Card_Ace' }", lua)
+        self.assertIn("{ when = 'zone', zone = 'z', play = 'normal', delay = 5, cb = 'foundry_LaterM2' }", lua)
+        self.assertIn("foundry_Radio('starts', o.name)\nfoundry_Musics('starts', o.name)", lua)
+        self.assertIn("foundry_Radio('end') foundry_Musics('end')", lua)
+        self.assertIn("if bFoundryMusic then foundry_NormalMusic() end\nfoundry_NormalWeather()\n"
+                      "sReasonForFailure = sReason", lua)   # failing puts the music and weather back
+
+    def test_weather(self):
+        doc = {"objectives": [{"type": "goto", "text": "A", "zone": "a"}],
+               "weather": [{"when": "starts:1", "preset": "summer1"}, {"when": "done:1", "preset": "normal", "delay": 4}]}
+        lua = missions.objectives_script("sw_allies11", doc, lambda squad: [])
+        self.assertIn("{ when = 'starts', after = 'foundry1', preset = 'summer1' }", lua)
+        self.assertIn("preset = 'normal', delay = 4, cb = 'foundry_LaterS2' }", lua)
+        self.assertIn("Mission_EnableAtmosphere(w.preset, true)", lua)
+        self.assertIn("if sFoundryWeather then Mission_EnableAtmosphere(sFoundryWeather, false) end", lua)
+        self.assertIn("foundry_Musics('starts', o.name)\nfoundry_Weathers('starts', o.name)", lua)
+        with self.assertRaises(ValueError):
+            missions.objectives_script("sw_allies11", {**doc, "weather": [{"preset": "two words"}]}, lambda squad: [])
+        for bad in ("Card_Ace", "", "music.x y"):
+            with self.assertRaises(ValueError):
+                missions.objectives_script("sw_allies11", {**doc, "music": [{"play": bad}]}, lambda squad: [])
+
+    def test_placed_giver_rules(self):
+        placed, _ = missions.contract("sw_allies9", {"title": "T", "contact": {
+            "template": "template_ace_clubs", "position": [1, 2, 3], "stay": True, "invincible": True,
+            "lose_if_killed": True}}, "a", "b")
+        lua = missions.contracts_script([placed])
+        self.assertIn(", stay = true, invincible = true, lose = true }", lua)
+        self.assertIn("Actor_SetVerifiable(name, FALSE)", lua)            # an Ace template: never verified
+        self.assertIn("if c.stay then Ai_CommandQueue(name, 'Wait', 'hiPri') end", lua)
+        self.assertIn("if c.lose then Event_ActorHitPointsLessThan('foundry_GiverKilled', 'b', name, 1) end", lua)
+        self.assertIn("or Utility_ReadNumberFromScribbleMemory('foundry_lost_' .. c.id)) then", lua)
+        # only for one placed on the map
+        hq, _ = missions.contract("sw_allies9", {"title": "T", "contact": {"stay": True}}, "a", "b")
+        self.assertNotIn("stay = true", missions.contracts_script([hq]).split("tFoundryContracts")[1].split("}")[0])
 
     def test_waves(self):
         layer = {"map": "SW", "encounters": [{"name": "camp", "points": {"A": [[0, 0, 0]], "B": [[5, 0, 5]]},
@@ -600,7 +707,7 @@ class MissionTests(unittest.TestCase):
                                        "MissionInfo.MissionTitle.SWAllies10", "MissionInfo.Description.SWAllies10")
         chained_lua = missions.contracts_script([chained])
         self.assertIn("requires = { 'sw_allies9' } },", chained_lua)
-        self.assertIn("or not foundry_Unlocked(c)) then", chained_lua)
+        self.assertIn("or not foundry_Unlocked(c)\nor Utility_ReadNumberFromScribbleMemory('foundry_lost_' .. c.id)) then", chained_lua)
         self.assertIn("template = 'template_civ_civilian01'", placed_lua)
         # a placed giver comes from its own layer: waited for (its actor can
         # appear a moment after the layer loads), never spawned by the script

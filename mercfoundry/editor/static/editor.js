@@ -15,6 +15,7 @@ import {applyGround} from './ground.js';
 import {createMinimap} from './minimap.js';
 import {createTerrainEditor} from './terrain_edit.js';
 import {createMissions} from './missions.js';
+import {createSky} from './sky.js';
 
 const $ = (id) => document.getElementById(id);
 const NEAR_RADIUS = 220;      // metres around the view centre that show real models
@@ -58,6 +59,33 @@ function resize() {
   camera.updateProjectionMatrix();
 }
 new ResizeObserver(resize).observe(view);     // the header can wrap, so watch the view itself
+
+// The side panel: drag its left edge to make it wider (kept for next time).
+{
+  const panel = document.getElementById('panel'), grip = document.getElementById('panel-grip');
+  const setWidth = (w) => {
+    w = Math.max(260, Math.min(Math.round(w), Math.round(window.innerWidth * 0.7)));
+    panel.style.width = `${w}px`;
+    return w;
+  };
+  try { const w = +localStorage.getItem('foundry.panelWidth'); if (w) setWidth(w); } catch (e) { /* no storage */ }
+  grip.addEventListener('pointerdown', (e) => {
+    e.preventDefault();
+    grip.setPointerCapture(e.pointerId);
+    const x0 = e.clientX, w0 = panel.getBoundingClientRect().width;
+    const move = (ev) => setWidth(w0 + (x0 - ev.clientX));
+    const up = () => {
+      grip.removeEventListener('pointermove', move);
+      try { localStorage.setItem('foundry.panelWidth', String(Math.round(panel.getBoundingClientRect().width))); } catch (err) { /* no storage */ }
+    };
+    grip.addEventListener('pointermove', move);
+    grip.addEventListener('pointerup', up, {once: true});
+  });
+  grip.addEventListener('dblclick', () => {
+    setWidth(290);
+    try { localStorage.removeItem('foundry.panelWidth'); } catch (e) { /* no storage */ }
+  });
+}
 
 // ------------------------------------------------------------------ state
 const state = {
@@ -354,6 +382,7 @@ async function loadMap(name) {
   if (start) lookAt(start.position, 60);
   const [items, encounters] = await Promise.all([layout.load(name), encs.load(name)]);
   missions.load(name).catch((err) => console.warn('missions:', err));
+  sky.load(name).catch((err) => console.warn('sky:', err));
   if (mine !== loadSerial) return;
   minimap.setWater(waterAreas ? waterAreas() : []);
   refreshChanges();
@@ -544,6 +573,9 @@ function placedLook(from) {
 let placedSerial = 1;
 function addPlaced(from, name, file, position, rotation, select_ = true, set = null) {
   const look = placedLook(from);
+  // a copy given another model (a new object's) draws that
+  const geo = set && Object.entries(set).find(([k]) => k.toLowerCase() === 'geometryfile');
+  if (geo && geo[1]) { look.model = geo[1]; look.geometry = geo[1]; }
   const rec = {
     id: `placed:${placedSerial++}`, layer: file.replace(/\.json$/, ''), name: from, ...look,
     position, rotation, copyName: name, template: from, file,
@@ -557,6 +589,40 @@ function addPlaced(from, name, file, position, rotation, select_ = true, set = n
   }
   return rec;
 }
+
+// New object: the selected object's properties (and the skeleton of its
+// model) with your own model, a .glb. The server writes models/<name>.glb
+// and .new.json (the build makes the model); a copy that uses it is placed
+// beside the selected one, to move where it belongs and save.
+$('new-object').onclick = () => {
+  if (!state.selected) return status('Select an object first: the new one starts from it', true);
+  $('new-object-file').value = '';
+  $('new-object-file').click();
+};
+$('new-object-file').onchange = async () => {
+  const file = $('new-object-file').files[0], src = state.selected;
+  if (!file || !src) return;
+  const guess = file.name.replace(/\.glb$/i, '').toLowerCase().replace(/[^a-z0-9_-]+/g, '_');
+  const name = (prompt('Name of the new model (letters, digits, _ and -)', guess) || '').trim();
+  if (!name) return;
+  const bytes = new Uint8Array(await file.arrayBuffer());
+  let bin = '';
+  for (let i = 0; i < bytes.length; i += 0x8000) bin += String.fromCharCode.apply(null, bytes.subarray(i, i + 0x8000));
+  const base = src.geometry || src.model;
+  try {
+    const r = await fetch('/api/models/new', {method: 'POST', headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({name, base, glb: btoa(bin)})});
+    const doc = await r.json();
+    if (!r.ok) throw new Error(doc.error || r.statusText);
+    modelCache.delete(name);
+    const from = src.template || src.name || `model:${src.model}`;
+    const position = [src.position[0] + 3, src.position[1], src.position[2]];
+    const placed = addPlaced(from, freshPlacedName(name), state.layerFile, position, src.rotation, true, {GeometryFile: name});
+    status(`New model ${name} saved (${doc.files.join(', ')}); placed ${placed.copyName} beside the original: move it and Save`);
+  } catch (e) {
+    status(`Couldn't make the new object: ${e.message}`, true);
+  }
+};
 
 function freshPlacedName(from) {
   const base = from.replace(/^template_/i, '').replace(/^model:/i, '') || 'object';
@@ -705,6 +771,12 @@ async function save() {
       }
     } catch (e) {
       note += `; mission not saved: ${e.message}`;
+    }
+    const skyBody = sky.saveBody();
+    if (skyBody) {
+      const done = await post('/api/sky/save', skyBody);
+      sky.saved();
+      note += done.empty ? '; sky back to the game\'s' : `; sky and weather in ${done.file}`;
     }
     const terr = terrainEdit.saveBody(), paint = terrainEdit.paintBody(), roads = terrainEdit.roadsBody();
     if (terr) {
@@ -971,6 +1043,7 @@ const missions = createMissions({
   scene, threePos: (p) => threePos(p), lookAt: (p) => lookAt(p, 30),
   viewCentre: () => { const g = gamePos(controls.target); g[1] = round(heightAt(g[0], g[2])); return g; },
   newSquadIn: (file) => encs.startNewSquad(file),
+  skyPresets: () => sky.presetNames(),
   drawZoneIn: (file) => layout.startDraw('boundary', file),
   gamePos: (v) => gamePos(v), groundAt: (x, z) => heightAt(x, z),
   // The start marker takes the gizmo (move along the ground, or turn).
@@ -983,6 +1056,8 @@ const missions = createMissions({
     return r ? {name: r.copyName || r.name || null, kind: r.type || '', model: r.geometry || r.model || ''} : null;
   },
 });
+// Sky and weather: the map's base sky and atmosphere presets (sky/<map>.json).
+const sky = createSky({$, status, setDirty: (v) => setDirty(v)});
 // The minimap (water areas come from the layout module once it has loaded).
 let waterAreas = null;
 const minimap = createMinimap({$, heightAt, lookAt: (p, d) => lookAt(p, d)});
@@ -993,6 +1068,7 @@ const layout = createLayout({
   modName: () => modName,
   terrain: () => terrainMesh,
   encounterFiles: () => encs.files(),
+  skyPresets: () => sky.presetNames(),
 });
 const encs = createEncounters({
   scene, gizmo, heightAt, threePos, gamePos, status, $, setDirty, camera, slug,

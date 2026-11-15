@@ -103,6 +103,13 @@ def _member(source, spec, extra=()):
                 break
         else:
             inst["properties"].append([key, str(value)])
+    # A copy given another model (GeometryFile, as a new object's) draws it:
+    # the object's own model word follows, as in 4632 of SW's 4748 objects.
+    for key, value in sets.items():
+        if key.lower() == "geometryfile" and value:
+            inst["model"] = str(value)
+    if spec.get("model"):
+        inst["model"] = str(spec["model"])
     inst["position"] = [float(v) for v in spec["position"]]
     inst["rotation"] = _rotation(float(spec.get("yaw", 0)))
     chunks = inst.get("chunks", ["INFO", "XFRM", "PROP"])
@@ -385,6 +392,16 @@ def build(layer, doc, find_source, source_loads=None):
                 if kind.lower() not in LAYER_KINDS:
                     extra.append((kind, names_))
     extra += list((doc.get("loads") or {}).items())
+    # models a copy is given (a new object's GeometryFile, its ruin) load with the layer
+    given = []
+    for o in doc.get("objects") or []:
+        for key, value in (o.get("set") or {}).items():
+            if key.lower() in ("geometryfile", "geometrynameruined") and value:
+                given.append(str(value))
+        if o.get("model"):
+            given.append(str(o["model"]))
+    if given:
+        extra.append(("model", given))
     for kind, names_ in extra:
         have = sections.setdefault(kind, [])
         have += [n for n in names_ if n.lower() not in {h.lower() for h in have}]

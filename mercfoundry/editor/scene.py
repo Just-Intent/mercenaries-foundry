@@ -292,6 +292,85 @@ class Scene:
                 "squads": shared_squads, "zones": shared_zones, "paths": shared_paths, "sets": shared_sets,
                 "hq": self._hq_points(m)}
 
+    def new_model(self, name, base, glb):
+        """A new object's model: writes models/<name>.glb (glb: the file's
+        bytes) and models/<name>.new.json naming the game model it's built on.
+        The build makes the model (modbuild._new_models)."""
+        import re
+        if not re.fullmatch(r"[A-Za-z0-9_\-]+", name or ""):
+            raise ValueError("a model name is letters, digits, _ and -")
+        if any(r.key == name_hash(name) and r.kind == model.MODEL for a in self.archives for r in a.records):
+            raise ValueError(f"the game already has a model named {name!r}: pick another name")
+        if glb[:4] != b"glTF":
+            raise ValueError("that isn't a .glb file (binary glTF)")
+        try:
+            model.find(self.archives, base)
+        except Exception:
+            raise ValueError(f"no game model {base!r} to build it on") from None
+        d = self.mod / "models"
+        d.mkdir(parents=True, exist_ok=True)
+        (d / f"{name}.glb").write_bytes(glb)
+        (d / f"{name}.new.json").write_text(json.dumps({"base": base}, indent=1) + "\n", encoding="utf-8")
+        self._models.pop(name, None)
+        return {"files": [f"models/{name}.glb", f"models/{name}.new.json"]}
+
+    def sky(self, map_name):
+        """A map's sky and weather: its base sky settings and atmosphere
+        presets as the game has them, and the mod's changes (sky/<map>.json)."""
+        from .. import sky as sk
+        texts = sk.level_texts(self.data, map_name)
+        if not texts:
+            return {"level": False}
+        files = list(texts)
+        p = self.mod / "sky" / f"{map_name.lower()}.json"
+        mod = json.loads(p.read_text(encoding="utf-8")) if p.exists() else {}
+        presets = [{"name": v["name"], "file": v["file"][len("DATAxbox/"):], "keys": [list(kv) for kv in v["keys"]]}
+                   for v in sk.presets_of(texts).values()]
+        # the sky textures the game's presets use (for picking one)
+        if not hasattr(self, "_sky_textures"):
+            seen = set()
+            for m in ("sw", "swn", "nw", "aclubs", "admnd", "aheart", "aspade", "shl"):
+                for v in sk.presets_of(sk.level_texts(self.data, m)).values():
+                    seen |= {val for k, val in v["keys"] if k.lower() == "skytexture"}
+                for t in sk.level_texts(self.data, m).values():
+                    seen |= {v for k, v in sk.base(t).items() if k.lower() == "skytexture"}
+            self._sky_textures = sorted(seen, key=str.lower)
+        return {"level": True, "files": [f[len("DATAxbox/"):] for f in files], "base": sk.base(texts[files[0]]),
+                "presets": presets, "mod": mod, "textures": self._sky_textures,
+                "preset_keys": list(sk.PRESET_KEYS), "base_keys": list(sk.BASE_KEYS)}
+
+    def save_sky(self, map_name, doc):
+        """Write sky/<map>.json (checked by applying it to the game's files);
+        an empty one is removed."""
+        from .. import sky as sk
+        texts = sk.level_texts(self.data, map_name)
+        if not texts:
+            raise ValueError(f"{map_name} isn't a level with sky settings")
+        clean = {}
+        if doc.get("base"):
+            clean["base"] = {k: v for k, v in doc["base"].items() if str(v).strip()}
+        presets = {n: {k: v for k, v in keys.items() if (v if isinstance(v, list) else str(v).strip())}
+                   for n, keys in (doc.get("presets") or {}).items()}
+        presets = {n: keys for n, keys in presets.items() if keys}
+        if presets:
+            clean["presets"] = presets
+        clean = {k: v for k, v in clean.items() if v}
+        sk.apply(texts, clean, f"sky/{map_name.lower()}.json")        # raises on anything the build would refuse
+        p = self.mod / "sky" / f"{map_name.lower()}.json"
+        if clean:
+            p.parent.mkdir(parents=True, exist_ok=True)
+            p.write_text(json.dumps(clean, indent=1) + "\n", encoding="utf-8")
+        elif p.exists():
+            p.unlink()
+        return {"file": f"sky/{p.name}", "empty": not clean}
+
+    def music_tracks(self):
+        """The game's music tracks (the music sound bank's cues): ["music.Card_Ace", ...]."""
+        try:
+            return [f"music.{c.name}" for c in self.sound_library().sound_bank("music").cues]
+        except KeyError:
+            return []
+
     def voice_lines(self):
         """The game's voiced lines a radio line can play: [{"cue": "fio.01011FIO",
         "text": subtitle}], from the subtitles (vo.<bank>.<cue>) whose cue is in
@@ -541,6 +620,16 @@ class Scene:
                 doc["done_mail"] = m
             else:
                 doc.pop("done_mail", None)
+        if "keep_if_hostile" in mission:
+            if mission.get("keep_if_hostile"):
+                doc["keep_if_hostile"] = True
+            else:
+                doc.pop("keep_if_hostile", None)
+        if "test_from" in mission:
+            if mission.get("test_from"):
+                doc["test_from"] = int(mission["test_from"])
+            else:
+                doc.pop("test_from", None)
         if "debug" in mission:
             if mission.get("debug"):
                 doc["debug"] = True
@@ -571,14 +660,14 @@ class Scene:
             else:
                 doc.pop("support", None)
         if "waves" in mission:
-            waves = [{k: v for k, v in w.items() if k in ("when", "squad") and v not in ("", None)}
+            waves = [{k: v for k, v in w.items() if k in ("when", "squad", "delay") and v not in ("", None, 0)}
                      for w in mission.get("waves") or []]
             if waves:
                 doc["waves"] = waves
             else:
                 doc.pop("waves", None)
         if "orders" in mission:
-            orders = [{k: v for k, v in o.items() if k in ("when", "squad", "do", "to") and v not in ("", None)}
+            orders = [{k: v for k, v in o.items() if k in ("when", "squad", "do", "to", "delay") and v not in ("", None, 0)}
                       for o in mission.get("orders") or []]
             for k, o in enumerate(orders, 1):
                 if o.get("do") not in ms.ORDER_TYPES:
@@ -587,8 +676,24 @@ class Scene:
                 doc["orders"] = orders
             else:
                 doc.pop("orders", None)
+        if "weather" in mission:
+            weather = [{k: v for k, v in w.items() if k in ("when", "preset", "delay") and v not in ("", None, 0)}
+                       for w in mission.get("weather") or []]
+            weather = [w for w in weather if w.get("preset")]
+            if weather:
+                doc["weather"] = weather
+            else:
+                doc.pop("weather", None)
+        if "music" in mission:
+            music = [{k: v for k, v in m.items() if k in ("when", "play", "delay") and v not in ("", None, 0)}
+                     for m in mission.get("music") or []]
+            music = [m for m in music if m.get("play")]
+            if music:
+                doc["music"] = music
+            else:
+                doc.pop("music", None)
         if "radio" in mission:
-            radio = [{k: v for k, v in r.items() if k in ("when", "sound", "text") and v not in ("", None)}
+            radio = [{k: v for k, v in r.items() if k in ("when", "sound", "text", "delay") and v not in ("", None, 0)}
                      for r in mission.get("radio") or []]
             radio = [r for r in radio if r.get("sound") or r.get("text")]     # empty lines aren't kept
             if radio:
@@ -646,7 +751,8 @@ class Scene:
                 doc["contact"] = False
             else:
                 old = doc.get("contact") if isinstance(doc.get("contact"), dict) else {}
-                c = {k: v for k, v in old.items() if k not in ("position", "heading", "template", "side", "marker")}
+                c = {k: v for k, v in old.items() if k not in ("position", "heading", "template", "side", "marker",
+                                                               "stay", "invincible", "lose_if_killed")}
                 for k in ("name", "prompt"):
                     if (giver.get(k) or "").strip():
                         c[k] = giver[k].strip()
@@ -663,6 +769,9 @@ class Scene:
                         c["side"] = giver["side"]
                     if giver.get("marker") and giver["marker"] != "gold":
                         c["marker"] = giver["marker"]
+                    for k in ("stay", "invincible", "lose_if_killed"):
+                        if giver.get(k):
+                            c[k] = True
                 if c:
                     doc["contact"] = c
                 else:
@@ -924,6 +1033,9 @@ class Scene:
 
     # ------------------------------------------------------------ models
     def model_glb(self, name):
+        own = self.mod / "models" / f"{name}.glb"
+        if own.is_file() and (self.mod / "models" / f"{name}.new.json").is_file():
+            return own.read_bytes()          # the mod's new model, as it'll be imported
         if name not in self._models:
             mr, sr = model.find(self.archives, name)
             m = model.decode(mr, sr)

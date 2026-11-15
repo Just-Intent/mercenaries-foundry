@@ -134,15 +134,35 @@ toolkit bundle run it the same way: `foundry\python\python.exe foundry\mercfound
   A road replaces whatever decal is on its cells (a patch holds one per cell;
   more hung or crashed the game), and paint hidden under opaque paint is left
   out of the patch (see dsk.md).
+- **Sky**: the map's sky and weather. **Base sky** is the map's own (sun
+  angle and colour, sky colour, fog, sky texture, rain). **Weather presets**
+  are the named weather the game switches to inside a weather zone, or when
+  a mission forces it. Each setting is listed with a colour swatch for
+  colours: sun, ambient, horizon, sky and zenith colours, fog, sky texture
+  and rotation, rain, snow and leaf chances, glow, and the five
+  colour-grading lines. Changed settings are highlighted. **New from this**
+  copies a preset under a new name; **Revert** puts one back. A **weather
+  zone** is a zone of type Weather (New zone), named after its preset.
+  Missions switch weather at a moment on the Events tab (**Weather**). Save
+  writes `sky/<map>.json`.
 - **Missions**: make a contract on the map. Pick a mission, or **New
   mission...** with a faction (it takes that faction's next free number on the
-  map), then give it:
+  map). The panel is in tabs (the one last open opens again, and each counts
+  what's in it): **Overview** (the outline, Check mission, the debug option,
+  the Lua line to start it), **Contract** (title, offer, briefing, fee,
+  bonus, mood), **Giver & start**, **Objectives**, **Events** (squads that
+  appear later, squad orders, radio lines), **Fail** and **Rewards**
+  (support items, shop unlocks, the follow-up mail). Objective cards fold to
+  one line (click the heading; new ones open). Drag the panel's left edge to
+  make it wider (double-click it for the normal width). Give the mission:
   - a title, a description (the contact's offer), a briefing (the contract
     mail), a fee and a flat bonus (paid on completion on top of the fee; 0
     unless you set one), and **Mood on completion**: how each faction's mood
     changes when it's done (-100 to 100; a new mission gives its own faction
     20, as retail contracts give 20 to 40; set another faction below 0 to
-    anger it);
+    anger it). **Keep the contract if its faction turns hostile**: the game
+    cancels a contract when its own faction turns on you (killing their
+    people, or civilians in their area); with this it goes on;
   - objectives: **Destroy** (pick a squad, or objects selected on the map
     with **+ Add selected object**; **How many** makes it done after that
     many, "kill 10 of the 20"), **Go to zone** (pick a zone; the zone
@@ -171,8 +191,18 @@ toolkit bundle run it the same way: `foundry\python\python.exe foundry\mercfound
     zone; the contract pays its reward on top if it's done, shows it failed if
     it was shown and not done, and leaves it out if it never was;
   - **Radio lines**: each plays **When** the mission starts, an objective
-    starts or is done, the player enters a zone, or the contract completes
-    (it completes after the line). A voice (`bank.cue`, the
+    starts or is done, the player enters a zone, a squad is wiped out
+    (every member dead), or the contract completes (it completes after the
+    line). Squads that appear later, squad orders, a bonus objective's
+    **Shown** and a fail condition's **Begins** take the same moments, all
+    but the last. Radio lines, squads that appear later and orders can also
+    wait a number of seconds after their moment (**after … s**: "the ambush
+    arrives 30 s after you reach the village");
+  - **Music**: at a moment (and delay), one of the game's 26 music tracks
+    (the card themes, each faction's action and explore themes, the win and
+    fail stingers; ▶ plays one here), or **Back to normal** (the faction's
+    own music). The normal music comes back when the contract completes or
+    fails; A voice (`bank.cue`, the
     game's or one the mod adds) plays through the game's radio queue with the
     text as its subtitle; with no voice, the text shows as a message. The
     contract completes after the last voiced line. **Find voice** searches
@@ -214,7 +244,8 @@ toolkit bundle run it the same way: `foundry\python\python.exe foundry\mercfound
     starts where the contract leaves them (the HQ);
   - a **Mission giver**: a contact at the faction's HQ (name and prompt can be
     set); someone **placed on the map** (any character template, name,
-    prompt, side and marker; a cyan figure you drag and turn like the start
+    prompt, side, marker, and whether they **stay put**, **can't be hurt**,
+    or **lose the contract when killed**; a cyan figure you drag and turn like the start
     arrow); **in the faction's HQ contract sequence** (the faction's own HQ
     bouncer offers it after the retail contract you pick, optionally with an
     HQ contact too); or no one (started by the Lua line). **Available after**
@@ -238,6 +269,13 @@ toolkit bundle run it the same way: `foundry\python\python.exe foundry\mercfound
   for test runs. With it or without, the last dozen steps are kept in the
   game's scribble memory, so they outlive the mission: type `foundry_Log()`
   in Foundry Console's Lua box to read them, even after it failed.
+
+  **Start at (for testing)** starts the mission at a later main objective,
+  skipping the ones before it, to test a later part without playing the
+  whole mission again. The dropdown turns orange, the outline says so, and
+  Check mission notes it, so it isn't shared by accident. Set it back to the
+  first objective when done. (Things set to happen when a skipped objective
+  starts or is done don't happen.)
 
   **Mission outline** shows the mission as a timeline in words, updated as
   you edit: what happens at the start, when each objective starts and is
@@ -317,6 +355,18 @@ toolkit bundle run it the same way: `foundry\python\python.exe foundry\mercfound
     template loaded there.
   - It's saved in the mod's layer for the map, `encounters/<mod>_<map>.json`,
     under `"objects"`.
+- **New object from a model...** (on a selected object) makes a new object
+  from your own model, a `.glb`. Name it, and the editor writes
+  `models/<name>.glb` and `models/<name>.new.json`, built on the selected
+  object's model; the build makes the model under the new name. It then
+  places a copy of the selected object that uses it (`GeometryFile`), beside
+  the original: move it and Save. Its properties (type, hit points,
+  material...) are the selected object's, so start from something like it:
+  a crate for a prop, a wall for a wall. Its textures come from the file: a
+  material named like one of the game's textures (as in an exported model)
+  keeps it, and any other becomes a new texture, `<model>_<material>`, from
+  its PNG image (scaled to power-of-two sides, at most 1024) or, with none, a
+  swatch of its base colour. JPEG images can't be read: export them as PNG.
 - **Editor layers load with their map.** Layer files the editor makes (squads,
   paths, zones, placed objects) get `"load": "map"`. The build then loads them
   whenever free roam starts on their map, so they appear in the game with no

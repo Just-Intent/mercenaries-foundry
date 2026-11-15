@@ -25,6 +25,12 @@ LUA_GLOBALS = {
     "string", "table", "math", "coroutine", "io", "os", "debug", "arg",
 }
 
+# Lua's library tables. The game's Lua is cut down: its scripts never touch
+# string, math, os or io, and calling string.len there stopped a mission's
+# start (0.94). So a library function counts only if the game's own scripts
+# call it too (known_names records "table.getn" and the like).
+LIBRARIES = {"string", "math", "os", "io", "coroutine", "debug", "table"}
+
 KEYWORDS = {"and", "break", "do", "else", "elseif", "end", "false", "for", "function", "if", "in", "local",
             "nil", "not", "or", "repeat", "return", "then", "true", "until", "while"}
 
@@ -333,11 +339,19 @@ class _Parser:
             kind, base = "paren", None
         else:
             raise LuaSyntaxError(f"line {tok[2]}: unexpected symbol near '{tok[1]}'")
+        lib = None          # "string.len": a field of a standard library table, called
         while True:
             t = self.peek()
             if t[0] == "op" and t[1] == ".":
-                self.next(); self.name(); kind, base = "index", None
-            elif t[0] == "op" and t[1] == "[":
+                self.next()
+                field = self.name()
+                lib = f"{base}.{field}" if kind == "name" and base in LIBRARIES and not self.is_local(base) else None
+                kind, base = "index", None
+                continue
+            if lib and ((t[0] == "op" and t[1] in ("(", "{")) or t[0] == "string"):
+                self.called.append((lib, t[2]))
+            lib = None
+            if t[0] == "op" and t[1] == "[":
                 self.next(); self.expr(); self.expect("]"); kind, base = "index", None
             elif t[0] == "op" and t[1] == ":":
                 self.next(); self.name(); self.args(None, t[2]); kind, base = "call", None
@@ -396,8 +410,9 @@ def names(source):
 
 def known_names(sources):
     """Every global a set of scripts defines or calls (the retail scripts: the
-    game's own functions and the engine's)."""
-    out = set(LUA_GLOBALS)
+    game's own functions and the engine's), and the library functions they
+    call ("table.getn"): the Lua the game is known to have."""
+    out = set()
     for s in sources:
         try:
             d, c, cb = names(s)
@@ -409,14 +424,19 @@ def known_names(sources):
 
 def unknown(source, known):
     """Calls and event callbacks that nothing defines: not this script, not
-    `known` (known_names of the retail scripts), not Lua's own."""
+    `known` (known_names of the retail scripts). Lua's own functions count only
+    if the game's scripts call them too: its Lua is cut down (no string
+    library, for one)."""
     defined, called, callbacks = names(source)
-    have = set(defined) | set(known) | LUA_GLOBALS
+    have = set(defined) | set(known)
     out, seen = [], set()
     for n, line in called:
         if n not in have and n not in seen:
             seen.add(n)
-            out.append(f"line {line}: calls {n}, which nothing defines (not this script, not the game's)")
+            if "." in n or n in LUA_GLOBALS:
+                out.append(f"line {line}: calls {n}, which the game's scripts never use (its Lua may not have it)")
+            else:
+                out.append(f"line {line}: calls {n}, which nothing defines (not this script, not the game's)")
     for n, line in callbacks:
         if n not in set(defined) and n not in known and n not in seen:
             seen.add(n)

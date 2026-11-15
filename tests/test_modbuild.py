@@ -51,6 +51,57 @@ class ModBuildTests(unittest.TestCase):
         arc = dsk.Archive(self.out / name)
         return {r.ident: arc.read(r) for r in arc.records}
 
+    def test_new_model(self):
+        # models/<name>.new.json + <name>.glb: a model under a new name, on a game model's skeleton
+        from mercfoundry import gltf
+        from tests.test_gltf_model import write_glb
+        m = model.decode(self.mr, self.sr)
+        doc, binary = gltf.read(gltf.export(m))
+        for n in doc["nodes"]:
+            if "mesh" in n:
+                n["name"] = "new_" + n["name"]                      # all new pieces
+        write_glb(self.project / "models" / "thing.glb", doc, binary)
+        self.write("models/thing.new.json", json.dumps({"base": "sample"}))
+        result = modbuild.build(self.project, self.data, self.out)
+        self.assertTrue(any(c.startswith("model thing: new, from thing.glb on sample's skeleton") for c in result.changes))
+        arc = dsk.Archive(self.out / "streamed.dsk")
+        recs = {r.kind: arc.read(r) for r in arc.records if r.key == name_hash("thing")}
+        new = model.decode(recs[model.MODEL], recs[model.SEGMENTS])
+        self.assertEqual(new.name, "thing")
+        self.assertEqual(len(new.pieces), len([n for n in doc["nodes"] if "mesh" in n]))   # none of the base's left
+        # the base stays as it was
+        self.assertEqual(self.records("streamed.dsk")[(name_hash("sample"), model.MODEL)], self.mr)
+        for spec, msg in (({"base": "nothere"}, "names no game model"), ({"base": "sample"}, "already has a model")):
+            p = self.project / "models"
+            for f in p.glob("*"):
+                f.unlink()
+            name = "sample" if "already" in msg else "thing"
+            write_glb(p / f"{name}.glb", doc, binary)
+            (p / f"{name}.new.json").write_text(json.dumps(spec))
+            with self.assertRaisesRegex(ValueError, msg):
+                modbuild.build(self.project, self.data, self.out)
+
+    def test_sky(self):
+        # sky/<map>.json: the base sky and atmosphere presets in the map's level config files
+        (self.data / "levels.ini").write_text("[LV_SW]\r\nName\t\tSW\r\nConfigFile\t\t\\SW\\SW.ini\r\n", encoding="latin-1")
+        (self.data / "SW").mkdir()
+        (self.data / "SW" / "SW.ini").write_bytes(b"SkyTexture\t\tskySummer\r\nFogRGBA\t\t1 2 3 4\r\n\r\n[SoundAmbience]\r\n")
+        (self.data / "SW" / "SW_XBOX.ini").write_bytes(b"[atmosphere]\r\nName\t\tsummer1\r\nRainChance\t0.0\r\n")
+        (self.project / "sky").mkdir(exist_ok=True)
+        self.write("sky/sw.json", json.dumps({"base": {"FogRGBA": "9 9 9 9"},
+                                              "presets": {"summer1": {"RainChance": "1"},
+                                                          "storm": {"copy": "summer1", "SnowChance": "1"}}}))
+        result = modbuild.build(self.project, self.data, self.out)
+        config = (self.out / "DATAxbox" / "SW" / "SW.ini").read_bytes().decode("latin-1")
+        xbox = (self.out / "DATAxbox" / "SW" / "SW_XBOX.ini").read_bytes().decode("latin-1")
+        self.assertIn("FogRGBA\t\t9 9 9 9", config)
+        self.assertIn("RainChance\t\t1", xbox)
+        self.assertIn("Name\t\tstorm\r\nRainChance\t\t0.0\r\nSnowChance\t\t1", xbox)
+        self.assertTrue(any(c.startswith("sky sw: ") for c in result.changes))
+        self.write("sky/nowhere.json", "{}")
+        with self.assertRaises(ValueError):
+            modbuild.build(self.project, self.data, self.out)
+
     def test_lua_checked(self):
         # a mod's scripts are checked as the game's Lua 5.0 will compile them
         self.write("scripts/mission.lua", "if x then\n  y = #t\nend\n")

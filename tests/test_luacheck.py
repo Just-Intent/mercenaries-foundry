@@ -65,6 +65,16 @@ local function f(x) x() end
                                     "line 6: an event calls back foundry_Missing, which nothing defines"])
         self.assertEqual(luacheck.known_names([src]) >= {"foundry_A", "Undefined_Native", "foundry_Missing"}, True)
 
+    def test_library_calls_must_be_the_games(self):
+        # the game's Lua is cut down: a library function counts only if the
+        # retail scripts call it (string.len stopped a mission's start)
+        retail = luacheck.known_names(["n = table.getn(t) table.insert(t, 1) s = tostring(n)"])
+        self.assertEqual(retail, {"table.getn", "table.insert", "tostring", "n", "s"})     # (and what it assigns)
+        src = "local s = 'x'\nn = string.len(s)\nm = table.getn(t)\nok = pcall(f)\nlocal string = {}\nstring.len(s)\n"
+        self.assertEqual(luacheck.unknown(src, retail), [
+            "line 2: calls string.len, which the game's scripts never use (its Lua may not have it)",
+            "line 4: calls pcall, which the game's scripts never use (its Lua may not have it)"])
+
     def test_generated_mission_script(self):
         # every feature at once: the script must be Lua 5.0 the game compiles,
         # and every function and callback it names its own (or the game's)

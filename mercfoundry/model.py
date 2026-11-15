@@ -371,3 +371,57 @@ def preview_png(model: Model, lod=0, size=512, yaw=35.0, pitch=-25.0, damaged=Fa
                 depth[k] = z
                 img[k * 3:k * 3 + 3] = colour
     return png.encode(size, size, bytes(img), 3)
+
+
+def renamed(model_record: bytes, name: str) -> bytes:
+    """The Model record under another name (its NAME chunk): a copy for a new model."""
+    body, pads = ucfb.unwrap(model_record, b"modl", with_pad=True)
+    items, pad_last = ucfb.split(body)
+    items = [(t, name.encode("latin-1") + b"\0" if t == b"NAME" else b) for t, b in items]
+    return ucfb.wrap(b"modl", ucfb.pack_children(items, pad_last), pads)
+
+
+def without_collision(segments_record: bytes) -> bytes:
+    """The segments record with its collision (cshp) taken out: a new model
+    made from another gets collision fitted to its own pieces instead."""
+    cseg, cseg_pad = ucfb.unwrap(segments_record, b"CSEG", with_pad=True)
+    size, _ = struct.unpack_from("<II", cseg)
+    tree = script.decompress(cseg[8:], size)
+    roots, tree_pad = ucfb.split(tree)
+    items, pad_last = ucfb.split(roots[0][1])
+    items = [(t, b) for t, b in items if t != b"cshp"]
+    new_tree = ucfb.pack_children([(b"ucfb", ucfb.pack_children(items, pad_last))], tree_pad)
+    packed = script.compress(new_tree)
+    return ucfb.wrap(b"CSEG", struct.pack("<II", len(new_tree), len(packed)) + packed, cseg_pad)
+
+
+def drop_pieces(model_record: bytes, segments_record: bytes, positions) -> tuple:
+    """(model, segments) without the pieces at these positions (their segm
+    chunks, in order), the model's piece count following."""
+    drop = set(positions)
+    cseg, cseg_pad = ucfb.unwrap(segments_record, b"CSEG", with_pad=True)
+    size, _ = struct.unpack_from("<II", cseg)
+    tree = script.decompress(cseg[8:], size)
+    roots, tree_pad = ucfb.split(tree)
+    items, pad_last = ucfb.split(roots[0][1])
+    out, k = [], 0
+    for t, b in items:
+        if t == b"segm":
+            k += 1
+            if k - 1 in drop:
+                continue
+        out.append((t, b))
+    count = sum(1 for t, _ in out if t == b"segm")
+    new_tree = ucfb.pack_children([(b"ucfb", ucfb.pack_children(out, pad_last))], tree_pad)
+    packed = script.compress(new_tree)
+    segments = ucfb.wrap(b"CSEG", struct.pack("<II", len(new_tree), len(packed)) + packed, cseg_pad)
+    body, pads = ucfb.unwrap(model_record, b"modl", with_pad=True)
+    mitems, mpad_last = ucfb.split(body)
+    new_items = []
+    for t, b in mitems:
+        if t == b"INFO":
+            info = bytearray(b)
+            struct.pack_into("<H", info, 2, count)
+            b = bytes(info)
+        new_items.append((t, b))
+    return ucfb.wrap(b"modl", ucfb.pack_children(new_items, mpad_last), pads), segments

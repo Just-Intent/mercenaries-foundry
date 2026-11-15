@@ -83,3 +83,42 @@ code.copyable { display: block; white-space: pre-wrap; word-break: break-all; fo
 #ms-voice-list { max-height: 260px; overflow-y: auto; font-size: 12px; }
 .ms-voice { padding: 2px 0; border-bottom: 1px solid #2a323c; }
 .ms-voice button { padding: 0 5px; margin-right: 3px; }
+
+/* Missions: tabs */
+#ms-tabs { display: flex; flex-wrap: wrap; gap: 3px; margin: 8px 0 6px; border-bottom: 1px solid #3a4654; padding-bottom: 6px; }
+#ms-tabs button { padding: 3px 7px; font-size: 12px; }
+#ms-tabs .ms-count { display: inline-block; min-width: 14px; padding: 0 4px; margin-left: 2px; border-radius: 7px;
+  background: rgba(255, 255, 255, 0.18); font-size: 10px; text-align: center; }
+
+/* the side panel's drag handle */
+#panel-grip { width: 5px; cursor: col-resize; background: #2a2e34; flex: none; }
+#panel-grip:hover { background: #3f6390; }
+#panel { flex: none; }
+
+/* Missions: folded objective cards */
+.ms-fold { cursor: pointer; display: block; }
+.ms-folded { padding-top: 4px; padding-bottom: 4px; }
+.ms-folded .ms-fold { display: inline; }
+.ms-summary { cursor: pointer; color: #9fb3c8; font-size: 12px; }
+
+/* tick boxes in cards keep their size (the inputs rule above is for text) */
+.ms-obj input[type=checkbox] { width: auto; margin-right: 4px; }
+
+/* a testing setting that's on */
+.ms-warn { border-color: #d08a3a; background: #4a3420; }
+#panel input[type=checkbox] { width: auto; margin-right: 4px; }
+.field:has(> input[type=checkbox]) { flex-direction: row; align-items: center; color: inherit; }
+
+/* a moment's delay */
+.ms-delay { display: inline-flex; align-items: center; gap: 4px; }
+.ms-obj .ms-delay input { width: 70px; }
+
+/* Sky and weather */
+.sky-row { display: grid; grid-template-columns: 130px auto 1fr; align-items: center; gap: 4px; margin: 2px 0; font-size: 12px; }
+.sky-row span { color: #8d98a3; overflow: hidden; text-overflow: ellipsis; }
+.sky-row input[type=color] { width: 28px; height: 22px; padding: 0; border: none; background: none; }
+.sky-row input[type=text], .sky-row textarea { grid-column: 3; width: 100%; box-sizing: border-box; font: inherit; }
+.sky-row input[type=color] + input, .sky-row input[type=color] + textarea { grid-column: 3; }
+.sky-row > input:only-of-type, .sky-row > textarea { grid-column: 2 / 4; }
+.sky-changed span { color: #e8c46a; }
+.sky-row textarea, .sky-row input[type=text] { background: #33383f; color: inherit; border: 1px solid #4a5059; border-radius: 4px; padding: 3px 6px; }
