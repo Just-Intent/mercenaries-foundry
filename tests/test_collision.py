@@ -277,3 +277,25 @@ def raw_cshp(segments_record):
 def shape_part(body, index, tag):
     shapes = [b for t, b in ucfb.iter_chunks(body) if t == b"shap"]
     return dict(ucfb.iter_chunks(shapes[index]))[tag]
+
+
+class BulletCrownTests(unittest.TestCase):
+    def test_crown_box_and_bullet_shape(self):
+        trunk = collision.Box(7, (0.2, 5.6, 0.2), (1, 0, 0, 0, 1, 0, 0, 0, 1), (0, 5.6, 0))
+        centre, half = collision.crown_box(((-5, 0, -5), (5, 18, 5)), trunk)
+        self.assertEqual(centre, (0.0, 11.8, 0.0))
+        self.assertEqual(half, (3.5, 6.2, 3.5))          # from the trunk box's middle to the top, 70% as wide
+        # a segments record with a trunk shape gets a shape only bullets hit, its own
+        block = cshp([box_shape(7, "root", [((0, 5.6, 0), (0.2, 5.6, 0.2))])], 1)
+        tree = ucfb.pack_chunk(b"ucfb", block)
+        packed = script.compress(tree)
+        seg = ucfb.wrap(b"CSEG", struct.pack("<II", len(tree), len(packed)) + packed)
+        new = collision.add_segments_bullet_boxes(seg, name_hash("root"), [(centre, half)])
+        cseg = ucfb.unwrap(new, b"CSEG")
+        size, _ = struct.unpack_from("<II", cseg)
+        items = list(ucfb.iter_chunks(list(ucfb.iter_chunks(script.decompress(cseg[8:], size)))[0][1]))
+        body = dict(items)[b"cshp"]
+        trunk_shape, crown = collision.parse(body)
+        self.assertEqual(trunk_shape.material, 7)
+        self.assertEqual((crown.material, crown.kind, crown.joint), (collision.BULLETS_ONLY, 2, name_hash("root")))
+        self.assertEqual(tuple(round(v, 3) for v in crown.boxes[0].half), (3.5, 6.2, 3.5))

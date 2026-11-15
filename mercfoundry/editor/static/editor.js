@@ -595,6 +595,10 @@ function showSelected() {
     $(id).disabled = !!rec.deleted || !!rec.context;
   }
   if (rec.mark) $('copy').disabled = $('delete').disabled = true;
+  // a tree: whether bullets hit its branches (its model's collision.json "crown")
+  const tree = /^tree/i.test(rec.type || '');
+  $('sel-crown-row').hidden = !tree || !!rec.context;
+  if (tree) $('sel-crown').checked = crowns.has((rec.geometry || rec.model || '').toLowerCase());
   $('delete').title = rec.name && !rec.copyName
     ? `Delete. Scripts may use "${rec.name}" by name; removing it can break them.` : 'Delete';
   if ($('sel-props-box').open) showProperties(rec);
@@ -1477,6 +1481,23 @@ function leanTo(normalOf, label) {
 }
 $('tilt').onclick = () => leanTo((r) => groundNormal(r.position[0], r.position[2]), 'Tilted');
 $('upright').onclick = () => leanTo(() => new THREE.Vector3(0, 1, 0), 'Stood upright');
+// Trees whose branches stop bullets (the mod's models/<model>.collision.json "crown").
+const crowns = new Set();
+getJSON('/api/crowns').then((list) => { for (const m of list) crowns.add(m.toLowerCase()); }).catch(() => {});
+$('sel-crown').addEventListener('change', async () => {
+  const rec = state.selected;
+  if (!rec) return;
+  const model = rec.geometry || rec.model, on = $('sel-crown').checked;
+  try {
+    const r = await fetch('/api/crown', {method: 'POST', headers: {'Content-Type': 'application/json'},
+                                         body: JSON.stringify({model, on})});
+    const doc = await r.json();
+    if (!r.ok) throw new Error(doc.error || r.statusText);
+    if (on) crowns.add(model.toLowerCase()); else crowns.delete(model.toLowerCase());
+    status(on ? `Bullets hit the branches of every ${model} after the next game start (${doc.file})`
+              : `${model}'s branches let bullets through again (${doc.file})`);
+  } catch (e) { $('sel-crown').checked = !on; status(e.message, true); }
+});
 $('copy').onclick = copySelected;
 $('place').onclick = startPlace;
 $('delete').onclick = deleteSelected;

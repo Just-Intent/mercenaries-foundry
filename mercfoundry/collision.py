@@ -239,6 +239,49 @@ def rewrite_box_shape(cshp_body: bytes, shape_index: int, drop=(), boxes=()) -> 
     raise ValueError(f"no shape {shape_index}")
 
 
+def _edit_segments(segments_record: bytes, edit) -> bytes:
+    """A segments record with its cshp body passed through edit."""
+    from . import script
+    cseg, cseg_pad = ucfb.unwrap(segments_record, b"CSEG", with_pad=True)
+    size, _ = struct.unpack_from("<II", cseg)
+    tree = script.decompress(cseg[8:], size)
+    roots, tree_pad = ucfb.split(tree)
+    items, pad_last = ucfb.split(roots[0][1])
+    if not any(t == b"cshp" for t, _ in items):
+        raise ValueError("the model has no collision")
+    items = [(t, edit(b) if t == b"cshp" else b) for t, b in items]
+    new_tree = ucfb.pack_children([(b"ucfb", ucfb.pack_children(items, pad_last))], tree_pad)
+    packed = script.compress(new_tree)
+    return ucfb.wrap(b"CSEG", struct.pack("<II", len(new_tree), len(packed)) + packed, cseg_pad)
+
+
+# Flags for a shape only bullets hit: bit 2 (hit by bullets) without bit 1
+# (solid to people and vehicles). Tested in game on box props: they sparked
+# when shot, and people and a Humvee went through them.
+BULLETS_ONLY = 2
+
+
+def crown_box(model_bounds, trunk_box=None):
+    """A box over a tree's branches, from its model's bounds ((min), (max)):
+    from a third of the way up (or the trunk box's top half, if lower) to
+    the top, 70% as wide as the tree (a crown narrows towards its edges).
+    (centre, half)."""
+    (x0, y0, z0), (x1, y1, z1) = model_bounds
+    bottom = y0 + (y1 - y0) / 3
+    if trunk_box is not None:
+        bottom = min(bottom, trunk_box.centre[1])
+    half = (0.35 * (x1 - x0), (y1 - bottom) / 2, 0.35 * (z1 - z0))
+    centre = ((x0 + x1) / 2, (bottom + y1) / 2, (z0 + z1) / 2)
+    return centre, half
+
+
+def add_segments_bullet_boxes(segments_record: bytes, joint: int, boxes) -> bytes:
+    """A segments record with a shape only bullets hit (BULLETS_ONLY): boxes
+    [(centre, half)] in the joint's space. Its own shape, so the model's
+    other shapes (a tree's trunk, a canopy's sway hull) are unchanged."""
+    return _edit_segments(segments_record, lambda body: add_box_shape(body, BULLETS_ONLY, joint, boxes))
+
+
 # Generated box shapes use kind 2: the kind drivable vehicles use for boxes
 # (kind 0 appears only on static objects such as train cars), and common on
 # static props too.

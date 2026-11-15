@@ -80,6 +80,8 @@
         <input id="new-object-file" type="file" accept=".glb" hidden>
       </div>
       <p id="sel-note" class="hint"></p>
+      <label class="field" id="sel-crown-row" hidden title="A tree's collision is a thin box round its trunk, so shots into its branches pass through. This adds a box over the branches that only bullets hit (walking and driving through them stay as they are), for every tree of this model; it shows in game after the next start. Hits on trees always show the game's default effect: the game's tree code ignores obstaclematerialtype.">
+        <input id="sel-crown" type="checkbox"> Bullets hit its branches (every tree of this model)</label>
       <details id="sel-props-box"><summary>Properties</summary>
         <p class="hint" id="sel-props-note"></p>
         <div id="sel-props"></div>

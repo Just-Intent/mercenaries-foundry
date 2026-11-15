@@ -48,6 +48,8 @@ GET  /api/groundtextures       every ground texture the game's maps paint with (
 POST /api/terrain/changelayer  {"map", "index", "texture"}: another texture for a ground layer
 POST /api/terrain/removelayer  {"map", "index"}: take off a ground layer the mod added (and its paint)
 POST /api/terrain/addlayer     {"map", "texture", "scale"?, "axis"?}: a new ground layer (terrain/<map>.layers.json)
+GET  /api/crowns              models whose branches bullets hit (models/<model>.collision.json "crown")
+POST /api/crown                {"model", "on"}: bullets hit that tree model's branches, or not
 GET  /api/placeables           everything Place can copy, any map: templates, named objects, model:<model>
 POST /api/encounters/save      {"map", "files": {file: [encounter, ...]}}
 POST /api/placed/save          {"map", "files": {file: [{from, name, position, rotation}]}}: objects placed from templates
@@ -216,6 +218,9 @@ def make_handler(scene: Scene, mod_name: str, live: Live = None):
                 if path == "/api/templates":
                     with objects_lock:
                         return self.send(200, scene.templates())
+                if path == "/api/crowns":
+                    with objects_lock:
+                        return self.send(200, scene.bullet_crowns())
                 if path == "/api/placeables":
                     with objects_lock:
                         return self.send(200, scene.placeables())
@@ -282,6 +287,9 @@ def make_handler(scene: Scene, mod_name: str, live: Live = None):
                         if op == "delete":
                             return self.send(200, scene.delete_mod(doc["folder"]))
                         return self.fail(404, "not found")
+                if path == "/api/crown":
+                    with objects_lock:
+                        return self.send(200, scene.bullet_crown(doc["model"], bool(doc.get("on"))))
                 if path == "/api/marks/save":
                     with objects_lock:
                         return self.send(200, scene.save_map_marks(doc.get("marks") or []))

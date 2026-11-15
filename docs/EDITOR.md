@@ -60,6 +60,11 @@ toolkit bundle run it the same way: `foundry\python\python.exe foundry\mercfound
 - Select an object to move it (W), turn it about the vertical (E), drop it to the
   ground (G) or copy it (C), or type its position and heading in the panel.
   Copies get a name you can change in the panel; names must be new.
+- **Bullets hit its branches** (a selected tree): a tree's collision is a thin
+  box round its trunk, so shots into its branches pass. This adds a box over
+  them that only bullets hit, for every tree of that model
+  (`models/<model>.collision.json` `"crown"`); walking and driving through
+  stay as they are.
 - **Tilt to slope** leans the selected objects to the ground's slope where
   each stands (keeping its heading); **Upright** stands them straight again. A
   tilted object is saved with its whole rotation (`"rotation"`, three rows, in

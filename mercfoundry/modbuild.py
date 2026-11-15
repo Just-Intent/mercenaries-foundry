@@ -1987,7 +1987,11 @@ def _apply_models(data, folder, result):
 
 def _apply_collision_flags(data, folder, result):
     """models/<name>.collision.json: {"shapes": {"0": 7, "1": 9}} sets collision
-    shape flags (see docs/formats/dsk.md); runs after models/ edits."""
+    shape flags (see docs/formats/dsk.md); "crown": true adds a box over a
+    tree's branches that only bullets hit (a tree's collision is a thin box
+    round its trunk, so shots into the branches pass), and "bullet_boxes":
+    [{"centre": [x, y, z], "half": [x, y, z]}] such boxes placed by hand, in
+    the model's space. Runs after models/ edits."""
     from . import collision
     for f in sorted((folder / "models").glob("*.collision.json")) if (folder / "models").is_dir() else []:
         name = f.name[:-len(".collision.json")]
@@ -1996,10 +2000,31 @@ def _apply_collision_flags(data, folder, result):
         hits = [(a, r) for a, r in data.records(model.SEGMENTS) if r.key == name_hash(name)]
         if not hits:
             raise ValueError(f"models/{f.name}: no model named {name!r}")
-        for a, r in hits:
-            data.set(a, r, collision.set_segments_flags(data.current(a, r), flags))
-        result.changes.append(f"model {name}: collision flags " +
-                              ", ".join(f"shape {k} = {v}" for k, v in sorted(flags.items())))
+        notes = []
+        if flags:
+            for a, r in hits:
+                data.set(a, r, collision.set_segments_flags(data.current(a, r), flags))
+            notes.append("collision flags " + ", ".join(f"shape {k} = {v}" for k, v in sorted(flags.items())))
+        boxes = [([float(v) for v in b["centre"]], [abs(float(v)) for v in b["half"]])
+                 for b in doc.get("bullet_boxes") or []]
+        if doc.get("crown") or boxes:
+            for a, r in hits:
+                seg = data.current(a, r)
+                mr = next((data.current(ma, mr_) for ma, mr_ in data.records(model.MODEL) if mr_.key == r.key), None)
+                if mr is None:
+                    raise ValueError(f"models/{f.name}: no model record for {name!r}")
+                m = model.decode(mr, seg)
+                trunk = next((s for s in m.collision if s.boxes), None)
+                joint = (trunk or (m.collision[0] if m.collision else None))
+                joint = joint.joint if joint else 0
+                these = list(boxes)
+                if doc.get("crown"):
+                    these.append(collision.crown_box(m.bounds, trunk.boxes[0] if trunk else None))
+                data.set(a, r, collision.add_segments_bullet_boxes(seg, joint, these))
+            notes.append(f"{len(boxes) + bool(doc.get('crown'))} box(es) only bullets hit"
+                         + (" (over its branches)" if doc.get("crown") else ""))
+        if notes:
+            result.changes.append(f"model {name}: " + "; ".join(notes))
 
 
 def _version(text):

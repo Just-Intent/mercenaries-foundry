@@ -993,6 +993,36 @@ class Scene:
                 "squads": shared_squads, "zones": shared_zones, "paths": shared_paths, "sets": shared_sets,
                 "hq": self._hq_points(m)}
 
+    def bullet_crown(self, model_name, on):
+        """Whether bullets hit a tree's branches: models/<model>.collision.json
+        "crown" (a box over the branches only bullets hit; the build adds it)."""
+        if not model_name or not all(c.isalnum() or c in "_-" for c in model_name):
+            raise ValueError(f"bad model name {model_name!r}")
+        p = self.mod / "models" / f"{model_name}.collision.json"
+        doc = json.loads(p.read_text(encoding="utf-8")) if p.exists() else {}
+        if on:
+            doc["crown"] = True
+        else:
+            doc.pop("crown", None)
+        if doc:
+            p.parent.mkdir(parents=True, exist_ok=True)
+            p.write_text(json.dumps(doc, indent=1) + "\n", encoding="utf-8")
+        elif p.exists():
+            p.unlink()
+        return {"model": model_name, "crown": bool(on), "file": f"models/{p.name}"}
+
+    def bullet_crowns(self):
+        """Models whose branches bullets hit (their collision.json "crown")."""
+        d = self.mod / "models"
+        out = []
+        for p in sorted(d.glob("*.collision.json")) if d.is_dir() else []:
+            try:
+                if json.loads(p.read_text(encoding="utf-8")).get("crown"):
+                    out.append(p.name[:-len(".collision.json")])
+            except ValueError:
+                continue
+        return out
+
     def new_model(self, name, base, glb):
         """A new object's model: writes models/<name>.glb (glb: the file's
         bytes) and models/<name>.new.json naming the game model it's built on.
