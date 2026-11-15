@@ -792,17 +792,32 @@ function freshPlacedName(from) {
 
 // Everything Place can copy, from any map (templates, named objects, models
 // as model:<name>), fetched once: the Place list and what each draws.
-let placeables = null;
+let placeables = null, placeablesList = [];
+// Templates the running game has loaded where the player is (the live link
+// asks): those spawn live as they're placed, so they're listed first.
+let liveLoaded = new Set();
+function fillPlaceables() {
+  const label = (p) => (liveLoaded.has(p.name.toLowerCase()) ? 'spawns live now, ' : '') +
+    (p.kind === 'template' ? `${p.type || 'template'} (${p.model})`
+      : p.kind === 'object' ? `${p.type || 'object'} on ${p.layer} (${p.model})` : `model, as on ${p.layer}`);
+  const list = [...placeablesList].sort((a, b) => liveLoaded.has(b.name.toLowerCase()) - liveLoaded.has(a.name.toLowerCase()));
+  $('placeables').innerHTML = list.map((p) => `<option value="${p.name}">${label(p)}</option>`).join('');
+}
+function setLiveLoaded(names) {
+  liveLoaded = new Set((names || []).map((n) => n.toLowerCase()));
+  if (placeables) fillPlaceables();
+}
 async function loadPlaceables() {
   if (placeables) return placeables;
-  const list = await getJSON('/api/placeables');
-  placeables = new Map(list.map((p) => [p.name.toLowerCase(), p]));
-  const label = (p) => p.kind === 'template' ? `${p.type || 'template'} (${p.model})`
-    : p.kind === 'object' ? `${p.type || 'object'} on ${p.layer} (${p.model})` : `model, as on ${p.layer}`;
-  $('placeables').innerHTML = list.map((p) => `<option value="${p.name}">${label(p)}</option>`).join('');
+  placeablesList = await getJSON('/api/placeables');
+  placeables = new Map(placeablesList.map((p) => [p.name.toLowerCase(), p]));
+  fillPlaceables();
   return placeables;
 }
-$('place-template').addEventListener('focus', () => { loadPlaceables().catch((e) => status(e.message, true)); });
+$('place-template').addEventListener('focus', () => {
+  loadPlaceables().catch((e) => status(e.message, true));
+  live.askLoaded();          // what the running game can spawn here (listed first when it answers)
+});
 
 async function startPlace() {
   const from = $('place-template').value.trim();
@@ -824,7 +839,10 @@ function placeAt(ray) {
   state.placing = null;
   const at = gamePos(hit.point).map(round);
   addPlaced(from, freshPlacedName(from), state.layerFile, at, [1, 0, 0, 0, 1, 0, 0, 0, 1]);
-  status(`Placed ${from}; rename it in the panel if you like.`);
+  const live_ = live.isOn() && live.loaded();
+  status(live_ && !liveLoaded.has(from.toLowerCase())
+    ? `Placed ${from}; the game hasn't it loaded here, so it shows in game after Save and the next game start (rename it in the panel if you like).`
+    : `Placed ${from}; rename it in the panel if you like.`);
 }
 
 function copySelected() {
@@ -1314,7 +1332,7 @@ const encs = createEncounters({
 });
 const live = createLive({
   scene, threePos, heightAt, status, $, lookAt, heading,
-  onLoaded: (names) => encs.setLoaded(names),
+  onLoaded: (names) => { encs.setLoaded(names); setLiveLoaded(names); },
   target: () => gamePos(controls.target),
   sourceOf: (rec) => state.byId.get(rec.source),
 });

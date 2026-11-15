@@ -417,6 +417,10 @@ toolkit bundle run it the same way: `foundry\python\python.exe foundry\mercfound
   copy of a building or prop that has no name. Type or pick it in the toolbar
   box (the list shows each one's kind and where it's from), click **Place**
   (or press P), then click the ground.
+  - With the live link on, the list starts with what the running game has
+    loaded where the player is ("spawns live now"): those appear in the game
+    as you place them. Anything else shows in game after Save and the next
+    game start (the game loads models only with a map or layer).
   - Its layer loads what it needs: its home layer's loads, or, for one from a
     map's own layer (SW, NW), just its model, ruin model and textures.
   - On a new map, characters, vehicles and weapons work too: a new map loads
