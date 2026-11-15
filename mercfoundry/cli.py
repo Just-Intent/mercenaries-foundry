@@ -651,16 +651,6 @@ def cmd_vehicles(args):
               file=sys.stderr)
 
 
-def cmd_gis(args):
-    from . import gis
-    mod = Path(args.mod)
-    plan = gis.load_plan(mod / "gis" / f"{args.map}.json")
-    if args.action == "fetch":
-        gis.fetch(plan, mod / "gis" / "cache", only=args.district)
-    else:
-        gis.build(plan, mod)
-
-
 def cmd_terrain(args):
     import json as _json
     from . import terrain
@@ -984,12 +974,7 @@ def main(argv=None):
     s.add_argument("data", help="DATAxbox folder or assets.dsk")
     s.add_argument("name", help="terrain name, e.g. sw (the southern province) or nw")
     s.add_argument("-o", "--out", default="terrain")
-    s = add("gis", cmd_gis, "a new map's ground, roads and buildings from real-world map data (OpenStreetMap, elevation)")
-    s.add_argument("action", choices=["fetch", "build"], help="fetch: download the data the plan needs; build: write the mod files")
-    s.add_argument("mod", help="mod folder holding gis/<map>.json")
-    s.add_argument("map", help="the new map's name (its plan is gis/<map>.json)")
-    s.add_argument("--district", action="append", help="fetch only this district (repeatable)")
-    s = add("test-range", cmd_test_range,"write the Foundry Test Range mod: a flat pad far from the game's AI")
+    s = add("test-range", cmd_test_range, "write the Foundry Test Range mod: a flat pad far from the game's AI")
     s.add_argument("data", help="DATAxbox folder"); s.add_argument("out", help="the mod folder to write, e.g. <port>/mods/Foundry Test Range")
     s = add("sound", cmd_sound, "list the game's sound cues or export them as .wav")
     ssub = s.add_subparsers(dest="sound_cmd", required=True)
