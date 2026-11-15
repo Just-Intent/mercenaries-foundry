@@ -742,6 +742,7 @@ function showHistory() {
   $('redo').title = history.future.length ? `Redo: ${last(history.future).label} (Ctrl+Y)` : 'Nothing to redo (Ctrl+Y)';
 }
 function stepHistory(redo) {
+  missions.flushUndo();             // a mission edit still waiting to be a step
   const from = redo ? history.future : history.past, to = redo ? history.past : history.future;
   const h = from.pop();
   if (!h) return status(redo ? 'Nothing to redo' : 'Nothing to undo');
@@ -1591,6 +1592,7 @@ const missions = createMissions({
   scene, threePos: (p) => threePos(p), lookAt: (p) => lookAt(p, 30),
   viewCentre: () => { const g = gamePos(controls.target); g[1] = round(heightAt(g[0], g[2])); return g; },
   newSquadIn: (file) => encs.startNewSquad(file),
+  remember: (...a) => remember(...a),
   skyPresets: () => sky.presetNames(),
   drawZoneIn: (file) => layout.startDraw('boundary', file),
   gamePos: (v) => gamePos(v), groundAt: (x, z) => heightAt(x, z),
@@ -1671,7 +1673,7 @@ const encs = createEncounters({
     .map((r) => (r.copyName || r.name || '').toLowerCase()).filter(Boolean)),
   remember: (...a) => remember(...a),
 });
-Object.assign(window.foundryEditor, {layout, encs});     // (debugging)
+Object.assign(window.foundryEditor, {layout, encs, missions});     // (debugging)
 // A line of Lua to the running game (its reply shows under Game replies).
 $('live-lua').addEventListener('keydown', (e) => {
   if (e.key !== 'Enter') return;

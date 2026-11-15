@@ -74,7 +74,9 @@ toolkit bundle run it the same way: `foundry\python\python.exe foundry\mercfound
   removing, Undo changes and renames; an edit of several objects is one step.
   Paths and zones (moving, adding and deleting points, pauses, animations,
   links, new and deleted ones) and squads (moving members and spawn points,
-  adding, turning and deleting them, placing squads) are on the same history.
+  adding, turning and deleting them, placing squads) are on the same history,
+  and so are the Missions panel's edits to the open mission (a pause in typing
+  ends a step).
   The history is cleared when you switch maps. (In terrain mode Ctrl+Z steps
   back terrain strokes, as before.)
 - Remove an object (Remove, or the Delete key). It disappears; pick it in the
@@ -516,7 +518,8 @@ the editor on the south map appeared there in free roam.
 
 ## Not yet
 
-- Undo for mission edits and terrain beyond its strokes (the history covers objects, paths, zones and squads).
+- Undo for terrain beyond its strokes, sky, factions and map settings (the history covers objects, paths,
+  zones, squads and missions).
 
 ## How it works
 

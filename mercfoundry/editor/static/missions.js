@@ -196,6 +196,7 @@ export function createMissions(ctx) {
   }
 
   function showCurrent() {
+    if (undoTimer) flushUndo();
     const m = st.current;
     const isNew = !m;
     $('ms-new').hidden = !isNew;
@@ -276,6 +277,7 @@ export function createMissions(ctx) {
         + `Utility_EraseValueFromScribbleMemory('mission_accepted') Utility_ResetToBaseLayerOnly('${st.map}')`
       : '';
     $('ms-start-row').hidden = !id;
+    undoBase = panelState();
   }
 
   // ---------------------------------------------------------------- objectives
@@ -417,7 +419,55 @@ export function createMissions(ctx) {
     }
   }
 
-  function edited() { st.dirty = true; setDirty(true); queueOutline(); }
+  function edited() {
+    st.dirty = true;
+    setDirty(true);
+    queueOutline();
+    clearTimeout(undoTimer);
+    undoTimer = setTimeout(flushUndo, 700);       // a burst of typing is one undo step
+  }
+
+  // ---------------------------------------------------------------- undo
+  // The open mission's panel (its fields and its lists) before and after an
+  // edit: one step on the editor's history, a moment after the last change.
+  const UNDO_FIELDS = ['ms-title', 'ms-description', 'ms-briefing', 'ms-fee', 'ms-bonus', 'ms-done-subject', 'ms-done-body',
+                       'ms-mood-allies', 'ms-mood-china', 'ms-mood-mafia', 'ms-mood-sk'];
+  const UNDO_CHECKS = ['ms-debug', 'ms-keep-hostile'];
+  let undoBase = null, undoTimer = null;
+  const openId = () => (st.current ? st.current.id : null);
+  function panelState() {
+    return JSON.stringify({id: openId(), fields: UNDO_FIELDS.map((id) => $(id).value),
+                           checks: UNDO_CHECKS.map((id) => $(id).checked), testFrom: st.testFrom || 0,
+                           objectives: st.objectives, fails: st.fails, radio: st.radio, music: st.music,
+                           weather: st.weather, orders: st.orders, waves: st.waves, support: st.support,
+                           unlocks: st.unlocks, start: st.start, giver: st.giver, requires: st.requires});
+  }
+  function putPanelState(json) {
+    const s = JSON.parse(json);
+    if (s.id !== openId()) return status('That undo step is for another mission: open it first', true);
+    UNDO_FIELDS.forEach((id, i) => { $(id).value = s.fields[i]; });
+    UNDO_CHECKS.forEach((id, i) => { $(id).checked = s.checks[i]; });
+    Object.assign(st, {testFrom: s.testFrom, objectives: s.objectives, fails: s.fails, radio: s.radio, music: s.music,
+                       weather: s.weather, orders: s.orders, waves: s.waves, support: s.support, unlocks: s.unlocks,
+                       start: s.start, giver: s.giver, requires: s.requires});
+    drawSupport(); drawUnlocks(); drawStart(); drawGiver(); drawSequence();
+    drawObjectives(); drawFails(); drawRadio(); drawMusic(); drawWeather(); drawOrders(); drawWaves(); drawOutline();
+    st.dirty = true;
+    setDirty(true);
+    undoBase = json;
+  }
+  function flushUndo() {
+    clearTimeout(undoTimer);
+    undoTimer = null;
+    if (undoBase === null || !st.objectives) return;
+    const now = panelState();
+    if (now === undoBase) return;
+    const before = undoBase, after = now;
+    undoBase = now;
+    if (ctx.remember) {
+      ctx.remember(`Edited mission ${openId() || '(new)'}`, () => putPanelState(before), () => putPanelState(after));
+    }
+  }
 
   // ---------------------------------------------------------------- tabs
   // The panel's parts, one at a time; the one last open is opened again.
@@ -1232,5 +1282,5 @@ export function createMissions(ctx) {
     await load(st.map);
   }
 
-  return {load, saveBody, saved, show, pick, markerMoved, isOpen: () => !$('missions').hidden};
+  return {load, saveBody, saved, show, pick, markerMoved, isOpen: () => !$('missions').hidden, flushUndo};
 }
