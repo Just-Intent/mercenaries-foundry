@@ -1067,7 +1067,47 @@ class Scene:
         people, models = self.faction_people()
         return {"doc": doc, "factions": list(fx.FACTIONS),
                 "old": {f: [o for o, _ in fx.OLD[f]] for f in fx.FACTIONS},
-                "people": people, "models": models}
+                "people": people, "models": models, "vehicles": self.faction_vehicles()}
+
+    VEHICLE_KINDS = ("jeep", "tank", "helicopter", "truck", "trucklarge", "airplane", "boat")
+
+    def _joints(self, model_name):
+        """A model's joint names (cached); [] if it can't be read."""
+        if not hasattr(self, "_joint_cache"):
+            self._joint_cache = {}
+        key = model_name.lower()
+        if key not in self._joint_cache:
+            try:
+                self._joint_cache[key] = [j.name for j in model.decode(*model.find(self.archives, model_name)).joints]
+            except Exception:
+                self._joint_cache[key] = []
+        return self._joint_cache[key]
+
+    def faction_vehicles(self):
+        """Each employer's vehicles: {faction: [{model, kind, templates,
+        shared, can: [models of the same kind with all its working joints
+        (seats, doors, wheels, guns, rotors, treads)]}]}, most used first."""
+        from collections import Counter
+        from .. import factions as fx
+        by, kinds = {}, {}
+        for t in self.templates():
+            kind = t["type"].lower()
+            # vehicle models only (an air strike's "airplane" may draw a pickup, shared by all)
+            if kind in self.VEHICLE_KINDS and t["geometry"] and "_veh_" in t["geometry"].lower():
+                by.setdefault(t["faction"].lower(), Counter())[t["geometry"]] += 1
+                kinds.setdefault(t["geometry"], kind)
+        everyone = sorted(kinds, key=str.lower)
+        out = {}
+        for f in fx.FACTIONS:
+            rows = []
+            for m, n in (by.get(f) or Counter()).most_common():
+                mine = self._joints(m)
+                can = [o for o in everyone if o.lower() != m.lower() and kinds[o] == kinds[m] and self._joints(o)
+                       and not fx.missing_joints(mine, self._joints(o))]
+                rows.append({"model": m, "kind": kinds[m], "templates": n, "can": can,
+                             "shared": sorted(g for g, c in by.items() if g != f and m in c)})
+            out[f] = rows
+        return out
 
     @staticmethod
     def model_role(model_name):

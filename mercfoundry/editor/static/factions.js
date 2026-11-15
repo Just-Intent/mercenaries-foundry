@@ -3,7 +3,7 @@
 
 export function createFactions(ctx) {
   const {$, status, setDirty} = ctx;
-  const st = {doc: {}, old: {}, list: [], people: {}, models: [], dirty: false, loaded: false};
+  const st = {doc: {}, old: {}, list: [], people: {}, models: [], vehicles: {}, dirty: false, loaded: false};
   const esc = (s) => String(s ?? '').replace(/[&<>"]/g, (c) => ({'&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;'}[c]));
   const LABELS = {allies: 'Allies', china: 'China', mafia: 'Russian Mafia', sk: 'South Korea'};
   const FIELDS = [['name', 'Name', 'e.g. Yakuza'], ['adjective', 'Adjective', 'as in "<x> HQ" (default: the name)'],
@@ -18,6 +18,7 @@ export function createFactions(ctx) {
     st.old = d.old || {};
     st.list = d.factions || [];
     st.people = d.people || {};
+    st.vehicles = d.vehicles || {};
     st.models = d.models || [];
     st.loaded = true;
     draw();
@@ -30,12 +31,19 @@ export function createFactions(ctx) {
       const people = (st.people[f] || []).map((p) => `<label class="sky-row" title="${p.templates} template(s)${p.shared.length ? '; also drawn by ' + p.shared.join(', ') + "'s, which change too" : ''}">
           <span>${esc(p.model)}${p.shared.length ? ' *' : ''}</span>
           <input type="text" list="fx-models" data-look="${f}" data-model="${esc(p.model)}" value="${esc(looks[p.model] || '')}" placeholder="keep it"></label>`).join('');
+      const vehicles = (st.vehicles[f] || []).map((p) => `<label class="sky-row" title="${esc(p.kind)}, ${p.templates} template(s)${p.shared.length ? '; also drawn by ' + p.shared.join(', ') + "'s, which change too" : ''}">
+          <span>${esc(p.model)}${p.shared.length ? ' *' : ''}</span>
+          <select data-look="${f}" data-model="${esc(p.model)}"><option value="">keep it</option>
+            ${p.can.map((m) => `<option${looks[p.model] === m ? ' selected' : ''}>${esc(m)}</option>`).join('')}
+            ${looks[p.model] && !p.can.includes(looks[p.model]) ? `<option selected>${esc(looks[p.model])}</option>` : ''}</select></label>`).join('');
       return `<div class="ms-obj"><b>${esc(LABELS[f] || f)}</b> <span class="hint">(${esc((st.old[f] || []).join(', '))})</span>
         ${FIELDS.map(([k, label, ph]) => `<label class="sky-row"><span>${label}</span>
           <input type="text" data-f="${f}" data-k="${k}" value="${esc(v[k] || '')}" placeholder="${esc(k === 'name' ? 'keep the game\'s' : ph)}"></label>`).join('')}
         <details${Object.keys(looks).length ? ' open' : ''}><summary>Look: its people's models</summary>
           <p class="hint">Each model its characters draw, and another to draw instead (* a model another faction's characters draw too: theirs change as well).</p>
           ${people}
+          ${vehicles ? `<p class="hint">Vehicles: each can be drawn as one of the same kind that has all its seats, doors,
+            wheels, guns and rotors (its ruin and wheels go with it).</p>${vehicles}` : ''}
           <div class="buttons">Look like <select data-like="${f}"><option value="">...</option>${st.list.filter((g) => g !== f).map((g) => `<option value="${g}">${esc(LABELS[g] || g)}</option>`).join('')}</select>
             <button data-clear-looks="${f}">Keep its own</button></div>
         </details>
@@ -66,6 +74,10 @@ export function createFactions(ctx) {
       const theirs = st.people[g] || [];
       const of = (role) => (theirs.find((p) => p.role === role) || {}).model;
       for (const p of st.people[f] || []) setLook(f, p.model, of(p.role));
+      for (const v of st.vehicles[f] || []) {
+        const fit = (st.vehicles[g] || []).find((w) => w.kind === v.kind && v.can.includes(w.model));
+        setLook(f, v.model, fit ? fit.model : '');
+      }
       edited();
       draw();
       status(`${LABELS[f] || f}'s people look like ${LABELS[g] || g}'s (model by model; change any), Save to keep it`);

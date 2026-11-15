@@ -74,3 +74,14 @@ class LookTests(unittest.TestCase):
             self.assertEqual(Scene.model_role("sk_hum_heavysoldier"), "heavy")
             self.assertEqual(Scene.model_role("allies_hum_mgsoldier"), "soldier")
             self.assertEqual(Scene.model_role("nk_hum_elitesoldier"), "elite")
+
+
+class VehicleJointTests(unittest.TestCase):
+    def test_working_joints(self):
+        jeep = ["jeepmgun", "wheel_fl", "wheel_fr", "hp_seat_lf", "hp_seat_rf", "Turret_a", "segment_damage_B",
+                "hp_headlightL"]
+        humvee = ["humvee", "wheel_fl", "wheel_fr", "hp_seat_lf", "hp_seat_rf", "hp_seat_lr", "turret_a",
+                  "door_lf"]
+        self.assertEqual(factions.working_joints(jeep), {"wheel_fl", "wheel_fr", "hp_seat_lf", "hp_seat_rf", "turret_a"})
+        self.assertEqual(factions.missing_joints(jeep, humvee), [])            # a Humvee can stand in for the jeep
+        self.assertEqual(factions.missing_joints(humvee, jeep), ["hp_seat_lr"])  # not the other way round

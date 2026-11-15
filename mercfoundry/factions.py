@@ -32,6 +32,9 @@ puts the new model's geometry under the old model's name, so every
 template, squad member and placed character that draws it changes, and
 every load list that loads it loads the new model's textures too. A model
 two factions share (the Mafia's allies_hum_mgsoldier) changes for both.
+Vehicles too: a vehicle's model can stand in for another's when it has
+every working joint the other has (seats, doors, wheels, guns, rotors,
+treads: WORKING_JOINTS), and its ruin and wheel models go with it.
 The factions' characters share a skeleton (bone_* joints), so one's
 animations play on another's model, as retail's mixed models show.
 """
@@ -47,6 +50,23 @@ OLD = {
 }
 # acronyms match in capitals only ("an Allied" isn't AN)
 ACRONYMS = {"AN", "SK"}
+
+
+# A vehicle's working joints: what its template's seats, doors, wheels,
+# guns, rotors and treads are attached to. A model can stand in for another
+# only if it has every one of these the other has.
+WORKING_JOINTS = ("wheel_", "turret_", "barrel_", "hp_barreltip", "hp_seat_", "hp_dock_", "rotor", "tailrotor",
+                  "hp_tread", "k_tail", "hp_ropeattachment", "hp_connectionpoint")
+
+
+def working_joints(joint_names):
+    """The working joints (lower case) among a model's joint names."""
+    return {j.lower() for j in joint_names if j.lower().startswith(WORKING_JOINTS)}
+
+
+def missing_joints(old_joints, new_joints):
+    """The old model's working joints the new one lacks (sorted)."""
+    return sorted(working_joints(old_joints) - working_joints(new_joints))
 
 
 def looks(doc):

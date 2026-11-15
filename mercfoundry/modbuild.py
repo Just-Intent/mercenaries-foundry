@@ -2084,14 +2084,66 @@ def _apply_factions(data, folder, result):
     if not f.exists():
         return
     doc = json.loads(f.read_text(encoding="utf-8"))
+    seen_swaps = set()
+    data.swapped_models = getattr(data, "swapped_models", {})
     edits = factions.plan(game_strings(data), factions._names_only(doc))
     if edits:
         changed, _ = _set_strings(data, edits)
         result.changes.append(f"factions: {changed} strings renamed")
     for faction, old, new in factions.looks(doc):
         loaded = _swap_model(data, old, new)
+        extra = []
+        # a vehicle: its working joints, and its ruin and wheel go with it
+        from . import model as _model
+        try:
+            jo = [j.name for j in _model.decode(*_model_bodies(data, old, before=True)).joints]
+            jn = [j.name for j in _model.decode(*_model_bodies(data, new, before=True)).joints]
+            gone = factions.missing_joints(jo, jn)
+        except (KeyError, ValueError):
+            gone = []
+        if gone:
+            result.warnings.append(f"factions.json: {faction}: {new} lacks {old}'s {', '.join(gone)} (its template's "
+                                   f"seats, wheels or guns there have nothing to attach to)")
+        for prop in ("geometrynameruined", "geometrynamewheel"):
+            a, b = _template_prop(data, old, prop), _template_prop(data, new, prop)
+            if a and b and a.lower() != b.lower() and a.lower() not in seen_swaps:
+                seen_swaps.add(a.lower())
+                _swap_model(data, a, b)
+                extra.append(f"{a} as {b}")
         result.changes.append(f"factions: {faction}'s {old} looks like {new}"
-                              + (f" (its textures load with {loaded} lists)" if loaded else ""))
+                              + (f" (its textures load with {loaded} lists)" if loaded else "")
+                              + (f"; with it {', '.join(extra)}" if extra else ""))
+
+
+def _template_prop(data, geometry, prop):
+    """A property of the first template that draws a model (its ruin model,
+    its wheel model), as the game has it."""
+    from . import find
+    if getattr(data, "_templates_by_geometry", None) is None:
+        archives = [data.archive(n) for n in ARCHIVES if (data.dir / n).exists()]
+        index = {}
+        for o in find.objects(archives):
+            if not o["name"].lower().startswith("template_"):
+                continue
+            props = {k.lower(): v for k, v in o["properties"]}
+            g = str(props.get("geometryfile") or o["model"] or "").lower()
+            if g:
+                index.setdefault(g, props)
+        data._templates_by_geometry = index
+    return (data._templates_by_geometry.get(geometry.lower()) or {}).get(prop)
+
+
+def _model_bodies(data, name, before=False):
+    """(model, segments) bodies of a model; before: as the game had it,
+    before this build's swaps (a model that stands in for another may
+    itself have been swapped)."""
+    from . import model
+    if before and name.lower() in getattr(data, "swapped_models", {}):
+        return data.swapped_models[name.lower()]
+    recs = _model_records(data, name)
+    if model.MODEL not in recs or model.SEGMENTS not in recs:
+        raise KeyError(name)
+    return recs[model.MODEL][1], recs[model.SEGMENTS][1]
 
 
 def _model_records(data, name):
@@ -2122,6 +2174,12 @@ def _swap_model(data, old, new):
             raise ValueError(f"factions.json: no model named {old!r} (looks)")
         if kind not in news:
             raise ValueError(f"factions.json: no model named {new!r} to look like (looks)")
+    data.swapped_models = getattr(data, "swapped_models", {})
+    data.swapped_models.setdefault(old.lower(), (olds[model.MODEL][1], olds[model.SEGMENTS][1]))
+    # new as the game had it, if this build swapped it already
+    if new.lower() in data.swapped_models:
+        news = {model.MODEL: (None, model.renamed(data.swapped_models[new.lower()][0], new)),
+                model.SEGMENTS: (None, data.swapped_models[new.lower()][1])}
     for kind in (model.MODEL, model.SEGMENTS):
         body = news[kind][1]
         if kind == model.MODEL:

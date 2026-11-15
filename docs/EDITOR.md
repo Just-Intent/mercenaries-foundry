@@ -220,6 +220,12 @@ toolkit bundle run it the same way: `foundry\python\python.exe foundry\mercfound
   model's geometry under the old model's name (`"looks"` in factions.json),
   so every template, squad member and placed character that draws it
   changes; a model marked * is drawn by another faction's characters too.
+  Vehicles too: each of a faction's vehicles can be drawn as another of the
+  same kind that has all its working joints (seats, doors, wheels, guns,
+  rotors, treads: anything less leaves the template's seat or gun with
+  nothing to attach to), and its ruin and wheel models go with it. **Look
+  like** picks the other faction's most used one that fits; one with no fit
+  keeps its own.
   With new names and a new look, a faction is as new as the game allows.
 - **Sky**: the map's sky and weather. **Base sky** is the map's own (sun
   angle and colour, sky colour, fog, sky texture, rain). **Weather presets**
