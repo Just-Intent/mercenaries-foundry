@@ -38,9 +38,9 @@ Built in 0.102: `sky/<map>.json`, the editor's Sky panel, weather zones, and mis
   - what `Dark` and `Normal` mean;
   - what the 4th `FogRGBA` value does.
 
-## New maps: feasible, not proven
+## New maps: feasible, entered in game
 
-Built as a trial in 0.106 (`maps/<name>.json`): the build copies a map's records under a new name, adds its level and config, and the terrain tools and editor work on it. Not tested in game: whether `Utility_ResetToBaseLayerOnly('<name>')` enters it is the open question. First try (0.106) froze at the loading screen: the copied load list loads a script named after the map (blank's master script is the script `blank`; a config's `MainMasterScript` names it otherwise), and it wasn't there. 0.111 adds it.
+Built as a trial in 0.106 (`maps/<name>.json`): the build copies a map's records under a new name, adds its level and config, and the terrain tools and editor work on it. Not tested in game: whether `Utility_ResetToBaseLayerOnly('<name>')` enters it is the open question. First try (0.106) froze at the loading screen: the copied load list loads a script named after the map (blank's master script is the script `blank`; a config's `MainMasterScript` names it otherwise), and it wasn't there. 0.111 adds it. With it, the game enters the new map (2026-11-15), so `levels.ini` and a copied config are enough to make a level; the radar tiles and larger terrain are still open questions.
 
 - A map is a set of `assets.dsk` records sharing its name: `Terrain`,
   `world`, `encounter`, `region`, `lineregion`, `path` and `list`. The
