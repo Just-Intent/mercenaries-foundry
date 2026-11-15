@@ -560,7 +560,9 @@ def mission_drafts(doc):
               or str(o.get("reveal") or "") == "zone:"]
     drafts += [f"wave {k}" for k, w in enumerate(doc.get("waves") or [], 1) if not w.get("squad")]
     drafts += [f"fail condition {k}" for k, c in enumerate(doc.get("fail") or [], 1)
-               if (c.get("type") == "dies" and not (c.get("squad") or c.get("targets")))
+               if (c.get("type") in ("dies", "hostile") and not (c.get("squad") or c.get("targets")))
+               or (c.get("type") == "alarm" and not c.get("targets"))
+               or (c.get("type") == "spotted" and not c.get("faction"))
                or (c.get("type") == "leave" and not c.get("zone"))
                or (c.get("type") == "timer" and not c.get("seconds"))]
     return drafts

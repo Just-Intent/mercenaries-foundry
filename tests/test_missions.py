@@ -152,9 +152,9 @@ class MissionTests(unittest.TestCase):
         self.assertIn("{ kind = 'escort', name = 'foundry1', key = 'sw.allies11.obj.foundry1', targets = { 'P1', 'P2' }, "
                       "zone = 'lz', x = 1.00, y = 2.00, z = 3.00, lost = 'sw.allies11.obj.foundry1.lost' }", lua)
         self.assertIn("Ai_CommandDefault(a, 'Follow', 'player0', 'loPri')", lua)
-        self.assertIn("{ kind = 'dies', reason = 'sw.allies11.fail.foundry1', targets = { 'Doc' } }", lua)
-        self.assertIn("{ kind = 'timer', reason = 'sw.allies11.fail.foundry2', seconds = 300, untilObj = 'foundry1' }", lua)
-        self.assertIn("{ kind = 'leave', reason = 'sw.allies11.fail.foundry3', zone = 'valley' }", lua)
+        self.assertIn("{ kind = 'dies', reason = 'sw.allies11.fail.foundry1', cb = 'foundry_Failed1', targets = { 'Doc' } }", lua)
+        self.assertIn("{ kind = 'timer', reason = 'sw.allies11.fail.foundry2', cb = 'foundry_Failed2', seconds = 300, untilObj = 'foundry1' }", lua)
+        self.assertIn("{ kind = 'leave', reason = 'sw.allies11.fail.foundry3', cb = 'foundry_Failed3', zone = 'valley' }", lua)
         self.assertIn("Utility_LoadUtilityScript('hud')", lua)
         self.assertIn("HUD_AddTrayDisplay{ { DisplayClock = true", lua)
         self.assertIn("Event_ActorInBoundary('foundry_Left', 'b', 'player0', f.zone, false)", lua)
@@ -289,6 +289,54 @@ class MissionTests(unittest.TestCase):
         for bad in ({"type": "verify", "text": "V"}, {"type": "verify", "targets": ["x"], "blip": "moon"}):
             with self.assertRaises(ValueError):
                 missions.objectives_script("sw_allies11", {"objectives": [bad]}, lambda squad: [])
+
+    def test_support(self):
+        doc = {"objectives": [{"type": "goto", "text": "A", "zone": "a"}],
+               "support": [{"item": "template_support_gunship", "count": 1}, {"item": "template_support_crate_SK"}]}
+        lua = missions.objectives_script("sw_allies11", doc, lambda squad: [])
+        self.assertIn("tSupport = {              -- support items for the mission", lua)
+        self.assertIn("  { 'template_support_gunship', 1 },\n  'template_support_crate_SK'\n}", lua)
+        lua = missions.objectives_script("sw_allies11", {"objectives": doc["objectives"]}, lambda squad: [])
+        self.assertIn("tSupport = {              -- support items for the mission (retail's: mission.lua adds them, and resets after)\n\n}", lua)
+        with self.assertRaises(ValueError):
+            missions.objectives_script("sw_allies11", {**doc, "support": [{"item": "gunship"}]}, lambda squad: [])
+
+    def test_mood(self):
+        doc = {"objectives": [{"type": "goto", "text": "A", "zone": "a"}], "mood": {"allies": 30, "sk": -10, "mafia": 0}}
+        lua = missions.objectives_script("sw_allies11", doc, lambda squad: [])
+        self.assertIn("iMissionMoodReward = 30   -- the contract's faction", lua)
+        self.assertIn("tFoundryMood = { sk = -10 }", lua)
+        self.assertIn("for sFaction, n in pairs(tFoundryMood) do Faction_ModifyRelation(sFaction, HERO_FACTION, n) end\n"
+                      "mission_MissionComplete()", lua)
+        lua = missions.objectives_script("sw_allies11", {"objectives": doc["objectives"]}, lambda squad: [])
+        self.assertNotIn("iMissionMoodReward", lua)
+        self.assertIn("tFoundryMood = {  }", lua)
+        for bad in ({"nk": 10}, {"sk": 200}, {"sk": "lots"}):
+            with self.assertRaises(ValueError):
+                missions.objectives_script("sw_allies11", {**doc, "mood": bad}, lambda squad: [])
+
+    def test_alarm_spotted_hostile_extract(self):
+        doc = {"objectives": [{"type": "subdue", "text": "Take him", "targets": ["general"], "extract": True}],
+               "fail": [{"type": "alarm", "targets": ["alarm1", "alarm2"]},
+                        {"type": "spotted", "faction": "sk", "until": "done:1"},
+                        {"type": "hostile", "squad": "Guards", "text": "The guards saw through you."}]}
+        lua = missions.objectives_script("sw_allies11", doc, lambda squad: ["g1"])
+        self.assertIn("lost = 'sw.allies11.obj.foundry1.lost', extract = true }", lua)
+        self.assertIn("elseif o.kind == 'subdue' and o.extract then\n-- capture alive and fly them out", lua)
+        self.assertIn("mission_ObjectiveExtract{ callbackFunc = foundry_TargetDown,", lua)
+        self.assertIn("{ kind = 'alarm', reason = 'sw.allies11.fail.foundry1', cb = 'foundry_Failed1', targets = { 'alarm1', 'alarm2' } }", lua)
+        self.assertIn("cb = 'foundry_Failed2', faction = 'sk', untilObj = 'foundry1' }", lua)
+        self.assertIn("cb = 'foundry_Failed3', targets = { 'g1' } }", lua)
+        self.assertIn("function foundry_Failed3() foundry_FailIf(3) end\n", lua)
+        self.assertIn("Event_AlarmUsed(f.cb, 'b', a, true)", lua)
+        self.assertIn("Event_ActorSpottedTrespassing(f.cb, 'b', 'player0', f.faction, true)", lua)
+        self.assertIn("Event_ActorIsHostileToward(f.cb, 'b', a, 'player0', true)", lua)
+        strings, _, _ = missions.text_plan("sw_allies11", doc, "SW_Allies11")
+        self.assertEqual(strings["sw.allies11.fail.foundry1"], "The alarm was raised.")
+        self.assertEqual(strings["sw.allies11.fail.foundry3"], "The guards saw through you.")
+        for bad in ({"type": "alarm"}, {"type": "spotted", "faction": "nk"}, {"type": "hostile"}):
+            with self.assertRaises(ValueError):
+                missions.objectives_script("sw_allies11", {"objectives": doc["objectives"], "fail": [bad]}, lambda squad: [])
 
     def test_waves(self):
         layer = {"map": "SW", "encounters": [{"name": "camp", "points": {"A": [[0, 0, 0]], "B": [[5, 0, 5]]},

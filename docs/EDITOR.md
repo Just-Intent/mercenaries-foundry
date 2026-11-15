@@ -139,14 +139,18 @@ toolkit bundle run it the same way: `foundry\python\python.exe foundry\mercfound
   map), then give it:
   - a title, a description (the contact's offer), a briefing (the contract
     mail), a fee and a flat bonus (paid on completion on top of the fee; 0
-    unless you set one);
+    unless you set one), and **Mood on completion**: how each faction's mood
+    changes when it's done (-100 to 100; a new mission gives its own faction
+    20, as retail contracts give 20 to 40; set another faction below 0 to
+    anger it);
   - objectives: **Destroy** (pick a squad, or objects selected on the map
     with **+ Add selected object**), **Go to zone** (pick a zone; the zone
     gets a marker on the minimap and GPS), **Escort squad** (the squad
     follows the player; done when the survivors reach the zone, failed if
     they all die), **Deliver vehicle** (a vehicle selected on the map, to a
     zone; failed if it's destroyed), **Capture alive** (subdue a squad or
-    objects; killing one fails it), **Hold zone** (stay in a zone for a
+    objects; killing one fails it; tick **Extract them** to need them flown
+    out by the extraction chopper), **Hold zone** (stay in a zone for a
     number of seconds; leaving starts the clock again), **Use object** (walk
     up to objects and use them, with your own prompt; failed if one is
     destroyed) and **Verify target** (kill and photograph the body, or
@@ -164,9 +168,16 @@ toolkit bundle run it the same way: `foundry\python\python.exe foundry\mercfound
     text as its subtitle; with no voice, the text shows as a message. The
     contract completes after the last voiced line;
   - **Fail conditions**: **Protect squad** (fail if one of them dies), **Time
-    limit** (an on-screen clock) and **Stay in zone** (fail on leaving it),
+    limit** (an on-screen clock), **Stay in zone** (fail on leaving it),
+    **Alarm raised** (alarms picked on the map), **Spotted trespassing** (by a
+    faction you pick) and **Turns hostile** (a squad or people picked on the
+    map turn on the player),
     each with the message the failure screen shows, lasting the whole mission
     or until an objective is done;
+  - **Support**: support items the player gets for the mission (an
+    airstrike, a vehicle drop, a supply crate: any of the game's
+    `template_support_*`, picked from a list), each with an optional count;
+    their usual support comes back when the mission ends;
   - **Squads that appear later**: a squad of the mission's own layer that
     isn't there at the start arrives **When** the mission starts, an
     objective starts or is done, or the player enters a zone (an ambush,

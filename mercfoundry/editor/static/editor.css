@@ -65,3 +65,8 @@ code.copyable { display: block; white-space: pre-wrap; word-break: break-all; fo
 #ms-check-out ul { margin: 4px 0; padding-left: 18px; }
 .ms-problem { color: #ff8a80; }
 .ms-note { color: #9fb3c8; }
+
+/* Missions: mood on completion */
+.ms-mood { display: flex; gap: 6px; }
+.ms-mood label { flex: 1; font-size: 11px; }
+.ms-mood input { width: 100%; }

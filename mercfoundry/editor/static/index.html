@@ -139,6 +139,11 @@
       <label class="field">Briefing (the contract mail) <textarea id="ms-briefing" rows="3"></textarea></label>
       <label class="field">Fee ($) <input id="ms-fee" type="number" min="0" step="1000"></label>
       <label class="field">Flat bonus ($) <input id="ms-bonus" type="number" min="0" step="1000" title="Paid on completion on top of the fee. Bonus objectives add their own rewards when done."></label>
+      <div class="field" title="How each faction's mood changes when the contract is done (-100 to 100). Retail contracts give their own faction 20 to 40.">Mood on completion
+        <div class="ms-mood"><label>Allies <input id="ms-mood-allies" type="number" min="-100" max="100" step="5" placeholder="0"></label>
+        <label>China <input id="ms-mood-china" type="number" min="-100" max="100" step="5" placeholder="0"></label>
+        <label>Mafia <input id="ms-mood-mafia" type="number" min="-100" max="100" step="5" placeholder="0"></label>
+        <label>SK <input id="ms-mood-sk" type="number" min="-100" max="100" step="5" placeholder="0"></label></div></div>
       <h3>Player start</h3>
       <p class="hint" id="ms-start-at">Where the contract leaves the player (the HQ).</p>
       <label class="field">Heading (degrees) <input id="ms-start-heading" type="number" step="5" value="0"></label>
@@ -188,6 +193,11 @@
         <button id="ms-add-hold" title="Stay in a zone for a time; leaving resets the clock">+ Hold zone</button>
         <button id="ms-add-deliver" title="Get a vehicle (picked on the map) into a zone; failed if it's destroyed">+ Deliver vehicle</button>
         <button id="ms-add-escort" title="A squad that follows the player; done when the survivors reach a zone, failed if they all die">+ Escort squad</button></div>
+      <h3>Support</h3>
+      <p class="hint">Support items the player gets for the mission (airstrikes, vehicle drops, supply crates); their usual support comes back when it ends.</p>
+      <div id="ms-support"></div>
+      <datalist id="ms-support-items"></datalist>
+      <div class="buttons"><button id="ms-add-support">+ Support item</button></div>
       <h3>Squads that appear later</h3>
       <p class="hint">A squad of the mission's own layer that isn't there at the start: it arrives at its moment (an ambush, reinforcements). Give it an order (below) to attack.</p>
       <div id="ms-waves"></div>
@@ -201,7 +211,10 @@
       <h3>Fail conditions</h3>
       <div id="ms-fails"></div>
       <div class="buttons"><button id="ms-add-protect">+ Protect squad</button><button id="ms-add-timer">+ Time limit</button>
-        <button id="ms-add-leave">+ Stay in zone</button></div>
+        <button id="ms-add-leave">+ Stay in zone</button>
+        <button id="ms-add-alarm" title="Fail if one of the alarms (picked on the map) is raised">+ Alarm raised</button>
+        <button id="ms-add-spotted" title="Fail if a faction spots the player trespassing">+ Spotted trespassing</button>
+        <button id="ms-add-hostile" title="Fail if one of them turns hostile to the player">+ Turns hostile</button></div>
       <div id="ms-layer-tools">
         <p class="hint">The mission's soldiers and zones go in its layer (loaded only during the mission):</p>
         <div class="buttons"><button id="ms-add-squad">Add squad</button><button id="ms-add-zone">Draw zone</button></div>

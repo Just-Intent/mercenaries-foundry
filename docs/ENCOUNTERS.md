@@ -215,22 +215,29 @@ The generated script also handles:
 - `{"type": "escort", "squad": ..., "zone": ...}`: the squad follows the player (`Ai_CommandDefault(actor, 'Follow', 'player0', 'loPri')`, as retail's downed pilots); done when every survivor has entered the zone; the mission fails when they all die (the message is `"lost"`, or a default).
 - `{"type": "destroy", "targets": [names]}`: named objects (a building, a vehicle) as well as, or instead of, a `"squad"`.
 - `{"type": "deliver", "vehicle": name, "zone": ...}`: done when the vehicle enters the zone (`Event_ActorInBoundary` on the vehicle); failed if it's destroyed.
-- `{"type": "subdue", "squad": ... or "targets": ...}`: capture alive (`mission_ObjectiveSubdue`); killing one fails a main objective and loses a bonus one.
+- `{"type": "subdue", "squad": ... or "targets": ...}`: capture alive (`mission_ObjectiveSubdue`); killing one fails a main objective and loses a bonus one. With `"extract": true` it's retail's extract verb instead (`mission_ObjectiveExtract`, as `nw_allies6`): done when they're flown out (`Event_ActorCaptured`).
 - `{"type": "hold", "zone": ..., "seconds": 60}`: a clock counts down while the player is in the zone (`HUD_AddTrayDisplay`); leaving stops it, and it starts again from the top on coming back.
 - `{"type": "use", "targets": [names], "prompt": "Plant charge"}`: walk up and use each one (`mission_ObjectiveAction`, the prompt is its `actionCaption`, a string `<map>.<faction><n>.act.foundry<k>`); destroying one fails it.
 - `{"type": "verify", "squad": ... or "targets": ..., "blip": "spades", "alive": 20000}`: retail's verify (`mission_ObjectiveVerify`, one per target): kill and photograph the body, or capture alive. `"blip"` is the marker (`human` (default), `scope`, `blip`, `clubs`, `diamond`, `hearts`, `spades`); `"alive"` is paid on completion for each target taken alive, and counts toward `BonusFee`, the most the contract pays.
+- `"mood"`: `{"china": 20, "allies": -10}`, faction moods changed on completion (-100 to 100). The contract's own faction's is retail's `iMissionMoodReward` (`mission.lua` adds it in `mission_MissionComplete3`); the others go through `Faction_ModifyRelation(faction, HERO_FACTION, n)` as the contract completes (as `nw_mafia1`'s -10 to the SK). Without it, completing the mission changes no mood.
+- `"support"`: `[{"item": "template_support_gunship", "count": 1}, {"item": "template_support_crate_SK"}]`, written as retail's `tSupport` (as `nw_sk1`'s and `nw_allies1`'s): `mission.lua` adds each as the mission starts (`Support_AddItem(item, count)`, or `(item)` with no count) and calls `util_DefaultSupport()` when it ends.
 - `"waves"`: `[{"when": ..., "squad": "encounter:squad"}]`, squads of the mission's layer that arrive later. The build moves each into a layer of its own (`<id>_w<k>`, its encounter `<encounter>_w<k>` with the encounter's points), which the script loads (`Utility_ReadLevelFile`) at `"when"`.
 - `"orders"`: `[{"when": ..., "squad": "encounter:squad", "do": ...}]` with `"do"` one of `attack` (`Squad_Command(..., 'Attack', 'player0')`), `hold` (`Wait`), `move` (`TacticalMove` to the point set `"to"`), `close` (`MoveToActor` the player) and `path` (each member `Ai_CommandQueue(..., 'PathMove', "to")`, a path's name). Orders for a wave's squad are given two seconds after its layer loads.
 - A bonus objective's `"reveal"`: `"start"` (default), `"starts:N"` / `"done:N"` (when objective N starts or is done) or `"zone:<name>"`. One never shown pays nothing and isn't marked failed.
 - `"fail"`: a list of conditions, each with an optional `"text"` (the failure screen's reason, set as `sReasonForFailure` before `mission_MissionFailure()`, as retail does) and `"until": "done:N"`:
   - `{"type": "dies", "squad": ...}` or `"targets"`: fail if any of them dies (`Event_ActorHitPointsLessThan(..., 1)`);
   - `{"type": "timer", "seconds": 300}`: an on-screen clock (`HUD_AddTrayDisplay{ { DisplayClock = true, ... } }`, as `sw_allies5`);
-  - `{"type": "leave", "zone": ...}`: fail on leaving the zone (`Event_ActorInBoundary(..., false)`, as retail's "out of area" checks).
+  - `{"type": "leave", "zone": ...}`: fail on leaving the zone (`Event_ActorInBoundary(..., false)`, as retail's "out of area" checks);
+  - `{"type": "alarm", "targets": [alarm names]}`: fail when one sounds (`Event_AlarmUsed(..., true)`, as `chemplant` and `nw_allies3`);
+  - `{"type": "spotted", "faction": "sk"}`: fail when that faction spots the player trespassing (`Event_ActorSpottedTrespassing`, as `nw_china1`);
+  - `{"type": "hostile", "squad": ...}` or `"targets"`: fail when one of them turns hostile to the player (`Event_ActorIsHostileToward(..., 'player0', true)`, as `nw_allies3`'s inspectors).
+
+  These events don't say which condition they're for, so each condition gets its own callback (`foundry_Failed<k>`).
 - `"radio"`: lines `{"when": ..., "sound": "<bank>.<cue>", "text": ...}`. `"when"` takes the same values as `"reveal"`. A voiced line goes through the banter queue (`banter_Add`, which `Radio_QueueMessage` wraps for Fiona's bank) 3.5 s late so the objective message it comes with doesn't hide its subtitle (`vo.<bank>.<cue>`); a line with no sound shows its text as a message (`util_ObjMsgPrint`, `GENERAL`). The contract completes after the last voiced line has played.
 
 Zones and squads these use load from the mod's map layers like the objectives'.
 
-Tested in game (2026-11-15): a radio line's text, a bonus objective shown on its reveal, and a time limit's clock. Escort, protect, stay-in-zone, destroying objects, deliver, subdue, hold, use, verify, waves and squad orders aren't tested in game yet.
+Tested in game (2026-11-15): a radio line's text, a bonus objective shown on its reveal, and a time limit's clock. Escort, protect, stay-in-zone, destroying objects, deliver, subdue, hold, use, verify, waves, squad orders, support items, mood changes, extract and the alarm, spotted and hostile conditions aren't tested in game yet.
 
 The editor's Check (`modbuild.check_mission`, `GET /api/missions/check/<id>`) runs these checks on a saved mission without building.
 

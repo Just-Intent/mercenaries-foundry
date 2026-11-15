@@ -215,10 +215,18 @@ def make_handler(scene: Scene, mod_name: str, live: Live = None):
     return Handler
 
 
+class _Server(ThreadingHTTPServer):
+    # The page loads about twenty modules at once. With the default backlog
+    # (5), Windows refuses the overflow, one module fails, and the editor
+    # never starts (stuck on "Loading...").
+    request_queue_size = 128
+    daemon_threads = True
+
+
 def serve(mod_dir, data_dir, port=8740, open_browser=True):
     from ..modbuild import project_name
     scene = Scene(mod_dir, data_dir)
-    server = ThreadingHTTPServer(("127.0.0.1", port), make_handler(scene, project_name(mod_dir)))
+    server = _Server(("127.0.0.1", port), make_handler(scene, project_name(mod_dir)))
     url = f"http://127.0.0.1:{server.server_address[1]}/"
     print(f"Foundry editor for {project_name(mod_dir)}: {url}  (Ctrl+C stops it)", flush=True)
     if open_browser:

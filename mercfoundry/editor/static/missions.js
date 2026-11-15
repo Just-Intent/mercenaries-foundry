@@ -201,11 +201,13 @@ export function createMissions(ctx) {
       for (const id of ['ms-title', 'ms-description', 'ms-briefing']) $(id).value = '';
       $('ms-fee').value = 50000;
       $('ms-bonus').value = 0;
+      for (const f of MOOD_FACTIONS) $(`ms-mood-${f}`).value = f === $('ms-faction').value ? 20 : '';
       st.objectives = [];
       st.fails = [];
       st.radio = [];
       st.orders = [];
       st.waves = [];
+      st.support = [];
       st.start = null;
       st.giver = {mode: 'hq'};
       st.requires = [];
@@ -217,16 +219,19 @@ export function createMissions(ctx) {
       $('ms-briefing').value = (m.doc.mail || {}).body || '';
       $('ms-fee').value = (m.doc.ini || {}).ContractFee ?? 50000;
       $('ms-bonus').value = (m.doc.ini || {}).BonusFee ?? 0;
+      for (const f of MOOD_FACTIONS) $(`ms-mood-${f}`).value = (m.doc.mood || {})[f] || '';
       st.objectives = (m.doc.objectives || []).map((o) => ({...o}));
       st.fails = (m.doc.fail || []).map((c) => ({...c}));
       st.radio = (m.doc.radio || []).map((r) => ({...r}));
       st.orders = (m.doc.orders || []).map((o) => ({...o}));
       st.waves = (m.doc.waves || []).map((w) => ({...w}));
+      st.support = (m.doc.support || []).map((s) => ({...s}));
       st.start = m.doc.start ? {...m.doc.start} : null;
       st.giver = giverFrom(m.doc.contact, m.doc.hq);
       st.requires = [...(m.doc.requires || [])];
     }
     $('ms-layer-tools').hidden = false;
+    drawSupport();
     drawStart();
     drawGiver();
     drawSequence();
@@ -246,6 +251,7 @@ export function createMissions(ctx) {
   }
 
   // ---------------------------------------------------------------- objectives
+  const MOOD_FACTIONS = ['allies', 'china', 'mafia', 'sk'];
   const OBJ_NAMES = {destroy: 'Destroy squad / objects', goto: 'Go to zone', escort: 'Escort squad (they follow you to the zone)',
                      deliver: 'Deliver vehicle to zone', subdue: 'Capture alive (subdue)', hold: 'Hold zone',
                      use: 'Use object', verify: 'Verify target (kill and photograph, or capture)'};
@@ -277,9 +283,12 @@ export function createMissions(ctx) {
             `<option value="${v}" ${(o.blip || 'human') === v ? 'selected' : ''}>${n}</option>`).join('')}</select></label>
            <label title="Paid on completion for each target captured alive">Alive $
             <input data-i="${i}" data-k="alive" type="number" min="0" step="1000" value="${+o.alive > 0 ? +o.alive : ''}" placeholder="none"></label>` : '';
+      const extract = o.type === 'subdue'
+        ? `<label title="Done when they're flown out by the extraction chopper, not when knocked down"><input data-i="${i}" data-k="extract" type="checkbox" ${o.extract ? 'checked' : ''}> Extract them</label>` : '';
       const pick = o.type === 'use' ? targets + prompt
         : o.type === 'verify' ? squadPick + targets + verify
-        : (o.type === 'destroy' || o.type === 'subdue') ? squadPick + targets
+        : o.type === 'subdue' ? squadPick + targets + extract
+        : o.type === 'destroy' ? squadPick + targets
         : o.type === 'escort' ? squadPick + zonePick
         : o.type === 'deliver' ? vehicle + zonePick : zonePick + seconds;
       return `<div class="ms-obj"><b>${i + 1}. ${OBJ_NAMES[o.type] || o.type}${+o.bonus > 0 ? ' (bonus)' : ''}</b>
@@ -349,6 +358,7 @@ export function createMissions(ctx) {
     }
     if (k === 'revealZone') { o.reveal = `zone:${e.target.value}`; edited(); return; }
     const wasBonus = +o.bonus > 0;
+    if (k === 'extract') { if (e.target.checked) o.extract = true; else delete o.extract; edited(); return; }
     o[k] = (k === 'bonus' || k === 'seconds' || k === 'alive') ? Math.max(0, +e.target.value || 0) : e.target.value;
     if (k === 'bonus' && wasBonus !== +o.bonus > 0) {
       // became a bonus objective or stopped being one: its heading and "Shown"
@@ -426,14 +436,24 @@ export function createMissions(ctx) {
   // The mission fails if one happens: someone protected dies, time runs out,
   // or the player leaves a zone; each for the whole mission or until an
   // objective is done ("until": "done:N").
-  const FAIL_NAMES = {dies: 'Protect squad (fail if one dies)', timer: 'Time limit', leave: 'Stay in zone (fail on leaving)'};
+  const FAIL_NAMES = {dies: 'Protect squad (fail if one dies)', timer: 'Time limit', leave: 'Stay in zone (fail on leaving)',
+                      alarm: 'Alarm raised', spotted: 'Spotted trespassing', hostile: 'Someone turns hostile'};
   function drawFails() {
     const m = st.current;
     const squads = m ? m.squads : (st.shared || {}).squads || [], zones = m ? m.zones : (st.shared || {}).zones || [];
     $('ms-fails').innerHTML = st.fails.map((c, k) => {
-      const pick = c.type === 'dies'
-        ? `<select data-k="squad" data-f="${k}"><option value="">(squad)</option>${squads.map((s) =>
-            `<option ${s === c.squad ? 'selected' : ''}>${esc(s)}</option>`).join('')}</select>`
+      const squadPick = `<select data-k="squad" data-f="${k}"><option value="">(squad)</option>${squads.map((s) =>
+            `<option ${s === c.squad ? 'selected' : ''}>${esc(s)}</option>`).join('')}</select>`;
+      // alarm boxes, or people, picked on the map
+      const targets = `<span class="ms-targets">${(c.targets || []).map((t, j) => `<span class="ms-tag">${esc(t)}
+            <button data-f="${k}" data-t="${j}" data-a="untarget" title="Remove">×</button></span>`).join('')}
+            <button data-f="${k}" data-a="target" title="Select a named object on the map first">+ Add selected ${c.type === 'alarm' ? 'alarm' : 'object'}</button></span>`;
+      const pick = c.type === 'dies' ? squadPick
+        : c.type === 'hostile' ? squadPick + targets
+        : c.type === 'alarm' ? targets
+        : c.type === 'spotted'
+          ? `<label>By <select data-k="faction" data-f="${k}"><option value="">(faction)</option>${MOOD_FACTIONS.map((f) =>
+              `<option value="${f}" ${f === c.faction ? 'selected' : ''}>${f === 'sk' ? 'SK' : f[0].toUpperCase() + f.slice(1)}</option>`).join('')}</select></label>`
         : c.type === 'leave'
           ? `<select data-k="zone" data-f="${k}"><option value="">(zone)</option>${zones.map((z) =>
               `<option ${z === c.zone ? 'selected' : ''}>${esc(z)}</option>`).join('')}</select>`
@@ -456,7 +476,19 @@ export function createMissions(ctx) {
     edited();
   });
   $('ms-fails').addEventListener('click', (e) => {
-    if (e.target.dataset.a !== 'del') return;
+    const a = e.target.dataset.a, k = +e.target.dataset.f;
+    if (a === 'target') {
+      const sel = ctx.selectedObject();
+      if (!sel) return status('Select an object on the map first', true);
+      if (!sel.name) return status(`That ${sel.model || 'object'} has no name the game can find: copy or place one to use it`, true);
+      st.fails[k].targets = [...new Set([...(st.fails[k].targets || []), sel.name])];
+      drawFails(); edited(); return;
+    }
+    if (a === 'untarget') {
+      st.fails[k].targets.splice(+e.target.dataset.t, 1);
+      drawFails(); edited(); return;
+    }
+    if (a !== 'del') return;
     st.fails.splice(+e.target.dataset.f, 1);
     drawFails(); edited();
   });
@@ -539,6 +571,39 @@ export function createMissions(ctx) {
   });
   $('ms-add-wave').onclick = () => { st.waves.push({when: 'start', squad: ''}); drawWaves(); edited(); };
 
+  // ---------------------------------------------------------------- support
+  // Support items for the mission (airstrikes, vehicle drops, crates), as
+  // retail's tSupport: added when it starts, the default back when it ends.
+  let supportItems = null;
+  async function drawSupport() {
+    if (!supportItems) {
+      supportItems = [];
+      try {
+        const all = await (await fetch('/api/templates')).json();
+        supportItems = all.map((t) => t.name).filter((n) => /^template_support_/i.test(n)).sort((a, b) => a.localeCompare(b));
+      } catch (e) { /* the list stays empty: names can still be typed */ }
+      $('ms-support-items').innerHTML = supportItems.map((n) => `<option value="${esc(n)}">`).join('');
+    }
+    $('ms-support').innerHTML = st.support.map((s, k) => `<div class="ms-obj"><b>Item ${k + 1}</b>
+        <input data-s="${k}" data-k="item" type="text" list="ms-support-items" value="${esc(s.item)}" placeholder="template_support_...">
+        <label title="How many uses it gives (blank: retail's default)">Count <input data-s="${k}" data-k="count" type="number" min="0" step="1"
+          value="${+s.count > 0 ? +s.count : ''}" placeholder="default"></label>
+        <span class="buttons"><button data-s="${k}" data-a="del">Delete</button></span></div>`)
+      .join('') || '<p class="hint">None: the player has their usual support.</p>';
+  }
+  $('ms-support').addEventListener('change', (e) => {
+    const k = e.target.dataset.s, key = e.target.dataset.k;
+    if (k === undefined || !key) return;
+    st.support[+k][key] = key === 'count' ? Math.max(0, Math.floor(+e.target.value || 0)) : e.target.value.trim();
+    edited();
+  });
+  $('ms-support').addEventListener('click', (e) => {
+    if (e.target.dataset.a !== 'del') return;
+    st.support.splice(+e.target.dataset.s, 1);
+    drawSupport(); edited();
+  });
+  $('ms-add-support').onclick = () => { st.support.push({item: 'template_support_gunship', count: 1}); drawSupport(); edited(); };
+
   // ---------------------------------------------------------------- squad orders
   // At a moment (as radio lines), a squad attacks the player, holds, moves to
   // one of its encounter's point sets, closes in on the player, or walks a path.
@@ -591,11 +656,20 @@ export function createMissions(ctx) {
   $('ms-add-protect').onclick = () => { st.fails.push({type: 'dies', squad: ''}); drawFails(); edited(); };
   $('ms-add-timer').onclick = () => { st.fails.push({type: 'timer', seconds: 300}); drawFails(); edited(); };
   $('ms-add-leave').onclick = () => { st.fails.push({type: 'leave', zone: ''}); drawFails(); edited(); };
+  $('ms-add-alarm').onclick = () => { st.fails.push({type: 'alarm', targets: []}); drawFails(); edited(); };
+  $('ms-add-spotted').onclick = () => { st.fails.push({type: 'spotted', faction: ''}); drawFails(); edited(); };
+  $('ms-add-hostile').onclick = () => { st.fails.push({type: 'hostile', squad: '', targets: []}); drawFails(); edited(); };
 
   // ---------------------------------------------------------------- the rest of the panel
-  for (const id of ['ms-title', 'ms-description', 'ms-briefing', 'ms-fee', 'ms-bonus']) $(id).addEventListener('input', edited);
+  for (const id of ['ms-title', 'ms-description', 'ms-briefing', 'ms-fee', 'ms-bonus', ...MOOD_FACTIONS.map((f) => `ms-mood-${f}`)]) {
+    $(id).addEventListener('input', edited);
+  }
   // A new mission's faction picks its number only; what's typed stays.
   $('ms-faction').onchange = () => {
+    // a new mission's own-faction mood (20 by default) goes with the faction
+    const own = $('ms-faction').value, set = MOOD_FACTIONS.filter((f) => $(`ms-mood-${f}`).value !== '');
+    const from = set.length === 1 && set[0] !== own && $(`ms-mood-${set[0]}`).value === '20' ? set[0] : null;
+    if (from) { $(`ms-mood-${own}`).value = $(`ms-mood-${from}`).value; $(`ms-mood-${from}`).value = ''; }
     $('ms-number').textContent = `${st.map}_${$('ms-faction').value}${st.next[$('ms-faction').value] || 9}`;
     edited();
   };
@@ -689,8 +763,9 @@ export function createMissions(ctx) {
     if (st.giver.mode === 'placed' && !st.giver.position) throw new Error('Place the mission giver (Set here), or pick another giver');
     return {map: st.map, mission: {
       faction, number, title: $('ms-title').value.trim(), description: $('ms-description').value.trim(),
-      briefing: $('ms-briefing').value.trim(), fee: +$('ms-fee').value || 0, bonus: +$('ms-bonus').value || 0, objectives: st.objectives,
-      start: st.start, giver: st.giver, requires: st.requires || [], fail: st.fails, radio: st.radio, orders: st.orders, waves: st.waves,
+      briefing: $('ms-briefing').value.trim(), fee: +$('ms-fee').value || 0, bonus: +$('ms-bonus').value || 0,
+      mood: Object.fromEntries(MOOD_FACTIONS.map((f) => [f, Math.max(-100, Math.min(100, Math.round(+$(`ms-mood-${f}`).value || 0)))])), objectives: st.objectives,
+      start: st.start, giver: st.giver, requires: st.requires || [], fail: st.fails, radio: st.radio, orders: st.orders, waves: st.waves, support: st.support,
     }};
   }
   async function saved(done) {

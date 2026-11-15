@@ -385,10 +385,30 @@ class Scene:
             doc.setdefault("ini", {})["ContractFee"] = int(mission["fee"])
         if mission.get("bonus") is not None:
             doc.setdefault("ini", {})["BonusFee"] = int(mission["bonus"])
-        doc["objectives"] = [{k: v for k, v in o.items() if k in ("type", "text", "prompt", "squad", "targets", "vehicle", "zone", "seconds", "marker", "blip", "alive",
+        if "mood" in mission:
+            mood = {f: int(float(v)) for f, v in (mission.get("mood") or {}).items()
+                    if f in ms.FACTIONS and v not in ("", None) and int(float(v))}
+            if mood:
+                doc["mood"] = mood
+            else:
+                doc.pop("mood", None)
+        doc["objectives"] = [{k: v for k, v in o.items() if k in ("type", "text", "prompt", "squad", "targets", "vehicle", "zone", "seconds", "marker", "blip", "alive", "extract",
                                                             "bonus", "reveal")
                               and not (k == "bonus" and not v) and not (k == "reveal" and (v in ("", "start") or not o.get("bonus")))}
                              for o in mission.get("objectives") or []]
+        if "support" in mission:
+            support = []
+            for s in mission.get("support") or []:
+                if not s.get("item"):
+                    continue
+                row = {"item": str(s["item"])}
+                if int(float(s.get("count") or 0)) > 0:
+                    row["count"] = int(float(s["count"]))
+                support.append(row)
+            if support:
+                doc["support"] = support
+            else:
+                doc.pop("support", None)
         if "waves" in mission:
             waves = [{k: v for k, v in w.items() if k in ("when", "squad") and v not in ("", None)}
                      for w in mission.get("waves") or []]
@@ -415,7 +435,7 @@ class Scene:
             else:
                 doc.pop("radio", None)
         if "fail" in mission:
-            fails = [{k: v for k, v in c.items() if k in ("type", "text", "squad", "targets", "seconds", "zone", "until")
+            fails = [{k: v for k, v in c.items() if k in ("type", "text", "squad", "targets", "seconds", "zone", "faction", "until")
                       and v not in ("", None)} for c in mission.get("fail") or []]
             for k, c in enumerate(fails, 1):
                 if c.get("type") not in ms.FAIL_TYPES:

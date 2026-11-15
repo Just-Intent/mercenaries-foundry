@@ -182,14 +182,15 @@ OBJECTIVE_TYPES = ("destroy", "goto", "escort", "deliver", "subdue", "hold", "us
 # A verify objective's marker on its targets (retail's blipType: the card suits
 # are the Deck of 52's).
 VERIFY_BLIPS = ("human", "scope", "blip", "clubs", "diamond", "hearts", "spades")
-FAIL_TYPES = ("dies", "timer", "leave")
+FAIL_TYPES = ("dies", "timer", "leave", "alarm", "spotted", "hostile")
 # Squad orders (retail's own commands): attack the player, hold, move to one
 # of the encounter's point sets, close in on the player, or walk a path.
 ORDER_TYPES = ("attack", "hold", "move", "close", "path")
 FAIL_TEXT = {"dies": "A target you had to protect was killed.", "timer": "You ran out of time.",
              "leave": "You left the mission area.", "escort": "Everyone you were escorting was killed.",
              "deliver": "The vehicle was destroyed.", "subdue": "The target was killed.",
-             "use": "What you had to use was destroyed."}
+             "use": "What you had to use was destroyed.", "alarm": "The alarm was raised.",
+             "spotted": "You were spotted.", "hostile": "They turned on you."}
 
 
 def bonus_amount(o):
@@ -246,6 +247,48 @@ def reveal_of(o, count, i):
     if when == "zone" and what:
         return ("zone", what)
     raise ValueError(f"objective {i}: \"reveal\" is start, starts:<n>, done:<n> or zone:<name>, not {r!r}")
+
+
+def support_table(doc):
+    """Lua for retail's tSupport from a mission's "support": [{"item":
+    "template_support_gunship", "count": 1}, ...]. mission.lua adds them as
+    the mission starts (Support_AddItem(item, count), or (item) with no
+    count) and puts the default support back when it ends."""
+    rows = []
+    for k, s in enumerate(doc.get("support") or [], 1):
+        item = str(s.get("item") or "")
+        if not item.lower().startswith("template_"):
+            raise ValueError(f"support item {k}: \"item\" is a template (template_support_...), not {item!r}")
+        try:
+            count = int(float(s.get("count") or 0))
+        except (TypeError, ValueError):
+            raise ValueError(f"support item {k}: \"count\" is a number") from None
+        rows.append(f"{{ {_lua_str(item)}, {count} }}" if count > 0 else _lua_str(item))
+    return ",\n".join("  " + r for r in rows)
+
+
+def mood_lua(asset_id, doc):
+    """Lua for a mission's "mood": {faction: change} on completion. The
+    contract's own faction's is retail's iMissionMoodReward (mission.lua adds
+    it; retail missions give 20 to 40); the others go through
+    Faction_ModifyRelation (as nw_mafia1's -10 to the SK)."""
+    _, own, _ = parse_id(asset_id)
+    reward, others = None, []
+    for f, v in sorted((doc.get("mood") or {}).items()):
+        if f not in FACTIONS:
+            raise ValueError(f"mood: {f!r} isn't a faction ({', '.join(FACTIONS)})")
+        try:
+            n = int(float(v))
+        except (TypeError, ValueError):
+            raise ValueError(f"mood: {f}'s change is a number, not {v!r}") from None
+        if not -100 <= n <= 100:
+            raise ValueError(f"mood: {f}'s change is -100 to 100, not {n}")
+        if f == own:
+            reward = n
+        elif n:
+            others.append(f"{f} = {n}")
+    head = f"iMissionMoodReward = {reward}   -- the contract's faction, on completion (mission.lua)\n" if reward else ""
+    return head + f"tFoundryMood = {{ {', '.join(others)} }}   -- other factions, on completion\n"
 
 
 def alive_amount(o):
@@ -315,6 +358,8 @@ def objectives_script(asset_id, doc, squad_members, layers=(), zone_centre=None)
             row = f"{head}, targets = {{ {', '.join(_lua_str(t) for t in targets)} }}"
             if kind in ("subdue", "use"):
                 row += f", lost = {_lua_str(escort_lost_key(asset_id, i))}"     # killed / destroyed instead
+            if kind == "subdue" and o.get("extract"):
+                row += ", extract = true"                                       # done when flown out
             if kind == "use":
                 row += f", act = {_lua_str(use_prompt_key(asset_id, i))}"      # the prompt on the object
             if kind == "verify":
@@ -360,8 +405,18 @@ def objectives_script(asset_id, doc, squad_members, layers=(), zone_centre=None)
         kind = c.get("type")
         if kind not in FAIL_TYPES:
             raise ValueError(f"fail condition {k}: type is one of {', '.join(FAIL_TYPES)}, not {kind!r}")
-        row = f"kind = '{kind}', reason = {_lua_str(fail_key(asset_id, k))}"
-        if kind == "dies":
+        row = f"kind = '{kind}', reason = {_lua_str(fail_key(asset_id, k))}, cb = 'foundry_Failed{k}'"
+        if kind in ("alarm", "hostile"):
+            # an alarm (a placed alarm box) sounded, or someone turned hostile to the player
+            targets = list(c.get("targets") or []) + (squad_members(c["squad"]) if c.get("squad") else [])
+            if not targets:
+                raise ValueError(f"fail condition {k}: \"{kind}\" needs \"targets\"" + (" or \"squad\"" if kind == "hostile" else ""))
+            row += f", targets = {{ {', '.join(_lua_str(t) for t in targets)} }}"
+        elif kind == "spotted":
+            if c.get("faction") not in FACTIONS:
+                raise ValueError(f"fail condition {k}: \"spotted\" needs the \"faction\" ({', '.join(FACTIONS)})")
+            row += f", faction = '{c['faction']}'"
+        elif kind == "dies":
             targets = list(c.get("targets") or []) + (squad_members(c["squad"]) if c.get("squad") else [])
             if not targets:
                 raise ValueError(f"fail condition {k}: nobody to protect (give \"targets\" or \"squad\")")
@@ -384,6 +439,8 @@ def objectives_script(asset_id, doc, squad_members, layers=(), zone_centre=None)
             row += f", untilObj = 'foundry{int(m.group(1))}'"
         fails.append(f"{{ {row} }}")
     fail_table = ",\n".join("  " + r for r in fails)
+    # each condition's own callback (the events don't say which one they're for)
+    fail_cbs = "".join(f"function foundry_Failed{k}() foundry_FailIf({k}) end\n" for k in range(1, len(fails) + 1))
     radio = []
     for k, line in enumerate(doc.get("radio") or [], 1):
         when = when_of(line.get("when"), len(objs), f"radio line {k}")
@@ -470,13 +527,16 @@ def objectives_script(asset_id, doc, squad_members, layers=(), zone_centre=None)
 tFoundryObjectives = {{    -- main objectives, in order
 {main_table}
 }}
+tSupport = {{              -- support items for the mission (retail's: mission.lua adds them, and resets after)
+{support_table(doc)}
+}}
 tFoundryBonus = {{         -- bonus objectives, shown at the start or on their "reveal"
 {bonus_table}
 }}
 tFoundryFail = {{          -- the mission fails if one happens (until its objective is done)
 {fail_table}
 }}
-tFoundryRadio = {{         -- radio lines: voiced (banter queue, with a subtitle) or text
+{fail_cbs}tFoundryRadio = {{         -- radio lines: voiced (banter queue, with a subtitle) or text
 {radio_table}
 }}
 iFoundryRadioPending = 0   -- voiced lines queued and not yet played
@@ -493,7 +553,7 @@ bFoundryOver = false
 iFoundryStep = 0
 iFoundryFlatBonus = {flat}
 iFoundryEarned = 0
-bFoundryPays = {pays}      -- the payout depends on what's done (bonus objectives, targets taken alive)
+{mood_lua(asset_id, doc)}bFoundryPays = {pays}      -- the payout depends on what's done (bonus objectives, targets taken alive)
 tFoundryVerify = {{}}       -- verify target (actor name) -> its objective
 
 function ScriptInit()
@@ -629,6 +689,12 @@ for j, a in ipairs(f.targets) do
 tFoundryWatch[Utility_GetActorAsInt(a)] = f
 Event_ActorHitPointsLessThan('foundry_Died', 'b', a, 1)
 end
+elseif f.kind == 'alarm' then
+for j, a in ipairs(f.targets) do Event_AlarmUsed(f.cb, 'b', a, true) end
+elseif f.kind == 'hostile' then
+for j, a in ipairs(f.targets) do Event_ActorIsHostileToward(f.cb, 'b', a, 'player0', true) end
+elseif f.kind == 'spotted' then
+Event_ActorSpottedTrespassing(f.cb, 'b', 'player0', f.faction, true)
 elseif f.kind == 'timer' then
 tFoundryTimer = f
 f.hud = HUD_AddTrayDisplay{{ {{ DisplayClock = true, nObjStyle = HUD.STYLE.NORMAL, nStart = f.seconds, nLimit = 0,
@@ -644,6 +710,10 @@ bFoundryOver = true
 foundry_StopTimer()
 sReasonForFailure = sReason
 mission_MissionFailure()
+end
+function foundry_FailIf(i)
+local f = tFoundryFail[i]
+if f and not f.off then foundry_Fail(f.reason) end
 end
 function foundry_StopTimer()
 if tFoundryTimer and tFoundryTimer.hud then HUD_RemoveTrayDisplay(tFoundryTimer.hud) tFoundryTimer.hud = nil end
@@ -787,6 +857,13 @@ mission_ObjectiveAction{{ callbackFunc = foundry_TargetDown, killCallbackFunc = 
                          actionCaption = o.act, objectiveType = sObjType, targetType = sTargetType }}
 util_ObjMsgPrint{{ sMsg = o.text, sType = sMsg .. 'ADD', vIdx = iIdx,
                   tCounter = {{ vCurr = 0, vLim = table.getn(o.targets) }}, sObjective = o.name }}
+elseif o.kind == 'subdue' and o.extract then
+-- capture alive and fly them out (retail's extract verb, as nw_allies6); killing them fails it
+mission_ObjectiveExtract{{ callbackFunc = foundry_TargetDown, killCallbackFunc = foundry_TargetKilled,
+                          objectiveName = o.name, objectiveDesc = o.text, actorName = o.targets,
+                          objectiveType = sObjType, targetType = sTargetType, blipType = 'human' }}
+util_ObjMsgPrint{{ sMsg = o.text, sType = sMsg .. 'ADD', vIdx = iIdx,
+                  tCounter = {{ vCurr = 0, vLim = table.getn(o.targets) }}, sObjective = o.name }}
 elseif o.kind == 'subdue' then
 -- capture alive (retail's subdue verb); killing them fails it
 mission_ObjectiveSubdue{{ callbackFunc = foundry_TargetDown, killCallbackFunc = foundry_TargetKilled,
@@ -913,6 +990,7 @@ end
 if bFoundryPays then
 Utility_WriteMissionData( {{ fBonusFee = iFoundryFlatBonus + iFoundryEarned }} )
 end
+for sFaction, n in pairs(tFoundryMood) do Faction_ModifyRelation(sFaction, HERO_FACTION, n) end
 mission_MissionComplete()
 end
 """
