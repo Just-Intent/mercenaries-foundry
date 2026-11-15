@@ -213,3 +213,25 @@ class MissionFileToolTests(unittest.TestCase):
             self.assertTrue((root / out["trash"] / "missions" / "sw_china9.json").exists())
             with self.assertRaises(ValueError):
                 sc.delete_mission("sw_china9")
+
+
+class VoiceLineTests(unittest.TestCase):
+    """Radio lines' voice search: the game's lines and the mod's own."""
+
+    def test_mod_voices(self):
+        import tempfile
+        from pathlib import Path
+        from mercfoundry.editor.scene import Scene
+        with tempfile.TemporaryDirectory() as d:
+            root = Path(d)
+            (root / "sounds" / "fio" / "new").mkdir(parents=True)
+            (root / "sounds" / "fio" / "new" / "MyLine01.wav").write_bytes(b"RIFF-test")
+            sc = Scene.__new__(Scene)
+            sc.mod = root
+            sc._voices = [{"cue": "fio.01011FIO", "text": "Hello."}]
+            self.assertEqual(sc.voice_lines(), [{"cue": "fio.MyLine01", "text": "", "mod": True},
+                                                {"cue": "fio.01011FIO", "text": "Hello."}])
+            self.assertEqual(sc.voice_wav("fio.MyLine01"), b"RIFF-test")
+            for bad in ("fio", "fio./../x", "nobank"):
+                with self.assertRaises(ValueError):
+                    sc.voice_wav(bad)

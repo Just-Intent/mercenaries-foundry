@@ -96,6 +96,18 @@ def add_to_list(list_text, section, name):
     return "\n".join(lines)
 
 
+def done_mail(asset_id, doc, key):
+    """(mail id, sender, subject key, body key) of a mission's follow-up mail
+    ("done_mail": {"subject", "body"}, posted when the contract completes), or
+    None. Its strings go in the always-loaded missioninfo text: the mail is
+    read later, when the mission's own text has gone."""
+    m = doc.get("done_mail")
+    if not isinstance(m, dict) or not (m.get("subject") or m.get("body")):
+        return None
+    return (f"{asset_id}_done", m.get("sender", (doc.get("mail") or {}).get("sender", "mail.senders.techgal")),
+            f"MissionInfo.FoundryMail.{key}.Subject", f"MissionInfo.FoundryMail.{key}.Body")
+
+
 def add_mail(emails_ini, mail_id, sender, subject_key, body_key):
     """DATAPOD/emails.ini with a [Mail] block (Id, Sender, Subject, Body are
     string keys).  mission_GenericInit posts '<mission>_initial' when the
@@ -139,6 +151,10 @@ def text_plan(asset_id, doc, section):
             # a voiced line's subtitle (vo.<bank>.<cue>, as retail's), or a line's text
             key = f"vo.{line['sound']}" if line.get("sound") else radio_key(asset_id, k)
             strings[key] = line["text"]
+    done = done_mail(asset_id, doc, key)
+    if done:
+        strings[done[2]] = (doc.get("done_mail") or {}).get("subject") or f"Re: {doc.get('title', asset_id)}"
+        strings[done[3]] = (doc.get("done_mail") or {}).get("body") or ""
     mail = None
     if doc.get("mail"):
         m = doc["mail"]
@@ -178,7 +194,7 @@ def _lua_str(s):
     return "'" + str(s).replace("\\", "\\\\").replace("'", "\\'") + "'"
 
 
-OBJECTIVE_TYPES = ("destroy", "goto", "escort", "deliver", "subdue", "hold", "use", "verify")
+OBJECTIVE_TYPES = ("destroy", "goto", "escort", "deliver", "subdue", "hold", "use", "verify", "fast")
 # A verify objective's marker on its targets (retail's blipType: the card suits
 # are the Deck of 52's).
 VERIFY_BLIPS = ("human", "scope", "blip", "clubs", "diamond", "hearts", "spades")
@@ -335,6 +351,9 @@ def objectives_script(asset_id, doc, squad_members, layers=(), zone_centre=None)
         raise ValueError("a mission needs an objective")
     if not any(not bonus_amount(o) for o in objs):
         raise ValueError("a mission needs a main objective (one without a bonus)")
+    fast = [i for i, o in enumerate(objs, 1) if o.get("type") == "fast"]
+    if len(fast) > 1:
+        raise ValueError(f"objectives {', '.join(map(str, fast))}: a mission has one \"finish fast\" bonus")
     main, bonus = [], []
     for i, o in enumerate(objs, 1):
         kind = o.get("type")
@@ -356,6 +375,17 @@ def objectives_script(asset_id, doc, squad_members, layers=(), zone_centre=None)
             if not targets:
                 raise ValueError(f"objective {i}: nothing to {kind} (give \"targets\" or \"squad\")")
             row = f"{head}, targets = {{ {', '.join(_lua_str(t) for t in targets)} }}"
+            if kind in ("destroy", "escort") and o.get("need"):
+                # destroy: done after this many; escort: fails once fewer than this many can arrive
+                try:
+                    need = int(float(o["need"]))
+                except (TypeError, ValueError):
+                    need = 0
+                if not 1 <= need <= len(targets):
+                    raise ValueError(f"objective {i}: \"need\" is 1 to {len(targets)} (it has {len(targets)} "
+                                     f"target{'s' if len(targets) > 1 else ''}), not {o['need']!r}")
+                if need < len(targets):
+                    row += f", need = {need}"
             if kind in ("subdue", "use"):
                 row += f", lost = {_lua_str(escort_lost_key(asset_id, i))}"     # killed / destroyed instead
             if kind == "subdue" and o.get("extract"):
@@ -377,6 +407,12 @@ def objectives_script(asset_id, doc, squad_members, layers=(), zone_centre=None)
                 mark = f", x = {at[0]:.2f}, y = {at[1]:.2f}, z = {at[2]:.2f}" if at else ""
                 row += f", zone = {_lua_str(o['zone'])}{mark}, lost = {_lua_str(escort_lost_key(asset_id, i))}"
             row = f"{{ {row} }}"
+        elif kind == "fast":
+            # a bonus for completing the contract within "seconds" of it being shown (a clock counts down)
+            seconds = float(o.get("seconds") or 0)
+            if not reward or seconds <= 0:
+                raise ValueError(f"objective {i}: a finish-fast objective is a bonus (\"bonus\") with \"seconds\"")
+            row = f"{{ {head}, seconds = {seconds:g} }}"
         elif kind == "hold":
             # stay in a zone for "seconds"; leaving resets the clock
             seconds = float(o.get("seconds") or 0)
@@ -455,7 +491,8 @@ def objectives_script(asset_id, doc, squad_members, layers=(), zone_centre=None)
     fail_cbs = "".join(f"function foundry_Failed{k}() foundry_FailIf({k}) end\n" for k in range(1, len(fails) + 1))
     radio = []
     for k, line in enumerate(doc.get("radio") or [], 1):
-        when = when_of(line.get("when"), len(objs), f"radio line {k}")
+        # "end": as the contract completes (it waits for the line)
+        when = ("end",) if line.get("when") == "end" else when_of(line.get("when"), len(objs), f"radio line {k}")
         row = f"when = '{when[0]}'"
         if when[0] in ("starts", "done"):
             row += f", after = 'foundry{when[1]}'"
@@ -529,6 +566,11 @@ def objectives_script(asset_id, doc, squad_members, layers=(), zone_centre=None)
     bonus_table = ",\n".join("  " + r for r in bonus)
     flat = bonus_fee(doc) - sum(bonus_amount(o) + alive_amount(o) for o in objs)
     pays = "true" if bonus or any(alive_amount(o) for o in objs) else "false"   # writes fBonusFee
+    unlocks = [str(u) for u in doc.get("unlocks") or [] if u]
+    for u in unlocks:
+        if not u.lower().startswith("template_"):
+            raise ValueError(f"unlocks: {u!r} isn't a template (template_support_...)")
+    done = done_mail(asset_id, doc, "x")
     loads = "".join(f"Utility_ReadLevelFile({_lua_str(n)})   -- its squads or zones\n" for n in layers)
     start = doc.get("start") or {}
     if start.get("position"):     # where the player begins (on foot, as retail missions move the player)
@@ -566,8 +608,12 @@ iFoundryStep = 0
 iFoundryGroupLeft = 0       -- main objectives running together not done yet
 iFoundryFlatBonus = {flat}
 iFoundryEarned = 0
-{mood_lua(asset_id, doc)}bFoundryPays = {pays}      -- the payout depends on what's done (bonus objectives, targets taken alive)
+{mood_lua(asset_id, doc)}bFoundryPays = {pays}
+bFoundryDebug = {"true" if doc.get("debug") else "false"}     -- each step shown on screen too (for testing)
+tFoundryLog = {{}}          -- the last steps, kept in scribble memory as foundry_log (foundry_Log() reads it)      -- the payout depends on what's done (bonus objectives, targets taken alive)
 tFoundryVerify = {{}}       -- verify target (actor name) -> its objective
+tFoundryUnlocks = {{ {", ".join(_lua_str(u) for u in unlocks)} }}   -- shop items unlocked on completion
+sFoundryDoneMail = {_lua_str(done[0]) if done else "nil"}   -- the follow-up mail
 
 function ScriptInit()
 Utility_LoadUtilityScript('mission')
@@ -580,7 +626,29 @@ Utility_LoadUtilityScript('util_banter')
 mission_GenericInit()
 {loads}end
 
+-- The mission's steps, for finding out what happened in a test run: the last
+-- dozen are kept in scribble memory (they outlive the mission, failed or
+-- done); foundry_Log() in Foundry Console's Lua box returns them, and with
+-- "debug" each shows on screen as it happens.
+function foundry_Note(s)
+iFoundryNote = (iFoundryNote or 0) + 1
+local line = iFoundryNote .. ': ' .. s
+table.insert(tFoundryLog, line)
+if table.getn(tFoundryLog) > 12 then table.remove(tFoundryLog, 1) end
+local sAll = '{asset_id}: ' .. table.concat(tFoundryLog, ' | ')
+while string.len(sAll) > 400 and table.getn(tFoundryLog) > 1 do   -- short, as retail's scribble strings are
+table.remove(tFoundryLog, 1)
+sAll = '{asset_id}: ' .. table.concat(tFoundryLog, ' | ')
+end
+Utility_WriteStringToScribbleMemory('foundry_log', sAll)
+if bFoundryDebug then util_ObjMsgPrint{{ sMsg = '[{asset_id}] ' .. line, sType = 'GENERAL' }} end
+end
+function foundry_Log()
+return Utility_ReadStringFromScribbleMemory('foundry_log') or 'no mission log yet'
+end
+
 function post_InitialNotifications()   -- after the contract mail
+foundry_Note('started')
 foundry_SetupFail()
 for i, r in ipairs(tFoundryRadio) do
 if r.when == 'zone' then Event_ActorInBoundary('foundry_RadioZone', 'b', 'player0', r.zone, true) end
@@ -655,6 +723,7 @@ end
 end
 function foundry_Wave(w)
 w.loaded = true
+foundry_Note('squad arrives (' .. w.layer .. ')')
 Utility_ReadLevelFile(w.layer)
 Event_RelativeTimer('foundry_WavesUp', 'b', 2.0)
 end
@@ -669,6 +738,7 @@ end
 function foundry_Order(o)
 o.given = true
 if o.wave and not tFoundryWaveUp[o.wave] then o.pending = true return end   -- not there yet
+foundry_Note('order ' .. o.act .. ' to ' .. o.enc .. ':' .. o.squad)
 if o.act == 'attack' then Squad_Command(o.enc, o.squad, 'Attack', 'player0', 'hiPri')
 elseif o.act == 'hold' then Squad_Command(o.enc, o.squad, 'Wait', 'hiPri')
 elseif o.act == 'move' then Squad_Command(o.enc, o.squad, 'TacticalMove', o.to, 'hiPri')
@@ -681,6 +751,7 @@ end
 end
 function foundry_Say(r)
 r.said = true
+foundry_Note('radio ' .. (r.sound or r.text))
 if r.sound then
 iFoundryRadioPending = iFoundryRadioPending + 1
 banter_Add{{ r.sound, prePad = 3.5, callback = foundry_RadioDone }}
@@ -716,6 +787,7 @@ end
 function foundry_ArmFail(f)
 if f.armed or f.off or bFoundryOver then return end
 f.armed = true
+foundry_Note('fail condition on: ' .. f.kind)
 if f.kind == 'dies' then
 for j, a in ipairs(f.targets) do
 tFoundryWatch[Utility_GetActorAsInt(a)] = f
@@ -738,6 +810,7 @@ end
 function foundry_Fail(sReason)
 if bFoundryOver then return end
 bFoundryOver = true
+foundry_Note('FAILED: ' .. tostring(sReason))
 foundry_StopTimer()
 sReasonForFailure = sReason
 mission_MissionFailure()
@@ -748,6 +821,17 @@ if f and not f.off then foundry_Fail(f.reason) end
 end
 function foundry_StopTimer()
 if tFoundryTimer and tFoundryTimer.hud then HUD_RemoveTrayDisplay(tFoundryTimer.hud) tFoundryTimer.hud = nil end
+if tFoundryFast and tFoundryFast.hud then HUD_RemoveTrayDisplay(tFoundryFast.hud) tFoundryFast.hud = nil end
+end
+-- Finish fast: the clock ran out first; the bonus is lost.
+function foundry_TooSlow()
+local o = tFoundryFast
+if not o or o.done or bFoundryOver then return end
+o.done = true
+if o.hud then HUD_RemoveTrayDisplay(o.hud) o.hud = nil end
+foundry_Note(o.name .. ': too slow')
+util_ObjMsgPrint{{ sMsg = o.text, sType = 'BON_OBJ_FAIL', vIdx = 2, sObjective = o.name }}
+mission_RemoveObjective(o.name)
 end
 function foundry_Died(aActor)
 local w = tFoundryWatch[Utility_GetActorAsInt(aActor)]
@@ -790,7 +874,7 @@ local k = Utility_GetActorAsInt(aActor)
 if o.inZone[k] then o.arrived = o.arrived - 1 end
 o.inZone[k] = nil
 o.dead = o.dead + 1
-if o.dead >= table.getn(o.targets) then foundry_Fail(o.lost) else foundry_EscortCheck(o) end
+if table.getn(o.targets) - o.dead < (o.need or 1) then foundry_Fail(o.lost) else foundry_EscortCheck(o) end
 end
 -- Subdue: a target was killed instead. A main objective fails the mission;
 -- a bonus one is lost.
@@ -813,6 +897,7 @@ for sName, o in pairs(tFoundryActive) do
 if o.kind == 'hold' and o.zone == boundaryName and not o.done and not o.holding then
 o.holding = true
 tFoundryHolding = o
+foundry_Note(o.name .. ': in the zone, clock running')
 o.hud = HUD_AddTrayDisplay{{ {{ DisplayClock = true, nObjStyle = HUD.STYLE.NORMAL, nStart = o.seconds, nLimit = 0,
                                 fCallback = foundry_HoldDone }} }}
 Event_ActorInBoundary('foundry_HoldOut', 'b', 'player0', o.zone, false)
@@ -823,6 +908,7 @@ function foundry_HoldOut(playerActor, boundaryName)
 local o = tFoundryHolding
 if not o or o.done or not o.holding or o.zone ~= boundaryName then return end
 o.holding = false
+foundry_Note(o.name .. ': left the zone, clock stopped')
 if o.hud then HUD_RemoveTrayDisplay(o.hud) o.hud = nil end
 local sMsg, iIdx = foundry_Kind(o)
 util_ObjMsgPrint{{ sMsg = o.text, sType = sMsg .. 'UPD_NEG', vIdx = iIdx, sObjective = o.name }}
@@ -879,8 +965,15 @@ function foundry_Start(o)
 o.text = Utility_GetStringById(o.key)
 o.down = 0
 tFoundryActive[o.name] = o
+foundry_Note((o.bonus and 'bonus ' or '') .. o.name .. ' (' .. o.kind .. ') starts')
 local sMsg, iIdx, sObjType, sTargetType = foundry_Kind(o)
-if o.kind == 'verify' then
+if o.kind == 'fast' then
+-- done if the contract completes before its clock runs out (foundry_Finish)
+util_ObjMsgPrint{{ sMsg = o.text, sType = sMsg .. 'ADD', vIdx = iIdx, sObjective = o.name }}
+tFoundryFast = o
+o.hud = HUD_AddTrayDisplay{{ {{ DisplayClock = true, nObjStyle = HUD.STYLE.NORMAL, nStart = o.seconds, nLimit = 0,
+                                fCallback = foundry_TooSlow }} }}
+elseif o.kind == 'verify' then
 -- kill and photograph the body, or capture alive (retail's verify: the Deck of 52)
 for j, a in ipairs(o.targets) do
 tFoundryVerify[a] = o
@@ -948,7 +1041,7 @@ elseif o.kind == 'destroy' then
 mission_ObjectiveDestroy{{ callbackFunc = foundry_TargetDown, objectiveName = o.name, objectiveDesc = o.text,
                           actorName = o.targets, objectiveType = sObjType, targetType = sTargetType }}
 util_ObjMsgPrint{{ sMsg = o.text, sType = sMsg .. 'ADD', vIdx = iIdx,
-                  tCounter = {{ vCurr = 0, vLim = table.getn(o.targets) }}, sObjective = o.name }}
+                  tCounter = {{ vCurr = 0, vLim = o.need or table.getn(o.targets) }}, sObjective = o.name }}
 else
 util_ObjMsgPrint{{ sMsg = o.text, sType = sMsg .. 'ADD', vIdx = iIdx, sObjective = o.name }}
 if o.x then   -- a marker on the zone, as retail location objectives do (sw_sk2)
@@ -968,6 +1061,7 @@ end
 
 function foundry_Done(o)
 o.done = true
+foundry_Note(o.name .. ' done')
 foundry_EndFail(o.name)
 local sMsg, iIdx = foundry_Kind(o)
 util_ObjMsgPrint{{ sMsg = o.text, sType = sMsg .. 'CMPL', vIdx = iIdx, sObjective = o.name }}
@@ -988,8 +1082,9 @@ end
 function foundry_TargetDown(sActor, bComplete, sObjName)
 local o = tFoundryActive[sObjName]
 if not o or o.done then return end
-local iAll = table.getn(o.targets)
+local iAll = o.need or table.getn(o.targets)        -- "need": done after that many
 o.down = o.down + 1
+foundry_Note(o.name .. ': ' .. tostring(sActor) .. ' (' .. o.down .. ' of ' .. iAll .. ')')
 if o.down >= iAll then
 foundry_Done(o)
 else
@@ -1018,10 +1113,24 @@ end
 -- The main objectives are done: bonus objectives shown and still open have
 -- failed (ones never shown are left out), and the contract pays the flat
 -- bonus plus the rewards earned.
+-- After the contract completes (mission.lua calls it, as retail missions
+-- unlock shop items there): the shop unlocks and the follow-up mail.
+function post_MissionComplete()
+for i, s in ipairs(tFoundryUnlocks) do Shop_UnlockItem(s) end
+if sFoundryDoneMail then Mail_Post(sFoundryDoneMail) end
+end
+
 function foundry_Finish()
 if bFoundryOver then return end
+if not bFoundryEndSaid then bFoundryEndSaid = true foundry_Radio('end') end   -- the lines for the end
 if iFoundryRadioPending > 0 then bFoundryFinishing = true return end   -- after the last radio line
+local o = tFoundryFast
+if o and not o.done then          -- finished in time
+if o.hud then HUD_RemoveTrayDisplay(o.hud) o.hud = nil end
+foundry_Done(o)
+end
 bFoundryOver = true
+foundry_Note('COMPLETE, earned ' .. iFoundryEarned .. ' in bonuses')
 foundry_StopTimer()
 for i, o in ipairs(tFoundryBonus) do
 if tFoundryActive[o.name] and not o.done then
@@ -1039,6 +1148,12 @@ end
 
 
 CONTRACTS_SCRIPT = "foundry_contracts"
+# In the contracts script too (always loaded), so the log reads after the
+# mission's own script has gone.
+_LOG_READER = """function foundry_Log()
+return Utility_ReadStringFromScribbleMemory('foundry_log') or 'no mission log yet'
+end
+"""
 _HOOK_START = "Utility_LoadUtilityScript('foundry_contracts') foundry_ReturnFromContract()"
 _HOOK_SPAWN = "foundry_SetupContracts()"
 
@@ -1396,6 +1511,7 @@ def contracts_script(contracts, insertions=()):
     if insertions:
         from . import hqsequence
         out.append(hqsequence.lua_block(insertions).rstrip("\n"))
+    out.append(_LOG_READER.rstrip("\n"))
     return "\n".join(out) + "\n"
 
 

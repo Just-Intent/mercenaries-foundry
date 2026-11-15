@@ -202,6 +202,7 @@ export function createMissions(ctx) {
       for (const id of ['ms-title', 'ms-description', 'ms-briefing']) $(id).value = '';
       $('ms-fee').value = 50000;
       $('ms-bonus').value = 0;
+      $('ms-debug').checked = false;
       for (const f of MOOD_FACTIONS) $(`ms-mood-${f}`).value = f === $('ms-faction').value ? 20 : '';
       st.objectives = [];
       st.fails = [];
@@ -209,6 +210,9 @@ export function createMissions(ctx) {
       st.orders = [];
       st.waves = [];
       st.support = [];
+      st.unlocks = [];
+      $('ms-done-subject').value = '';
+      $('ms-done-body').value = '';
       st.start = null;
       st.giver = {mode: 'hq'};
       st.requires = [];
@@ -220,6 +224,7 @@ export function createMissions(ctx) {
       $('ms-briefing').value = (m.doc.mail || {}).body || '';
       $('ms-fee').value = (m.doc.ini || {}).ContractFee ?? 50000;
       $('ms-bonus').value = (m.doc.ini || {}).BonusFee ?? 0;
+      $('ms-debug').checked = !!m.doc.debug;
       for (const f of MOOD_FACTIONS) $(`ms-mood-${f}`).value = (m.doc.mood || {})[f] || '';
       st.objectives = (m.doc.objectives || []).map((o) => ({...o}));
       st.fails = (m.doc.fail || []).map((c) => ({...c}));
@@ -227,12 +232,16 @@ export function createMissions(ctx) {
       st.orders = (m.doc.orders || []).map((o) => ({...o}));
       st.waves = (m.doc.waves || []).map((w) => ({...w}));
       st.support = (m.doc.support || []).map((s) => ({...s}));
+      st.unlocks = [...(m.doc.unlocks || [])];
+      $('ms-done-subject').value = (m.doc.done_mail || {}).subject || '';
+      $('ms-done-body').value = (m.doc.done_mail || {}).body || '';
       st.start = m.doc.start ? {...m.doc.start} : null;
       st.giver = giverFrom(m.doc.contact, m.doc.hq);
       st.requires = [...(m.doc.requires || [])];
     }
     $('ms-layer-tools').hidden = false;
     drawSupport();
+    drawUnlocks();
     drawStart();
     drawGiver();
     drawSequence();
@@ -256,7 +265,7 @@ export function createMissions(ctx) {
   const MOOD_FACTIONS = ['allies', 'china', 'mafia', 'sk'];
   const OBJ_NAMES = {destroy: 'Destroy squad / objects', goto: 'Go to zone', escort: 'Escort squad (they follow you to the zone)',
                      deliver: 'Deliver vehicle to zone', subdue: 'Capture alive (subdue)', hold: 'Hold zone',
-                     use: 'Use object', verify: 'Verify target (kill and photograph, or capture)'};
+                     use: 'Use object', fast: 'Finish fast', verify: 'Verify target (kill and photograph, or capture)'};
   const BLIPS = {human: 'Person', scope: 'Scope', blip: 'Dot', clubs: 'Clubs', diamond: 'Diamonds', hearts: 'Hearts', spades: 'Spades'};
   function drawObjectives() {
     const m = st.current;
@@ -276,7 +285,7 @@ export function createMissions(ctx) {
         ? `<span class="ms-targets">${o.vehicle ? `<span class="ms-tag">${esc(o.vehicle)}</span>` : '(no vehicle)'}
             <button data-i="${i}" data-a="vehicle" title="Select the vehicle on the map first">Use selected vehicle</button></span>`
         : '';
-      const seconds = o.type === 'hold'
+      const seconds = (o.type === 'hold' || o.type === 'fast')
         ? `<label>Seconds <input data-i="${i}" data-k="seconds" type="number" min="1" step="10" value="${+o.seconds || ''}"></label>` : '';
       const prompt = o.type === 'use'
         ? `<input data-i="${i}" data-k="prompt" type="text" value="${esc(o.prompt)}" placeholder="Prompt on the object, e.g. Plant charge">` : '';
@@ -291,15 +300,20 @@ export function createMissions(ctx) {
       const together = !(+o.bonus > 0) && firstMain >= 0 && i > firstMain
         ? `<label title="Starts with the main objective before it, in any order; the next one waits until both are done">`
           + `<input data-i="${i}" data-k="together" type="checkbox" ${o.together ? 'checked' : ''}> Together with the one before</label>` : '';
+      const need = (o.type === 'destroy' || o.type === 'escort')
+        ? `<label title="${o.type === 'destroy' ? 'Done after this many (blank: all of them)' : 'The mission fails once fewer than this many can still arrive (blank: one)'}">`
+          + `${o.type === 'destroy' ? 'How many' : 'At least'} <input data-i="${i}" data-k="need" type="number" min="1" step="1" value="${+o.need > 0 ? +o.need : ''}" `
+          + `placeholder="${o.type === 'destroy' ? 'all' : '1'}">${o.type === 'escort' ? ' must arrive' : ''}</label>` : '';
       const pick = o.type === 'use' ? targets + prompt
         : o.type === 'verify' ? squadPick + targets + verify
         : o.type === 'subdue' ? squadPick + targets + extract
         : o.type === 'destroy' ? squadPick + targets
         : o.type === 'escort' ? squadPick + zonePick
-        : o.type === 'deliver' ? vehicle + zonePick : zonePick + seconds;
+        : o.type === 'deliver' ? vehicle + zonePick
+        : o.type === 'fast' ? seconds : zonePick + seconds;
       return `<div class="ms-obj"><b>${i + 1}. ${OBJ_NAMES[o.type] || o.type}${+o.bonus > 0 ? ' (bonus)' : ''}</b>
         <input data-i="${i}" data-k="text" type="text" value="${esc(o.text)}" placeholder="What the player reads">
-        ${pick} ${together}
+        ${pick} ${need} ${together}
         <label class="ms-bonus" title="A reward makes this a bonus objective: optional, active from the start alongside the main ones, paid on completion if done">Bonus $
           <input data-i="${i}" data-k="bonus" type="number" min="0" step="1000" value="${+o.bonus > 0 ? +o.bonus : ''}" placeholder="none"></label>
         ${+o.bonus > 0 ? revealPick(o, i, zones) : ''}
@@ -382,7 +396,9 @@ export function createMissions(ctx) {
     const box = $('ms-outline');
     if (!box) return;
     const objs = st.objectives;
-    const objName = (i) => `${i + 1}. ${OBJ_NAMES[objs[i].type] || objs[i].type}: "${objs[i].text || ''}"`;
+    const objName = (i) => `${i + 1}. ${OBJ_NAMES[objs[i].type] || objs[i].type}: "${objs[i].text || ''}"`
+      + (+objs[i].need > 0 ? (objs[i].type === 'escort' ? ` (at least ${objs[i].need} must arrive)` : ` (${objs[i].need} of them)`) : '')
+      + (objs[i].type === 'fast' ? ` (complete within ${clock(+objs[i].seconds || 0)} of it showing)` : '');
     const at = {};
     const add = (when, line) => (at[when || 'start'] = at[when || 'start'] || []).push(line);
     for (const s of st.support) if (s.item) add('start', `Support: ${s.item.replace(/^template_support_/i, '')}${+s.count > 0 ? ` x${s.count}` : ''}`);
@@ -429,7 +445,10 @@ export function createMissions(ctx) {
     const pay = [`Pays ${money($('ms-fee').value)}${flat ? ` + ${money(flat)} bonus` : ''}${extras ? ` + up to ${money(extras)} more for bonuses` : ''}`];
     objs.forEach((o, i) => { if (o.type === 'verify' && +o.alive > 0) pay.push(`+ ${money(o.alive)} for each target of objective ${i + 1} taken alive`); });
     if (moods.length) pay.push(`Mood: ${moods.join(', ')}`);
-    html += block(main.length ? 'Contract complete' : 'No main objective: the mission can\'t complete', '(end)', main.length ? pay : []);
+    for (const u of st.unlocks) if (u) pay.push(`Unlocks in the shop: ${u.replace(/^template_support_/i, '')}`);
+    if ($('ms-done-subject').value.trim() || $('ms-done-body').value.trim()) pay.push(`Mail: "${$('ms-done-subject').value.trim()}"`);
+    if (main.length) at.end = [...(at.end || []), ...pay];     // its radio lines play first, then it pays
+    html += block(main.length ? 'Contract complete' : 'No main objective: the mission can\'t complete', 'end');
     const stray = Object.keys(at).filter((k) => !used.has(k));
     if (stray.length) html += `<li class="ms-problem">Nothing triggers ${stray.map(esc).join(', ')} (an objective that isn't there)</li>`;
     box.innerHTML = `<ul class="ms-outline">${html}</ul>`;
@@ -449,6 +468,11 @@ export function createMissions(ctx) {
     if (k === 'extract' || k === 'together') {
       if (e.target.checked) o[k] = true; else delete o[k];
       queueOutline(); edited(); return;
+    }
+    if (k === 'need') {
+      const n = Math.floor(+e.target.value || 0);
+      if (n > 0) o.need = n; else delete o.need;
+      edited(); return;
     }
     o[k] = (k === 'bonus' || k === 'seconds' || k === 'alive') ? Math.max(0, +e.target.value || 0) : e.target.value;
     if (k === 'bonus' && wasBonus !== +o.bonus > 0) {
@@ -498,6 +522,10 @@ export function createMissions(ctx) {
   });
   $('ms-add-destroy').onclick = () => { st.objectives.push({type: 'destroy', text: 'Destroy the squad', squad: ''}); drawObjectives(); drawFails(); drawRadio(); drawOrders(); drawWaves(); edited(); };
   $('ms-add-goto').onclick = () => { st.objectives.push({type: 'goto', text: 'Go to the marked area', zone: ''}); drawObjectives(); drawFails(); drawRadio(); drawOrders(); drawWaves(); edited(); };
+  $('ms-add-fast').onclick = () => {
+    st.objectives.push({type: 'fast', text: 'Finish the contract within 5 minutes', seconds: 300, bonus: 20000});
+    drawObjectives(); drawFails(); drawRadio(); drawOrders(); drawWaves(); edited();
+  };
   $('ms-add-verify').onclick = () => {
     st.objectives.push({type: 'verify', text: 'Verify the target', squad: '', targets: [], blip: 'human'});
     drawObjectives(); drawFails(); drawRadio(); drawOrders(); drawWaves(); edited();
@@ -593,9 +621,10 @@ export function createMissions(ctx) {
   // A line plays when the mission starts, an objective starts or is done, or
   // the player enters a zone: a voice ("<bank>.<cue>", with the text as its
   // subtitle) or, with no voice, the text as an on-screen message.
-  function whenPick(value, attrs, zones, key = 'when') {
+  function whenPick(value, attrs, zones, key = 'when', withEnd = false) {
     const r = value || 'start';
     const opts = [['start', 'When the mission starts']];
+    if (withEnd) opts.push(['end', 'When the contract completes']);
     st.objectives.forEach((x, j) => opts.push([`starts:${j + 1}`, `When objective ${j + 1} starts`],
                                               [`done:${j + 1}`, `When objective ${j + 1} is done`]));
     opts.push(['zone', 'When the player enters a zone']);
@@ -606,14 +635,66 @@ export function createMissions(ctx) {
       ? `<select ${attrs} data-k="${key}Zone"><option value="">(zone)</option>${zones.map((z) =>
           `<option ${z === zone ? 'selected' : ''}>${esc(z)}</option>`).join('')}</select>` : ''}`;
   }
+  // Voice lines: the game's own (searched by what's said, or cue), and the
+  // mod's new ones; ▶ plays one, Use puts it on the radio line.
+  let voices = null, voiceFor = null, voiceAudio = null;
+  async function loadVoices() {
+    if (!voices) {
+      try { voices = await (await fetch('/api/voices')).json(); } catch (e) { voices = []; }
+    }
+    return voices;
+  }
+  function voiceText(cue) {
+    const low = String(cue || '').toLowerCase();
+    const v = (voices || []).find((x) => x.cue.toLowerCase() === low);
+    return v ? v.text : '';
+  }
+  function drawVoices() {
+    const q = $('ms-voice-q').value.trim().toLowerCase();
+    const words = q.split(/\s+/).filter(Boolean);
+    const hits = (voices || []).filter((v) => words.every((w) => v.text.toLowerCase().includes(w) || v.cue.toLowerCase().includes(w)));
+    $('ms-voice-list').innerHTML = hits.slice(0, 60).map((v) => `<div class="ms-voice">
+        <button data-play="${esc(v.cue)}" title="Listen">▶</button><button data-use="${esc(v.cue)}">Use</button>
+        <b>${esc(v.cue)}</b>${v.mod ? ' (this mod)' : ''} ${esc(v.text)}</div>`).join('')
+      + `<p class="hint">${hits.length > 60 ? `${hits.length} lines: showing 60, search for more words` : `${hits.length} line${hits.length === 1 ? '' : 's'}`}.`
+      + ` With one of the game's voices, leave the line's text empty to keep its own subtitle: text there replaces that subtitle wherever the game plays the line.</p>`;
+  }
+  async function openVoices(k) {
+    voiceFor = k;
+    $('ms-voice-find').hidden = false;
+    $('ms-voice-list').innerHTML = '<p class="hint">Loading the game\'s voice lines...</p>';
+    // under the line it's for
+    document.querySelectorAll('#ms-radio .ms-obj')[k].after($('ms-voice-find'));
+    await loadVoices();
+    drawVoices();
+    $('ms-voice-q').focus();
+  }
+  $('ms-voice-q').addEventListener('input', drawVoices);
+  $('ms-voice-list').addEventListener('click', (e) => {
+    const play = e.target.dataset.play, use = e.target.dataset.use;
+    if (play) {
+      if (voiceAudio) voiceAudio.pause();
+      voiceAudio = new Audio(`/api/voice/${encodeURIComponent(play)}.wav`);
+      voiceAudio.play().catch((err) => status(`Couldn't play ${play}: ${err.message}`, true));
+    } else if (use && voiceFor !== null && st.radio[voiceFor]) {
+      st.radio[voiceFor].sound = use;
+      $('ms-voice-find').hidden = true;
+      $('ms-radio').after($('ms-voice-find'));
+      drawRadio(); edited();
+    }
+  });
+
   function drawRadio() {
+    if ($('ms-voice-find').parentElement === $('ms-radio')) $('ms-radio').after($('ms-voice-find'));
     const m = st.current;
     const zones = m ? m.zones : (st.shared || {}).zones || [];
     $('ms-radio').innerHTML = st.radio.map((r, k) => `<div class="ms-obj"><b>Line ${k + 1}</b>
-        ${whenPick(r.when, `data-r="${k}"`, zones)}
+        ${whenPick(r.when, `data-r="${k}"`, zones, 'when', true)}
         <input data-r="${k}" data-k="sound" type="text" value="${esc(r.sound)}" placeholder="Voice (optional): fio.S10START"
           title="A voice cue as bank.cue: the game's own, or one your mod adds as sounds/<bank>/new/<cue>.wav">
-        <input data-r="${k}" data-k="text" type="text" value="${esc(r.text)}" placeholder="Subtitle, or the message with no voice">
+        <button data-r="${k}" data-a="voice" title="Search the game's voice lines">Find voice</button>
+        <input data-r="${k}" data-k="text" type="text" value="${esc(r.text)}"
+          placeholder="${esc(r.sound && voiceText(r.sound) ? `Subtitle: ${voiceText(r.sound)}` : 'Subtitle, or the message with no voice')}">
         <span class="buttons"><button data-r="${k}" data-a="up">Up</button><button data-r="${k}" data-a="del">Delete</button></span></div>`)
       .join('') || '<p class="hint">No radio lines.</p>';
   }
@@ -631,6 +712,7 @@ export function createMissions(ctx) {
     edited();
   });
   $('ms-radio').addEventListener('click', (e) => {
+    if (e.target.dataset.a === 'voice') { openVoices(+e.target.dataset.r); return; }
     const k = +e.target.dataset.r, a = e.target.dataset.a;
     if (!a) return;
     if (a === 'del') st.radio.splice(k, 1);
@@ -701,6 +783,27 @@ export function createMissions(ctx) {
   });
   $('ms-add-support').onclick = () => { st.support.push({item: 'template_support_gunship', count: 1}); drawSupport(); edited(); };
 
+  // ---------------------------------------------------------------- shop unlocks
+  function drawUnlocks() {
+    drawSupport();      // (fills the support items list the inputs share)
+    $('ms-unlocks').innerHTML = st.unlocks.map((u, k) => `<div class="ms-obj">
+        <input data-u="${k}" type="text" list="ms-support-items" value="${esc(u)}" placeholder="template_support_...">
+        <span class="buttons"><button data-u="${k}" data-a="del">Delete</button></span></div>`).join('')
+      || '<p class="hint">No shop unlocks.</p>';
+  }
+  $('ms-unlocks').addEventListener('change', (e) => {
+    if (e.target.dataset.u === undefined || e.target.tagName !== 'INPUT') return;
+    st.unlocks[+e.target.dataset.u] = e.target.value.trim();
+    edited();
+  });
+  $('ms-unlocks').addEventListener('click', (e) => {
+    if (e.target.dataset.a !== 'del') return;
+    st.unlocks.splice(+e.target.dataset.u, 1);
+    drawUnlocks(); edited();
+  });
+  $('ms-add-unlock').onclick = () => { st.unlocks.push('template_support_deliverH2'); drawUnlocks(); edited(); };
+  for (const id of ['ms-done-subject', 'ms-done-body']) $(id).addEventListener('input', edited);
+
   // ---------------------------------------------------------------- squad orders
   // At a moment (as radio lines), a squad attacks the player, holds, moves to
   // one of its encounter's point sets, closes in on the player, or walks a path.
@@ -762,6 +865,7 @@ export function createMissions(ctx) {
     $(id).addEventListener('input', edited);
   }
   $('ms-outline-box').addEventListener('toggle', drawOutline);
+  $('ms-debug').addEventListener('change', edited);
   // A new mission's faction picks its number only; what's typed stays.
   $('ms-faction').onchange = () => {
     // a new mission's own-faction mood (20 by default) goes with the faction
@@ -893,9 +997,10 @@ export function createMissions(ctx) {
     if (st.giver.mode === 'placed' && !st.giver.position) throw new Error('Place the mission giver (Set here), or pick another giver');
     return {map: st.map, mission: {
       faction, number, title: $('ms-title').value.trim(), description: $('ms-description').value.trim(),
-      briefing: $('ms-briefing').value.trim(), fee: +$('ms-fee').value || 0, bonus: +$('ms-bonus').value || 0,
+      briefing: $('ms-briefing').value.trim(), fee: +$('ms-fee').value || 0, bonus: +$('ms-bonus').value || 0, debug: $('ms-debug').checked,
       mood: Object.fromEntries(MOOD_FACTIONS.map((f) => [f, Math.max(-100, Math.min(100, Math.round(+$(`ms-mood-${f}`).value || 0)))])), objectives: st.objectives,
-      start: st.start, giver: st.giver, requires: st.requires || [], fail: st.fails, radio: st.radio, orders: st.orders, waves: st.waves, support: st.support,
+      start: st.start, giver: st.giver, requires: st.requires || [], fail: st.fails, radio: st.radio, orders: st.orders, waves: st.waves, support: st.support, unlocks: st.unlocks,
+      done_mail: {subject: $('ms-done-subject').value.trim(), body: $('ms-done-body').value.trim()},
     }};
   }
   async function saved(done) {

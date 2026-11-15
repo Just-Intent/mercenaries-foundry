@@ -76,3 +76,10 @@ code.copyable { display: block; white-space: pre-wrap; word-break: break-all; fo
 .ms-outline { margin: 0; padding-left: 14px; font-size: 12px; }
 .ms-outline > li { margin: 4px 0; }
 .ms-outline ul { margin: 2px 0; padding-left: 16px; color: #9fb3c8; }
+
+/* Missions: voice line search */
+#ms-voice-find { border: 1px solid #3a4654; padding: 6px; margin: 4px 0; }
+#ms-voice-q { width: 100%; box-sizing: border-box; }
+#ms-voice-list { max-height: 260px; overflow-y: auto; font-size: 12px; }
+.ms-voice { padding: 2px 0; border-bottom: 1px solid #2a323c; }
+.ms-voice button { padding: 0 5px; margin-right: 3px; }

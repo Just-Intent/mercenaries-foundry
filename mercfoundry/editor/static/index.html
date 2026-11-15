@@ -191,6 +191,7 @@
       <h3>Objectives, in order</h3>
       <div id="ms-objectives"></div>
       <div class="buttons"><button id="ms-add-destroy">+ Destroy squad / objects</button><button id="ms-add-goto">+ Go to zone</button>
+        <button id="ms-add-fast" title="A bonus for completing the contract before a clock runs out (from when it's shown)">+ Finish fast (bonus)</button>
         <button id="ms-add-verify" title="Kill a target and photograph the body, or capture them alive (the Deck of 52's verify)">+ Verify target</button>
         <button id="ms-add-use" title="Walk up to an object (picked on the map) and use it, with your own prompt">+ Use object</button>
         <button id="ms-add-subdue" title="Subdue a target (picked on the map) or a squad; killing them fails it">+ Capture alive</button>
@@ -202,6 +203,12 @@
       <div id="ms-support"></div>
       <datalist id="ms-support-items"></datalist>
       <div class="buttons"><button id="ms-add-support">+ Support item</button></div>
+      <h3>On completion</h3>
+      <p class="hint">Shop items it unlocks (as retail contracts unlock vehicle drops and airstrikes), and a mail that arrives after it.</p>
+      <div id="ms-unlocks"></div>
+      <div class="buttons"><button id="ms-add-unlock">+ Shop unlock</button></div>
+      <label class="field">Follow-up mail subject <input id="ms-done-subject" type="text" placeholder="none: no mail"></label>
+      <label class="field">Follow-up mail <textarea id="ms-done-body" rows="2"></textarea></label>
       <h3>Squads that appear later</h3>
       <p class="hint">A squad of the mission's own layer that isn't there at the start: it arrives at its moment (an ambush, reinforcements). Give it an order (below) to attack.</p>
       <div id="ms-waves"></div>
@@ -212,6 +219,10 @@
       <h3>Radio lines</h3>
       <div id="ms-radio"></div>
       <div class="buttons"><button id="ms-add-radio">+ Radio line</button></div>
+      <div id="ms-voice-find" hidden>
+        <input id="ms-voice-q" type="search" placeholder="Search the game's voice lines: words said, or a cue (fio.)">
+        <div id="ms-voice-list"></div>
+      </div>
       <h3>Fail conditions</h3>
       <div id="ms-fails"></div>
       <div class="buttons"><button id="ms-add-protect">+ Protect squad</button><button id="ms-add-timer">+ Time limit</button>
@@ -227,6 +238,8 @@
         here aren't used.</p>
       <p class="hint">Save writes the mission. On the next game start a contact at the faction's HQ offers it;
         after the last objective the contract completes.</p>
+      <label class="field" title="Each step of the mission (objectives starting and done, fail conditions, squads, orders, radio) shows on screen as it happens. The steps are also kept: foundry_Log() in Foundry Console's Lua box returns the last dozen, with or without this.">
+        <input id="ms-debug" type="checkbox"> Show debug messages in game (for testing)</label>
       <details id="ms-outline-box" open><summary>Mission outline</summary><div id="ms-outline"></div></details>
       <div class="buttons"><button id="ms-check" title="Run the build's checks on the saved mission">Check mission</button></div>
       <div id="ms-check-out" hidden></div>

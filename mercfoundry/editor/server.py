@@ -22,6 +22,8 @@ POST /api/live/poll            the running game's plugin: its state in, commands
 GET  /api/live/state           connected?, the player's position, command results
 POST /api/live/send            {"commands": [...]} for the game (see live.py)
 GET  /api/encounters/<map>     encounters: the game's (read only) and the mod's
+GET  /api/voices               the game's voiced lines with subtitles, for radio lines: [{cue, text}]
+GET  /api/voice/<bank>.<cue>.wav  a voice line to listen to
 GET  /api/templates            objects a squad member can copy (template_*)
 POST /api/encounters/save      {"map", "files": {file: [encounter, ...]}}
 POST /api/placed/save          {"map", "files": {file: [{from, name, position, rotation}]}}: objects placed from templates
@@ -153,6 +155,11 @@ def make_handler(scene: Scene, mod_name: str, live: Live = None):
                 if path == "/api/animations":
                     with objects_lock:
                         return self.send(200, scene.animation_names())
+                if path == "/api/voices":
+                    with objects_lock:
+                        return self.send(200, scene.voice_lines())
+                if path.startswith("/api/voice/") and path.endswith(".wav"):
+                    return self.send(200, scene.voice_wav(path[len("/api/voice/"):-4]), "audio/wav")
                 if path == "/api/templates":
                     with objects_lock:
                         return self.send(200, scene.templates())

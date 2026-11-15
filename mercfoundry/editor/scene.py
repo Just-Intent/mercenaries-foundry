@@ -292,6 +292,68 @@ class Scene:
                 "squads": shared_squads, "zones": shared_zones, "paths": shared_paths, "sets": shared_sets,
                 "hq": self._hq_points(m)}
 
+    def voice_lines(self):
+        """The game's voiced lines a radio line can play: [{"cue": "fio.01011FIO",
+        "text": subtitle}], from the subtitles (vo.<bank>.<cue>) whose cue is in
+        its sound bank, plus the mod's own new ones (sounds/<bank>/new/<cue>.wav,
+        "mod": true)."""
+        if not hasattr(self, "_voices"):
+            from .. import registry, xsb
+            subs = {}
+            for a in self.archives:
+                if a.path.name.lower() != "english.dsk":
+                    continue
+                for r in a.records:
+                    if r.kind == name_hash("registry"):
+                        try:
+                            strings = registry.Registry(a.read(r)).strings()
+                        except Exception:          # not a text registry
+                            continue
+                        for k, v in strings.items():
+                            if k.lower().startswith("vo.") and k.count(".") >= 2:
+                                subs.setdefault(k.lower(), v)
+            lib = self.sound_library()
+            out, seen = [], set()
+            for key in sorted(subs):
+                _, bank, cue = key.split(".", 2)
+                try:
+                    c = lib.sound_bank(bank).cue(cue)
+                except KeyError:
+                    continue
+                if c and (bank, c.name.lower()) not in seen:
+                    seen.add((bank, c.name.lower()))
+                    out.append({"cue": f"{bank}.{c.name}", "text": subs[key]})
+            self._voices = out
+        own = [{"cue": f"{p.parent.parent.name.lower()}.{p.stem}", "text": "", "mod": True}
+               for p in sorted((self.mod / "sounds").glob("*/new/*.wav"))] if (self.mod / "sounds").is_dir() else []
+        return own + self._voices
+
+    def sound_library(self):
+        if not hasattr(self, "_sound_lib"):
+            from .. import xsb
+            self._sound_lib = xsb.Library(self.data)
+        return self._sound_lib
+
+    def voice_wav(self, cue):
+        """A voice line as a .wav to listen to: the mod's own new one, or the
+        game's (its first wave)."""
+        from .. import sounds
+        bank, _, name = cue.partition(".")
+        if not bank or not name or "/" in cue or "\\" in cue:
+            raise ValueError(f"no voice {cue!r}")
+        own = self.mod / "sounds" / bank / "new" / f"{name}.wav"
+        if own.is_file():
+            return own.read_bytes()
+        lib = self.sound_library()
+        try:
+            c = lib.sound_bank(bank).cue(name)
+        except KeyError:
+            c = None
+        waves = lib.sound_bank(bank).cue_waves(c) if c else []
+        if not waves:
+            raise ValueError(f"no voice {cue!r}")
+        return sounds.decoded(lib, *waves[0])
+
     def _mission_titles(self):
         """{string key: text} of the game's mission titles (MissionInfo.MissionTitle.*)."""
         if not hasattr(self, "_titles"):
@@ -425,7 +487,22 @@ class Scene:
     def check_mission(self, asset_id):
         """The build's checks for a saved mission (modbuild.check_mission)."""
         from ..modbuild import check_mission
-        return check_mission(self.mod, asset_id.lower())
+        return check_mission(self.mod, asset_id.lower(), self.lua_names())
+
+    def lua_names(self):
+        """Every global the game's scripts define or call (luacheck.known_names)."""
+        if not hasattr(self, "_lua_names"):
+            from .. import luacheck, script as sc
+            sources = []
+            for a in self.archives:
+                for r in a.records:
+                    if r.kind == name_hash("script"):
+                        try:
+                            sources.append(sc.decode(a.read(r)).source)
+                        except Exception:
+                            continue
+            self._lua_names = luacheck.known_names(sources)
+        return self._lua_names
 
     def save_mission(self, map_name, mission):
         """Write missions/<id>.json from the editor's fields (title,
@@ -452,6 +529,23 @@ class Scene:
             doc.setdefault("ini", {})["ContractFee"] = int(mission["fee"])
         if mission.get("bonus") is not None:
             doc.setdefault("ini", {})["BonusFee"] = int(mission["bonus"])
+        if "unlocks" in mission:
+            unlocks = [str(u).strip() for u in mission.get("unlocks") or [] if str(u).strip()]
+            if unlocks:
+                doc["unlocks"] = unlocks
+            else:
+                doc.pop("unlocks", None)
+        if "done_mail" in mission:
+            m = {k: str(v) for k, v in (mission.get("done_mail") or {}).items() if k in ("subject", "body") and str(v).strip()}
+            if m:
+                doc["done_mail"] = m
+            else:
+                doc.pop("done_mail", None)
+        if "debug" in mission:
+            if mission.get("debug"):
+                doc["debug"] = True
+            else:
+                doc.pop("debug", None)
         if "mood" in mission:
             mood = {f: int(float(v)) for f, v in (mission.get("mood") or {}).items()
                     if f in ms.FACTIONS and v not in ("", None) and int(float(v))}
@@ -459,7 +553,7 @@ class Scene:
                 doc["mood"] = mood
             else:
                 doc.pop("mood", None)
-        doc["objectives"] = [{k: v for k, v in o.items() if k in ("type", "text", "prompt", "squad", "targets", "vehicle", "zone", "seconds", "marker", "blip", "alive", "extract", "together",
+        doc["objectives"] = [{k: v for k, v in o.items() if k in ("type", "text", "prompt", "squad", "targets", "vehicle", "zone", "seconds", "marker", "blip", "alive", "extract", "together", "need",
                                                             "bonus", "reveal")
                               and not (k == "bonus" and not v) and not (k == "reveal" and (v in ("", "start") or not o.get("bonus")))}
                              for o in mission.get("objectives") or []]

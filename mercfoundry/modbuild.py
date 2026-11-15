@@ -555,7 +555,7 @@ def mission_drafts(doc):
     drafts = [f"objective {i}" for i, o in enumerate(doc.get("objectives") or [], 1)
               if (o.get("type") in ("destroy", "escort", "subdue", "use", "verify") and not (o.get("squad") or o.get("targets")))
               or (o.get("type") in ("goto", "escort", "deliver", "hold") and not o.get("zone"))
-              or (o.get("type") == "hold" and not o.get("seconds"))
+              or (o.get("type") in ("hold", "fast") and not o.get("seconds"))
               or (o.get("type") == "deliver" and not o.get("vehicle"))
               or str(o.get("reveal") or "") == "zone:"]
     drafts += [f"wave {k}" for k, w in enumerate(doc.get("waves") or [], 1) if not w.get("squad")]
@@ -632,11 +632,12 @@ def mission_resolvers(folder, asset_id, map_, doc, fname):
     return squad_members, zone_centre, used, layers
 
 
-def check_mission(folder, asset_id):
+def check_mission(folder, asset_id, known=None):
     """The editor's Check: what would stop this mission's script being
     written, or break it in game, as the build sees it. {"problems": [...],
-    "notes": [...]}; no problems means the build writes its script."""
-    from . import missions, hqsequence
+    "notes": [...]}; no problems means the build writes its script. known:
+    the names the game's scripts define or call, to check the script's calls."""
+    from . import missions, hqsequence, luacheck
     folder = Path(folder)
     problems, notes = [], []
     p = folder / "missions" / f"{asset_id}.json"
@@ -659,9 +660,13 @@ def check_mission(folder, asset_id):
     if doc.get("objectives") and not drafts:
         squad_members, zone_centre, used, layers = mission_resolvers(folder, asset_id, map_, doc, p.name)
         try:
-            missions.objectives_script(asset_id, doc, squad_members, sorted(used), zone_centre)
+            body = missions.objectives_script(asset_id, doc, squad_members, sorted(used), zone_centre)
         except ValueError as e:
             problems.append(str(e))
+        else:
+            # as the game's Lua will compile it (known: the game's own names, to check calls too)
+            lua = luacheck.check(body) or (luacheck.unknown(body, known) if known else [])
+            problems += [f"the script it writes: {p}" for p in lua]
         zones, paths, _ = _mission_names(doc)
         known_zones = set().union(*[set(l.get("boundaries") or {}) for _, l in layers]) if layers else set()
         known_paths = set().union(*[set(l.get("paths") or {}) for _, l in layers]) if layers else set()
@@ -742,11 +747,12 @@ def _apply_missions(data, folder, result, files=None):
             overrides["Chapter"] = hqsequence.ini_chapter(insertion["chapter"])
         ini, section = missions.add_to_mission_ini(ini, asset_id, overrides)
         data.files[path] = ini.encode("latin-1")
-        if mail:
+        done = missions.done_mail(asset_id, doc, probe_section.replace("_", ""))      # as text_plan keyed it
+        for m in [x for x in (mail, done) if x]:
             mpath = "DATAxbox/DATAPOD/emails.ini"
             mails = data.files[mpath].decode("latin-1") if mpath in data.files else \
                 (data.dir / "DATAPOD" / "emails.ini").read_bytes().decode("latin-1")
-            data.files[mpath] = missions.add_mail(mails, *mail).encode("latin-1")
+            data.files[mpath] = missions.add_mail(mails, *m).encode("latin-1")
         # Titles and descriptions go in the always-loaded missioninfo text;
         # the mission's own strings (mail, objectives) in a text record named
         # after the mission, which its layer loads, as retail missions do.
@@ -903,6 +909,51 @@ def _check_new_scripts(data, result):
                 name = script.decode(body).name
                 result.warnings.append(f"scripts/{name}.lua is new but no load list names it under [script], so "
                                        f"the game won't find it (missions/ lists mission scripts in their map)")
+
+
+def retail_lua_names(data):
+    """Every global the game's own scripts define or call (luacheck.known_names):
+    the names a mod's script can count on."""
+    from . import luacheck
+    if getattr(data, "_retail_names", None) is None:
+        sources = []
+        for a, r in data.records(SCRIPT):
+            try:
+                sources.append(script.decode(data.archive(a).read(r)).source)
+            except Exception:
+                continue
+        data._retail_names = luacheck.known_names(sources)
+    return data._retail_names
+
+
+def _check_lua(data, result):
+    """The scripts this build adds or changes, checked as the game's Lua 5.0
+    will compile them when they load: syntax errors (which lose the whole
+    script in game, silently), and calls or event callbacks that nothing
+    defines (a misspelt name)."""
+    from . import luacheck
+    mine = []
+    for archive, recs in data.replace.items():
+        mine += [body for (key, kind), body in recs.items() if kind == SCRIPT]
+    for archive, recs in data.add.items():
+        mine += [body for key, kind, body in recs if kind == SCRIPT]
+    if not mine:
+        return
+    scripts = []
+    for body in mine:
+        s = script.decode(body)
+        scripts.append((s.name, s.source))
+    known = set(retail_lua_names(data))
+    for _, source in scripts:          # what the mod's scripts define, for each other
+        try:
+            known |= set(luacheck.names(source)[0])
+        except luacheck.LuaSyntaxError:
+            pass
+    for name, source in scripts:
+        problems = luacheck.check(source)
+        if not problems:
+            problems = luacheck.unknown(source, known)
+        result.warnings += [f"script {name}: {p}" for p in problems]
 
 
 def _material_warnings(rules):
@@ -1505,6 +1556,7 @@ def build(projects, data_dir, out_dir, name=None, description=None) -> Result:
             if getattr(data, "map_layers", None):
                 _apply_map_layers(data, result)
             _check_new_scripts(data, result)
+            _check_lua(data, result)
     from . import sounds
     data.project = "Foundry"
     sounds.finish(data, result)

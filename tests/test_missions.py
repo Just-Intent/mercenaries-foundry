@@ -367,6 +367,71 @@ class MissionTests(unittest.TestCase):
         self.assertIn("while tFoundryObjectives[iFoundryStep + 1] and tFoundryObjectives[iFoundryStep + 1].together do", lua)
         self.assertIn("iFoundryGroupLeft = iFoundryGroupLeft - 1\nif iFoundryGroupLeft <= 0 then foundry_NextObjective() end", lua)
 
+    def test_mission_log(self):
+        doc = {"objectives": [{"type": "goto", "text": "A", "zone": "a"}]}
+        lua = missions.objectives_script("sw_allies11", doc, lambda squad: [])
+        self.assertIn("bFoundryDebug = false", lua)
+        self.assertIn("Utility_WriteStringToScribbleMemory('foundry_log', sAll)", lua)
+        self.assertIn("while string.len(sAll) > 400 and table.getn(tFoundryLog) > 1 do", lua)
+        self.assertIn("if bFoundryDebug then util_ObjMsgPrint{ sMsg = '[sw_allies11] ' .. line, sType = 'GENERAL' } end", lua)
+        for step in ("foundry_Note('started')", "foundry_Note('FAILED: ' .. tostring(sReason))",
+                     "foundry_Note(o.name .. ' done')", "foundry_Note('fail condition on: ' .. f.kind)"):
+            self.assertIn(step, lua)
+        self.assertIn("bFoundryDebug = true", missions.objectives_script("sw_allies11", {**doc, "debug": True}, lambda squad: []))
+        self.assertIn("function foundry_Log()", missions.contracts_script([]))   # readable after the mission's script has gone
+
+    def test_need(self):
+        doc = {"objectives": [{"type": "destroy", "text": "Kill ten", "squad": "camp:Guards", "need": 2},
+                              {"type": "escort", "text": "Bring them", "squad": "camp:Guards", "zone": "lz", "need": "2"},
+                              {"type": "destroy", "text": "All", "squad": "camp:Guards", "need": 3}]}
+        lua = missions.objectives_script("sw_allies11", doc, lambda squad: ["g1", "g2", "g3"])
+        self.assertIn("targets = { 'g1', 'g2', 'g3' }, need = 2 }", lua)
+        self.assertIn("targets = { 'g1', 'g2', 'g3' }, need = 2, zone = 'lz'", lua)
+        self.assertIn("key = 'sw.allies11.obj.foundry3', targets = { 'g1', 'g2', 'g3' } }", lua)    # 3 of 3: all
+        self.assertIn("local iAll = o.need or table.getn(o.targets)", lua)
+        self.assertIn("if table.getn(o.targets) - o.dead < (o.need or 1) then foundry_Fail(o.lost)", lua)
+        for bad in (4, "x", -1):
+            with self.assertRaises(ValueError):
+                missions.objectives_script("sw_allies11", {"objectives": [{"type": "destroy", "text": "K", "squad": "s", "need": bad}]},
+                                           lambda squad: ["g1", "g2", "g3"])
+
+    def test_finish_fast(self):
+        doc = {"objectives": [{"type": "goto", "text": "A", "zone": "a"},
+                              {"type": "fast", "text": "Quick", "seconds": 300, "bonus": 20000}]}
+        lua = missions.objectives_script("sw_allies11", doc, lambda squad: [])
+        self.assertIn("{ kind = 'fast', name = 'foundry2', key = 'sw.allies11.obj.foundry2', bonus = 20000, seconds = 300 }", lua)
+        self.assertIn("fCallback = foundry_TooSlow", lua)
+        finish = lua[lua.index("function foundry_Finish()"):]
+        self.assertLess(finish.index("foundry_Done(o)"), finish.index("bFoundryOver = true"))   # paid before the payout
+        self.assertEqual(missions.bonus_fee(doc), 20000)
+        for bad in ([{"type": "fast", "seconds": 60}],                                          # not a bonus
+                    [{"type": "fast", "bonus": 5}],                                            # no time
+                    [{"type": "fast", "seconds": 5, "bonus": 5}, {"type": "fast", "seconds": 9, "bonus": 5}]):
+            with self.assertRaises(ValueError):
+                missions.objectives_script("sw_allies11", {"objectives": doc["objectives"][:1] + bad}, lambda squad: [])
+
+    def test_on_completion(self):
+        doc = {"title": "Job", "objectives": [{"type": "goto", "text": "A", "zone": "a"}],
+               "radio": [{"when": "end", "sound": "fio.S10DONE"}],
+               "unlocks": ["template_support_deliverH2"], "done_mail": {"subject": "Thanks", "body": "Good work."}}
+        lua = missions.objectives_script("sw_allies11", doc, lambda squad: [])
+        self.assertIn("{ when = 'end', sound = 'fio.S10DONE' }", lua)
+        self.assertIn("if not bFoundryEndSaid then bFoundryEndSaid = true foundry_Radio('end') end", lua)
+        self.assertIn("tFoundryUnlocks = { 'template_support_deliverH2' }", lua)
+        self.assertIn("sFoundryDoneMail = 'sw_allies11_done'", lua)
+        self.assertIn("for i, s in ipairs(tFoundryUnlocks) do Shop_UnlockItem(s) end", lua)
+        self.assertIn("if sFoundryDoneMail then Mail_Post(sFoundryDoneMail) end", lua)
+        strings, _, _ = missions.text_plan("sw_allies11", doc, "SW_Allies11")
+        self.assertEqual(strings["MissionInfo.FoundryMail.SWAllies11.Subject"], "Thanks")    # always loaded
+        self.assertEqual(missions.done_mail("sw_allies11", doc, "SWAllies11"),
+                         ("sw_allies11_done", "mail.senders.techgal", "MissionInfo.FoundryMail.SWAllies11.Subject",
+                          "MissionInfo.FoundryMail.SWAllies11.Body"))
+        plain = missions.objectives_script("sw_allies11", {"objectives": doc["objectives"]}, lambda squad: [])
+        self.assertIn("tFoundryUnlocks = {  }", plain)
+        self.assertIn("sFoundryDoneMail = nil", plain)
+        with self.assertRaises(ValueError):
+            missions.objectives_script("sw_allies11", {**doc, "unlocks": ["gunship"]}, lambda squad: [])
+
     def test_waves(self):
         layer = {"map": "SW", "encounters": [{"name": "camp", "points": {"A": [[0, 0, 0]], "B": [[5, 0, 5]]},
                                                "squads": [{"name": "Guards", "points": ["A"], "members": [{"name": "G1"}]},

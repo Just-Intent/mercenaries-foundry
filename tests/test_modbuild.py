@@ -51,6 +51,20 @@ class ModBuildTests(unittest.TestCase):
         arc = dsk.Archive(self.out / name)
         return {r.ident: arc.read(r) for r in arc.records}
 
+    def test_lua_checked(self):
+        # a mod's scripts are checked as the game's Lua 5.0 will compile them
+        self.write("scripts/mission.lua", "if x then\n  y = #t\nend\n")
+        self.write("scripts/brand_new.lua", "Not_A_Game_Function(1)\nEvent_X('helper', 'b')\n")
+        result = modbuild.build(self.project, self.data, self.out)
+        self.assertIn("script mission: line 2: unexpected character '#' (the length operator # came with Lua 5.1; "
+                      "use table.getn)", result.warnings)
+        self.assertIn("script brand_new: line 1: calls Not_A_Game_Function, which nothing defines "
+                      "(not this script, not the game's)", result.warnings)
+        self.assertIn("script brand_new: line 2: an event calls back helper, which nothing defines", result.warnings)
+        self.write("scripts/brand_new.lua", "function helper() end\n")
+        result = modbuild.build(self.project, self.data, self.out)
+        self.assertFalse([w for w in result.warnings if w.startswith("script brand_new: line")])
+
     def test_empty_project_writes_nothing(self):
         result = modbuild.build(self.project, self.data, self.out)
         self.assertEqual(result.written, [])

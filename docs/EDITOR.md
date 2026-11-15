@@ -144,10 +144,12 @@ toolkit bundle run it the same way: `foundry\python\python.exe foundry\mercfound
     20, as retail contracts give 20 to 40; set another faction below 0 to
     anger it);
   - objectives: **Destroy** (pick a squad, or objects selected on the map
-    with **+ Add selected object**), **Go to zone** (pick a zone; the zone
+    with **+ Add selected object**; **How many** makes it done after that
+    many, "kill 10 of the 20"), **Go to zone** (pick a zone; the zone
     gets a marker on the minimap and GPS), **Escort squad** (the squad
     follows the player; done when the survivors reach the zone, failed if
-    they all die), **Deliver vehicle** (a vehicle selected on the map, to a
+    they all die, or once fewer than **At least** can still arrive),
+    **Deliver vehicle** (a vehicle selected on the map, to a
     zone; failed if it's destroyed), **Capture alive** (subdue a squad or
     objects; killing one fails it; tick **Extract them** to need them flown
     out by the extraction chopper), **Hold zone** (stay in a zone for a
@@ -155,7 +157,10 @@ toolkit bundle run it the same way: `foundry\python\python.exe foundry\mercfound
     up to objects and use them, with your own prompt; failed if one is
     destroyed) and **Verify target** (kill and photograph the body, or
     capture alive, as the Deck of 52; a marker of your choice, a card suit or
-    a person, and an optional **Alive $** paid for each one taken alive).
+    a person, and an optional **Alive $** paid for each one taken alive),
+    and **Finish fast**, a bonus paid if the contract is completed before a
+    clock runs out (it counts down from when the bonus is shown; one per
+    mission).
     **Show** looks at an objective's squad or zone.
     Main objectives are done in order; one ticked **Together with the one
     before** starts at the same time as the main objective before it, and
@@ -166,10 +171,15 @@ toolkit bundle run it the same way: `foundry\python\python.exe foundry\mercfound
     zone; the contract pays its reward on top if it's done, shows it failed if
     it was shown and not done, and leaves it out if it never was;
   - **Radio lines**: each plays **When** the mission starts, an objective
-    starts or is done, or the player enters a zone. A voice (`bank.cue`, the
+    starts or is done, the player enters a zone, or the contract completes
+    (it completes after the line). A voice (`bank.cue`, the
     game's or one the mod adds) plays through the game's radio queue with the
     text as its subtitle; with no voice, the text shows as a message. The
-    contract completes after the last voiced line;
+    contract completes after the last voiced line. **Find voice** searches
+    the game's 2,555 subtitled voice lines (and the mod's own new ones) by
+    the words said or the cue; ▶ plays one, **Use** puts it on the line.
+    With one of the game's voices, leave the text empty to keep its own
+    subtitle (text there replaces that subtitle wherever the game plays it);
   - **Fail conditions**: **Protect squad** (fail if one of them dies), **Time
     limit** (an on-screen clock), **Stay in zone** (fail on leaving it),
     **Alarm raised** (alarms picked on the map), **Spotted trespassing** (by a
@@ -181,6 +191,9 @@ toolkit bundle run it the same way: `foundry\python\python.exe foundry\mercfound
     starts"), and lasts the whole mission or until an objective is done. A
     Stay in zone condition should begin once the player is in the zone (on
     entering it, say);
+  - **On completion**: **Shop unlocks** (support items, such as a vehicle
+    drop or an airstrike, that become buyable in the shop, as retail
+    contracts reward), and a **follow-up mail** that arrives afterwards;
   - **Support**: support items the player gets for the mission (an
     airstrike, a vehicle drop, a supply crate: any of the game's
     `template_support_*`, picked from a list), each with an optional count;
@@ -219,6 +232,13 @@ toolkit bundle run it the same way: `foundry\python\python.exe foundry\mercfound
   mod; moving them back undoes it, and it warns if another mission lists it
   under "Available after".
 
+  **Show debug messages in game** puts each step of the mission on screen as
+  it happens (objectives starting and done, targets down, fail conditions
+  coming on and failing, squads arriving, orders, radio lines, completion),
+  for test runs. With it or without, the last dozen steps are kept in the
+  game's scribble memory, so they outlive the mission: type `foundry_Log()`
+  in Foundry Console's Lua box to read them, even after it failed.
+
   **Mission outline** shows the mission as a timeline in words, updated as
   you edit: what happens at the start, when each objective starts and is
   done, on entering each zone (radio lines, squads arriving, orders, bonus
@@ -228,8 +248,10 @@ toolkit bundle run it the same way: `foundry\python\python.exe foundry\mercfound
 
   **Check mission** runs the build's checks on the saved mission: what would
   stop the build writing its script (unfinished objectives, zones or paths
-  that aren't there, a giver's marker), and notes such as the map layers it
-  loads.
+  that aren't there, a giver's marker), the script it writes checked as the
+  game's Lua 5.0 will compile it (syntax, and any function or event callback
+  it names that neither it nor the game's scripts define), and notes such as
+  the map layers it loads.
 
   **Add squad** and **Add zone** put a squad or zone in the mission's own
   layer, `encounters/<id>.json`, which loads only during the mission; squads
