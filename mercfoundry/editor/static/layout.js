@@ -279,13 +279,56 @@ export function createLayout(ctx) {
     const it = st.selected;
     if (!it || it.source !== 'mod') return;
     if (!confirm(`Delete ${label(it)} ${it.name}? Scripts that use it by name will fail.`)) return;
-    select(null);
-    group.remove(it.visual);
+    removeItem(it);
+    ctx.remember && ctx.remember(`Deleted ${label(it)} ${it.name}`, () => restoreItem(it), () => removeItem(it));
+  }
+
+  // ---------------------------------------------------------------- undo
+  // A path's or zone's data (points, settings) before and after an edit; and
+  // whole ones taken away and brought back. Steps go on the editor's history.
+  const itemData = (it) => JSON.stringify({points: it.points, spec: it.spec || null, properties: it.properties || {}});
+  function putItemData(it, json) {
+    const d = JSON.parse(json);
+    it.points = d.points;
+    if (d.spec) it.spec = d.spec;
+    it.properties = d.properties;
+    if (it.spec && it.source === 'mod') it.spec.points = it.points;
+    edited(it);
+    buildVisual(it);
+    if (st.selected === it) select(it, null);
+  }
+  function removeItem(it) {
+    if (st.selected === it) select(null);
+    if (it.visual) group.remove(it.visual);
     if (it.water) { waterGroup.remove(it.water); it.water = null; }
     st.items = st.items.filter((x) => x !== it);
-    st.dirtyFiles.add(it.file);
+    if (it.source === 'mod') st.dirtyFiles.add(it.file);
     ctx.setDirty(true);
     refreshList();
+  }
+  function restoreItem(it) {
+    if (!st.items.includes(it)) st.items.push(it);
+    buildVisual(it);
+    edited(it);
+  }
+  // fn edits the selected path or zone: one undo step if it changed it
+  const onItem = (what, fn) => (...args) => {
+    const it = st.selected, before = it ? itemData(it) : null;
+    const r = fn(...args);
+    if (it && st.items.includes(it) && ctx.remember) {
+      const after = itemData(it);
+      if (after !== before) ctx.remember(`${what} ${it.name}`, () => putItemData(it, before), () => putItemData(it, after));
+    }
+    return r;
+  };
+  let dragBefore = null;          // a point being dragged: its item's data first
+  function dragStart() { dragBefore = st.selected ? [st.selected, itemData(st.selected)] : null; }
+  function dragEnd() {
+    if (!dragBefore || !ctx.remember) return;
+    const [it, before] = dragBefore;
+    dragBefore = null;
+    const after = itemData(it);
+    if (after !== before) ctx.remember(`Moved a point of ${it.name}`, () => putItemData(it, before), () => putItemData(it, after));
   }
 
   function revertItem() {
@@ -388,6 +431,7 @@ export function createLayout(ctx) {
     buildVisual(it);
     edited(it);
     select(it);
+    ctx.remember && ctx.remember(`Added ${label(it)} ${name}`, () => removeItem(it), () => restoreItem(it));
     status(`${name} added`);
   }
 
@@ -585,6 +629,13 @@ export function createLayout(ctx) {
   }
 
   // ---------------------------------------------------------------- wiring
+  addPoint = onItem('Added a point to', addPoint);
+  deletePoint = onItem('Deleted a point of', deletePoint);
+  revertItem = onItem('Put back', revertItem);
+  setPointFromPanel = onItem('Moved a point of', setPointFromPanel);
+  setPause = onItem('Changed a pause on', setPause);
+  setAnims = onItem('Changed the animations on', setAnims);
+  addLink = onItem('Added a link to', addLink);
   $('new-path').onclick = () => startDraw('path');
   $('new-zone').onclick = () => startDraw('boundary');
   $('draw-finish').onclick = finishDraw;
@@ -612,6 +663,6 @@ export function createLayout(ctx) {
     startDraw,
     files: () => [...st.files],
     hasSelection: () => !!st.selected,
-    deletePoint, addPoint,
+    deletePoint, addPoint, dragStart, dragEnd,
   };
 }

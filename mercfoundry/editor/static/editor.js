@@ -54,6 +54,11 @@ let dragStart = null;        // [[rec, snap, its matrix]] and the pivot's, for u
 gizmo.addEventListener('dragging-changed', (e) => {
   controls.enabled = !e.value;
   if (!e.value && gizmo.object && gizmo.object.userData.squadPivot) encs.dragEnded();
+  // paths' and zones' points, squad members and spawn points: one undo step a drag
+  if (gizmo.object && gizmo.object.userData.handle) { if (e.value) layout.dragStart(); else layout.dragEnd(); }
+  if (gizmo.object && (gizmo.object.userData.pick || gizmo.object.userData.squadPivot)) {
+    if (e.value) encs.dragStart(); else encs.dragStop();
+  }
   const objs = gizmo.object && (gizmo.object === groupPivot || gizmo.object.userData.rec) ? selectionRecs() : [];
   if (e.value && objs.length) {
     groupPivot.updateMatrixWorld();
@@ -1651,6 +1656,7 @@ const layout = createLayout({
   terrain: () => terrainMesh,
   encounterFiles: () => encs.files(),
   skyPresets: () => sky.presetNames(),
+  remember: (...a) => remember(...a),
 });
 const encs = createEncounters({
   scene, gizmo, heightAt, threePos, gamePos, status, $, setDirty, camera, slug,
@@ -1663,7 +1669,9 @@ const encs = createEncounters({
   layerFile: () => state.layerFile,
   objectNames: () => new Set(state.records.filter((r) => !r.removed)
     .map((r) => (r.copyName || r.name || '').toLowerCase()).filter(Boolean)),
+  remember: (...a) => remember(...a),
 });
+Object.assign(window.foundryEditor, {layout, encs});     // (debugging)
 // A line of Lua to the running game (its reply shows under Game replies).
 $('live-lua').addEventListener('keydown', (e) => {
   if (e.key !== 'Enter') return;

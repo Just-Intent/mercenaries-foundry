@@ -514,6 +514,58 @@ export function createEncounters(ctx) {
 
   function saved() { st.dirty.clear(); st.gameDirty.clear(); }
 
+  // ---------------------------------------------------------------- undo
+  // Encounters are plain data: the whole of it before and after an edit is
+  // one undo step on the editor's history. Putting a state back marks
+  // whatever differs as changed (so an undo after saving is saved again).
+  const snapState = () => JSON.stringify({game: st.game, mod: st.mod});
+  const gameKey = (e) => `${e.layer}:${e.name}`;
+  function putState(json) {
+    const next = JSON.parse(json);
+    const was = {game: st.game, mod: st.mod};
+    const same = (a, b) => JSON.stringify(a) === JSON.stringify(b);
+    for (const f of next.mod) {
+      const old = was.mod.find((x) => x.file === f.file);
+      if (!old || !same(old, f)) st.dirty.add(f.file);
+    }
+    for (const f of was.mod) if (!next.mod.find((x) => x.file === f.file)) st.dirty.add(f.file);
+    const dirtyKeys = new Set([...st.gameDirty].map(gameKey));
+    st.gameDirty.clear();
+    next.game.forEach((e, i) => {
+      const old = was.game[i];
+      if (!old) return;
+      if (dirtyKeys.has(gameKey(e)) || !same(old.points, e.points)) st.gameDirty.add(e);
+      // the mod's squads in the game's encounters: their files
+      if (!same(old.squads, e.squads)) for (const sq of [...(old.squads || []), ...(e.squads || [])]) if (sq.file) st.dirty.add(sq.file);
+    });
+    st.game = next.game;
+    st.mod = next.mod;
+    st.selected = null;
+    if (gizmo.object && gizmo.object.userData.pick) gizmo.detach();
+    ctx.setDirty(true);
+    rebuild();
+    showPanel();
+  }
+  const undoable = (what, fn) => (...args) => {
+    const before = snapState();
+    const r = fn(...args);
+    const done = () => {
+      const after = snapState();
+      if (after !== before && ctx.remember) ctx.remember(what, () => putState(before), () => putState(after));
+    };
+    if (r && typeof r.then === 'function') return r.then((v) => { done(); return v; });
+    done();
+    return r;
+  };
+  let dragBefore = null;
+  function dragStart() { dragBefore = snapState(); }
+  function dragStop() {
+    if (dragBefore === null || !ctx.remember) return;
+    const before = dragBefore, after = snapState();
+    dragBefore = null;
+    if (after !== before) ctx.remember('Moved a squad member or spawn point', () => putState(before), () => putState(after));
+  }
+
   function find(q) {
     q = q.toLowerCase();
     // A squad: "encounter:squad", or a squad's name.
@@ -540,6 +592,14 @@ export function createEncounters(ctx) {
   }
 
   // ---------------------------------------------------------------- wiring
+  // the edits, each one undo step
+  addMember = undoable('Added a squad member', addMember);
+  turnSquad = undoable('Turned a squad', turnSquad);
+  deleteSelected = undoable('Deleted a squad member or spawn point', deleteSelected);
+  deleteSquad = undoable('Deleted a squad', deleteSquad);
+  deleteEncounter = undoable('Deleted an encounter', deleteEncounter);
+  fromPanel = undoable('Changed a squad member or spawn point', fromPanel);
+  placeClick = undoable('Placed a squad or spawn point', placeClick);
   $('new-squad').onclick = startNewSquad;
   $('sq-file').addEventListener('change', fillEncounters);
   $('sq-enc').addEventListener('change', () => { $('sq-enc-new-row').hidden = $('sq-enc').value !== ''; });
@@ -559,6 +619,7 @@ export function createEncounters(ctx) {
 
   return {
     load, pick, select, moved, dragEnded, placeClick, hoverText, cancelPlace, saveBody, saved, find, deleteSelected, setLoaded,
+    dragStart, dragStop,
     isPlacing: () => !!st.place,
     // Names search can find: encounters and their squads ("encounter:squad").
     names: () => all().flatMap((s) => [s.enc.name, ...(s.enc.squads || []).map((q) => `${s.enc.name}:${q.name}`)]),
