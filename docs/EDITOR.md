@@ -137,6 +137,8 @@ toolkit bundle run it the same way: `foundry\python\python.exe foundry\mercfound
 - **New maps**: a mod's `maps/<name>.json` (`{"from": "blank"}`) appears in
   the Map list like the game's maps, with the copied map's ground to reshape
   and paint (Terrain), its sky (Sky), and objects, squads and zones to add.
+  Layers that "load with the map" only do so on the free-roam maps (SW, NW):
+  on a new map, load them from a script (`Utility_ReadLevelFile`).
 - **Factions**: new names for the four employers (`factions.json`): name,
   adjective, short form and people, per faction; **Everywhere** for mission
   text too, and voiced lines' subtitles if wanted. **Preview** lists the
@@ -261,6 +263,16 @@ toolkit bundle run it the same way: `foundry\python\python.exe foundry\mercfound
     appears, for chains of side contracts. Moving or deleting objectives keeps
     every "objective N" reference (bonus Shown, radio When, fail Lasts) on the
     same objective.
+
+  **Make a feature test mission here** lays out a mission around the middle
+  of the view (about 150 m across; open, flat-ish ground is best) that runs
+  through most mission features in one playthrough, with debug messages on:
+  go to and hold a zone (weather switches, music plays), kill 2 of 3 guards
+  together with talking to an officer, an ambush and a bonus when the guards
+  are wiped out, capture a civilian, deliver a Humvee, verify a target, a
+  finish-fast bonus, a time limit that begins at step 3, support, a shop
+  unlock, a follow-up mail and radio lines. Only templates already tested in
+  game are used. Play it, and read `foundry_Log()` if a step doesn't happen.
 
   **Duplicate** copies the saved mission and its layer to the next free
   number (of its faction, or another one picked beside it); names made from

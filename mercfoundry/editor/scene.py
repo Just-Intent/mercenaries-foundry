@@ -254,6 +254,113 @@ class Scene:
                     taken[f].add(n)
         return taken
 
+    def height_at(self, map_name, x, z):
+        """The ground's height at (x, z) on a map (bilinear, as drawn)."""
+        meta, raw = self.terrain(map_name)
+        n, sp = meta["size"], meta["spacing"]
+        heights = struct.unpack(f"<{n * n}f", raw)
+        fx, fz = (x - meta["x0"]) / sp, (z - meta["z0"]) / sp
+        ix, iz = max(0, min(n - 2, int(fx))), max(0, min(n - 2, int(fz)))
+        tx, tz = min(1.0, max(0.0, fx - ix)), min(1.0, max(0.0, fz - iz))
+        h = lambda c, r: heights[r * n + c]
+        top = h(ix, iz) * (1 - tx) + h(ix + 1, iz) * tx
+        bot = h(ix, iz + 1) * (1 - tx) + h(ix + 1, iz + 1) * tx
+        return top * (1 - tz) + bot * tz
+
+    def make_test_mission(self, map_name, centre, faction="china"):
+        """A mission that exercises most mission features in one run, laid out
+        around centre [x, y, z] on the map: its file and its layer (squads,
+        objects, zones), at the faction's next free number. Debug messages on.
+        Returns {"id"}."""
+        from .. import missions as ms, sky as sk
+        m = map_name.lower()
+        if faction not in ms.FACTIONS:
+            raise ValueError(f"no faction {faction!r}")
+        number = max([8] + sorted(self._arc_numbers(m)[faction])) + 1
+        aid = f"{m}_{faction}{number}"
+        if (self.mod / "missions" / f"{aid}.json").exists():
+            raise ValueError(f"{aid} already exists")
+        names = {o["name"].lower() for o in self.all_objects() if o["name"]}
+        need = ["template_A6_NK_Soldier", "template_civ_civilian01", "template_allies_officer",
+                "template_allies_humvee_empty"]
+        missing = [t for t in need if t.lower() not in names]
+        if missing:
+            raise ValueError(f"the game data lacks {', '.join(missing)}")
+        cx, _, cz = (float(v) for v in centre)
+
+        def at(dx, dz):                 # a point on the ground, dx/dz metres from the centre
+            x, z = cx + dx, cz + dz
+            return [round(x, 2), round(self.height_at(m, x, z) + 0.3, 2), round(z, 2)]
+
+        def square(dx, dz, r):          # a square zone
+            return {"points": [at(dx - r, dz - r), at(dx + r, dz - r), at(dx + r, dz + r), at(dx - r, dz + r)]}
+        enc = f"{aid}_enc"
+        layer = {
+            "map": m.upper(),
+            "boundaries": {"ft_hold": square(40, 0, 8), "ft_deliver": square(-60, 30, 10),
+                           "ft_ambush": square(70, 0, 12)},
+            "encounters": [{"name": enc,
+                            "points": {"A": [at(80, 10)], "B": [at(-20, 60)], "C": [at(110, -20)]},
+                            "squads": [
+                                {"name": "Guards", "points": ["A"],
+                                 "members": [{"from": "template_A6_NK_Soldier", "name": f"{aid}_guard{k}",
+                                              "position": at(80 + 3 * k, 10), "yaw": 270} for k in range(1, 4)]},
+                                {"name": "Ambush", "points": ["C"],
+                                 "members": [{"from": "template_A6_NK_Soldier", "name": f"{aid}_ambush{k}",
+                                              "position": at(110 + 3 * k, -20), "yaw": 270} for k in range(1, 4)]}]}],
+            "objects": [
+                {"from": "template_allies_officer", "name": f"{aid}_contact", "position": at(30, 15), "yaw": 180},
+                {"from": "template_civ_civilian01", "name": f"{aid}_civ1", "position": at(-20, 60), "yaw": 0},
+                {"from": "template_civ_civilian01", "name": f"{aid}_civ2", "position": at(-25, 65), "yaw": 0},
+                {"from": "template_allies_humvee_empty", "name": f"{aid}_humvee", "position": at(10, -12), "yaw": 90}],
+        }
+        squad = lambda s: f"{enc}:{s}"
+        presets = list(sk.presets_of(sk.level_texts(self.data, m)).values())
+        preset = next((p["name"] for p in presets if p["name"].lower() == "dmz"), presets[0]["name"] if presets else None)
+        doc = {
+            "title": "Foundry feature test",
+            "description": "Runs through the mission features one by one. Debug messages show each step.",
+            "mail": {"sender": "mail.senders.techgal", "subject": "Contract: 'Foundry feature test'",
+                     "body": "A test of the mission features. Follow the objectives."},
+            "ini": {"ContractFee": 1000, "BonusFee": 500},
+            "start": {"position": at(0, 0), "heading": 90},
+            "debug": True, "keep_if_hostile": True,
+            "mood": {faction: 10},
+            "support": [{"item": "template_support_gunship", "count": 1}],
+            "unlocks": ["template_support_deliverH2"],
+            "done_mail": {"subject": "Feature test done", "body": "The test contract completed."},
+            "objectives": [
+                {"type": "goto", "text": "1. Go to the marked zone", "zone": "ft_hold"},
+                {"type": "hold", "text": "2. Hold the zone for 20 seconds", "zone": "ft_hold", "seconds": 20},
+                {"type": "destroy", "text": "3. Kill 2 of the 3 guards", "squad": squad("Guards"), "need": 2},
+                {"type": "use", "text": "3b. Talk to the officer", "targets": [f"{aid}_contact"], "prompt": "Talk",
+                 "together": True},
+                {"type": "subdue", "text": "4. Capture the civilian alive", "targets": [f"{aid}_civ1"]},
+                {"type": "deliver", "text": "5. Drive the Humvee to the marked zone", "vehicle": f"{aid}_humvee",
+                 "zone": "ft_deliver"},
+                {"type": "verify", "text": "6. Verify the second civilian", "targets": [f"{aid}_civ2"],
+                 "blip": "spades", "alive": 2000},
+                {"type": "fast", "text": "Bonus: finish within 15 minutes", "seconds": 900, "bonus": 3000},
+                {"type": "destroy", "text": "Bonus: kill the ambush", "squad": squad("Ambush"), "bonus": 2000,
+                 "reveal": f"dead:{squad('Guards')}"},
+            ],
+            "waves": [{"when": f"dead:{squad('Guards')}", "squad": squad("Ambush"), "delay": 5}],
+            "orders": [{"when": f"dead:{squad('Guards')}", "squad": squad("Ambush"), "do": "attack", "delay": 8}],
+            "radio": [{"when": "start", "text": "Feature test: follow the objectives."},
+                      {"when": f"dead:{squad('Guards')}", "text": "Guards down: an ambush is coming.", "delay": 2},
+                      {"when": "end", "text": "Feature test complete."}],
+            "music": [{"when": "starts:3", "play": "music.Card_miniboss"}, {"when": "done:3", "play": "normal"}],
+            "fail": [{"type": "timer", "seconds": 900, "from": "starts:3", "until": "done:4",
+                      "text": "Too slow on step 3."}],
+        }
+        if preset:
+            doc["weather"] = [{"when": "starts:2", "preset": preset}, {"when": "done:2", "preset": "normal"}]
+        (self.mod / "missions").mkdir(parents=True, exist_ok=True)
+        (self.mod / "encounters").mkdir(parents=True, exist_ok=True)
+        (self.mod / "missions" / f"{aid}.json").write_text(json.dumps(doc, indent=1) + "\n", encoding="utf-8")
+        (self.mod / "encounters" / f"{aid}.json").write_text(json.dumps(layer, indent=1) + "\n", encoding="utf-8")
+        return {"id": aid}
+
     def missions(self, map_name):
         """The mod's missions on this map, each with its layer's squads and
         zones, and the next free number per faction."""

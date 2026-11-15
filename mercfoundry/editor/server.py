@@ -38,6 +38,7 @@ POST /api/placed/save          {"map", "files": {file: [{from, name, position, r
 POST /api/terrain/save         {"map", "samples": [[column, row, height units], ...]}: painted ground heights
 GET  /api/missions/<map>        the mod's missions on the map (+ their layer's squads and zones)
 GET  /api/missions/check/<id>   what would stop the mission's script being written (the build's checks)
+POST /api/missions/testmission {"map", "centre", "faction"?}: a feature test mission laid out there -> {"id"}
 POST /api/missions/duplicate   {"id", "faction"?}: a copy at the next free number -> {"id", "notes"}
 POST /api/missions/delete      {"id"}: its files go to the mod's .trash/ -> {"moved", "trash", "required_by"}
 POST /api/missions/save        {"map", "mission": {faction, number, title, description, briefing, fee, objectives}}
@@ -230,6 +231,9 @@ def make_handler(scene: Scene, mod_name: str, live: Live = None):
                 if path == "/api/sky/save":
                     with objects_lock:
                         return self.send(200, scene.save_sky(doc["map"], doc.get("doc") or {}))
+                if path == "/api/missions/testmission":
+                    with objects_lock:
+                        return self.send(200, scene.make_test_mission(doc["map"], doc["centre"], doc.get("faction") or "china"))
                 if path == "/api/missions/duplicate":
                     with objects_lock:
                         return self.send(200, scene.duplicate_mission(doc["id"], doc.get("faction")))

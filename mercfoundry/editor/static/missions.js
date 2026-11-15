@@ -1162,6 +1162,15 @@ export function createMissions(ctx) {
     if (!r.ok) throw new Error(doc.error || r.statusText);
     return doc;
   }
+  $('ms-testmission').onclick = async () => {
+    if (!confirm('Make a feature test mission around the middle of the view? It adds a mission and its layer to the mod (about 150 m of flat-ish ground works best).')) return;
+    try {
+      const doc = await post('/api/missions/testmission', {map: st.map, centre: ctx.viewCentre()});
+      st.current = {id: doc.id};
+      await load(st.map);
+      status(`Made ${doc.id}: save is done; start the game through the launcher, then take the contract at the HQ or run its Lua line (Overview)`);
+    } catch (e) { status(e.message, true); }
+  };
   $('ms-duplicate').onclick = async () => {
     if (!st.current) return;
     if (st.dirty && !confirm('Duplicate copies the saved mission: your unsaved changes aren\'t in the copy. Go on?')) return;
