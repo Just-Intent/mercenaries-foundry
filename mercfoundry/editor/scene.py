@@ -310,8 +310,8 @@ class Scene:
                                               "position": at(110 + 3 * k, -20), "yaw": 270} for k in range(1, 4)]}]}],
             "objects": [
                 {"from": "template_allies_officer", "name": f"{aid}_contact", "position": at(30, 15), "yaw": 180},
-                {"from": "template_civ_civilian01", "name": f"{aid}_civ1", "position": at(-20, 60), "yaw": 0},
-                {"from": "template_civ_civilian01", "name": f"{aid}_civ2", "position": at(-25, 65), "yaw": 0},
+                {"from": "template_A6_NK_Soldier", "name": f"{aid}_civ1", "position": at(-20, 60), "yaw": 0},
+                {"from": "template_A6_NK_Soldier", "name": f"{aid}_civ2", "position": at(-25, 65), "yaw": 0},
                 {"from": "template_allies_humvee_empty", "name": f"{aid}_humvee", "position": at(10, -12), "yaw": 90}],
         }
         squad = lambda s: f"{enc}:{s}"
@@ -342,10 +342,10 @@ class Scene:
                 {"type": "destroy", "text": "3. Kill 2 of the 3 guards", "squad": squad("Guards"), "need": 2},
                 {"type": "use", "text": "3b. Talk to the officer", "targets": [f"{aid}_contact"], "prompt": "Talk",
                  "together": True},
-                {"type": "subdue", "text": "4. Capture the civilian alive", "targets": [f"{aid}_civ1"]},
+                {"type": "subdue", "text": "4. Knock out the lone NK soldier and carry him (capture alive)", "targets": [f"{aid}_civ1"]},
                 {"type": "deliver", "text": "5. Drive the Humvee to the marked zone", "vehicle": f"{aid}_humvee",
                  "zone": "ft_deliver"},
-                {"type": "verify", "text": "6. Verify the second civilian", "targets": [f"{aid}_civ2"],
+                {"type": "verify", "text": "6. Verify the second lone NK soldier (photo or carry)", "targets": [f"{aid}_civ2"],
                  "blip": "spades", "alive": 2000},
                 {"type": "fast", "text": "Bonus: finish within 15 minutes", "seconds": 900, "bonus": 3000},
                 {"type": "destroy", "text": "Bonus: kill the ambush", "squad": squad("Ambush"), "bonus": 2000,
@@ -388,7 +388,7 @@ class Scene:
                                  "members": [{"from": "template_civ_civilian01", "name": f"{aid}_escortee{k}",
                                               "position": at(-20 + 2 * k, 30), "yaw": 0} for k in (1, 2)]}]}],
             "objects": [
-                {"from": "template_civ_civilian01", "name": f"{aid}_target", "position": at(70, 10), "yaw": 180},
+                {"from": "template_A6_NK_Soldier", "name": f"{aid}_target", "position": at(70, 10), "yaw": 180},
                 {"from": "template_allies_officer", "name": f"{aid}_officer", "position": at(33, 4), "yaw": 180}],
         }
         doc = {
@@ -405,7 +405,8 @@ class Scene:
                 {"type": "goto", "text": "1. Meet at the marked zone", "zone": "ft_meet"},
                 {"type": "escort", "text": "2. Escort the civilians to the safe zone (at least 1)",
                  "squad": squad("Escortees"), "zone": "ft_safe", "need": 1},
-                {"type": "subdue", "text": "3. Capture the civilian and call the extraction", "targets": [f"{aid}_target"],
+                {"type": "subdue", "text": "3. Knock out the NK soldier, carry him and call the extraction",
+                 "targets": [f"{aid}_target"],
                  "extract": True},
                 {"type": "hold", "text": "4. Hold the area for 30 seconds (leaving the larger area fails it)",
                  "zone": "ft_hold", "seconds": 30},
@@ -813,9 +814,74 @@ class Scene:
         return {"moved": moved, "trash": trash.relative_to(self.mod).as_posix(), "required_by": required_by}
 
     def check_mission(self, asset_id):
-        """The build's checks for a saved mission (modbuild.check_mission)."""
+        """The build's checks for a saved mission (modbuild.check_mission),
+        and characters to capture that can't be carried."""
         from ..modbuild import check_mission
-        return check_mission(self.mod, asset_id.lower(), self.lua_names())
+        out = check_mission(self.mod, asset_id.lower(), self.lua_names())
+        try:
+            out["notes"] += self._carry_notes(asset_id.lower())
+        except Exception as e:                     # a check that can't run doesn't hold up the rest
+            out["notes"].append(f"(couldn't check who can be carried: {e})")
+        return out
+
+    def _carryable(self, table):
+        """Whether an animation table has the "carried" clips (a captive on
+        the player's back: retail's nk_soldier_ehuman has them, nk_civilian
+        doesn't, so a civilian drags along the ground)."""
+        if not hasattr(self, "_carry_tables"):
+            self._carry_tables = {}
+        low = (table or "").lower()
+        if low not in self._carry_tables:
+            from .. import animtable
+            doc = None
+            for a in self.archives:
+                for r in a.records:
+                    if r.kind == name_hash("animtable") and r.key == name_hash(low):
+                        doc = animtable.to_json(a.read(r))
+                        break
+                if doc:
+                    break
+            self._carry_tables[low] = None if doc is None else any(
+                "carry_passenger" in c.lower() for c in animtable.clips(doc))
+        return self._carry_tables[low]
+
+    def _carry_notes(self, aid):
+        """Capture, extract and verify targets whose animation table can't be carried."""
+        p = self.mod / "missions" / f"{aid}.json"
+        if not p.exists():
+            return []
+        doc = json.loads(p.read_text(encoding="utf-8"))
+        lp = self.mod / "encounters" / f"{aid}.json"
+        layer = json.loads(lp.read_text(encoding="utf-8")) if lp.exists() else {}
+        # the layer's people: name -> (template, its set)
+        people, squads = {}, {}
+        for e in layer.get("encounters") or []:
+            for s in e.get("squads") or []:
+                for mbr in s.get("members") or []:
+                    people[mbr["name"].lower()] = (mbr.get("from"), mbr.get("set") or {})
+                    squads.setdefault(f"{e['name']}:{s['name']}".lower(), []).append(mbr["name"].lower())
+        for o in layer.get("objects") or []:
+            people[o["name"].lower()] = (o.get("from"), o.get("set") or {})
+        by_name = {o["name"].lower(): o for o in self.all_objects() if o["name"]}
+        notes = []
+        for i, o in enumerate(doc.get("objectives") or [], 1):
+            if o.get("type") not in ("subdue", "verify"):
+                continue
+            names = [t.lower() for t in o.get("targets") or []] + squads.get(str(o.get("squad") or "").lower(), [])
+            bad = []
+            for n in names:
+                src, sets = people.get(n, (n, {}))
+                obj = by_name.get(str(src or "").lower())
+                props = {k.lower(): v for k, v in (obj["properties"] if obj else [])}
+                props.update({k.lower(): v for k, v in sets.items()})
+                table = props.get("animationtable")
+                if table and self._carryable(table) is False:
+                    bad.append(f"{n} ({src}: {table})")
+            if bad:
+                notes.append(f"objective {i}: {', '.join(bad)} can't be carried (that animation table has no "
+                             f"carry animations, so a captive drags along the ground): use a soldier or officer "
+                             f"template, as retail's capture targets are (nk_soldier_ehuman has them)")
+        return notes
 
     def lua_names(self):
         """Every global the game's scripts define or call (luacheck.known_names)."""

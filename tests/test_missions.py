@@ -157,6 +157,7 @@ class MissionTests(unittest.TestCase):
         self.assertIn("{ kind = 'leave', reason = 'sw.allies11.fail.foundry3', cb = 'foundry_Failed3', zone = 'valley' }", lua)
         self.assertIn("Utility_LoadUtilityScript('hud')", lua)
         self.assertIn("HUD_AddTrayDisplay{ { DisplayClock = true", lua)
+        self.assertIn("function foundry_TimeUp(hDisplay, eState)\nif eState ~= HUD.STATE.LIMIT then return end", lua)
         self.assertIn("Event_ActorInBoundary('foundry_Left', 'b', 'player0', f.zone, false)", lua)
         self.assertIn("sReasonForFailure = sReason\nmission_MissionFailure()", lua)
         self.assertIn("foundry_EndFail(o.name)", lua)
@@ -225,6 +226,8 @@ class MissionTests(unittest.TestCase):
                       "x = 1.00, y = 2.00, z = 3.00, seconds = 90 }", lua)
         self.assertIn("Event_ActorInBoundary('foundry_HoldOut', 'b', 'player0', o.zone, false)", lua)
         self.assertIn("fCallback = foundry_HoldDone", lua)
+        # the HUD clock calls back at half time, a quarter and the end: only the end counts
+        self.assertIn("function foundry_HoldDone(hDisplay, eState)\nif eState ~= HUD.STATE.LIMIT then return end", lua)
         # a killed bonus target loses the bonus; a main one fails the mission
         self.assertIn("if o.bonus then\no.done = true\nutil_ObjMsgPrint{ sMsg = o.text, sType = 'BON_OBJ_FAIL'", lua)
         self.assertNotIn("#", lua.split("\n", 1)[1])
@@ -403,6 +406,7 @@ class MissionTests(unittest.TestCase):
         lua = missions.objectives_script("sw_allies11", doc, lambda squad: [])
         self.assertIn("{ kind = 'fast', name = 'foundry2', key = 'sw.allies11.obj.foundry2', bonus = 20000, seconds = 300 }", lua)
         self.assertIn("fCallback = foundry_TooSlow", lua)
+        self.assertIn("function foundry_TooSlow(hDisplay, eState)\nif eState ~= HUD.STATE.LIMIT then return end", lua)
         finish = lua[lua.index("function foundry_Finish()"):]
         self.assertLess(finish.index("foundry_Done(o)"), finish.index("bFoundryOver = true"))   # paid before the payout
         self.assertEqual(missions.bonus_fee(doc), 20000)

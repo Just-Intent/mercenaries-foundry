@@ -1067,7 +1067,8 @@ if tFoundryTimer and tFoundryTimer.hud then HUD_RemoveTrayDisplay(tFoundryTimer.
 if tFoundryFast and tFoundryFast.hud then HUD_RemoveTrayDisplay(tFoundryFast.hud) tFoundryFast.hud = nil end
 end
 -- Finish fast: the clock ran out first; the bonus is lost.
-function foundry_TooSlow()
+function foundry_TooSlow(hDisplay, eState)
+if eState ~= HUD.STATE.LIMIT then return end
 local o = tFoundryFast
 if not o or o.done or bFoundryOver then return end
 o.done = true
@@ -1083,7 +1084,8 @@ if w.kind == 'escort' then foundry_EscortLost(w, aActor)
 elseif w.kind == 'deliver' then if not w.done then foundry_Fail(w.lost) end
 elseif not w.off then foundry_Fail(w.reason) end
 end
-function foundry_TimeUp()
+function foundry_TimeUp(hDisplay, eState)
+if eState ~= HUD.STATE.LIMIT then return end
 if tFoundryTimer and not tFoundryTimer.off then foundry_Fail(tFoundryTimer.reason) end
 end
 function foundry_Left(playerActor, boundaryName)
@@ -1157,7 +1159,8 @@ local sMsg, iIdx = foundry_Kind(o)
 util_ObjMsgPrint{{ sMsg = o.text, sType = sMsg .. 'UPD_NEG', vIdx = iIdx, sObjective = o.name }}
 Event_ActorInBoundary('foundry_HoldIn', 'b', 'player0', o.zone, true)
 end
-function foundry_HoldDone()
+function foundry_HoldDone(hDisplay, eState)
+if eState ~= HUD.STATE.LIMIT then return end
 local o = tFoundryHolding
 if not o or o.done or not o.holding then return end
 if o.hud then HUD_RemoveTrayDisplay(o.hud) o.hud = nil end
