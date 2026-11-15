@@ -82,17 +82,25 @@ def level_texts(data_dir, map_name, files=None):
     changed, by that path), or {} if the map isn't a level."""
     from pathlib import Path
     data_dir = Path(data_dir)
+    files = files or {}
     levels = data_dir / "levels.ini"
-    if not levels.exists():
+    if "DATAxbox/levels.ini" in files:
+        levels_text = files["DATAxbox/levels.ini"].decode("latin-1")
+    elif levels.exists():
+        levels_text = levels.read_text(encoding="latin-1")
+    else:
         return {}
-    rels = level_files(levels.read_text(encoding="latin-1"), map_name, lambda rel: find(data_dir, rel))
+    added = {p[len("DATAxbox/"):].lower(): p[len("DATAxbox/"):] for p in files}
+
+    def where(rel):            # a file a build added (a new map's config), or on disk
+        return added.get(rel.lower()) or find(data_dir, rel)
     out = {}
-    for rel in rels:
-        rel = find(data_dir, rel)
+    for rel in level_files(levels_text, map_name, where):
+        rel = where(rel)
         if not rel:
             continue
         path = "DATAxbox/" + rel
-        out[path] = files[path].decode("latin-1") if files and path in files else             (data_dir / rel).read_bytes().decode("latin-1")
+        out[path] = files[path].decode("latin-1") if path in files else (data_dir / rel).read_bytes().decode("latin-1")
     return out
 
 

@@ -191,7 +191,7 @@ def new_project(folder, name=None):
     folder = Path(folder)
     name = name or folder.resolve().name
     for sub in ("text", "scripts", "objects", "encounters", "missions", "textures", "models", "layout", "animations",
-                "animtables", "terrain", "sounds", "sky"):
+                "animtables", "terrain", "sounds", "sky", "maps"):
         (folder / sub).mkdir(parents=True, exist_ok=True)
     meta = folder / "mod.json"
     if not meta.exists():
@@ -339,6 +339,8 @@ def _apply_rule(inst, rule):
                 break
         else:
             inst["properties"].append([prop, str(value)])
+        if prop.lower() == "geometryfile" and value:
+            inst["model"] = str(value)           # it draws the model it names (its model word follows)
     if any(k in rule for k in ("move", "position", "turn")) and "position" not in inst:
         raise ValueError(f"object {inst['template']!r} has no transform to change")
     if "position" in rule:
@@ -969,12 +971,40 @@ def _material_warnings(rules):
     return out
 
 
+def _load_models(data, layer_key, names):
+    """A layer's load list with these models in its [model] section (those
+    it doesn't load already)."""
+    from . import encounters
+    LIST = name_hash("list")
+    for a, r in data.records(LIST):
+        if r.key != layer_key:
+            continue
+        text = data.current(a, r).decode("latin-1")
+        have = {m.lower() for m in encounters.parse_list(text).get("model", [])}
+        add = []
+        for n in names:
+            if n.lower() not in have and n.lower() not in {x.lower() for x in add}:
+                add.append(n)
+        if not add:
+            continue
+        nl = "\r\n" if "\r\n" in text else "\n"
+        if "[model]" in text.lower():
+            i = text.lower().index("[model]") + len("[model]")
+            text = text[:i] + nl + "".join(f"load {n}{nl}" for n in add) + text[i:]
+        else:
+            text = text.rstrip() + f"{nl}{nl}[model]{nl}{nl}" + "".join(f"load {n}{nl}" for n in add)
+        data.set(a, r, text.encode("latin-1"))
+
+
 def _apply_objects(data, folder, result, skip=()):
     rules = list(_rules(folder, skip))
     if not rules:
         return
     result.warnings += _material_warnings(rules)
     hits = [0] * len(rules)
+    # models rules give objects (a new object's, its ruin): their layer loads them
+    given = [str(v) for _, rule in rules for k, v in (rule.get("set") or {}).items()
+             if k.lower() in ("geometryfile", "geometrynameruined") and v]
     for a, r in data.records(WORLD):
         doc = None
         for n, (fname, rule) in enumerate(rules):
@@ -1031,6 +1061,8 @@ def _apply_objects(data, folder, result, skip=()):
             chunks += twins          # later rules can still move them
         if doc is not None:
             data.set(a, r, world.from_json(doc))
+            if given:
+                _load_models(data, r.key, given)
     for (fname, rule), n in zip(rules, hits):
         what = rule.get("name") or rule.get("template") or rule.get("model") or f"object near {rule['near']}"
         if not n:
@@ -1192,6 +1224,97 @@ def _apply_animtables(data, folder, result):
             result.warnings.append(f"animtables/{f.name}: clips not in the game or this mod: {', '.join(missing[:6])}")
 
 
+MAP_KINDS = ("Terrain", "world", "encounter", "region", "lineregion", "path", "list")
+
+
+def _renamed_record(body, new):
+    """A map record (Terrain, world, ...) under a new name: its NAME chunk,
+    and a world's TNAM (the terrain it's on)."""
+    from . import ucfb
+    roots, outer_pad = ucfb.split(body)
+    if len(roots) != 1 or roots[0][0] != b"ucfb":
+        return body                      # a list's text, or nothing to rename
+    kids, inner_pad = ucfb.split(roots[0][1])
+    if len(kids) != 1:
+        return body
+    tag, inner = kids[0]
+    items, pad_last = ucfb.split(inner)
+    items = [(t, new.encode("latin-1") + b"\0" if t in (b"NAME", b"TNAM") else b) for t, b in items]
+    return ucfb.wrap(tag, ucfb.pack_children(items, pad_last), (outer_pad, inner_pad))
+
+
+def _apply_maps(data, folder, result):
+    """maps/<name>.json {"from": "blank"}: a new map, a copy of a game map
+    under a new name: its terrain, world layer, encounters, regions, zones,
+    paths and load list (the list loading the new name's own), a level in
+    levels.ini and a copy of its level config. Reshape and paint it with
+    terrain/<name>.* like any map; enter it from Foundry Console with
+    Utility_ResetToBaseLayerOnly('<name>')."""
+    from . import sky
+    mdir = folder / "maps"
+    for f in sorted(mdir.glob("*.json")) if mdir.is_dir() else []:
+        name = f.stem
+        where = f"maps/{f.name}"
+        if not re.fullmatch(r"[A-Za-z0-9_]+", name):
+            raise ValueError(f"{where}: a map name is letters, digits and _")
+        key = name_hash(name)
+        if any(r.key == key for _, r in data.records(name_hash("Terrain"))) or \
+                data.find_added(key, name_hash("Terrain")) is not None:
+            raise ValueError(f"{where}: there's already a map named {name!r}")
+        src = str(json.loads(f.read_text(encoding="utf-8")).get("from") or "blank")
+        made = []
+        for kind in MAP_KINDS:
+            hit = [(a, r) for a, r in data.records(name_hash(kind)) if r.key == name_hash(src)]
+            if not hit:
+                if kind in ("Terrain", "world", "list"):
+                    raise ValueError(f"{where}: \"from\" names no game map ({src!r} has no {kind} record)")
+                continue
+            a, r = hit[0]
+            body = data.current(a, r)
+            if kind == "list":
+                # the copy loads its own layer records, not the source's
+                text = body.decode("latin-1")
+                text = re.sub(rf"(?im)^load {re.escape(src)}[ \t]*(?=\r?$)", f"load {name}", text)
+                body = text.encode("latin-1")
+            else:
+                body = _renamed_record(body, name)
+            data.new(a, key, name_hash(kind), body)
+            made.append(kind)
+            if kind == "Terrain":
+                data.new_map_terrain = getattr(data, "new_map_terrain", {})
+                data.new_map_terrain[key] = body
+        # its level: a levels.ini section (as the source's) and a copy of its config
+        lpath = "DATAxbox/levels.ini"
+        levels = data.files[lpath].decode("latin-1") if lpath in data.files else \
+            (data.dir / "levels.ini").read_bytes().decode("latin-1")
+        texts = sky.level_texts(data.dir, src, data.files)
+        if texts:
+            conf_path = next(iter(texts))                       # DATAxbox/TEST/blank.ini
+            conf_dir = conf_path.rsplit("/", 1)[0]
+            new_conf = f"{conf_dir}/{name}.ini"
+            data.files[new_conf] = texts[conf_path].encode("latin-1")
+            for path, text in list(texts.items())[1:]:          # its Xbox config, if any
+                data.files[f"{conf_dir}/{name}_XBOX.ini"] = text.encode("latin-1")
+            rel = "\\" + new_conf[len("DATAxbox/"):].replace("/", "\\")
+            nl = "\r\n" if "\r\n" in levels else "\n"
+            if not re.search(rf"(?im)^\[LV_{re.escape(name)}\]", levels):
+                section = (f"[LV_{name}]{nl}Name\t\t\t{name}{nl}Path\t\t\t\\{conf_dir[len('DATAxbox/'):]}\\{nl}"
+                           f"AssetFile\t\t\\{conf_dir[len('DATAxbox/'):]}\\{name}.lvl{nl}"
+                           f"TextureFile\t\t\\{conf_dir[len('DATAxbox/'):]}\\{name}t.lvl{nl}"
+                           f"WorldFile\t\t\\{conf_dir[len('DATAxbox/'):]}\\{name}w.lvl{nl}ConfigFile\t\t{rel}{nl}")
+                levels = levels.rstrip("\r\n") + nl + nl + section
+                # and in the list of level names, as the game lists them
+                m = re.search(r"(?im)^\[LevelNamesList\][^\[]*", levels)
+                if m:
+                    block = m.group(0).rstrip("\r\n")
+                    levels = (levels[:m.start()] + block + nl + f"LevelName\tLV_{name}" + nl + nl
+                              + levels[m.end():].lstrip("\r\n"))
+                data.files[lpath] = levels.encode("latin-1")
+        result.changes.append(f"map {name}: new, from {src} ({', '.join(made)}; a level in levels.ini"
+                              + (f", config {name}.ini" if texts else "") + f"); enter it with "
+                              f"Utility_ResetToBaseLayerOnly('{name}')")
+
+
 def _apply_terrain(data, folder, result):
     from . import png, terrain, terrain_decals, terrain_layers, terrain_light, terrain_paint
     tdir = folder / "terrain"
@@ -1221,17 +1344,21 @@ def _apply_terrain(data, folder, result):
     for name, job in work.items():
         key = name_hash(name)
         hit = [(a, r) for a, r in data.records(name_hash("Terrain")) if r.key == key]
+        if not hit and data.find_added(key, name_hash("Terrain")) is not None:
+            hit = [(None, None)]                 # a new map's (maps/): its copied terrain
         if not hit:
             raise ValueError(f"terrain/{name}.*: no terrain named {name!r}")
         notes = []
+        new_maps = getattr(data, "new_map_terrain", {})
         for a, r in hit:
             notes = []
-            record = data.current(a, r)
+            record = data.current(a, r) if a else data.find_added(key, name_hash("Terrain"))
+            original = data.archive(a).read(r) if a else new_maps[key]
             chunks = terrain.tern_chunks(record)
             replace = {}
             if "heights" in job:
                 f = job["heights"]
-                _, base, _ = terrain.decode_height_units(terrain.tern_chunks(data.archive(a).read(r)))
+                _, base, _ = terrain.decode_height_units(terrain.tern_chunks(original))
                 if f.name.endswith(".changes.json"):
                     from . import modpack
                     meta = json.loads(f.read_text(encoding="utf-8"))
@@ -1276,7 +1403,7 @@ def _apply_terrain(data, folder, result):
                 if job.get("layers"):
                     # Only pixels this mod changed from the game's paint
                     # replace the current paint (other mods' included).
-                    _, base_imgs = terrain_paint.layer_images(terrain.tern_chunks(data.archive(a).read(r)))
+                    _, base_imgs = terrain_paint.layer_images(terrain.tern_chunks(original))
                     _, cur_imgs = terrain_paint.layer_images({**chunks, **replace})
                 for index, f in job.get("layers", {}).items():
                     w, h, rgba = png.decode(f.read_bytes())
@@ -1315,7 +1442,10 @@ def _apply_terrain(data, folder, result):
                         result.warnings.append(f"terrain/{job['decals'].name}: no game texture named {t!r}")
                 roads = len(doc.get("roads", []))
                 notes.append(f"{count} decals" + (f" ({roads} road{'s' if roads != 1 else ''} laid)" if roads else ""))
-            data.set(a, r, terrain.rebuild(record, replace))
+            if a:
+                data.set(a, r, terrain.rebuild(record, replace))
+            else:
+                data.replace_added(key, name_hash("Terrain"), terrain.rebuild(record, replace))
         result.changes.append(f"terrain {name}: " + "; ".join(notes))
 
 
@@ -1654,9 +1784,33 @@ def _apply_sky(data, folder, result):
             result.changes.append(f"sky {f.stem}: " + "; ".join(changes))
 
 
+def game_strings(data):
+    """Every English string as the build has it so far: {key: text}."""
+    out = {}
+    for name, rec in data.records(REGISTRY, ("english.dsk",)):
+        try:
+            out.update(registry.Registry(data.current(name, rec)).strings())
+        except Exception:
+            continue
+    return out
+
+
+def _apply_factions(data, folder, result):
+    """factions.json: a faction's new names in the game's text (see factions.py)."""
+    from . import factions
+    f = folder / "factions.json"
+    if not f.exists():
+        return
+    edits = factions.plan(game_strings(data), json.loads(f.read_text(encoding="utf-8")))
+    if edits:
+        changed, _ = _set_strings(data, edits)
+        result.changes.append(f"factions: {changed} strings renamed")
+
+
 STEPS = (_apply_text, _apply_scripts, _apply_objects, _apply_encounters, _apply_missions,
          _apply_textures, _apply_models, _apply_collision_flags, _apply_layout, _apply_game_squads,
-         _apply_animations, _apply_animtables, _apply_terrain, _apply_sounds, _apply_sky)
+         _apply_animations, _apply_animtables, _apply_maps, _apply_terrain, _apply_sounds, _apply_sky,
+         _apply_factions)
 
 
 def build(projects, data_dir, out_dir, name=None, description=None) -> Result:

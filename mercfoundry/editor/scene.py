@@ -69,6 +69,20 @@ def context_mods(mod_dir):
     return [mod]
 
 
+def _terrain_rec(data, name):
+    """A map's terrain record in a build's data: the game's, or a new map's
+    (maps/), which the build added."""
+    rec = next(((a, r) for a, r in data.records(name_hash("Terrain")) if r.key == name_hash(name)), None)
+    if rec is None and data.find_added(name_hash(name), name_hash("Terrain")) is not None:
+        rec = (None, name_hash(name))
+    return rec
+
+
+def _terrain_bytes(data, rec):
+    a, r = rec
+    return data.current(a, r) if a else data.find_added(r, name_hash("Terrain"))
+
+
 class Scene:
     def __init__(self, mod_dir, data_dir, context=None):
         self.mod = Path(mod_dir)
@@ -107,6 +121,10 @@ class Scene:
                     n = self.names().get(r.key)
                     if n:
                         out.append(n.lower())
+        # new maps (maps/<name>.json) of the mods the editor shows
+        for p in self.context:
+            mdir = Path(p) / "maps"
+            out += [f.stem.lower() for f in mdir.glob("*.json")] if mdir.is_dir() else []
         return sorted(set(out))
 
     def _modded_terrain(self):
@@ -116,8 +134,10 @@ class Scene:
             gen = getattr(self, "_terrain_gen", 0)
             data = modbuild._Data(self.data)
             for p in self.context:
+                data.project = modbuild.project_name(p)
+                if (Path(p) / "maps").is_dir():
+                    modbuild._apply_maps(data, Path(p), modbuild.Result())      # new maps, to see and edit
                 if (Path(p) / "terrain").is_dir():
-                    data.project = modbuild.project_name(p)
                     modbuild._apply_terrain(data, Path(p), modbuild.Result())
             # A save during the build makes it stale: use it this once, keep nothing.
             if gen != getattr(self, "_terrain_gen", 0):
@@ -136,10 +156,10 @@ class Scene:
         """(meta, float32 heights bytes), row z from the map's -z edge, with
         the context mods' terrain edits."""
         data = self._modded_terrain()
-        rec = next(((a, r) for a, r in data.records(name_hash("Terrain")) if r.key == name_hash(name)), None)
+        rec = _terrain_rec(data, name)
         if rec is None:
             raise KeyError(name)
-        chunks = terrain.tern_chunks(data.current(*rec))
+        chunks = terrain.tern_chunks(_terrain_bytes(data, rec))
         info = terrain.parse_info(chunks[b"INFO"])
         size, heights = terrain.decode_heights(chunks)
         sp = info["spacing"]
@@ -318,7 +338,7 @@ class Scene:
         """A map's sky and weather: its base sky settings and atmosphere
         presets as the game has them, and the mod's changes (sky/<map>.json)."""
         from .. import sky as sk
-        texts = sk.level_texts(self.data, map_name)
+        texts = sk.level_texts(self.data, map_name) or sk.level_texts(self.data, map_name, self._modded_terrain().files)
         if not texts:
             return {"level": False}
         files = list(texts)
@@ -343,7 +363,7 @@ class Scene:
         """Write sky/<map>.json (checked by applying it to the game's files);
         an empty one is removed."""
         from .. import sky as sk
-        texts = sk.level_texts(self.data, map_name)
+        texts = sk.level_texts(self.data, map_name) or sk.level_texts(self.data, map_name, self._modded_terrain().files)
         if not texts:
             raise ValueError(f"{map_name} isn't a level with sky settings")
         clean = {}
@@ -363,6 +383,54 @@ class Scene:
         elif p.exists():
             p.unlink()
         return {"file": f"sky/{p.name}", "empty": not clean}
+
+    def factions(self):
+        """The mod's factions.json and the game's names for the four employers."""
+        from .. import factions as fx
+        p = self.mod / "factions.json"
+        doc = json.loads(p.read_text(encoding="utf-8")) if p.exists() else {}
+        return {"doc": doc, "factions": list(fx.FACTIONS),
+                "old": {f: [o for o, _ in fx.OLD[f]] for f in fx.FACTIONS}}
+
+    def _english(self):
+        if not hasattr(self, "_strings"):
+            from .. import registry
+            self._strings = {}
+            for a in self.archives:
+                if a.path.name.lower() != "english.dsk":
+                    continue
+                for r in a.records:
+                    if r.kind == name_hash("registry"):
+                        try:
+                            self._strings.update(registry.Registry(a.read(r)).strings())
+                        except Exception:
+                            continue
+        return self._strings
+
+    def faction_preview(self, doc):
+        """What factions.json (doc) would change: {"count", "samples": [[key, old, new]]}."""
+        from .. import factions as fx
+        strings = self._english()
+        edits = fx.plan(strings, doc)
+        keys = sorted(edits, key=lambda k: (not k.lower().startswith("interface"), k.lower()))
+        return {"count": len(edits), "samples": [[k, strings[k], edits[k]] for k in keys[:40]]}
+
+    def save_factions(self, doc):
+        from .. import factions as fx
+        fx.plan(self._english(), doc)                       # raises on what the build would refuse
+        clean = {f: {k: str(v).strip() for k, v in (doc.get(f) or {}).items() if str(v).strip()}
+                 for f in fx.FACTIONS}
+        clean = {f: v for f, v in clean.items() if v.get("name")}
+        if clean and doc.get("everywhere"):
+            clean["everywhere"] = True
+        if clean and doc.get("subtitles"):
+            clean["subtitles"] = True
+        p = self.mod / "factions.json"
+        if clean:
+            p.write_text(json.dumps(clean, indent=1) + "\n", encoding="utf-8")
+        elif p.exists():
+            p.unlink()
+        return {"file": "factions.json", "empty": not clean}
 
     def music_tracks(self):
         """The game's music tracks (the music sound bank's cues): ["music.Card_Ace", ...]."""
@@ -821,10 +889,10 @@ class Scene:
         if name not in self._looks:
             from .. import terrain_layers as tl, terrain_light, terrain_paint
             data = self._modded_terrain()
-            rec = next(((a, r) for a, r in data.records(name_hash("Terrain")) if r.key == name_hash(name)), None)
+            rec = _terrain_rec(data, name)
             if rec is None:
                 raise KeyError(name)
-            chunks = terrain.tern_chunks(data.current(*rec))
+            chunks = terrain.tern_chunks(_terrain_bytes(data, rec))
             table = terrain_paint.layer_table(chunks)
             w, images = terrain_paint.layer_images(chunks)
             paint = b"".join(images.get(i, bytes(w * w)) for i in range(len(table)))
@@ -850,10 +918,10 @@ class Scene:
         (x+1, z+1), (x, z), (x+1, z), as stored."""
         from .. import terrain_decals
         data = self._modded_terrain()
-        rec = next(((a, r) for a, r in data.records(name_hash("Terrain")) if r.key == name_hash(name)), None)
+        rec = _terrain_rec(data, name)
         if rec is None:
             raise KeyError(name)
-        doc = terrain_decals.export(terrain.tern_chunks(data.current(*rec)))
+        doc = terrain_decals.export(terrain.tern_chunks(_terrain_bytes(data, rec)))
         names = list(doc["textures"])
         out = []
         for d in doc["decals"]:
@@ -894,6 +962,27 @@ class Scene:
                         "model": o["model"], **look(o),
                         "position": list(o["position"]), "rotation": to_three(rows)})
         return out
+
+    def object_properties(self, ref):
+        """An object's properties, [[key, value], ...]: "id:<layer>:<index>"
+        (a game object), or "from:<name>" / "from:model:<model>" (the object a
+        copy or placed object comes from)."""
+        kind, _, what = ref.partition(":")
+        o = None
+        if kind == "id":
+            layer, _, index = what.rpartition(":")
+            o = next((x for x in self.all_objects()
+                      if x["layer"].lower() == layer.lower() and str(x["index"]) == index), None)
+        elif kind == "from":
+            low = what.lower()
+            if low.startswith("model:"):
+                o = next((x for x in self.all_objects() if not x["name"] and x["model"].lower() == low[6:]), None)
+            else:
+                o = next((x for x in self.all_objects() if x["name"].lower() == low), None)
+        if o is None:
+            raise ValueError(f"no object {ref!r}")
+        return {"name": o["name"], "model": o["model"], "layer": o["layer"],
+                "properties": [list(p) for p in o["properties"]]}
 
     def bounds(self, map_name, context=False):
         """{model: [min x, y, z, max x, y, z]} for the models this map's objects
@@ -1123,7 +1212,8 @@ class Scene:
             if new_name.lower() in names:
                 raise ValueError(f"the game already has an object named {new_name!r}")
             taken.add(new_name.lower())
-            rules.append({**self._rule(c["source"], c), "copy": True, "as": new_name})
+            rules.append({**self._rule(c["source"], c), "copy": True, "as": new_name,
+                          **({"set": dict(c["set"])} if c.get("set") else {})})
         removed = set(removed)
         for oid, e in moved.items():
             if oid not in removed:

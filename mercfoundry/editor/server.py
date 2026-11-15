@@ -25,6 +25,10 @@ GET  /api/encounters/<map>     encounters: the game's (read only) and the mod's
 GET  /api/sky/<map>            its base sky and atmosphere presets, and the mod's changes (sky/<map>.json)
 POST /api/models/new           {"name", "base", "glb" (base64)}: a new object's model (models/<name>.glb + .new.json)
 POST /api/sky/save             {"map", "doc"}: writes sky/<map>.json
+GET  /api/properties/<ref>     an object's properties: id:<layer>:<index>, or from:<name> / from:model:<model>
+GET  /api/factions             the mod's factions.json (faction re-skins) and the game's names
+POST /api/factions/preview     {"doc"}: what it would change ({count, samples})
+POST /api/factions/save        {"doc"}: writes factions.json
 GET  /api/music                the game's music tracks, for music lines
 GET  /api/voices               the game's voiced lines with subtitles, for radio lines: [{cue, text}]
 GET  /api/voice/<bank>.<cue>.wav  a voice line to listen to
@@ -162,6 +166,12 @@ def make_handler(scene: Scene, mod_name: str, live: Live = None):
                 if path.startswith("/api/sky/"):
                     with objects_lock:
                         return self.send(200, scene.sky(path[len("/api/sky/"):]))
+                if path.startswith("/api/properties/"):
+                    with objects_lock:
+                        return self.send(200, scene.object_properties(path[len("/api/properties/"):]))
+                if path == "/api/factions":
+                    with objects_lock:
+                        return self.send(200, scene.factions())
                 if path == "/api/music":
                     return self.send(200, scene.music_tracks())
                 if path == "/api/voices":
@@ -211,6 +221,12 @@ def make_handler(scene: Scene, mod_name: str, live: Live = None):
                     import base64
                     with objects_lock:
                         return self.send(200, scene.new_model(doc["name"], doc["base"], base64.b64decode(doc["glb"])))
+                if path == "/api/factions/preview":
+                    with objects_lock:
+                        return self.send(200, scene.faction_preview(doc.get("doc") or {}))
+                if path == "/api/factions/save":
+                    with objects_lock:
+                        return self.send(200, scene.save_factions(doc.get("doc") or {}))
                 if path == "/api/sky/save":
                     with objects_lock:
                         return self.send(200, scene.save_sky(doc["map"], doc.get("doc") or {}))

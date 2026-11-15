@@ -134,6 +134,14 @@ toolkit bundle run it the same way: `foundry\python\python.exe foundry\mercfound
   A road replaces whatever decal is on its cells (a patch holds one per cell;
   more hung or crashed the game), and paint hidden under opaque paint is left
   out of the patch (see dsk.md).
+- **New maps**: a mod's `maps/<name>.json` (`{"from": "blank"}`) appears in
+  the Map list like the game's maps, with the copied map's ground to reshape
+  and paint (Terrain), its sky (Sky), and objects, squads and zones to add.
+- **Factions**: new names for the four employers (`factions.json`): name,
+  adjective, short form and people, per faction; **Everywhere** for mission
+  text too, and voiced lines' subtitles if wanted. **Preview** lists the
+  strings that change. The game's eight faction slots are fixed in its code,
+  so a faction can be renamed but not added.
 - **Sky**: the map's sky and weather. **Base sky** is the map's own (sun
   angle and colour, sky colour, fog, sky texture, rain). **Weather presets**
   are the named weather the game switches to inside a weather zone, or when
@@ -355,6 +363,14 @@ toolkit bundle run it the same way: `foundry\python\python.exe foundry\mercfound
     template loaded there.
   - It's saved in the mod's layer for the map, `encounters/<mod>_<map>.json`,
     under `"objects"`.
+- **Properties** (under a selected object) lists its properties: the game's
+  own objects read only, and a copy's or placed object's to change (hit
+  points, destructible, material, faction...). A change is that copy's own
+  (`"set"`, saved with it), highlighted; changing `GeometryFile` changes the
+  model it draws. A new object made from a building (one with a
+  `geometryNameRuined`) gets **Ruin model...**: its own ruin, a `.glb` built
+  on the original's ruin model, shown when it's destroyed. Without one it
+  keeps the original's ruin.
 - **New object from a model...** (on a selected object) makes a new object
   from your own model, a `.glb`. Name it, and the editor writes
   `models/<name>.glb` and `models/<name>.new.json`, built on the selected

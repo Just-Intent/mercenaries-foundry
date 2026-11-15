@@ -30,6 +30,7 @@
   <button id="terrain-mode" title="Edit the ground's height (T)">Terrain</button>
   <button id="missions-mode" title="Make and edit contracts">Missions</button>
   <button id="sky-mode" title="The map's sky and weather presets">Sky</button>
+  <button id="factions-mode" title="Give a faction new names in the game's text">Factions</button>
   <datalist id="templates"></datalist>
   <span class="spacer"></span>
   <button id="live">Live (no game)</button>
@@ -73,6 +74,12 @@
         <input id="new-object-file" type="file" accept=".glb" hidden>
       </div>
       <p id="sel-note" class="hint"></p>
+      <details id="sel-props-box"><summary>Properties</summary>
+        <p class="hint" id="sel-props-note"></p>
+        <div id="sel-props"></div>
+        <div class="buttons" id="sel-ruin-row" hidden><button id="sel-ruin" title="This new object's own ruin: a model (.glb) built on the original's ruin, shown when it's destroyed">Ruin model...</button>
+          <input id="sel-ruin-file" type="file" accept=".glb" hidden></div>
+      </details>
     </div>
     <div id="draw" hidden>
       <h2 id="draw-title"></h2>
@@ -281,6 +288,18 @@
         <div class="buttons"><button id="ms-add-squad">Add squad</button><button id="ms-add-zone">Draw zone</button></div>
       </div>
       <div class="buttons"><button id="ms-close">Close</button></div>
+    </div>
+    <div id="factions" hidden>
+      <h2>Factions</h2>
+      <p class="hint">The game's eight faction slots are fixed in its code: a mod can't add one, but it can give one of
+        the four employers new names. The interface's faction text changes (PDA, contracts menu, trespassing and
+        disguise messages, HQ labels); spoken lines and the HUD's flags stay.</p>
+      <div id="fx-rows"></div>
+      <label class="field"><input id="fx-everywhere" type="checkbox"> Everywhere: mission text, mail and objectives too</label>
+      <label class="field"><input id="fx-subtitles" type="checkbox"> And voiced lines' subtitles (the voice still says the old name)</label>
+      <div class="buttons"><button id="fx-preview">Preview</button></div>
+      <div id="fx-out"></div>
+      <div class="buttons"><button id="fx-close">Close</button></div>
     </div>
     <div id="sky" hidden>
       <h2>Sky &amp; weather <span id="sky-map" class="hint"></span></h2>

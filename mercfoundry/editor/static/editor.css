@@ -122,3 +122,7 @@ code.copyable { display: block; white-space: pre-wrap; word-break: break-all; fo
 .sky-row > input:only-of-type, .sky-row > textarea { grid-column: 2 / 4; }
 .sky-changed span { color: #e8c46a; }
 .sky-row textarea, .sky-row input[type=text] { background: #33383f; color: inherit; border: 1px solid #4a5059; border-radius: 4px; padding: 3px 6px; }
+
+/* Factions: preview */
+.fx-sample { font-size: 12px; margin: 4px 0; padding: 3px 0; border-bottom: 1px solid #2a323c; }
+.fx-sample s { color: #8d98a3; }

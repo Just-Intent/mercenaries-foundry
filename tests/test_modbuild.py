@@ -81,6 +81,62 @@ class ModBuildTests(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, msg):
                 modbuild.build(self.project, self.data, self.out)
 
+    def test_factions(self):
+        # factions.json renames a faction in the game's text (after the mod's own text)
+        self.write("text/t.json", json.dumps({"interface.datapod.mafia": "RUSSIAN MAFIA ", "veh.jeep": "Mafia jeep"}))
+        self.write("factions.json", json.dumps({"mafia": {"name": "Yakuza"}}))
+        result = modbuild.build(self.project, self.data, self.out)
+        self.assertIn("factions: 1 strings renamed", result.changes)
+        strings = {}
+        for (key, kind), body in self.records("english.dsk").items():
+            if kind == REGISTRY:
+                strings.update(registry.Registry(body).strings())
+        self.assertEqual(strings["interface.datapod.mafia"], "YAKUZA ")
+        self.assertEqual(strings["veh.jeep"], "Mafia jeep")                     # not the interface's: kept
+
+    def test_new_map(self):
+        # maps/<name>.json: a copy of a game map under a new name, and its level
+        from mercfoundry import ucfb
+        tern = ucfb.wrap(b"tern", ucfb.pack_chunk(b"NAME", b"blank\0") + ucfb.pack_chunk(b"INFO", b"\0" * 8))
+        wrld = ucfb.wrap(b"wrld", ucfb.pack_chunk(b"NAME", b"blank\0") + ucfb.pack_chunk(b"TNAM", b"blank\0"))
+        build(self.data / "assets.dsk", [
+            (name_hash("mission"), SCRIPT, script.encode(script.new("mission", "x = 1\n"))),
+            (name_hash("blank"), name_hash("Terrain"), tern), (name_hash("blank"), WORLD, wrld),
+            (name_hash("blank"), name_hash("list"), b"\n[terrain]\n\nload blank\n\n[world]\n\nload blank\n\n[model]\n\nload blankish\n"),
+        ])
+        (self.data / "levels.ini").write_text("[LevelNamesList]\n\nLevelName\tLV_blank\n\n[LV_blank]\nName\t\t\tblank\n"
+                                              "Path\t\t\t\\TEST\\\nConfigFile\t\t\\TEST\\blank.ini\n", encoding="latin-1")
+        (self.data / "TEST").mkdir()
+        (self.data / "TEST" / "blank.ini").write_text("SkyTexture\t\tsky\n", encoding="latin-1")
+        (self.project / "maps").mkdir(exist_ok=True)
+        self.write("maps/island.json", json.dumps({"from": "blank"}))
+        result = modbuild.build(self.project, self.data, self.out)
+        self.assertTrue(any(c.startswith("map island: new, from blank") for c in result.changes))
+        recs = self.records("assets.dsk")
+        self.assertIn(b"NAME\x07\x00\x00\x00island\x00\x00INFO", recs[(name_hash("island"), name_hash("Terrain"))])   # padded
+        self.assertIn(b"TNAM", recs[(name_hash("island"), WORLD)])
+        self.assertNotIn(b"blank", recs[(name_hash("island"), WORLD)])
+        self.assertEqual(recs[(name_hash("island"), name_hash("list"))],
+                         b"\n[terrain]\n\nload island\n\n[world]\n\nload island\n\n[model]\n\nload blankish\n")
+        levels = (self.out / "DATAxbox" / "levels.ini").read_text(encoding="latin-1")
+        self.assertIn("LevelName\tLV_blank\nLevelName\tLV_island\n", levels)
+        self.assertIn("[LV_island]\nName\t\t\tisland\n", levels)
+        self.assertIn("ConfigFile\t\t\\TEST\\island.ini", levels)
+        self.assertEqual((self.out / "DATAxbox" / "TEST" / "island.ini").read_text(encoding="latin-1"), "SkyTexture\t\tsky\n")
+        self.write("maps/blank.json", json.dumps({"from": "blank"}))
+        with self.assertRaisesRegex(ValueError, "already a map"):
+            modbuild.build(self.project, self.data, self.out)
+
+    def test_rule_new_model(self):
+        # a rule giving an object another model (GeometryFile): its model word follows
+        self.write("objects/o.json", json.dumps({"template": "jeep_template", "set": {"GeometryFile": "foundry_crate"}}))
+        modbuild.build(self.project, self.data, self.out)
+        arc = dsk.Archive(self.out / "assets.dsk")
+        rec = next(arc.read(r) for r in arc.records if r.kind == WORLD)
+        inst = next(world.iter_objects(rec))
+        self.assertEqual(inst["model"], "foundry_crate")
+        self.assertIn(("GeometryFile", "foundry_crate"), [tuple(p) for p in inst["properties"]])
+
     def test_sky(self):
         # sky/<map>.json: the base sky and atmosphere presets in the map's level config files
         (self.data / "levels.ini").write_text("[LV_SW]\r\nName\t\tSW\r\nConfigFile\t\t\\SW\\SW.ini\r\n", encoding="latin-1")

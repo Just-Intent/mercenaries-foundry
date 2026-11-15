@@ -16,6 +16,7 @@ import {createMinimap} from './minimap.js';
 import {createTerrainEditor} from './terrain_edit.js';
 import {createMissions} from './missions.js';
 import {createSky} from './sky.js';
+import {createFactions} from './factions.js';
 
 const $ = (id) => document.getElementById(id);
 const NEAR_RADIUS = 220;      // metres around the view centre that show real models
@@ -469,7 +470,93 @@ function showSelected() {
   }
   $('delete').title = rec.name && !rec.copyName
     ? `Delete. Scripts may use "${rec.name}" by name; removing it can break them.` : 'Delete';
+  if ($('sel-props-box').open) showProperties(rec);
 }
+
+// ------------------------------------------------------------------ properties
+// The selected object's properties (the game's, or the source's for a copy).
+// A copy's or placed object's can be changed: the changes are its "set"
+// (saved with it); the game's own objects are read only here.
+const propCache = new Map();
+async function showProperties(rec) {
+  const copy = rec.copyName ? state.copies.find((c) => c.rec === rec) : null;
+  const ref = copy ? (copy.template ? `from:${copy.template}` : `id:${copy.source}`) : `id:${rec.id}`;
+  if (!propCache.has(ref)) {
+    propCache.set(ref, fetch(`/api/properties/${encodeURIComponent(ref)}`).then(async (r) => {
+      const doc = await r.json();
+      if (!r.ok) throw new Error(doc.error || r.statusText);
+      return doc.properties;
+    }));
+  }
+  let props;
+  try { props = await propCache.get(ref); } catch (e) {
+    $('sel-props').innerHTML = '';
+    $('sel-props-note').textContent = `No properties: ${e.message}`;
+    return;
+  }
+  if (state.selected !== rec) return;
+  const set = (copy && copy.set) || {};
+  const value = (k) => { const hit = Object.keys(set).find((x) => x.toLowerCase() === k.toLowerCase()); return hit ? set[hit] : null; };
+  const rows = props.map(([k, v]) => [k, value(k) ?? v, value(k) !== null]);
+  for (const k of Object.keys(set)) if (!props.some(([x]) => x.toLowerCase() === k.toLowerCase())) rows.push([k, set[k], true]);
+  const editable = !!copy && !rec.context;
+  $('sel-props-note').textContent = editable
+    ? 'Change a value to give this copy its own (saved with it). Changed ones are highlighted.'
+    : 'The game\'s own object: read only here. Copy it (C) or place one to change its properties.';
+  const esc = (s) => String(s ?? '').replace(/[&<>"]/g, (c) => ({'&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;'}[c]));
+  $('sel-props').innerHTML = rows.map(([k, v, changed]) => `<label class="sky-row${changed ? ' sky-changed' : ''}"><span title="${esc(k)}">${esc(k)}</span>`
+    + `<input type="text" data-prop="${esc(k)}" value="${esc(v)}" ${editable ? '' : 'readonly'}></label>`).join('');
+  // a new object's own ruin (it has a model of its own and its source has a ruin)
+  const ruin = props.find(([k]) => k.toLowerCase() === 'geometrynameruined');
+  $('sel-ruin-row').hidden = !(editable && ruin && ruin[1] && value('GeometryFile'));
+}
+$('sel-props-box').addEventListener('toggle', () => { if ($('sel-props-box').open && state.selected) showProperties(state.selected); });
+$('sel-props').addEventListener('change', (e) => {
+  const k = e.target.dataset.prop, rec = state.selected;
+  if (!k || !rec || !rec.copyName) return;
+  const copy = state.copies.find((c) => c.rec === rec);
+  if (!copy) return;
+  copy.set = copy.set || {};
+  const hit = Object.keys(copy.set).find((x) => x.toLowerCase() === k.toLowerCase()) || k;
+  copy.set[hit] = e.target.value.trim();
+  if (hit.toLowerCase() === 'geometryfile') {           // it draws the model it names
+    rec.model = rec.geometry = copy.set[hit];
+    if (rec.node) { if (gizmo.object === rec.node) gizmo.detach(); scene.remove(rec.node); rec.node = null; }
+    gizmo.attach(ensureNode(rec));
+  }
+  e.target.closest('.sky-row').classList.add('sky-changed');
+  setDirty(true);
+  refreshChanges();
+  if (hit.toLowerCase() === 'geometryfile') showSelected();      // its model line, and the ruin button
+});
+// Ruin model: the new object's ruin, built on its source's ruin model.
+$('sel-ruin').onclick = () => { $('sel-ruin-file').value = ''; $('sel-ruin-file').click(); };
+$('sel-ruin-file').onchange = async () => {
+  const file = $('sel-ruin-file').files[0], rec = state.selected;
+  const copy = rec && state.copies.find((c) => c.rec === rec);
+  if (!file || !copy) return;
+  const props = await propCache.get(copy.template ? `from:${copy.template}` : `id:${copy.source}`);
+  const base = (props.find(([k]) => k.toLowerCase() === 'geometrynameruined') || [])[1];
+  const own = Object.entries(copy.set || {}).find(([k]) => k.toLowerCase() === 'geometryfile');
+  const name = (prompt('Name of the ruin model', `${own ? own[1] : 'object'}_ruin`) || '').trim();
+  if (!name || !base) return;
+  const bytes = new Uint8Array(await file.arrayBuffer());
+  let bin = '';
+  for (let i = 0; i < bytes.length; i += 0x8000) bin += String.fromCharCode.apply(null, bytes.subarray(i, i + 0x8000));
+  try {
+    const r = await fetch('/api/models/new', {method: 'POST', headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({name, base, glb: btoa(bin)})});
+    const doc = await r.json();
+    if (!r.ok) throw new Error(doc.error || r.statusText);
+    copy.set = copy.set || {};
+    copy.set.geometrynameruined = name;
+    setDirty(true);
+    showProperties(rec);
+    status(`Ruin model ${name} saved (${doc.files.join(', ')}), built on ${base}: Save to keep it on this object`);
+  } catch (e) {
+    status(`Couldn't make the ruin: ${e.message}`, true);
+  }
+};
 
 function deleteSelected() {
   const rec = state.selected;
@@ -733,7 +820,8 @@ async function save() {
     map: state.map,
     moved: state.moved,
     copies: state.copies.filter((c) => !c.template)
-      .map((c) => ({source: c.source, as: c.as, position: c.position, rotation: c.rotation})),
+      .map((c) => ({source: c.source, as: c.as, position: c.position, rotation: c.rotation,
+                    ...(c.set && Object.keys(c.set).length ? {set: c.set} : {})})),
     removed: [...state.removed],
   };
   // Placed objects, by layer file (files that lost all theirs get an empty list).
@@ -771,6 +859,12 @@ async function save() {
       }
     } catch (e) {
       note += `; mission not saved: ${e.message}`;
+    }
+    const fxBody = factions.saveBody();
+    if (fxBody) {
+      const done = await post('/api/factions/save', fxBody);
+      factions.saved();
+      note += done.empty ? '; factions back to the game\'s' : `; faction names in ${done.file}`;
     }
     const skyBody = sky.saveBody();
     if (skyBody) {
@@ -1058,6 +1152,7 @@ const missions = createMissions({
 });
 // Sky and weather: the map's base sky and atmosphere presets (sky/<map>.json).
 const sky = createSky({$, status, setDirty: (v) => setDirty(v)});
+const factions = createFactions({$, status, setDirty: (v) => setDirty(v)});
 // The minimap (water areas come from the layout module once it has loaded).
 let waterAreas = null;
 const minimap = createMinimap({$, heightAt, lookAt: (p, d) => lookAt(p, d)});

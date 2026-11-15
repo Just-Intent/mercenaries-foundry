@@ -40,6 +40,8 @@ Built in 0.102: `sky/<map>.json`, the editor's Sky panel, weather zones, and mis
 
 ## New maps: feasible, not proven
 
+Built as a trial in 0.106 (`maps/<name>.json`): the build copies a map's records under a new name, adds its level and config, and the terrain tools and editor work on it. Not tested in game: whether `Utility_ResetToBaseLayerOnly('<name>')` enters it is the open question.
+
 - A map is a set of `assets.dsk` records sharing its name: `Terrain`,
   `world`, `encounter`, `region`, `lineregion`, `path` and `list`. The
   `list` record is its load list.
@@ -71,6 +73,8 @@ Built in 0.102: `sky/<map>.json`, the editor's Sky panel, weather zones, and mis
   - whether larger terrain works.
 
 ## New factions: a truly new one isn't feasible; re-skins are
+
+Re-skins built in 0.107 (`factions.json`: a faction's names in the game's text). Not tested in game.
 
 - The executable's `Faction_FromHash` (0x95C20) is a fixed switch over 8
   slots: none, prokat/exops (the player), nk, sk, mafia, china, allies, civ.
