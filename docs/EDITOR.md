@@ -284,7 +284,10 @@ toolkit bundle run it the same way: `foundry\python\python.exe foundry\mercfound
     a person, and an optional **Alive $** paid for each one taken alive),
     and **Finish fast**, a bonus paid if the contract is completed before a
     clock runs out (it counts down from when the bonus is shown; one per
-    mission).
+    mission), **Defend** (keep a squad or people and objects picked on the
+    map alive until a clock runs out; **At least** sets how many must live)
+    and **Collect items** (pick up items picked on the map; **How many** of
+    them).
     **Show** looks at an objective's squad or zone.
     Main objectives are done in order; one ticked **Together with the one
     before** starts at the same time as the main objective before it, and
@@ -317,8 +320,9 @@ toolkit bundle run it the same way: `foundry\python\python.exe foundry\mercfound
   - **Fail conditions**: **Protect squad** (fail if one of them dies), **Time
     limit** (an on-screen clock), **Stay in zone** (fail on leaving it),
     **Alarm raised** (alarms picked on the map), **Spotted trespassing** (by a
-    faction you pick) and **Turns hostile** (a squad or people picked on the
-    map turn on the player),
+    faction you pick), **Turns hostile** (a squad or people picked on the
+    map turn on the player) and **Target escapes** (one of them reaches a
+    zone: a chase, with a destroy objective and a path order),
     each with the message the failure screen shows. Each **Begins** at the
     start, when an objective starts or is done, or when the player enters a
     zone (a time limit's clock starts then: "two minutes once objective 2

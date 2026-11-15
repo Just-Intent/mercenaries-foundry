@@ -284,7 +284,8 @@ export function createMissions(ctx) {
   const MOOD_FACTIONS = ['allies', 'china', 'mafia', 'sk'];
   const OBJ_NAMES = {destroy: 'Destroy squad / objects', goto: 'Go to zone', escort: 'Escort squad (they follow you to the zone)',
                      deliver: 'Deliver vehicle to zone', subdue: 'Capture alive (subdue)', hold: 'Hold zone',
-                     use: 'Use object', fast: 'Finish fast', verify: 'Verify target (kill and photograph, or capture)'};
+                     use: 'Use object', fast: 'Finish fast', verify: 'Verify target (kill and photograph, or capture)',
+                     defend: 'Defend (keep them alive until the clock runs out)', collect: 'Collect items (pick them up)'};
   const BLIPS = {human: 'Person', scope: 'Scope', blip: 'Dot', clubs: 'Clubs', diamond: 'Diamonds', hearts: 'Hearts', spades: 'Spades'};
   // Folded cards: one line each. Which are open is kept by the objective
   // itself (so it survives moving them up and down).
@@ -293,11 +294,11 @@ export function createMissions(ctx) {
     const what = [o.squad, ...(o.targets || []), o.vehicle].filter(Boolean);
     const bits = [o.text ? `"${o.text}"` : '(no text)'];
     if (what.length) bits.push(what.length > 2 ? `${what[0]} +${what.length - 1}` : what.join(', '));
-    else if (['destroy', 'subdue', 'use', 'verify', 'escort'].includes(o.type)) bits.push('(nothing picked)');
+    else if (['destroy', 'subdue', 'use', 'verify', 'escort', 'defend', 'collect'].includes(o.type)) bits.push('(nothing picked)');
     if (o.zone) bits.push(`to ${o.zone}`);
     else if (['goto', 'escort', 'deliver', 'hold'].includes(o.type)) bits.push('(no zone)');
     if (+o.seconds > 0) bits.push(clock(+o.seconds));
-    if (+o.need > 0) bits.push(o.type === 'escort' ? `at least ${o.need}` : `${o.need} of them`);
+    if (+o.need > 0) bits.push(o.type === 'escort' || o.type === 'defend' ? `at least ${o.need}` : `${o.need} of them`);
     if (+o.bonus > 0) bits.push(money(o.bonus));
     if (o.together) bits.push('with the one before');
     return bits.join(' · ');
@@ -315,7 +316,7 @@ export function createMissions(ctx) {
       const zonePick = `<select data-i="${i}" data-k="zone"><option value="">(${o.type === 'escort' ? 'to zone' : 'zone'})</option>${zones.map((z) =>
             `<option ${z === o.zone ? 'selected' : ''}>${esc(z)}</option>`).join('')}</select>`;
       // Objects picked on the map: destroy targets, or the vehicle to deliver.
-      const targets = (o.type === 'destroy' || o.type === 'subdue' || o.type === 'use' || o.type === 'verify')
+      const targets = ['destroy', 'subdue', 'use', 'verify', 'defend', 'collect'].includes(o.type)
         ? `<span class="ms-targets">${(o.targets || []).map((t, j) => `<span class="ms-tag">${esc(t)}
             <button data-i="${i}" data-t="${j}" data-a="untarget" title="Remove">×</button></span>`).join('')}
             <button data-i="${i}" data-a="target" title="Select a named object on the map first">+ Add selected object</button></span>`
@@ -324,7 +325,7 @@ export function createMissions(ctx) {
         ? `<span class="ms-targets">${o.vehicle ? `<span class="ms-tag">${esc(o.vehicle)}</span>` : '(no vehicle)'}
             <button data-i="${i}" data-a="vehicle" title="Select the vehicle on the map first">Use selected vehicle</button></span>`
         : '';
-      const seconds = (o.type === 'hold' || o.type === 'fast')
+      const seconds = (o.type === 'hold' || o.type === 'fast' || o.type === 'defend')
         ? `<label>Seconds <input data-i="${i}" data-k="seconds" type="number" min="1" step="10" value="${+o.seconds || ''}"></label>` : '';
       const prompt = o.type === 'use'
         ? `<input data-i="${i}" data-k="prompt" type="text" value="${esc(o.prompt)}" placeholder="Prompt on the object, e.g. Plant charge">` : '';
@@ -339,14 +340,19 @@ export function createMissions(ctx) {
       const together = !(+o.bonus > 0) && firstMain >= 0 && i > firstMain
         ? `<label title="Starts with the main objective before it, in any order; the next one waits until both are done">`
           + `<input data-i="${i}" data-k="together" type="checkbox" ${o.together ? 'checked' : ''}> Together with the one before</label>` : '';
-      const need = (o.type === 'destroy' || o.type === 'escort')
-        ? `<label title="${o.type === 'destroy' ? 'Done after this many (blank: all of them)' : 'The mission fails once fewer than this many can still arrive (blank: one)'}">`
-          + `${o.type === 'destroy' ? 'How many' : 'At least'} <input data-i="${i}" data-k="need" type="number" min="1" step="1" value="${+o.need > 0 ? +o.need : ''}" `
-          + `placeholder="${o.type === 'destroy' ? 'all' : '1'}">${o.type === 'escort' ? ' must arrive' : ''}</label>` : '';
+      const needText = {destroy: ['Done after this many (blank: all of them)', 'How many', 'all', ''],
+                        escort: ['The mission fails once fewer than this many can still arrive (blank: one)', 'At least', '1', ' must arrive'],
+                        defend: ['How many must still be alive when the clock runs out (blank: all of them)', 'At least', 'all', ' must live'],
+                        collect: ['Done after this many are picked up (blank: all of them)', 'How many', 'all', '']}[o.type];
+      const need = needText
+        ? `<label title="${needText[0]}">${needText[1]} <input data-i="${i}" data-k="need" type="number" min="1" step="1" value="${+o.need > 0 ? +o.need : ''}" `
+          + `placeholder="${needText[2]}">${needText[3]}</label>` : '';
       const pick = o.type === 'use' ? targets + prompt
         : o.type === 'verify' ? squadPick + targets + verify
         : o.type === 'subdue' ? squadPick + targets + extract
         : o.type === 'destroy' ? squadPick + targets
+        : o.type === 'defend' ? squadPick + targets + seconds
+        : o.type === 'collect' ? targets
         : o.type === 'escort' ? squadPick + zonePick
         : o.type === 'deliver' ? vehicle + zonePick
         : o.type === 'fast' ? seconds : zonePick + seconds;
@@ -515,7 +521,8 @@ export function createMissions(ctx) {
             leave: `the player leaves zone ${c.zone || '(none picked)'}`,
             alarm: `an alarm sounds (${(c.targets || []).join(', ') || 'none picked'})`,
             spotted: `${c.faction ? c.faction.toUpperCase() : '(no faction)'} spots the player trespassing`,
-            hostile: `${who} turn hostile`}[c.type] || c.type;
+            hostile: `${who} turn hostile`,
+            escapes: `${who} reach zone ${c.zone || '(none picked)'}`}[c.type] || c.type;
   }
   function drawOutline() {
     const box = $('ms-outline');
@@ -685,6 +692,14 @@ export function createMissions(ctx) {
     pushObjective({type: 'deliver', text: 'Deliver the vehicle to the marked area', vehicle: '', zone: ''});
     drawObjectives(); drawFails(); drawRadio(); drawMusic(); drawWeather(); drawOrders(); drawWaves(); edited();
   };
+  $('ms-add-defend').onclick = () => {
+    pushObjective({type: 'defend', text: 'Defend them until help arrives', squad: '', targets: [], seconds: 120});
+    drawObjectives(); drawFails(); drawRadio(); drawMusic(); drawWeather(); drawOrders(); drawWaves(); edited();
+  };
+  $('ms-add-collect').onclick = () => {
+    pushObjective({type: 'collect', text: 'Collect the marked items', targets: []});
+    drawObjectives(); drawFails(); drawRadio(); drawMusic(); drawWeather(); drawOrders(); drawWaves(); edited();
+  };
   $('ms-add-escort').onclick = () => {
     pushObjective({type: 'escort', text: 'Escort them to the marked area', squad: '', zone: ''});
     drawObjectives(); drawFails(); drawRadio(); drawMusic(); drawWeather(); drawOrders(); drawWaves(); edited();
@@ -695,7 +710,8 @@ export function createMissions(ctx) {
   // or the player leaves a zone; each for the whole mission or until an
   // objective is done ("until": "done:N").
   const FAIL_NAMES = {dies: 'Protect squad (fail if one dies)', timer: 'Time limit', leave: 'Stay in zone (fail on leaving)',
-                      alarm: 'Alarm raised', spotted: 'Spotted trespassing', hostile: 'Someone turns hostile'};
+                      alarm: 'Alarm raised', spotted: 'Spotted trespassing', hostile: 'Someone turns hostile',
+                      escapes: 'Target escapes (fail if they reach a zone)'};
   function drawFails() {
     const m = st.current;
     const squads = m ? m.squads : (st.shared || {}).squads || [], zones = m ? m.zones : (st.shared || {}).zones || [];
@@ -712,8 +728,8 @@ export function createMissions(ctx) {
         : c.type === 'spotted'
           ? `<label>By <select data-k="faction" data-f="${k}"><option value="">(faction)</option>${MOOD_FACTIONS.map((f) =>
               `<option value="${f}" ${f === c.faction ? 'selected' : ''}>${f === 'sk' ? 'SK' : f[0].toUpperCase() + f.slice(1)}</option>`).join('')}</select></label>`
-        : c.type === 'leave'
-          ? `<select data-k="zone" data-f="${k}"><option value="">(zone)</option>${zones.map((z) =>
+        : c.type === 'leave' || c.type === 'escapes'
+          ? (c.type === 'escapes' ? squadPick + targets : '') + `<select data-k="zone" data-f="${k}"><option value="">(${c.type === 'escapes' ? 'zone they run for' : 'zone'})</option>${zones.map((z) =>
               `<option ${z === c.zone ? 'selected' : ''}>${esc(z)}</option>`).join('')}</select>`
           : `<label>Seconds <input data-k="seconds" data-f="${k}" type="number" min="1" step="10" value="${+c.seconds || ''}"></label>`;
       const until = `<label>Lasts <select data-k="until" data-f="${k}"><option value="">the whole mission</option>${st.objectives.map((o, j) =>
@@ -1107,6 +1123,7 @@ export function createMissions(ctx) {
   $('ms-add-alarm').onclick = () => { st.fails.push({type: 'alarm', targets: []}); drawFails(); edited(); };
   $('ms-add-spotted').onclick = () => { st.fails.push({type: 'spotted', faction: ''}); drawFails(); edited(); };
   $('ms-add-hostile').onclick = () => { st.fails.push({type: 'hostile', squad: '', targets: []}); drawFails(); edited(); };
+  $('ms-add-escapes').onclick = () => { st.fails.push({type: 'escapes', squad: '', targets: [], zone: ''}); drawFails(); edited(); };
 
   // ---------------------------------------------------------------- the rest of the panel
   for (const id of ['ms-title', 'ms-description', 'ms-briefing', 'ms-fee', 'ms-bonus', ...MOOD_FACTIONS.map((f) => `ms-mood-${f}`)]) {

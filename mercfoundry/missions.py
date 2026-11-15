@@ -140,7 +140,7 @@ def text_plan(asset_id, doc, section):
         ini["ShortDescriptionDbKey"] = f"MissionInfo.Description.{key}"
     for i, o in enumerate(doc.get("objectives") or [], 1):
         strings[objective_key(asset_id, i)] = o.get("text") or f"Objective {i}"
-        if o.get("type") in ("escort", "deliver", "subdue", "use"):
+        if o.get("type") in ("escort", "deliver", "subdue", "use", "defend"):
             strings[escort_lost_key(asset_id, i)] = o.get("lost") or FAIL_TEXT[o["type"]]
         if o.get("type") == "use":
             strings[use_prompt_key(asset_id, i)] = o.get("prompt") or "Use"
@@ -194,11 +194,12 @@ def _lua_str(s):
     return "'" + str(s).replace("\\", "\\\\").replace("'", "\\'") + "'"
 
 
-OBJECTIVE_TYPES = ("destroy", "goto", "escort", "deliver", "subdue", "hold", "use", "verify", "fast")
+OBJECTIVE_TYPES = ("destroy", "goto", "escort", "deliver", "subdue", "hold", "use", "verify", "fast", "defend",
+                   "collect")
 # A verify objective's marker on its targets (retail's blipType: the card suits
 # are the Deck of 52's).
 VERIFY_BLIPS = ("human", "scope", "blip", "clubs", "diamond", "hearts", "spades")
-FAIL_TYPES = ("dies", "timer", "leave", "alarm", "spotted", "hostile")
+FAIL_TYPES = ("dies", "timer", "leave", "alarm", "spotted", "hostile", "escapes")
 # Squad orders (retail's own commands): attack the player, hold, move to one
 # of the encounter's point sets, close in on the player, or walk a path.
 ORDER_TYPES = ("attack", "hold", "move", "close", "path")
@@ -206,7 +207,8 @@ FAIL_TEXT = {"dies": "A target you had to protect was killed.", "timer": "You ra
              "leave": "You left the mission area.", "escort": "Everyone you were escorting was killed.",
              "deliver": "The vehicle was destroyed.", "subdue": "The target was killed.",
              "use": "What you had to use was destroyed.", "alarm": "The alarm was raised.",
-             "spotted": "You were spotted.", "hostile": "They turned on you."}
+             "spotted": "You were spotted.", "hostile": "They turned on you.",
+             "defend": "What you had to defend was destroyed.", "escapes": "The target got away."}
 
 
 def bonus_amount(o):
@@ -437,6 +439,31 @@ def objectives_script(asset_id, doc, squad_members, layers=(), zone_centre=None)
                 mark = f", x = {at[0]:.2f}, y = {at[1]:.2f}, z = {at[2]:.2f}" if at else ""
                 row += f", zone = {_lua_str(o['zone'])}{mark}, lost = {_lua_str(escort_lost_key(asset_id, i))}"
             row = f"{{ {row} }}"
+        elif kind in ("defend", "collect"):
+            targets = list(o.get("targets") or [])
+            if o.get("squad"):
+                targets += squad_members(o["squad"])
+            if not targets:
+                raise ValueError(f"objective {i}: nothing to {kind} (give \"targets\"" + (" or \"squad\")" if kind == "defend" else ")"))
+            row = f"{head}, targets = {{ {', '.join(_lua_str(t) for t in targets)} }}"
+            need = len(targets)
+            if o.get("need"):
+                # defend: this many must live; collect: done after this many
+                try:
+                    need = int(float(o["need"]))
+                except (TypeError, ValueError):
+                    need = 0
+                if not 1 <= need <= len(targets):
+                    raise ValueError(f"objective {i}: \"need\" is 1 to {len(targets)}, not {o['need']!r}")
+            if kind == "defend":
+                # keep them alive while a clock counts down; done when it runs out
+                seconds = float(o.get("seconds") or 0)
+                if seconds <= 0:
+                    raise ValueError(f"objective {i}: a defend objective needs \"seconds\"")
+                row += f", seconds = {seconds:g}, keep = {need}, lost = {_lua_str(escort_lost_key(asset_id, i))}"
+            elif need < len(targets):
+                row += f", need = {need}"
+            row = f"{{ {row} }}"
         elif kind == "fast":
             # a bonus for completing the contract within "seconds" of it being shown (a clock counts down)
             seconds = float(o.get("seconds") or 0)
@@ -497,6 +524,15 @@ def objectives_script(asset_id, doc, squad_members, layers=(), zone_centre=None)
             if seconds <= 0:
                 raise ValueError(f"fail condition {k}: a timer needs \"seconds\"")
             row += f", seconds = {seconds:g}"
+        elif kind == "escapes":
+            # one of them reaches a zone (a target running for it: a chase)
+            targets = list(c.get("targets") or []) + (squad_members(c["squad"]) if c.get("squad") else [])
+            if not targets or not c.get("zone"):
+                raise ValueError(f"fail condition {k}: \"escapes\" needs \"targets\" or \"squad\", and the \"zone\" "
+                                 f"they mustn't reach")
+            if zone_centre:
+                zone_centre(c["zone"])        # (its layer loads with the script)
+            row += f", targets = {{ {', '.join(_lua_str(t) for t in targets)} }}, zone = {_lua_str(c['zone'])}"
         else:
             if not c.get("zone"):
                 raise ValueError(f"fail condition {k}: \"leave\" needs the \"zone\" the player must stay in")
@@ -1040,6 +1076,8 @@ elseif f.kind == 'hostile' then
 for j, a in ipairs(f.targets) do Event_ActorIsHostileToward(f.cb, 'b', a, 'player0', true) end
 elseif f.kind == 'spotted' then
 Event_ActorSpottedTrespassing(f.cb, 'b', 'player0', f.faction, true)
+elseif f.kind == 'escapes' then
+for j, a in ipairs(f.targets) do Event_ActorInBoundary(f.cb, 'b', a, f.zone, true) end
 elseif f.kind == 'timer' then
 tFoundryTimer = f
 f.hud = HUD_AddTrayDisplay{{ {{ DisplayClock = true, nObjStyle = HUD.STYLE.NORMAL, nStart = f.seconds, nLimit = 0,
@@ -1065,6 +1103,7 @@ end
 function foundry_StopTimer()
 if tFoundryTimer and tFoundryTimer.hud then HUD_RemoveTrayDisplay(tFoundryTimer.hud) tFoundryTimer.hud = nil end
 if tFoundryFast and tFoundryFast.hud then HUD_RemoveTrayDisplay(tFoundryFast.hud) tFoundryFast.hud = nil end
+if tFoundryDefending and tFoundryDefending.hud then HUD_RemoveTrayDisplay(tFoundryDefending.hud) tFoundryDefending.hud = nil end
 end
 -- Finish fast: the clock ran out first; the bonus is lost.
 function foundry_TooSlow(hDisplay, eState)
@@ -1081,6 +1120,7 @@ function foundry_Died(aActor)
 local w = tFoundryWatch[Utility_GetActorAsInt(aActor)]
 if not w then return end
 if w.kind == 'escort' then foundry_EscortLost(w, aActor)
+elseif w.kind == 'defend' then foundry_DefendLost(w)
 elseif w.kind == 'deliver' then if not w.done then foundry_Fail(w.lost) end
 elseif not w.off then foundry_Fail(w.reason) end
 end
@@ -1283,6 +1323,25 @@ Objective_SetShortDescription(o.name, o.text)
 Objective_SetType(o.name, sObjType)
 Objective_SetTargetVector(o.name, o.zone, o.text, sTargetType, 'location', o.x, o.y, o.z, true, true, false)
 end
+elseif o.kind == 'defend' then
+-- keep them alive while a clock counts down (each marked); done when it runs out
+o.dead = 0
+for j, a in ipairs(o.targets) do
+tFoundryWatch[Utility_GetActorAsInt(a)] = o
+Event_ActorHitPointsLessThan('foundry_Died', 'b', a, 1)
+foundry_Mark(o.name .. 'd' .. j, a, o.text, sObjType, sTargetType)
+end
+util_ObjMsgPrint{{ sMsg = o.text, sType = sMsg .. 'ADD', vIdx = iIdx, sObjective = o.name }}
+tFoundryDefending = o
+o.hud = HUD_AddTrayDisplay{{ {{ DisplayClock = true, nObjStyle = HUD.STYLE.NORMAL, nStart = o.seconds, nLimit = 0,
+                                fCallback = foundry_DefendDone }} }}
+elseif o.kind == 'collect' then
+-- pick them up (each marked); done when enough are gone, looked at once a second
+o.got, o.gone = 0, {{}}
+for j, a in ipairs(o.targets) do foundry_Mark(o.name .. 'c' .. j, a, o.text, sObjType, sTargetType) end
+util_ObjMsgPrint{{ sMsg = o.text, sType = sMsg .. 'ADD', vIdx = iIdx,
+                  tCounter = {{ vCurr = 0, vLim = o.need or table.getn(o.targets) }}, sObjective = o.name }}
+foundry_CollectTick()
 elseif o.kind == 'destroy' then
 mission_ObjectiveDestroy{{ callbackFunc = foundry_TargetDown, objectiveName = o.name, objectiveDesc = o.text,
                           actorName = o.targets, objectiveType = sObjType, targetType = sTargetType }}
@@ -1305,6 +1364,72 @@ foundry_Radio('starts', o.name)
 foundry_Musics('starts', o.name)
 foundry_Weathers('starts', o.name)
 foundry_Orders('starts', o.name)
+end
+
+-- A marker on one thing an objective is about (GPS, map and in the world).
+function foundry_Mark(sName, aActor, sText, sObjType, sTargetType)
+Objective_SetShortDescription(sName, sText)
+Objective_SetType(sName, sObjType)
+Objective_SetTargetActor(sName, aActor, sText, sTargetType, 'blip', true, true, true)
+end
+
+-- Defend: they live until the clock runs out (at least "keep" of them).
+function foundry_DefendDone(hDisplay, eState)
+if eState ~= HUD.STATE.LIMIT then return end
+local o = tFoundryDefending
+if not o or o.done or bFoundryOver then return end
+foundry_DefendEnd(o)
+foundry_Done(o)
+end
+function foundry_DefendEnd(o)
+if o.hud then HUD_RemoveTrayDisplay(o.hud) o.hud = nil end
+for j, a in ipairs(o.targets) do Objective_Remove(o.name .. 'd' .. j) end
+end
+function foundry_DefendLost(o)
+o.dead = o.dead + 1
+if o.done then return end
+local left = table.getn(o.targets) - o.dead
+foundry_Note(o.name .. ': one lost, ' .. left .. ' left')
+if left >= o.keep then return end
+o.done = true
+foundry_DefendEnd(o)
+if o.bonus then
+util_ObjMsgPrint{{ sMsg = o.text, sType = 'BON_OBJ_FAIL', vIdx = 2, sObjective = o.name }}
+mission_RemoveObjective(o.name)
+else
+foundry_Fail(o.lost)
+end
+end
+
+-- Collect: picked up (gone from the world) counts; done after "need" (all).
+function foundry_CollectTick()
+local waiting = false
+for sName, o in pairs(tFoundryActive) do
+if o.kind == 'collect' and not o.done then
+local got = 0
+for j, a in ipairs(o.targets) do
+if o.gone[j] or not Utility_DoesActorExist(a) then
+got = got + 1
+if not o.gone[j] then o.gone[j] = true Objective_Remove(o.name .. 'c' .. j) end
+end
+end
+local all = o.need or table.getn(o.targets)
+if got ~= o.got then
+o.got = got
+foundry_Note(o.name .. ': ' .. got .. ' of ' .. all .. ' collected')
+if got >= all then
+for j, a in ipairs(o.targets) do if not o.gone[j] then Objective_Remove(o.name .. 'c' .. j) end end
+foundry_Done(o)
+else
+local sMsg, iIdx = foundry_Kind(o)
+util_ObjMsgPrint{{ sMsg = o.text, sType = sMsg .. 'UPD_POS', vIdx = iIdx,
+                  tCounter = {{ vCurr = got, vLim = all }}, sObjective = o.name }}
+end
+end
+if not o.done then waiting = true end
+end
+end
+if waiting and not bFoundryOver then Event_RelativeTimer('foundry_CollectTick', 'b', 1.0) end
 end
 
 function foundry_Done(o)

@@ -237,6 +237,36 @@ class MissionTests(unittest.TestCase):
             with self.assertRaises(ValueError):
                 missions.objectives_script("sw_allies11", {"objectives": [bad]}, lambda squad: [])
 
+    def test_defend_collect_and_escapes(self):
+        from mercfoundry import luacheck
+        doc = {"objectives": [{"type": "defend", "text": "Keep them alive", "squad": "Doctors", "seconds": 120, "need": 1},
+                              {"type": "collect", "text": "Grab the cases", "targets": ["case1", "case2", "case3"], "need": 2},
+                              {"type": "destroy", "text": "Stop him", "targets": ["runner"]}],
+               "fail": [{"type": "escapes", "targets": ["runner"], "zone": "border"}]}
+        lua = missions.objectives_script("sw_allies11", doc, lambda squad: ["Doc1", "Doc2"], (), lambda z: [1, 2, 3])
+        self.assertEqual(luacheck.check(lua), [])
+        self.assertIn("{ kind = 'defend', name = 'foundry1', key = 'sw.allies11.obj.foundry1', targets = { 'Doc1', 'Doc2' }, "
+                      "seconds = 120, keep = 1, lost = 'sw.allies11.obj.foundry1.lost' }", lua)
+        self.assertIn("targets = { 'case1', 'case2', 'case3' }, need = 2 }", lua)
+        self.assertIn("targets = { 'runner' }, zone = 'border'", lua)
+        self.assertIn("for j, a in ipairs(f.targets) do Event_ActorInBoundary(f.cb, 'b', a, f.zone, true) end", lua)
+        self.assertIn("elseif w.kind == 'defend' then foundry_DefendLost(w)", lua)
+        self.assertIn("function foundry_DefendDone(hDisplay, eState)\nif eState ~= HUD.STATE.LIMIT then return end", lua)
+        self.assertIn("not Utility_DoesActorExist(a)", lua)
+        self.assertNotIn("#", lua.split("\n", 1)[1])
+        strings, _, _ = missions.text_plan("sw_allies11", doc, "SW_Allies11")
+        self.assertEqual(strings["sw.allies11.obj.foundry1.lost"], "What you had to defend was destroyed.")
+        for bad in ([{"type": "defend", "targets": ["a"]}],                     # no clock
+                    [{"type": "defend", "seconds": 9}],                        # nothing to defend
+                    [{"type": "collect"}],
+                    [{"type": "collect", "targets": ["a"], "need": 2}]):
+            with self.assertRaises(ValueError):
+                missions.objectives_script("sw_allies11", {"objectives": bad}, lambda squad: [])
+        for bad in ({"type": "escapes", "zone": "z"}, {"type": "escapes", "targets": ["a"]}):
+            with self.assertRaises(ValueError):
+                missions.objectives_script("sw_allies11", {"objectives": [{"type": "goto", "zone": "z"}], "fail": [bad]},
+                                           lambda squad: [], (), lambda z: [1, 2, 3])
+
     def test_check_mission(self):
         # The editor's Check: the build's checks on a saved mission.
         import json, tempfile
