@@ -2083,10 +2083,84 @@ def _apply_factions(data, folder, result):
     f = folder / "factions.json"
     if not f.exists():
         return
-    edits = factions.plan(game_strings(data), json.loads(f.read_text(encoding="utf-8")))
+    doc = json.loads(f.read_text(encoding="utf-8"))
+    edits = factions.plan(game_strings(data), factions._names_only(doc))
     if edits:
         changed, _ = _set_strings(data, edits)
         result.changes.append(f"factions: {changed} strings renamed")
+    for faction, old, new in factions.looks(doc):
+        loaded = _swap_model(data, old, new)
+        result.changes.append(f"factions: {faction}'s {old} looks like {new}"
+                              + (f" (its textures load with {loaded} lists)" if loaded else ""))
+
+
+def _model_records(data, name):
+    """{kind: (archive, record) or None (added by a mod) -> body} for a model's
+    MODEL and SEGMENTS records, as the build has them now."""
+    from . import model
+    out = {}
+    for kind in (model.MODEL, model.SEGMENTS):
+        hit = [(a, r) for a, r in data.records(kind) if r.key == name_hash(name)]
+        if hit:
+            out[kind] = (hit[0], data.current(*hit[0]))
+        else:
+            body = data.find_added(name_hash(name), kind)
+            if body is not None:
+                out[kind] = (None, body)
+    return out
+
+
+def _swap_model(data, old, new):
+    """The model old drawn with new's geometry (and collision): old's records
+    get new's under old's name, and every load list that loads old loads
+    new's textures. Returns how many lists were given textures."""
+    from . import encounters, model
+    from .missions import add_to_list
+    olds, news = _model_records(data, old), _model_records(data, new)
+    for kind in (model.MODEL, model.SEGMENTS):
+        if kind not in olds:
+            raise ValueError(f"factions.json: no model named {old!r} (looks)")
+        if kind not in news:
+            raise ValueError(f"factions.json: no model named {new!r} to look like (looks)")
+    for kind in (model.MODEL, model.SEGMENTS):
+        body = news[kind][1]
+        if kind == model.MODEL:
+            body = model.renamed(body, old)
+        where = olds[kind][0]
+        if where is None:
+            data.replace_added(name_hash(old), kind, body)
+        else:
+            data.set(where[0], where[1], body)
+    # new's textures: the names (from the load lists) of the hashes its pieces draw
+    m = model.decode(news[model.MODEL][1], news[model.SEGMENTS][1])
+    hashes = set()
+    for p in m.pieces:
+        hashes.add(p.texture)
+        hashes.update(w for w in p.material if w)
+    LIST = name_hash("list")
+    lists = [(a, r, data.current(a, r).decode("latin-1")) for a, r in data.records(LIST)]
+    added = [(k, None, b.decode("latin-1")) for k, kind, _ in data.added() if kind == LIST
+             for b in [data.find_added(k, LIST)]]
+    names = {}
+    for _, _, text in lists + added:
+        for t in encounters.parse_list(text).get("texture", []):
+            if name_hash(t) in hashes or (t.lower().endswith("_nm") and name_hash(t[:-3]) in hashes):
+                names.setdefault(t.lower(), t)
+    textures = sorted(names.values(), key=str.lower)
+    n = 0
+    for a, r, text in lists + added:
+        if old.lower() not in {x.lower() for x in encounters.parse_list(text).get("model", [])}:
+            continue
+        new_text = text
+        for t in textures:
+            new_text = add_to_list(new_text, "texture", t)
+        if new_text != text:
+            n += 1
+            if r is None:
+                data.replace_added(a, LIST, new_text.encode("latin-1"))
+            else:
+                data.set(a, r, new_text.encode("latin-1"))
+    return n
 
 
 STEPS = (_apply_text, _apply_scripts, _apply_objects, _apply_encounters, _apply_missions,

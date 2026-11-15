@@ -210,6 +210,14 @@ toolkit bundle run it the same way: `foundry\python\python.exe foundry\mercfound
   text too, and voiced lines' subtitles if wanted. **Preview** lists the
   strings that change. The game's eight faction slots are fixed in its code,
   so a faction can be renamed but not added.
+  **Look** (under each faction): the models its characters draw, each with
+  another to draw instead (any character model, or a mod's new one);
+  **Look like** fills them from another faction's, role by role (soldier,
+  heavy, officer, elite; others keep their own). The build puts the new
+  model's geometry under the old model's name (`"looks"` in factions.json),
+  so every template, squad member and placed character that draws it
+  changes; a model marked * is drawn by another faction's characters too.
+  With new names and a new look, a faction is as new as the game allows.
 - **Sky**: the map's sky and weather. **Base sky** is the map's own (sun
   angle and colour, sky colour, fog, sky texture, rain). **Weather presets**
   are the named weather the game switches to inside a weather zone, or when

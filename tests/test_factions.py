@@ -47,3 +47,30 @@ class FactionTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class LookTests(unittest.TestCase):
+    def test_looks(self):
+        doc = {"china": {"looks": {"china_hum_soldier": "sk_hum_soldier", "china_hum_spy": "china_hum_spy"}},
+               "sk": {"name": "Hindis"}}
+        self.assertEqual(factions.looks(doc), [("china", "china_hum_soldier", "sk_hum_soldier")])
+        # looks aren't names: the text plan ignores them
+        self.assertEqual(factions.plan({"x": "China"}, {"china": {"looks": {"a": "b"}}}), {})
+        with self.assertRaises(ValueError):
+            factions.looks({"mafia": {"looks": {"mafia_hum_soldier": " "}}})
+
+    def test_saving_keeps_looks(self):
+        import json
+        import tempfile
+        from pathlib import Path
+        from mercfoundry.editor.scene import Scene
+        with tempfile.TemporaryDirectory() as d:
+            sc = Scene.__new__(Scene)
+            sc.mod = Path(d)
+            sc._english = lambda: {}
+            sc.save_factions({"china": {"looks": {"china_hum_soldier": "sk_hum_soldier"}}, "everywhere": True})
+            doc = json.loads((Path(d) / "factions.json").read_text(encoding="utf-8"))
+            self.assertEqual(doc, {"china": {"looks": {"china_hum_soldier": "sk_hum_soldier"}}})   # nothing renamed
+            self.assertEqual(Scene.model_role("sk_hum_heavysoldier"), "heavy")
+            self.assertEqual(Scene.model_role("allies_hum_mgsoldier"), "soldier")
+            self.assertEqual(Scene.model_role("nk_hum_elitesoldier"), "elite")

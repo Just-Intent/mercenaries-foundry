@@ -21,6 +21,19 @@ subtitles ("vo.*": the voice still says the old name) unless "subtitles":
 true. Each old form is replaced whole-word, keeping its case style (CHINA ->
 YAKUZA), and "a"/"an" before a new adjective follow its first letter. The
 HUD's faction flags ([flagmafia]) are sprites and stay.
+
+A faction's look: "looks" gives its people other models,
+
+    {"china": {"looks": {"china_hum_soldier": "sk_hum_soldier",
+                         "china_hum_officer": "my_officer"}}}
+
+each the game's or a mod's new model (models/<name>.new.json). The build
+puts the new model's geometry under the old model's name, so every
+template, squad member and placed character that draws it changes, and
+every load list that loads it loads the new model's textures too. A model
+two factions share (the Mafia's allies_hum_mgsoldier) changes for both.
+The factions' characters share a skeleton (bone_* joints), so one's
+animations play on another's model, as retail's mixed models show.
 """
 import re
 
@@ -34,6 +47,20 @@ OLD = {
 }
 # acronyms match in capitals only ("an Allied" isn't AN)
 ACRONYMS = {"AN", "SK"}
+
+
+def looks(doc):
+    """[(faction, old model, new model)] from factions.json's "looks"."""
+    out = []
+    for f in FACTIONS:
+        spec = doc.get(f) or {}
+        for old, new in (spec.get("looks") or {}).items():
+            old, new = str(old).strip(), str(new).strip()
+            if not old or not new:
+                raise ValueError(f"factions.json: {f}: \"looks\" maps a model to a model")
+            if old.lower() != new.lower():
+                out.append((f, old, new))
+    return out
 
 
 def interface_key(key, faction):
@@ -81,9 +108,22 @@ def rename(text, faction, names):
     return out
 
 
+def _names_only(doc):
+    """factions.json without its "looks" (a faction with only looks drops out)."""
+    out = {}
+    for k, v in doc.items():
+        if isinstance(v, dict):
+            v = {kk: vv for kk, vv in v.items() if kk != "looks"}
+            if not v:
+                continue
+        out[k] = v
+    return out
+
+
 def plan(strings, doc):
     """{key: new text} for factions.json (doc) over the game's strings
     ({key: text}), and the faction names it changed."""
+    doc = _names_only(doc)          # ("looks" are models: the build swaps those)
     edits = {}
     everywhere = bool(doc.get("everywhere"))
     subtitles = bool(doc.get("subtitles"))

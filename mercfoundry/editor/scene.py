@@ -1064,8 +1064,44 @@ class Scene:
         from .. import factions as fx
         p = self.mod / "factions.json"
         doc = json.loads(p.read_text(encoding="utf-8")) if p.exists() else {}
+        people, models = self.faction_people()
         return {"doc": doc, "factions": list(fx.FACTIONS),
-                "old": {f: [o for o, _ in fx.OLD[f]] for f in fx.FACTIONS}}
+                "old": {f: [o for o, _ in fx.OLD[f]] for f in fx.FACTIONS},
+                "people": people, "models": models}
+
+    @staticmethod
+    def model_role(model_name):
+        """A character model's role, for matching one faction's to another's:
+        soldier, heavy, elite, officer, or what its name says after _hum_."""
+        role = model_name.lower().split("_hum_", 1)[-1]
+        if role.startswith("heavy"):
+            return "heavy"
+        if "elite" in role:
+            return "elite"
+        if role in ("soldier", "mgsoldier"):
+            return "soldier"
+        return role
+
+    def faction_people(self):
+        """Each employer's people: the models its human templates draw
+        ({faction: [{model, role, templates, shared}]}, most used first; shared:
+        other factions whose templates draw it too), and every character model
+        a look can use (the game's and the mod's new ones)."""
+        from collections import Counter
+        from .. import factions as fx
+        by = {}
+        for t in self.templates():
+            if t["type"].lower() == "human" and t["geometry"]:
+                by.setdefault(t["faction"].lower(), Counter())[t["geometry"]] += 1
+        people = {}
+        for f in fx.FACTIONS:
+            people[f] = [{"model": m, "role": self.model_role(m), "templates": n,
+                          "shared": sorted(g for g, c in by.items() if g != f and m in c)}
+                         for m, n in (by.get(f) or Counter()).most_common()]
+        models = sorted({m for c in by.values() for m in c}, key=str.lower)
+        mdir = self.mod / "models"
+        models += sorted(p.name[:-len(".new.json")] for p in mdir.glob("*.new.json")) if mdir.is_dir() else []
+        return people, models
 
     def _english(self):
         if not hasattr(self, "_strings"):
@@ -1093,12 +1129,22 @@ class Scene:
     def save_factions(self, doc):
         from .. import factions as fx
         fx.plan(self._english(), doc)                       # raises on what the build would refuse
-        clean = {f: {k: str(v).strip() for k, v in (doc.get(f) or {}).items() if str(v).strip()}
-                 for f in fx.FACTIONS}
-        clean = {f: v for f, v in clean.items() if v.get("name")}
-        if clean and doc.get("everywhere"):
+        fx.looks(doc)
+        clean = {}
+        for f in fx.FACTIONS:
+            spec = doc.get(f) or {}
+            names = {k: str(v).strip() for k, v in spec.items() if k != "looks" and str(v).strip()}
+            looks = {str(o).strip(): str(n).strip() for o, n in (spec.get("looks") or {}).items()
+                     if str(o).strip() and str(n).strip() and str(o).strip().lower() != str(n).strip().lower()}
+            entry = names if names.get("name") else {}
+            if looks:
+                entry["looks"] = looks
+            if entry:
+                clean[f] = entry
+        named = any(v.get("name") for v in clean.values())
+        if named and doc.get("everywhere"):
             clean["everywhere"] = True
-        if clean and doc.get("subtitles"):
+        if named and doc.get("subtitles"):
             clean["subtitles"] = True
         p = self.mod / "factions.json"
         if clean:

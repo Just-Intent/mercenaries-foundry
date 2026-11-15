@@ -3,7 +3,7 @@
 
 export function createFactions(ctx) {
   const {$, status, setDirty} = ctx;
-  const st = {doc: {}, old: {}, list: [], dirty: false, loaded: false};
+  const st = {doc: {}, old: {}, list: [], people: {}, models: [], dirty: false, loaded: false};
   const esc = (s) => String(s ?? '').replace(/[&<>"]/g, (c) => ({'&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;'}[c]));
   const LABELS = {allies: 'Allies', china: 'China', mafia: 'Russian Mafia', sk: 'South Korea'};
   const FIELDS = [['name', 'Name', 'e.g. Yakuza'], ['adjective', 'Adjective', 'as in "<x> HQ" (default: the name)'],
@@ -17,6 +17,8 @@ export function createFactions(ctx) {
     st.doc = d.doc || {};
     st.old = d.old || {};
     st.list = d.factions || [];
+    st.people = d.people || {};
+    st.models = d.models || [];
     st.loaded = true;
     draw();
   }
@@ -24,17 +26,58 @@ export function createFactions(ctx) {
   function draw() {
     $('fx-rows').innerHTML = st.list.map((f) => {
       const v = st.doc[f] || {};
+      const looks = v.looks || {};
+      const people = (st.people[f] || []).map((p) => `<label class="sky-row" title="${p.templates} template(s)${p.shared.length ? '; also drawn by ' + p.shared.join(', ') + "'s, which change too" : ''}">
+          <span>${esc(p.model)}${p.shared.length ? ' *' : ''}</span>
+          <input type="text" list="fx-models" data-look="${f}" data-model="${esc(p.model)}" value="${esc(looks[p.model] || '')}" placeholder="keep it"></label>`).join('');
       return `<div class="ms-obj"><b>${esc(LABELS[f] || f)}</b> <span class="hint">(${esc((st.old[f] || []).join(', '))})</span>
         ${FIELDS.map(([k, label, ph]) => `<label class="sky-row"><span>${label}</span>
           <input type="text" data-f="${f}" data-k="${k}" value="${esc(v[k] || '')}" placeholder="${esc(k === 'name' ? 'keep the game\'s' : ph)}"></label>`).join('')}
+        <details${Object.keys(looks).length ? ' open' : ''}><summary>Look: its people's models</summary>
+          <p class="hint">Each model its characters draw, and another to draw instead (* a model another faction's characters draw too: theirs change as well).</p>
+          ${people}
+          <div class="buttons">Look like <select data-like="${f}"><option value="">...</option>${st.list.filter((g) => g !== f).map((g) => `<option value="${g}">${esc(LABELS[g] || g)}</option>`).join('')}</select>
+            <button data-clear-looks="${f}">Keep its own</button></div>
+        </details>
       </div>`;
-    }).join('');
+    }).join('') + `<datalist id="fx-models">${st.models.map((m) => `<option value="${esc(m)}">`).join('')}</datalist>`;
     $('fx-everywhere').checked = !!st.doc.everywhere;
     $('fx-subtitles').checked = !!st.doc.subtitles;
   }
 
   function edited() { st.dirty = true; setDirty(true); $('fx-out').innerHTML = ''; }
 
+  // a faction's looks: {its model: another}
+  function setLook(f, model, other) {
+    st.doc[f] = st.doc[f] || {};
+    const looks = st.doc[f].looks = st.doc[f].looks || {};
+    if (other && other.toLowerCase() !== model.toLowerCase()) looks[model] = other; else delete looks[model];
+    if (!Object.keys(looks).length) delete st.doc[f].looks;
+    if (!Object.keys(st.doc[f]).length) delete st.doc[f];
+  }
+  $('fx-rows').addEventListener('change', (e) => {
+    const t = e.target;
+    if (t.dataset.look) { setLook(t.dataset.look, t.dataset.model, t.value.trim()); edited(); }
+    if (t.dataset.like) {
+      // each model to the other faction's most used model of the same role
+      // (soldier, heavy, elite, officer...); one with no match keeps its own
+      const f = t.dataset.like, g = t.value;
+      if (!g) return;
+      const theirs = st.people[g] || [];
+      const of = (role) => (theirs.find((p) => p.role === role) || {}).model;
+      for (const p of st.people[f] || []) setLook(f, p.model, of(p.role));
+      edited();
+      draw();
+      status(`${LABELS[f] || f}'s people look like ${LABELS[g] || g}'s (model by model; change any), Save to keep it`);
+    }
+  });
+  $('fx-rows').addEventListener('click', (e) => {
+    const f = e.target.dataset.clearLooks;
+    if (!f) return;
+    if (st.doc[f]) { delete st.doc[f].looks; if (!Object.keys(st.doc[f]).length) delete st.doc[f]; }
+    edited();
+    draw();
+  });
   $('fx-rows').addEventListener('input', (e) => {
     const f = e.target.dataset.f, k = e.target.dataset.k;
     if (!f || !k) return;
@@ -50,9 +93,10 @@ export function createFactions(ctx) {
   // only factions with a name count (the others keep the game's)
   const body = () => {
     const doc = {};
-    for (const f of st.list) if (st.doc[f] && st.doc[f].name) doc[f] = st.doc[f];
-    if (Object.keys(doc).length && st.doc.everywhere) doc.everywhere = true;
-    if (Object.keys(doc).length && st.doc.subtitles) doc.subtitles = true;
+    for (const f of st.list) if (st.doc[f] && (st.doc[f].name || st.doc[f].looks)) doc[f] = st.doc[f];
+    const named = st.list.some((f) => doc[f] && doc[f].name);
+    if (named && st.doc.everywhere) doc.everywhere = true;
+    if (named && st.doc.subtitles) doc.subtitles = true;
     return doc;
   };
 
