@@ -12,7 +12,7 @@ const HEIGHT_TOOLS = ['raise', 'lower', 'flatten', 'smooth'];
 const TOOLS = [...HEIGHT_TOOLS, 'paint', 'erase', 'road'];
 
 export function createTerrainEditor(ctx) {
-  const {$, controls, status, setDirty, terrain, pick, gamePos, scene, threePos} = ctx;
+  const {$, controls, status, setDirty, terrain, pick, gamePos, scene, threePos, reloadGround} = ctx;
   const st = {
     on: false, tool: 'raise', radius: 12, strength: 0.5, layer: 0,
     stroke: null,          // {heights: Map(i -> before), paint: Map(k -> before), target}
@@ -295,6 +295,38 @@ export function createTerrainEditor(ctx) {
     st.roads = [];
     $('terrain-undo').disabled = true;
   }
+
+  // New ground layers: any texture the game's maps paint with (a map has up
+  // to 16). Written straight away (terrain/<map>.layers.json); the ground is
+  // read again so the new layer shows in the picker, ready to paint.
+  let groundTextures = null;
+  $('terrain-newlayer').addEventListener('focus', async () => {
+    if (groundTextures) return;
+    try {
+      const r = await fetch('/api/groundtextures');
+      groundTextures = await r.json();
+      if (!r.ok) throw new Error(groundTextures.error || r.statusText);
+      $('ground-textures').innerHTML = groundTextures.map((t) =>
+        `<option value="${t.texture}">${t.map}, scale ${t.scale}</option>`).join('');
+    } catch (e) { groundTextures = null; status(e.message, true); }
+  });
+  $('terrain-addlayer').onclick = async () => {
+    const texture = $('terrain-newlayer').value.trim();
+    if (!texture) return status('Type or pick a ground texture to add', true);
+    if (paintBody() || saveBody() || st.roads.length) return status('Save your terrain changes first', true);
+    try {
+      const r = await fetch('/api/terrain/addlayer', {method: 'POST', headers: {'Content-Type': 'application/json'},
+                                                     body: JSON.stringify({map: terrain().meta.name, texture})});
+      const doc = await r.json();
+      if (!r.ok) throw new Error(doc.error || r.statusText);
+      st.layer = doc.layers.length - 1;
+      await reloadGround();
+      $('terrain-layer').dataset.map = '';
+      fillLayers();
+      $('terrain-newlayer').value = '';
+      status(`Added layer ${doc.layers.length - 1}: ${texture} (${doc.file}); paint it on and Save`);
+    } catch (e) { status(e.message, true); }
+  };
 
   $('terrain-mode').onclick = () => setOn(!st.on);
   for (const tool of TOOLS) $(`terrain-${tool}`).onclick = () => setTool(tool);

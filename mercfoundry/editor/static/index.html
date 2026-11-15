@@ -329,7 +329,13 @@
         <button id="terrain-erase" title="Take a ground texture layer off">Erase paint</button>
         <button id="terrain-road" title="Lay a road through clicked points">Road</button>
       </div>
-      <label class="field" id="terrain-paint-row" hidden>Texture layer <select id="terrain-layer"></select></label>
+      <div id="terrain-paint-row" hidden>
+        <label class="field">Texture layer <select id="terrain-layer"></select></label>
+        <label class="field">Add a texture <input id="terrain-newlayer" type="text" list="ground-textures" spellcheck="false"
+          placeholder="any map's ground texture"></label>
+        <datalist id="ground-textures"></datalist>
+        <div class="buttons"><button id="terrain-addlayer" title="A new layer of this texture on the map (up to 16), to paint with">Add texture layer</button></div>
+      </div>
       <div id="terrain-road-row" hidden>
         <label class="field">Road texture <input id="terrain-road-texture" type="text" list="terrain-road-textures" spellcheck="false"></label>
         <datalist id="terrain-road-textures"></datalist>

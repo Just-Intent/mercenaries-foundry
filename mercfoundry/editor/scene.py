@@ -298,6 +298,59 @@ class Scene:
         self._forget_terrain(map_name)
         return {"files": written}
 
+    def ground_textures(self):
+        """Every ground texture the game's maps paint with, its scale and the
+        projection (axis) the maps give it most (top-down, 0, on a tie):
+        [{texture, scale, axis, map}]."""
+        if getattr(self, "_ground_textures", None) is None:
+            from collections import Counter
+            from .. import terrain_paint
+            out, seen, axes = [], set(), {}
+            for m in self.game_maps():
+                rec = _terrain_rec(self._modded_terrain(), m)
+                if rec is None:
+                    continue
+                try:
+                    table = terrain_paint.layer_table(terrain.tern_chunks(_terrain_bytes(self._modded_terrain(), rec)))
+                except (KeyError, ValueError):
+                    continue
+                for t in table:
+                    if not t["texture"]:
+                        continue
+                    axes.setdefault(t["texture"].lower(), Counter())[int(t["axis"])] += 1
+                    if t["texture"].lower() not in seen:
+                        seen.add(t["texture"].lower())
+                        out.append({**t, "map": m})
+            for t in out:
+                c = axes[t["texture"].lower()]
+                t["axis"] = max(c, key=lambda a: (c[a], a == 0))
+            out.sort(key=lambda t: t["texture"].lower())
+            self._ground_textures = out
+        return self._ground_textures
+
+    def add_ground_layer(self, map_name, texture, scale=None, axis=None):
+        """A new ground texture layer on a map (up to 16), to paint with:
+        written as the mod's terrain/<map>.layers.json, the whole layer table."""
+        from .. import terrain_paint
+        if not re.fullmatch(r"[A-Za-z0-9_]+", map_name):
+            raise ValueError(f"bad map name {map_name!r}")
+        texture = str(texture or "").strip()
+        known = {t["texture"].lower(): t for t in self.ground_textures()}
+        if texture.lower() not in known:
+            raise ValueError(f"{texture!r} isn't a ground texture the game's maps use")
+        meta, _, _ = self.terrain_look(map_name)
+        table = [dict(t) for t in meta["layers"]]
+        if len(table) >= terrain_paint.MAX_LAYERS:
+            raise ValueError(f"{map_name} already has {terrain_paint.MAX_LAYERS} layers, the most a map can have")
+        base = known[texture.lower()]
+        table.append({"texture": base["texture"], "scale": float(scale if scale is not None else base["scale"]),
+                      "axis": int(axis if axis is not None else base["axis"])})
+        p = self.mod / "terrain" / f"{map_name.lower()}.layers.json"
+        p.parent.mkdir(parents=True, exist_ok=True)
+        p.write_text(json.dumps({"layers": table}, indent=1) + "\n", encoding="utf-8")
+        self._forget_terrain(map_name)
+        return {"file": f"terrain/{p.name}", "layers": table}
+
     def save_roads(self, map_name, roads):
         """Roads laid in the editor ([{texture, span, points: [[x, z]]}])
         added to the mod's terrain/<map>.decals.json "roads"."""

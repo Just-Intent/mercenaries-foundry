@@ -36,6 +36,8 @@ GET  /api/music                the game's music tracks, for music lines
 GET  /api/voices               the game's voiced lines with subtitles, for radio lines: [{cue, text}]
 GET  /api/voice/<bank>.<cue>.wav  a voice line to listen to
 GET  /api/templates            objects a squad member can copy (template_*)
+GET  /api/groundtextures       every ground texture the game's maps paint with (texture, scale, axis, map)
+POST /api/terrain/addlayer     {"map", "texture", "scale"?, "axis"?}: a new ground layer (terrain/<map>.layers.json)
 GET  /api/placeables           everything Place can copy, any map: templates, named objects, model:<model>
 POST /api/encounters/save      {"map", "files": {file: [encounter, ...]}}
 POST /api/placed/save          {"map", "files": {file: [{from, name, position, rotation}]}}: objects placed from templates
@@ -189,6 +191,9 @@ def make_handler(scene: Scene, mod_name: str, live: Live = None):
                         return self.send(200, scene.voice_lines())
                 if path.startswith("/api/voice/") and path.endswith(".wav"):
                     return self.send(200, scene.voice_wav(path[len("/api/voice/"):-4]), "audio/wav")
+                if path == "/api/groundtextures":
+                    with objects_lock, terrain_lock:
+                        return self.send(200, scene.ground_textures())
                 if path == "/api/templates":
                     with objects_lock:
                         return self.send(200, scene.templates())
@@ -262,6 +267,10 @@ def make_handler(scene: Scene, mod_name: str, live: Live = None):
                 if path == "/api/terrain/paint":
                     with objects_lock, terrain_lock:      # not while a ground read is building
                         return self.send(200, scene.save_paint(doc["map"], doc.get("layers", {})))
+                if path == "/api/terrain/addlayer":
+                    with objects_lock, terrain_lock:
+                        return self.send(200, scene.add_ground_layer(doc["map"], doc["texture"],
+                                                                     doc.get("scale"), doc.get("axis")))
                 if path == "/api/terrain/roads":
                     with objects_lock, terrain_lock:      # not while a ground read is building
                         return self.send(200, scene.save_roads(doc["map"], doc.get("roads", [])))

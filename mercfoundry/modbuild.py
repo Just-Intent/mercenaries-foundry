@@ -372,6 +372,28 @@ def _world_index(data, archives):
     return data.world_index
 
 
+def _load_textures_with_map(data, map_name, textures):
+    """A map's load list loads these textures too (ground layers added to its
+    terrain: a texture from another map's ground isn't loaded otherwise)."""
+    from .missions import add_to_list
+    LIST, key = name_hash("list"), name_hash(map_name)
+    body = data.find_added(key, LIST)
+    if body is not None:
+        text = body.decode("latin-1")
+        for t in textures:
+            text = add_to_list(text, "texture", t)
+        data.replace_added(key, LIST, text.encode("latin-1"))
+        return
+    for a, r in data.records(LIST):
+        if r.key == key:
+            text = data.current(a, r).decode("latin-1")
+            new = text
+            for t in textures:
+                new = add_to_list(new, "texture", t)
+            if new != text:
+                data.set(a, r, new.encode("latin-1"))
+
+
 def _object_loads(obj, full, archives):
     """What one object needs from a load list that loads much more (a map's):
     entries its model or properties name (its model, ruin model, animation
@@ -1396,9 +1418,22 @@ def _apply_maps(data, folder, result):
             conf_path = next(iter(texts))                       # DATAxbox/TEST/blank.ini
             conf_dir = conf_path.rsplit("/", 1)[0]
             new_conf = f"{conf_dir}/{name}.ini"
-            data.files[new_conf] = texts[conf_path].encode("latin-1")
+            # The level runs the script its config names (MainMasterScript):
+            # blank's names none, so its script never ran. Name the map's own,
+            # unless the source names one (sw's: global, free roam itself).
+            def with_master(text):
+                if re.search(r"(?im)^\s*MainMasterScript\b", text):
+                    return text
+                nl_ = "\r\n" if "\r\n" in text else "\n"
+                return f"MainMasterScript\t{name}{nl_}{nl_}" + text
+            master = re.search(r"(?im)^\s*MainMasterScript\s+(\S+)", texts[conf_path])
+            if master and layers:
+                result.warnings.append(f"{where}: {src}'s config runs the script {master.group(1)}, not "
+                                       f"{name}'s, so {', '.join(layers)} won't load with it; load them from "
+                                       f"{master.group(1)} or copy blank")
+            data.files[new_conf] = with_master(texts[conf_path]).encode("latin-1")
             for path, text in list(texts.items())[1:]:          # its Xbox config, if any
-                data.files[f"{conf_dir}/{name}_XBOX.ini"] = text.encode("latin-1")
+                data.files[f"{conf_dir}/{name}_XBOX.ini"] = with_master(text).encode("latin-1")
             rel = "\\" + new_conf[len("DATAxbox/"):].replace("/", "\\")
             nl = "\r\n" if "\r\n" in levels else "\n"
             if not re.search(rf"(?im)^\[LV_{re.escape(name)}\]", levels):
@@ -1503,6 +1538,7 @@ def _apply_terrain(data, folder, result):
                     for t in table:
                         if name_hash(t["texture"]) not in known:
                             result.warnings.append(f"terrain/{job['table'].name}: no game texture named {t['texture']!r}")
+                    _load_textures_with_map(data, name, [t["texture"] for t in table if t.get("texture")])
                 images = {}
                 if job.get("layers"):
                     # Only pixels this mod changed from the game's paint

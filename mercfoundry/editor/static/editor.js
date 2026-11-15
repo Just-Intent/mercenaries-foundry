@@ -1163,6 +1163,7 @@ const terrainEdit = createTerrainEditor({
   scene, threePos: (p) => threePos(p), heightAt: (x, z) => heightAt(x, z),
   terrain: () => ({mesh: terrainMesh, meta: state.terrain.meta, heights: state.terrain.heights}),
   onHeights: () => minimap.setTerrain(state.terrain.meta, state.terrain.heights),
+  reloadGround: () => applyGround(terrainMesh, state.map, scene.fog, {...state.terrain.meta, heights: state.terrain.heights}),
 });
 // Missions: contracts, their objectives and their layer's squads and zones.
 const missions = createMissions({

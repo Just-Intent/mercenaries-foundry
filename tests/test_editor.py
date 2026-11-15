@@ -292,3 +292,28 @@ class PlaceablesTests(unittest.TestCase):
                           ("model:barn", "model"), ("model:house01", "model")])
         self.assertEqual(got[1]["geometry"], "crate_b")
         self.assertEqual(got[0]["type"], "human")
+
+
+class GroundLayerTests(unittest.TestCase):
+    def test_add_ground_layer(self):
+        import json
+        import tempfile
+        from pathlib import Path
+        from mercfoundry.editor.scene import Scene
+        with tempfile.TemporaryDirectory() as d:
+            sc = Scene.__new__(Scene)
+            sc.mod = Path(d)
+            sc.ground_textures = lambda: [{"texture": "sw_tt_greengrass", "scale": 16.0, "axis": 0, "map": "sw"},
+                                          {"texture": "sw_tt_cliffs", "scale": 16.0, "axis": 4, "map": "sw"}]
+            layers = [{"texture": "nk_tt_dirt", "scale": 16.0, "axis": 0}]
+            sc.terrain_look = lambda m: ({"layers": layers}, b"", b"")
+            sc._forget_terrain = lambda m: None
+            out = sc.add_ground_layer("fiefdom", "SW_TT_CLIFFS")
+            self.assertEqual(out["layers"][1], {"texture": "sw_tt_cliffs", "scale": 16.0, "axis": 4})
+            doc = json.loads((Path(d) / "terrain" / "fiefdom.layers.json").read_text(encoding="utf-8"))
+            self.assertEqual(len(doc["layers"]), 2)
+            with self.assertRaises(ValueError):
+                sc.add_ground_layer("fiefdom", "not_a_ground")
+            layers[:] = [{"texture": "x", "scale": 16.0, "axis": 0}] * 16
+            with self.assertRaisesRegex(ValueError, "16 layers"):
+                sc.add_ground_layer("fiefdom", "sw_tt_cliffs")

@@ -134,6 +134,12 @@ toolkit bundle run it the same way: `foundry\python\python.exe foundry\mercfound
   A road replaces whatever decal is on its cells (a patch holds one per cell;
   more hung or crashed the game), and paint hidden under opaque paint is left
   out of the patch (see dsk.md).
+  **Add texture layer** (under Paint) gives the map another ground texture to
+  paint with: any of the 40 the game's maps use, with the scale and
+  projection the game gives it most, up to 16 layers a map. It's written
+  straight away as `terrain/<map>.layers.json` (the whole layer table), and
+  the build adds the texture to the map's load list. A copy of blank has one
+  layer (dirt) until you add more.
 - **New maps**: **Map** > New map makes one: `maps/<name>.json`, a copy
   of a game map (blank: flat and nearly empty), and switches to it. It
   appears in the Map list like the game's maps, with the copied map's ground
@@ -144,7 +150,8 @@ toolkit bundle run it the same way: `foundry\python\python.exe foundry\mercfound
   one that does). The build writes its master script (run as it loads)
   from these; with none of them set, it's a copy of the source map's
   (blank's prints "Hello World!"). Write `scripts/<name>.lua` to make your
-  own instead. Enter it with `Utility_ResetToBaseLayerOnly('<name>')` from
+  own instead. Its config names the script (`MainMasterScript <name>`): a level
+  runs only the script its config names, and blank's names none. Enter it with `Utility_ResetToBaseLayerOnly('<name>')` from
   Foundry Console.
 - **Factions**: new names for the four employers (`factions.json`): name,
   adjective, short form and people, per faction; **Everywhere** for mission

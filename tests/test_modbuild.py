@@ -127,7 +127,9 @@ class ModBuildTests(unittest.TestCase):
         self.assertIn("LevelName\tLV_blank\nLevelName\tLV_island\n", levels)
         self.assertIn("[LV_island]\nName\t\t\tisland\n", levels)
         self.assertIn("ConfigFile\t\t\\TEST\\island.ini", levels)
-        self.assertEqual((self.out / "DATAxbox" / "TEST" / "island.ini").read_text(encoding="latin-1"), "SkyTexture\t\tsky\n")
+        # it runs its own script (blank's config names none, so blank's never ran)
+        self.assertEqual((self.out / "DATAxbox" / "TEST" / "island.ini").read_text(encoding="latin-1"),
+                         "MainMasterScript\tisland\n\nSkyTexture\t\tsky\n")
         # its master script (its load list loads one of its own name; a missing one hangs the game)
         self.assertEqual(script.decode(recs[(name_hash("island"), SCRIPT)]).source, "function ScriptInit()\nend\n")
         # a mod's own scripts/island.lua wins
@@ -410,3 +412,23 @@ class ObjectLoadsTests(unittest.TestCase):
         obj = {"model": "shed", "properties": [("GeometryNameRuined", "shed_ruin"), ("AnimationTable", "large_class")]}
         self.assertEqual(modbuild._object_loads(obj, full, []),
                          {"model": ["shed", "shed_ruin"], "animtable": ["large_class"]})
+
+
+class MapTextureLoadTests(unittest.TestCase):
+    def test_ground_textures_load_with_the_map(self):
+        class FakeData:
+            def __init__(self):
+                self.added = {(name_hash("isle"), name_hash("list")): b"\n[texture]\n\nload nk_tt_dirt\n"}
+
+            def find_added(self, key, kind):
+                return self.added.get((key, kind))
+
+            def replace_added(self, key, kind, body):
+                self.added[(key, kind)] = body
+
+            def records(self, kind):
+                return []
+        data = FakeData()
+        modbuild._load_textures_with_map(data, "isle", ["nk_tt_dirt", "nw_tt_snow"])
+        self.assertEqual(data.added[(name_hash("isle"), name_hash("list"))],
+                         b"\n[texture]\n\nload nk_tt_dirt\nload nw_tt_snow\n")
