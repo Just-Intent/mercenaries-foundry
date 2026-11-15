@@ -273,6 +273,13 @@ toolkit bundle run it the same way: `foundry\python\python.exe foundry\mercfound
   finish-fast bonus, a time limit that begins at step 3, support, a shop
   unlock, a follow-up mail and radio lines. Only templates already tested in
   game are used. Play it, and read `foundry_Log()` if a step doesn't happen.
+  **Test 2** lays out the rest: a contact placed on the map that stays put
+  and can't be hurt, escort (at least 1 of 2 to arrive), capture and extract,
+  hold an area, and squad orders (a friendly squad moves to a point set,
+  walks a path, closes in, holds), with radio lines saying which. Its fail
+  conditions are armed to set off on purpose: let an escortee die (step 2),
+  leave the larger area (step 4), shoot the officer (step 5). Play it
+  through once, then use Start at (for testing) to try each.
 
   **Duplicate** copies the saved mission and its layer to the next free
   number (of its faction, or another one picked beside it); names made from

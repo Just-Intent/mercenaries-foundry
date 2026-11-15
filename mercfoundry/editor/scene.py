@@ -267,7 +267,7 @@ class Scene:
         bot = h(ix, iz + 1) * (1 - tx) + h(ix + 1, iz + 1) * tx
         return top * (1 - tz) + bot * tz
 
-    def make_test_mission(self, map_name, centre, faction="china"):
+    def make_test_mission(self, map_name, centre, faction="china", which=1):
         """A mission that exercises most mission features in one run, laid out
         around centre [x, y, z] on the map: its file and its layer (squads,
         objects, zones), at the faction's next free number. Debug messages on.
@@ -315,6 +315,13 @@ class Scene:
                 {"from": "template_allies_humvee_empty", "name": f"{aid}_humvee", "position": at(10, -12), "yaw": 90}],
         }
         squad = lambda s: f"{enc}:{s}"
+        if int(which) == 2:
+            layer, doc = self._test_mission_2(aid, enc, at, square, squad)
+            (self.mod / "missions").mkdir(parents=True, exist_ok=True)
+            (self.mod / "encounters").mkdir(parents=True, exist_ok=True)
+            (self.mod / "missions" / f"{aid}.json").write_text(json.dumps(doc, indent=1) + "\n", encoding="utf-8")
+            (self.mod / "encounters" / f"{aid}.json").write_text(json.dumps(layer, indent=1) + "\n", encoding="utf-8")
+            return {"id": aid}
         presets = list(sk.presets_of(sk.level_texts(self.data, m)).values())
         preset = next((p["name"] for p in presets if p["name"].lower() == "dmz"), presets[0]["name"] if presets else None)
         doc = {
@@ -360,6 +367,73 @@ class Scene:
         (self.mod / "missions" / f"{aid}.json").write_text(json.dumps(doc, indent=1) + "\n", encoding="utf-8")
         (self.mod / "encounters" / f"{aid}.json").write_text(json.dumps(layer, indent=1) + "\n", encoding="utf-8")
         return {"id": aid}
+
+    def _test_mission_2(self, aid, enc, at, square, squad):
+        """Feature test 2: escort, extract, squad orders (move, path, close in,
+        hold), a placed giver that stays put and can't be hurt, and fail
+        conditions armed to be set off on purpose (protect, stay in zone,
+        turns hostile)."""
+        layer = {
+            "map": aid.split("_")[0].upper(),
+            "boundaries": {"ft_meet": square(30, 0, 6), "ft_safe": square(-50, 40, 10),
+                           "ft_hold": square(60, -40, 8), "ft_area": square(60, -40, 40)},
+            "paths": {"ft_patrol": {"points": [at(10, -30), at(30, -30), at(30, -10), at(10, -10)]}},
+            "encounters": [{"name": enc,
+                            "points": {"A": [at(15, -20)], "B": [at(40, -55)], "C": [at(-20, 30)]},
+                            "squads": [
+                                {"name": "Friends", "points": ["A"],
+                                 "members": [{"from": "template_allies_gunner", "name": f"{aid}_friend{k}",
+                                              "position": at(15 + 3 * k, -20), "yaw": 90} for k in (1, 2)]},
+                                {"name": "Escortees", "points": ["C"],
+                                 "members": [{"from": "template_civ_civilian01", "name": f"{aid}_escortee{k}",
+                                              "position": at(-20 + 2 * k, 30), "yaw": 0} for k in (1, 2)]}]}],
+            "objects": [
+                {"from": "template_civ_civilian01", "name": f"{aid}_target", "position": at(70, 10), "yaw": 180},
+                {"from": "template_allies_officer", "name": f"{aid}_officer", "position": at(33, 4), "yaw": 180}],
+        }
+        doc = {
+            "title": "Foundry feature test 2",
+            "description": "Escort, extract, squad orders, a placed giver and fail conditions to set off on purpose.",
+            "mail": {"sender": "mail.senders.techgal", "subject": "Contract: 'Foundry feature test 2'",
+                     "body": "Play it through once, then use Start at (testing) to set off each fail condition."},
+            "ini": {"ContractFee": 1000, "BonusFee": 0},
+            "start": {"position": at(0, 0), "heading": 90},
+            "debug": True, "keep_if_hostile": True,
+            "contact": {"template": "template_civ_civilian01", "name": "Test contact", "prompt": "Start feature test 2",
+                        "position": at(-6, 4), "heading": 90, "stay": True, "invincible": True},
+            "objectives": [
+                {"type": "goto", "text": "1. Meet at the marked zone", "zone": "ft_meet"},
+                {"type": "escort", "text": "2. Escort the civilians to the safe zone (at least 1)",
+                 "squad": squad("Escortees"), "zone": "ft_safe", "need": 1},
+                {"type": "subdue", "text": "3. Capture the civilian and call the extraction", "targets": [f"{aid}_target"],
+                 "extract": True},
+                {"type": "hold", "text": "4. Hold the area for 30 seconds (leaving the larger area fails it)",
+                 "zone": "ft_hold", "seconds": 30},
+                {"type": "goto", "text": "5. Back to the meeting zone (shooting the officer fails it)", "zone": "ft_meet"},
+            ],
+            "orders": [
+                {"when": "start", "squad": squad("Friends"), "do": "move", "to": "B"},
+                {"when": "starts:2", "squad": squad("Friends"), "do": "path", "to": "ft_patrol"},
+                {"when": "starts:3", "squad": squad("Friends"), "do": "close"},
+                {"when": "done:3", "squad": squad("Friends"), "do": "hold"},
+            ],
+            "radio": [
+                {"when": "start", "text": "Test 2: the friendly squad moves to its point B."},
+                {"when": "starts:2", "text": "The friendly squad walks its patrol path."},
+                {"when": "starts:3", "text": "The friendly squad closes in on you."},
+                {"when": "done:3", "text": "The friendly squad holds where it is."},
+                {"when": "end", "text": "Feature test 2 complete."},
+            ],
+            "fail": [
+                {"type": "dies", "squad": squad("Escortees"), "until": "done:2",
+                 "text": "An escortee died (protect squad works)."},
+                {"type": "leave", "zone": "ft_area", "from": "zone:ft_area", "until": "done:4",
+                 "text": "You left the area (stay in zone works)."},
+                {"type": "hostile", "targets": [f"{aid}_officer"], "from": "starts:5",
+                 "text": "The officer turned hostile (turns hostile works)."},
+            ],
+        }
+        return layer, doc
 
     def missions(self, map_name):
         """The mod's missions on this map, each with its layer's squads and

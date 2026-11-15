@@ -233,7 +233,8 @@ def make_handler(scene: Scene, mod_name: str, live: Live = None):
                         return self.send(200, scene.save_sky(doc["map"], doc.get("doc") or {}))
                 if path == "/api/missions/testmission":
                     with objects_lock:
-                        return self.send(200, scene.make_test_mission(doc["map"], doc["centre"], doc.get("faction") or "china"))
+                        return self.send(200, scene.make_test_mission(doc["map"], doc["centre"], doc.get("faction") or "china",
+                                                                     doc.get("which") or 1))
                 if path == "/api/missions/duplicate":
                     with objects_lock:
                         return self.send(200, scene.duplicate_mission(doc["id"], doc.get("faction")))
