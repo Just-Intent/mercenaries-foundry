@@ -21,6 +21,7 @@ export function createFactions(ctx) {
     st.vehicles = d.vehicles || {};
     st.models = d.models || [];
     st.loaded = true;
+    undoBase = JSON.stringify(st.doc);
     draw();
   }
 
@@ -53,7 +54,32 @@ export function createFactions(ctx) {
     $('fx-subtitles').checked = !!st.doc.subtitles;
   }
 
-  function edited() { st.dirty = true; setDirty(true); $('fx-out').innerHTML = ''; }
+  function edited() {
+    st.dirty = true;
+    setDirty(true);
+    $('fx-out').innerHTML = '';
+    clearTimeout(undoTimer);
+    undoTimer = setTimeout(flushUndo, 700);       // a burst of typing is one undo step
+  }
+  // factions.json's edits before and after a change: one step on the editor's history.
+  let undoBase = null, undoTimer = null;
+  function flushUndo() {
+    clearTimeout(undoTimer);
+    undoTimer = null;
+    if (undoBase === null) return;
+    const now = JSON.stringify(st.doc);
+    if (now === undoBase) return;
+    const before = undoBase, after = now;
+    undoBase = now;
+    const put = (json) => {
+      st.doc = JSON.parse(json);
+      undoBase = json;
+      st.dirty = true;
+      setDirty(true);
+      draw();
+    };
+    ctx.remember && ctx.remember('Edited the factions', () => put(before), () => put(after));
+  }
 
   // a faction's looks: {its model: another}
   function setLook(f, model, other) {
@@ -137,5 +163,5 @@ export function createFactions(ctx) {
 
   function saveBody() { return st.dirty ? {doc: body()} : null; }
   function saved() { st.dirty = false; }
-  return {show, saveBody, saved};
+  return {show, saveBody, saved, flushUndo};
 }

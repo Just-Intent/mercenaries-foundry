@@ -742,7 +742,9 @@ function showHistory() {
   $('redo').title = history.future.length ? `Redo: ${last(history.future).label} (Ctrl+Y)` : 'Nothing to redo (Ctrl+Y)';
 }
 function stepHistory(redo) {
-  missions.flushUndo();             // a mission edit still waiting to be a step
+  missions.flushUndo();             // edits still waiting to be a step
+  sky.flushUndo();
+  factions.flushUndo();
   const from = redo ? history.future : history.past, to = redo ? history.past : history.future;
   const h = from.pop();
   if (!h) return status(redo ? 'Nothing to redo' : 'Nothing to undo');
@@ -1607,8 +1609,8 @@ const missions = createMissions({
   },
 });
 // Sky and weather: the map's base sky and atmosphere presets (sky/<map>.json).
-const sky = createSky({$, status, setDirty: (v) => setDirty(v)});
-const factions = createFactions({$, status, setDirty: (v) => setDirty(v)});
+const sky = createSky({$, status, setDirty: (v) => setDirty(v), remember: (...a) => remember(...a)});
+const factions = createFactions({$, status, setDirty: (v) => setDirty(v), remember: (...a) => remember(...a)});
 // Mods: the one saved to (the toolbar button), switching, making, editing, deleting.
 createMods({
   $, status,

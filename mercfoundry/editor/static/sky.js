@@ -21,6 +21,7 @@ export function createSky(ctx) {
     }
     st.mod = JSON.parse(JSON.stringify(st.data.mod || {}));
     st.dirty = false;
+    undoBase = JSON.stringify(st.mod);
     draw();
   }
 
@@ -30,7 +31,32 @@ export function createSky(ctx) {
     if (on) draw();
   }
 
-  function edited() { st.dirty = true; setDirty(true); }
+  function edited() {
+    st.dirty = true;
+    setDirty(true);
+    clearTimeout(undoTimer);
+    undoTimer = setTimeout(flushUndo, 700);       // a burst of edits is one undo step
+  }
+  // The map's sky edits before and after a change: one step on the editor's history.
+  let undoBase = null, undoTimer = null;
+  function flushUndo() {
+    clearTimeout(undoTimer);
+    undoTimer = null;
+    if (undoBase === null) return;
+    const now = JSON.stringify(st.mod);
+    if (now === undoBase) return;
+    const before = undoBase, after = now, map = st.map;
+    undoBase = now;
+    const put = (json) => {
+      if (st.map !== map) return status(`That undo step is for ${map}'s sky: open that map first`, true);
+      st.mod = JSON.parse(json);
+      undoBase = json;
+      st.dirty = true;
+      setDirty(true);
+      draw();
+    };
+    ctx.remember && ctx.remember(`Edited ${map}'s sky`, () => put(before), () => put(after));
+  }
 
   // The game's preset by name, the mod's new ones, and a preset's settings
   // as they'll be: [[key, value]], repeated keys (ProcessRGBA) as one entry
@@ -176,5 +202,5 @@ export function createSky(ctx) {
 
   $('sky-mode').onclick = () => show($('sky').hidden);
   $('sky-close').onclick = () => show(false);
-  return {load, show, saveBody, saved, presetNames};
+  return {load, show, saveBody, saved, presetNames, flushUndo};
 }
