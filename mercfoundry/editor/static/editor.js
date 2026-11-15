@@ -8,6 +8,7 @@ import * as THREE from 'three';
 import {OrbitControls} from 'three/addons/controls/OrbitControls.js';
 import {TransformControls} from 'three/addons/controls/TransformControls.js';
 import {GLTFLoader} from 'three/addons/loaders/GLTFLoader.js';
+import * as SkeletonUtils from 'three/addons/utils/SkeletonUtils.js';
 import {createLayout} from './layout.js';
 import {createEncounters} from './encounters.js';
 import {createLive} from './live.js';
@@ -261,7 +262,9 @@ function ensureNode(rec) {
   if (rec.deleted) ghost(node);
   loadModel(rec.geometry || rec.model).then(async (model) => {
     if (!model || rec.node !== node) return;
-    const body = model.clone(true);
+    // SkeletonUtils: a character's skinned body bound to the copy's own bones
+    // (a plain clone keeps the original's, and the body doesn't draw)
+    const body = SkeletonUtils.clone(model);
     // Gates: the doors are models of their own, hung on the gate's joints.
     for (const [joint, part] of rec.parts || []) {
       const at = body.getObjectByName(joint), door = await loadModel(part);
