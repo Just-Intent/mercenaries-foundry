@@ -201,6 +201,17 @@ class Scene:
             for k, t in enumerate(doc.get("travel") or []):
                 if str(t.get("map") or "sw").lower() == m:
                     mark("travel", k, t, f"Pilot to {name}", "allies_hum_pilot")
+                    # where the pilot back from the new map puts the player (its "arrive",
+                    # or the default beside this pilot): the first pilot here that goes there
+                    back = doc.get("return") or {}
+                    first = next(i for i, x in enumerate(doc["travel"]) if str(x.get("map") or "sw").lower() == m)
+                    if back.get("position") and str(back.get("to") or "sw").lower() == m and k == first:
+                        from ..modbuild import default_arrive
+                        arrive = t.get("arrive") or {}
+                        spot = {"position": arrive.get("position") or (default_arrive(t["position"])
+                                                                         if t.get("position") else None),
+                                "heading": arrive.get("heading", t.get("heading") or 0)}
+                        mark("arrive", k, spot, f"Where you arrive back from {name}", "global_humanmarker")
             if name == m:
                 if doc.get("return"):
                     mark("return", 0, doc["return"], f"Pilot back to {str(doc['return'].get('to') or 'sw').upper()}",
@@ -220,11 +231,13 @@ class Scene:
                     raise ValueError(f"{to} isn't one of this mod's new maps")
                 docs[to] = json.loads(p.read_text(encoding="utf-8"))
             doc = docs[to]
-            if mk["kind"] == "travel":
+            if mk["kind"] in ("travel", "arrive"):
                 travel = doc.get("travel") or []
                 if not 0 <= int(mk["index"]) < len(travel):
                     raise ValueError(f"{to} has no travel pilot {mk['index']}")
                 spec = travel[int(mk["index"])]
+                if mk["kind"] == "arrive":
+                    spec = spec.setdefault("arrive", {})
             elif mk["kind"] in ("return", "start"):
                 spec = doc.get(mk["kind"])
                 if not spec:

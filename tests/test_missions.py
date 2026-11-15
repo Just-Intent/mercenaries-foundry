@@ -769,5 +769,5 @@ class TravelTests(unittest.TestCase):
         back = dict(pilot, map="isle", actor="foundry_return_isle", to="sw", arrive=[1, 2, 3])
         lua = missions.travel_lua("foundry_isle_Travel", [back], by_map=False)
         self.assertEqual(luacheck.check(lua), [])
-        self.assertIn("ax = 1.00, ay = 2.00, az = 3.00", lua)
+        self.assertIn("ax = 1.00, ay = 2.00, az = 3.00, ah = 0.0", lua)
         self.assertIn("Utility_ResetToBaseLayerOnly(t.to)", lua)

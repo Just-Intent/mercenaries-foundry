@@ -607,6 +607,13 @@ def _apply_encounters(data, folder, result):
 TRAVEL_PILOT = "template_allies_teleport_pilot"      # retail's quadrant pilot
 
 
+def default_arrive(pilot_position):
+    """Where a player coming back lands when the pilot that brought them
+    says nowhere ("arrive"): just beside it, a little above the ground."""
+    x, y, z = (float(v) for v in pilot_position)
+    return [round(x + 1.5, 2), round(y + 0.5, 2), round(z, 2)]
+
+
 def _travel_pilots(data, folder, result):
     """Travel pilots from the mod's maps/<name>.json: "travel" [{map (sw or
     nw), position, heading, template?}] stand on those maps and take the
@@ -637,7 +644,10 @@ def _travel_pilots(data, folder, result):
             data.travel_pilots = getattr(data, "travel_pilots", []) + [{
                 "map": m, "actor": actor, "to": name, "prompt": str(t.get("prompt") or f"Travel to {title}"),
                 "title": title, "question": str(t.get("question") or f"Travel to {title}?")}]
-            brought.setdefault(m, [pos[0] + 3, pos[1], pos[2]])      # back beside this pilot
+            # back where its "arrive" says, else beside this pilot
+            arrive = t.get("arrive") or {}
+            brought.setdefault(m, ([float(v) for v in arrive["position"]] if arrive.get("position")
+                                   else default_arrive(pos), float(arrive.get("heading", t.get("heading") or 0))))
             result.changes.append(f"travel pilot {actor}: on {m.upper()}, takes you to {name}")
         back = mdoc.get("return")
         if back:
@@ -655,7 +665,8 @@ def _travel_pilots(data, folder, result):
             data.new_map_pilots.setdefault(name, []).append({
                 "map": name, "actor": actor, "to": to, "prompt": str(back.get("prompt") or f"Travel back to {region}"),
                 "title": region[4:], "question": str(back.get("question") or f"Travel back to {region}?"),
-                "arrive": brought.get(to)})
+                "arrive": brought[to][0] if to in brought else None,
+                "arrive_heading": brought[to][1] if to in brought else None})
             data.travel_arrive = True
             result.changes.append(f"travel pilot {actor}: on {name}, takes you back to {to.upper()}"
                                   + (" (beside the pilot there)" if brought.get(to) else ""))

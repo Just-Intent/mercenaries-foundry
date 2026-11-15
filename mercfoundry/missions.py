@@ -1491,7 +1491,9 @@ def travel_lua(prefix, pilots, by_map=True):
         rows.append("{ map = %s, actor = %s, to = %s, prompt = %s, title = %s, question = %s%s }," % (
             _lua(t["map"]), _lua(t["actor"]), _lua(t["to"]), _lua(t["prompt"]), _lua(t["title"]),
             _lua(t["question"]),
-            ", ax = %.2f, ay = %.2f, az = %.2f" % tuple(float(v) for v in arrive) if arrive else ""))
+            ", ax = %.2f, ay = %.2f, az = %.2f, ah = %.1f" % (*(float(v) for v in arrive),
+                                                              float(t.get("arrive_heading") or 0))
+            if arrive else ""))
     out = [f"{P}List = {{"] + rows + ["}",
            f"if not {P}Armed then {P}Armed = {{}} end",
            f"{P}Waits = 0",
@@ -1532,6 +1534,7 @@ def travel_lua(prefix, pilots, by_map=True):
                 "Utility_WriteNumberToScribbleMemory('foundry_arrive_x', t.ax)",
                 "Utility_WriteNumberToScribbleMemory('foundry_arrive_y', t.ay)",
                 "Utility_WriteNumberToScribbleMemory('foundry_arrive_z', t.az)",
+                "Utility_WriteNumberToScribbleMemory('foundry_arrive_h', t.ah)",
                 "end",
                 "if t.to == 'sw' or t.to == 'nw' then Utility_WriteStringToScribbleMemory('SkipTo_Map', t.to) end",
                 "Utility_ResetToBaseLayerOnly(t.to)",
@@ -1547,17 +1550,20 @@ function foundry_Arrive()
 local x = Utility_ReadNumberFromScribbleMemory('foundry_arrive_x')
 if x then
 tFoundryArrive = { x, Utility_ReadNumberFromScribbleMemory('foundry_arrive_y'),
-Utility_ReadNumberFromScribbleMemory('foundry_arrive_z') }
+Utility_ReadNumberFromScribbleMemory('foundry_arrive_z'),
+Utility_ReadNumberFromScribbleMemory('foundry_arrive_h') }
 Utility_EraseValueFromScribbleMemory('foundry_arrive_x')
 Utility_EraseValueFromScribbleMemory('foundry_arrive_y')
 Utility_EraseValueFromScribbleMemory('foundry_arrive_z')
-Event_RelativeTimer('foundry_ArriveNow', 'b', 1.0)
-Event_RelativeTimer('foundry_ArriveLast', 'b', 3.0)
+Utility_EraseValueFromScribbleMemory('foundry_arrive_h')
+Event_RelativeTimer('foundry_ArriveNow', 'b', 0.5)
+Event_RelativeTimer('foundry_ArriveLast', 'b', 2.0)
 end
 end
 function foundry_ArriveNow()
 if tFoundryArrive then
 Actor_SetPosition('player0', tFoundryArrive[1], tFoundryArrive[2], tFoundryArrive[3])
+if tFoundryArrive[4] then Actor_SetYaw('player0', tFoundryArrive[4]) end
 end
 end
 function foundry_ArriveLast()

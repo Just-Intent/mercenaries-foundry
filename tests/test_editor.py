@@ -358,13 +358,19 @@ class MapMarkTests(unittest.TestCase):
                 "travel": [{"map": "sw", "position": [7, 8, 9]}, {"map": "nw", "position": [1, 1, 1]}]}))
             sc = Scene.__new__(Scene)
             sc.mod = root
-            self.assertEqual([(m["kind"], m["index"]) for m in sc.map_marks("sw")], [("travel", 0)])
+            self.assertEqual([(m["kind"], m["index"]) for m in sc.map_marks("sw")], [("travel", 0), ("arrive", 0)])
+            # where the pilot back lands the player: beside the pilot, a little up, until it's moved
+            self.assertEqual(sc.map_marks("sw")[1]["position"], [8.5, 8.5, 9.0])
+            sc.save_map_marks([{"kind": "arrive", "to": "isle", "index": 0, "position": [20, 21, 22],
+                                "rotation": to_three(_rotation(30))}])
+            self.assertEqual(sc.map_marks("sw")[1]["position"], [20.0, 21.0, 22.0])
             self.assertEqual(sorted(m["kind"] for m in sc.map_marks("isle")), ["return", "start"])
             sc.save_map_marks([{"kind": "travel", "to": "isle", "index": 0, "position": [10, 11, 12],
                                 "rotation": to_three(_rotation(45))},
                                {"kind": "start", "to": "isle", "index": 0, "position": [0, 0, 0],
                                 "rotation": to_three(_rotation(-90))}])
             doc = json.loads((root / "maps" / "isle.json").read_text(encoding="utf-8"))
-            self.assertEqual(doc["travel"][0], {"map": "sw", "position": [10.0, 11.0, 12.0], "heading": 45.0})
+            self.assertEqual(doc["travel"][0], {"map": "sw", "position": [10.0, 11.0, 12.0], "heading": 45.0,
+                                                "arrive": {"position": [20.0, 21.0, 22.0], "heading": 30.0}})
             self.assertEqual(doc["start"], {"position": [0.0, 0.0, 0.0], "heading": -90.0})
             self.assertEqual(doc["travel"][1], {"map": "nw", "position": [1, 1, 1]})

@@ -163,6 +163,8 @@ toolkit bundle run it the same way: `foundry\python\python.exe foundry\mercfound
   pilot, or a marker figure for the arrival point): move and turn them as
   objects, and Save writes them back to their `maps/<name>.json`. Add and
   remove them in the Map panel.
+  On SW or NW, "Where you arrive back from <map>" is where the pilot back
+  puts the player (and which way they face): move it into the open.
 - **Factions**: new names for the four employers (`factions.json`): name,
   adjective, short form and people, per faction; **Everywhere** for mission
   text too, and voiced lines' subtitles if wanted. **Preview** lists the
