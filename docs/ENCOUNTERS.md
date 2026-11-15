@@ -248,7 +248,7 @@ The generated script also handles:
 
 Zones and squads these use load from the mod's map layers like the objectives'.
 
-Tested in game (2026-11-15): a radio line's text, a bonus objective shown on its reveal, and a time limit's clock. Escort, protect, stay-in-zone, destroying objects, deliver, subdue, hold, use, verify, waves, squad orders, support items, mood changes, extract and the alarm, spotted and hostile conditions aren't tested in game yet.
+Tested in game (2026-11-15): a radio line's text, a bonus objective shown on its reveal, and a time limit's clock. Escort, protect, stay-in-zone, destroying objects, deliver, subdue, hold, use, verify, waves, squad orders, support items, mood changes, extract and the alarm, spotted and hostile conditions weren't tested at first. The editor's feature test mission (0.108) then confirmed in game (2026-11-15): goto, hold, destroy with a count, objectives together, use, subdue, deliver, verify (alive pay), finish fast, waves and an attack order, a squad wiped out as a moment, delays, a timer that begins later, weather, music, radio, support, a shop unlock and the follow-up mail. Still untested: escort, extract, protect, stay in zone, alarm, spotted, hostile, and the other order types.
 
 The editor's Check (`modbuild.check_mission`, `GET /api/missions/check/<id>`) runs these checks on a saved mission without building.
 
