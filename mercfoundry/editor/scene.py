@@ -254,9 +254,10 @@ class Scene:
             out += [f.stem.lower() for f in mdir.glob("*.json")] if mdir.is_dir() else []
         return sorted(set(out))
 
-    def new_map(self, name, src="blank"):
+    def new_map(self, name, src="blank", size=None):
         """A new map: maps/<name>.json, a copy of a game map (blank: flat,
-        nearly empty). The build makes its records, level and master script."""
+        nearly empty), optionally flat ground of another size (cells a side:
+        256, 512, 1024). The build makes its records, level and master script."""
         name = str(name or "").strip()
         if not re.fullmatch(r"[A-Za-z0-9_]+", name):
             raise ValueError("a map name is letters, digits and _")
@@ -265,9 +266,14 @@ class Scene:
         src = str(src or "blank").lower()
         if src not in self.game_maps():
             raise ValueError(f"{src} isn't a game map")
+        doc = {"from": src}
+        if size:
+            from ..terrain import SIZES
+            if int(size) not in SIZES:
+                raise ValueError(f"a new map's ground is {', '.join(map(str, SIZES))} cells a side")
+            doc["size"] = int(size)
         (self.mod / "maps").mkdir(parents=True, exist_ok=True)
-        (self.mod / "maps" / f"{name.lower()}.json").write_text(json.dumps({"from": src}, indent=1) + "\n",
-                                                                encoding="utf-8")
+        (self.mod / "maps" / f"{name.lower()}.json").write_text(json.dumps(doc, indent=1) + "\n", encoding="utf-8")
         return {"name": name.lower()}
 
     def game_maps(self):

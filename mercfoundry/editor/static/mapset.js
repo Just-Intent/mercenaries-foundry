@@ -35,6 +35,11 @@ export function createMapSettings(ctx) {
       <h3>New map</h3>
       <label class="field">Name <input id="mapset-name" placeholder="letters, digits and _"></label>
       <label class="field">Copy of <select id="mapset-from">${games}</select></label>
+      <label class="field">Ground <select id="mapset-size">
+        <option value="">as the map it copies (blank: 512 cells, 4 km)</option>
+        <option value="256">flat, 256 cells a side (2 km)</option>
+        <option value="512">flat, 512 cells a side (4 km)</option>
+        <option value="1024">flat, 1024 cells a side (8 km; untried in game)</option></select></label>
       <p class="hint">blank is flat ground and next to nothing else: shape it in Terrain, set its sky in Sky.
         A copy is the same size as the map it copies.</p>
       <div class="buttons"><button id="mapset-make">Make the map</button></div>`;
@@ -143,7 +148,8 @@ export function createMapSettings(ctx) {
       const name = $('mapset-name').value.trim();
       if (!/^[A-Za-z0-9_]+$/.test(name)) return status('A map name is letters, digits and _', true);
       try {
-        const r = await post('/api/maps/new', {name, from: $('mapset-from').value});
+        const r = await post('/api/maps/new', {name, from: $('mapset-from').value,
+                                               size: Number($('mapset-size').value) || null});
         status(`Made ${r.name}; loading it...`);
         await switchToMap(r.name);
       } catch (err) { status(err.message, true); }

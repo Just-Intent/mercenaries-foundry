@@ -436,3 +436,19 @@ class TestRangeTests(unittest.TestCase):
             self.assertEqual(new[jz][jx], target)
         far = at(cx + 300, cz)
         self.assertEqual(new[far[0]][far[1]], units[far[0]][far[1]])
+
+
+class FlatTerrainTests(unittest.TestCase):
+    def test_flat_record_of_another_size(self):
+        tl = terrain_layers
+        colr = tl.encode_colr([[tl.rgb_colr(128, 128, 128)] * 81] * 16)
+        rec = tern_record(sample_units(), colr=colr, paint=painted_chunks())
+        flat = terrain.flat_record(rec, 256, height=7.0)
+        ch = terrain.tern_chunks(flat)
+        info, units, _ = terrain.decode_height_units(ch)
+        self.assertEqual(info["size"], 256)
+        self.assertTrue(all(v == round(7.0 / STEP) for row in units for v in row))
+        self.assertEqual(len(tl.decode_ptch(ch[b"PTCH"])), 32 * 32)
+        self.assertEqual(terrain_paint.layer_table(ch), terrain_paint.layer_table(terrain.tern_chunks(rec)))
+        with self.assertRaises(ValueError):
+            terrain.flat_record(rec, 2048)

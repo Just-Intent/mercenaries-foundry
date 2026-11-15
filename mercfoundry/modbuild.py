@@ -1503,6 +1503,19 @@ def _apply_maps(data, folder, result):
                 body = text.encode("latin-1")
             else:
                 body = _renamed_record(body, name)
+            if kind == "Terrain" and mdoc.get("size"):
+                # a size of its own: flat ground that size (the copy's layers kept)
+                from . import terrain as _terrain
+                size = int(mdoc["size"])
+                if size != _terrain.parse_info(_terrain.tern_chunks(body)[b"INFO"])["size"]:
+                    try:
+                        body = _terrain.flat_record(body, size)
+                    except ValueError as e:
+                        raise ValueError(f"{where}: {e}") from None
+                    made.append(f"flat terrain {size} x {size}")
+                    if src.lower() != "blank":
+                        result.warnings.append(f"{where}: the copy of {src} has flat ground {size} cells a side: "
+                                               f"{src}'s own objects and layers stand on its old ground")
             data.new(a, key, name_hash(kind), body)
             made.append(kind)
             if kind == "Terrain":

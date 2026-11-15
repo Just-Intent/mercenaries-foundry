@@ -195,6 +195,50 @@ def units_from_png(data: bytes, meta: dict) -> list:
     return [[int(round(values[z * size + x] / levels)) + base for x in range(size)] for z in range(size)]
 
 
+SIZES = (256, 512, 1024)     # cells per side a new map's terrain can have (patch keys hold 255 a side)
+
+
+def flat_record(record: bytes, size: int, height: float = None) -> bytes:
+    """A flat terrain size x size cells (the record's spacing; 512 at 8 m is
+    4 km a side), from a terrain record: its texture layers and decal
+    textures kept, its ground flat at height (default: its lowest point),
+    every patch painted with layer 0 and lit with the record's commonest
+    colour, and no decals (roads)."""
+    from . import terrain_layers as tl
+    if size not in SIZES:
+        raise ValueError(f"a new terrain is {', '.join(map(str, SIZES))} cells a side, not {size}")
+    chunks = tern_chunks(record)
+    info = parse_info(chunks[b"INFO"])
+    patch, block, step = info["patch"], info["block"], info["step"]
+    level = info["min"] if height is None else float(height)
+    units = int(round(level / step))
+    if not -32768 <= units <= 32767:
+        raise ValueError("height out of range")
+    side = size // patch
+    old_side = info["size"] // patch
+    from collections import Counter
+    colours = tl.decode_colr(chunks[b"COLR"], old_side * old_side)
+    common = Counter(v for c in colours[::max(1, len(colours) // 64)] for v in c).most_common(1)[0][0]
+    new_info = bytearray(chunks[b"INFO"])
+    struct.pack_into("<2f", new_info, 8, units * step, units * step)
+    struct.pack_into("<h", new_info, 16, size)
+    struct.pack_into("<h", new_info, 26, 0)          # decals
+    nblocks = (size // block) ** 2
+    replace = {
+        b"INFO": bytes(new_info),
+        b"HEXP": struct.pack("<4h", 0, units, units, units) * nblocks,
+        b"HGT8": pack_hgt8(bytes(size * size)),
+        b"PTCH": tl.encode_ptch([tl.Patch(1, 0)] * (side * side)),
+        b"COLR": tl.encode_colr([[common] * 81] * (side * side)),
+        b"ALPH": b"",
+        b"DCAL": b"",
+    }
+    for optional in (b"ALPH", b"DCAL"):          # (a terrain without blends or decals has none)
+        if optional not in chunks:
+            replace.pop(optional)
+    return rebuild(record, replace)
+
+
 def tern_chunks(record: bytes) -> dict:
     from . import ucfb
     return dict(ucfb.iter_chunks(ucfb.unwrap(record, b"tern")))

@@ -177,7 +177,10 @@ toolkit bundle run it the same way: `foundry\python\python.exe foundry\mercfound
   the mod added, with its paint (the map's own layers can't go: paint them
   out).
 - **New maps**: **Map** > New map makes one: `maps/<name>.json`, a copy
-  of a game map (blank: flat and nearly empty), and switches to it. It
+  of a game map (blank: flat and nearly empty), and switches to it. **Ground**
+  picks its size: as the copy's, or flat ground 256, 512 or 1024 cells a side
+  (2, 4 or 8 km at 8 m; `"size"`), with the copy's texture layers and no
+  roads. 1024 is untried in game. It
   appears in the Map list like the game's maps, with the copied map's ground
   to reshape and paint (Terrain), its sky (Sky), and objects, squads and
   zones to add. On a new map, the Map panel sets where the player arrives

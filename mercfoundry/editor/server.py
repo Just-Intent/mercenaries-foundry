@@ -266,7 +266,7 @@ def make_handler(scene: Scene, mod_name: str, live: Live = None):
                         return self.send(200, scene.save_factions(doc.get("doc") or {}))
                 if path == "/api/maps/new":
                     with objects_lock:
-                        return self.send(200, scene.new_map(doc["name"], doc.get("from") or "blank"))
+                        return self.send(200, scene.new_map(doc["name"], doc.get("from") or "blank", doc.get("size")))
                 if path.startswith("/api/mods/"):
                     # switching, making or deleting a mod changes what every
                     # other request reads: none run meanwhile
