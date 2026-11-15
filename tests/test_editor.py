@@ -374,3 +374,36 @@ class MapMarkTests(unittest.TestCase):
                                                 "arrive": {"position": [20.0, 21.0, 22.0], "heading": 30.0}})
             self.assertEqual(doc["start"], {"position": [0.0, 0.0, 0.0], "heading": -90.0})
             self.assertEqual(doc["travel"][1], {"map": "nw", "position": [1, 1, 1]})
+
+
+class GroundLayerEditTests(unittest.TestCase):
+    def test_change_and_remove(self):
+        import json
+        import tempfile
+        from pathlib import Path
+        from mercfoundry.editor.scene import Scene
+        with tempfile.TemporaryDirectory() as d:
+            root = Path(d)
+            (root / "terrain").mkdir()
+            sc = Scene.__new__(Scene)
+            sc.mod = root
+            sc.ground_textures = lambda: [{"texture": t, "scale": 16.0, "axis": 0, "map": "sw"}
+                                          for t in ("dirt", "grass", "rock", "sand")]
+            layers = [{"texture": "dirt", "scale": 16.0, "axis": 0}, {"texture": "grass", "scale": 16.0, "axis": 0},
+                      {"texture": "rock", "scale": 16.0, "axis": 0}, {"texture": "rock", "scale": 16.0, "axis": 0}]
+            sc.terrain_look = lambda m: ({"layers": layers}, b"", b"")
+            sc._forget_terrain = lambda m: None
+            sc._base_layer_count = lambda m: 1
+            for k, t in ((1, "grass"), (2, "rock"), (3, "rock")):
+                (root / "terrain" / f"isle.layer{k:02d}.{t}.changes.png").write_bytes(b"x%d" % k)
+            out = sc.remove_ground_layer("isle", 2)        # the duplicate
+            self.assertEqual([t["texture"] for t in out["layers"]], ["dirt", "grass", "rock"])
+            self.assertEqual(sorted(f.name for f in (root / "terrain").glob("*.png")),
+                             ["isle.layer01.grass.changes.png", "isle.layer02.rock.changes.png"])
+            self.assertEqual((root / "terrain" / "isle.layer02.rock.changes.png").read_bytes(), b"x3")
+            with self.assertRaisesRegex(ValueError, "own"):
+                sc.remove_ground_layer("isle", 0)
+            out = sc.change_ground_layer("isle", 1, "sand")
+            self.assertEqual(out["layers"][1]["texture"], "sand")
+            self.assertTrue((root / "terrain" / "isle.layer01.sand.changes.png").exists())
+            self.assertEqual(json.loads((root / "terrain" / "isle.layers.json").read_text())["layers"][1]["texture"], "sand")

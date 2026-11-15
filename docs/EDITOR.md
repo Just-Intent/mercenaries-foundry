@@ -139,7 +139,10 @@ toolkit bundle run it the same way: `foundry\python\python.exe foundry\mercfound
   projection the game gives it most, up to 16 layers a map. It's written
   straight away as `terrain/<map>.layers.json` (the whole layer table), and
   the build adds the texture to the map's load list. A copy of blank has one
-  layer (dirt) until you add more.
+  layer (dirt) until you add more. **Use for selected layer** gives the selected layer the texture
+  in the box (its paint stays); **Remove selected layer** takes off a layer
+  the mod added, with its paint (the map's own layers can't go: paint them
+  out).
 - **New maps**: **Map** > New map makes one: `maps/<name>.json`, a copy
   of a game map (blank: flat and nearly empty), and switches to it. It
   appears in the Map list like the game's maps, with the copied map's ground

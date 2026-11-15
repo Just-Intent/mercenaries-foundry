@@ -1556,6 +1556,7 @@ Utility_EraseValueFromScribbleMemory('foundry_arrive_x')
 Utility_EraseValueFromScribbleMemory('foundry_arrive_y')
 Utility_EraseValueFromScribbleMemory('foundry_arrive_z')
 Utility_EraseValueFromScribbleMemory('foundry_arrive_h')
+Cinematic_FadeOut(0)     -- black until the player is where they belong (not at the HQ first)
 Event_RelativeTimer('foundry_ArriveNow', 'b', 0.5)
 Event_RelativeTimer('foundry_ArriveLast', 'b', 2.0)
 end
@@ -1569,6 +1570,7 @@ end
 function foundry_ArriveLast()
 foundry_ArriveNow()
 tFoundryArrive = nil
+Cinematic_FadeIn(0.5)
 end
 """
 

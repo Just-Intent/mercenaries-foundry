@@ -40,6 +40,8 @@ GET  /api/voices               the game's voiced lines with subtitles, for radio
 GET  /api/voice/<bank>.<cue>.wav  a voice line to listen to
 GET  /api/templates            objects a squad member can copy (template_*)
 GET  /api/groundtextures       every ground texture the game's maps paint with (texture, scale, axis, map)
+POST /api/terrain/changelayer  {"map", "index", "texture"}: another texture for a ground layer
+POST /api/terrain/removelayer  {"map", "index"}: take off a ground layer the mod added (and its paint)
 POST /api/terrain/addlayer     {"map", "texture", "scale"?, "axis"?}: a new ground layer (terrain/<map>.layers.json)
 GET  /api/placeables           everything Place can copy, any map: templates, named objects, model:<model>
 POST /api/encounters/save      {"map", "files": {file: [encounter, ...]}}
@@ -283,6 +285,12 @@ def make_handler(scene: Scene, mod_name: str, live: Live = None):
                 if path == "/api/terrain/paint":
                     with objects_lock, terrain_lock:      # not while a ground read is building
                         return self.send(200, scene.save_paint(doc["map"], doc.get("layers", {})))
+                if path == "/api/terrain/changelayer":
+                    with objects_lock, terrain_lock:
+                        return self.send(200, scene.change_ground_layer(doc["map"], doc["index"], doc["texture"]))
+                if path == "/api/terrain/removelayer":
+                    with objects_lock, terrain_lock:
+                        return self.send(200, scene.remove_ground_layer(doc["map"], doc["index"]))
                 if path == "/api/terrain/addlayer":
                     with objects_lock, terrain_lock:
                         return self.send(200, scene.add_ground_layer(doc["map"], doc["texture"],

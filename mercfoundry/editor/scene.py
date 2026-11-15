@@ -484,6 +484,79 @@ class Scene:
         self._forget_terrain(map_name)
         return {"file": f"terrain/{p.name}", "layers": table}
 
+    def _base_layer_count(self, map_name):
+        """How many ground layers the map has before any mod's terrain files
+        (a new map: its source's): the ones that can't be removed."""
+        from .. import modbuild, terrain_paint
+        data = modbuild._Data(self.data)
+        for p in self.context:
+            if (Path(p) / "maps").is_dir():
+                try:
+                    modbuild._apply_maps(data, Path(p), modbuild.Result())
+                except (ValueError, KeyError, OSError):
+                    pass
+        rec = _terrain_rec(data, map_name)
+        if rec is None:
+            raise KeyError(map_name)
+        return terrain_paint.layer_count(terrain.tern_chunks(_terrain_bytes(data, rec)))
+
+    def _write_layer_table(self, map_name, table):
+        p = self.mod / "terrain" / f"{map_name.lower()}.layers.json"
+        p.parent.mkdir(parents=True, exist_ok=True)
+        p.write_text(json.dumps({"layers": table}, indent=1) + "\n", encoding="utf-8")
+        self._forget_terrain(map_name)
+        return f"terrain/{p.name}"
+
+    def _paint_files(self, map_name, index):
+        tdir = self.mod / "terrain"
+        return sorted(tdir.glob(f"{map_name}.layer{index:02d}.*")) if tdir.is_dir() else []
+
+    def change_ground_layer(self, map_name, index, texture):
+        """Another texture for a ground layer (its paint stays): the layer
+        table's entry, with the scale and projection the game gives it."""
+        if not re.fullmatch(r"[A-Za-z0-9_]+", map_name):
+            raise ValueError(f"bad map name {map_name!r}")
+        known = {t["texture"].lower(): t for t in self.ground_textures()}
+        if str(texture).lower() not in known:
+            raise ValueError(f"{texture!r} isn't a ground texture the game's maps use")
+        meta, _, _ = self.terrain_look(map_name)
+        table = [dict(t) for t in meta["layers"]]
+        index = int(index)
+        if not 0 <= index < len(table):
+            raise ValueError(f"{map_name} has no layer {index}")
+        base = known[str(texture).lower()]
+        table[index] = {"texture": base["texture"], "scale": float(base["scale"]), "axis": int(base["axis"])}
+        for f in self._paint_files(map_name, index):        # its paint file named after the texture it paints
+            parts = f.name.split(".")
+            if len(parts) >= 4 and parts[1] == f"layer{index:02d}":
+                parts[2] = base["texture"]
+                f.rename(f.with_name(".".join(parts)))
+        return {"file": self._write_layer_table(map_name, table), "layers": table}
+
+    def remove_ground_layer(self, map_name, index):
+        """Take a ground layer the mod added off the map, with its paint; the
+        layers above it move down one (their paint files renumbered). The
+        map's own layers can't go (paint them out instead)."""
+        if not re.fullmatch(r"[A-Za-z0-9_]+", map_name):
+            raise ValueError(f"bad map name {map_name!r}")
+        meta, _, _ = self.terrain_look(map_name)
+        table = [dict(t) for t in meta["layers"]]
+        index = int(index)
+        base = self._base_layer_count(map_name)
+        if not base <= index < len(table):
+            raise ValueError(f"layer {index} came with the map (its first {base}): it can't be removed, "
+                             f"but you can paint it out or give it another texture"
+                             if index < base else f"{map_name} has no layer {index}")
+        for f in self._paint_files(map_name, index):
+            f.unlink()
+        for k in range(index + 1, len(table)):
+            for f in self._paint_files(map_name, k):
+                parts = f.name.split(".")
+                parts[1] = f"layer{k - 1:02d}"
+                f.rename(f.with_name(".".join(parts)))
+        del table[index]
+        return {"file": self._write_layer_table(map_name, table), "layers": table}
+
     def save_roads(self, map_name, roads):
         """Roads laid in the editor ([{texture, span, points: [[x, z]]}])
         added to the mod's terrain/<map>.decals.json "roads"."""
