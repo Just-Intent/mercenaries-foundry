@@ -129,3 +129,5 @@ code.copyable { display: block; white-space: pre-wrap; word-break: break-all; fo
 /* Factions: preview */
 .fx-sample { font-size: 12px; margin: 4px 0; padding: 3px 0; border-bottom: 1px solid #2a323c; }
 .fx-sample s { color: #8d98a3; }
+
+#select-box { position: absolute; border: 1px dashed #ffcc33; background: rgba(255, 204, 51, 0.12); pointer-events: none; z-index: 5; }

@@ -39,6 +39,8 @@
   <button id="to-player" disabled title="Look at where the player is">To player</button>
   <button id="player-here" disabled title="Teleport the player to the middle of the view">Player here</button>
   <span id="status">Loading...</span>
+  <button id="undo" disabled title="Nothing to undo (Ctrl+Z)">Undo</button>
+  <button id="redo" disabled title="Nothing to redo (Ctrl+Y)">Redo</button>
   <button id="save" disabled>Save</button>
 </header>
 <main>
@@ -69,6 +71,8 @@
         <button id="mode-move" class="on" title="W">Move</button>
         <button id="mode-turn" title="E">Turn</button>
         <button id="ground" title="G">Drop to ground</button>
+        <button id="tilt" title="Lean it to the ground's slope where it stands (keeps its heading)">Tilt to slope</button>
+        <button id="upright" title="Stand it straight up again">Upright</button>
         <button id="copy" title="C">Copy</button>
         <button id="delete" title="Delete">Remove</button>
         <button id="revert">Undo changes</button>

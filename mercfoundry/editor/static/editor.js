@@ -45,14 +45,41 @@ controls.maxPolarAngle = Math.PI * 0.495;
 const gizmo = new TransformControls(camera, renderer.domElement);
 scene.add(gizmo.getHelper());
 window.foundryEditor = {gizmo, camera, scene, renderer, controls};     // for debugging from the browser console
+// Several objects selected: the gizmo moves a pivot at their middle, and each
+// object follows it (its transform relative to the pivot at the drag's start).
+const groupPivot = new THREE.Object3D();
+groupPivot.userData.groupPivot = true;
+scene.add(groupPivot);
+let dragStart = null;        // [[rec, snap, its matrix]] and the pivot's, for undo and group moves
 gizmo.addEventListener('dragging-changed', (e) => {
   controls.enabled = !e.value;
   if (!e.value && gizmo.object && gizmo.object.userData.squadPivot) encs.dragEnded();
+  const objs = gizmo.object && (gizmo.object === groupPivot || gizmo.object.userData.rec) ? selectionRecs() : [];
+  if (e.value && objs.length) {
+    groupPivot.updateMatrixWorld();
+    dragStart = {recs: objs.map((r) => [r, snap(r), transformOf(r)]), pivot: groupPivot.matrixWorld.clone()};
+  } else if (!e.value && dragStart) {
+    rememberMoves(gizmo.getMode() === 'rotate' ? 'Turned' : 'Moved', dragStart.recs.map(([r, s]) => [r, s]));
+    dragStart = null;
+  }
 });
 gizmo.addEventListener('objectChange', () => {
   if (gizmo.object && gizmo.object.userData.handle) layout.handleMoved(gizmo.object);
   else if (gizmo.object && gizmo.object.userData.pick) encs.moved(gizmo.object);
   else if (gizmo.object && gizmo.object.userData.missionMarker) missions.markerMoved(gizmo.object);
+  else if (gizmo.object === groupPivot && dragStart) {
+    groupPivot.updateMatrixWorld();
+    const delta = groupPivot.matrixWorld.clone().multiply(dragStart.pivot.clone().invert());
+    for (const [rec, , m] of dragStart.recs) {
+      const node = ensureNode(rec);
+      delta.clone().multiply(m).decompose(node.position, node.quaternion, node.scale);
+      rec.position = gamePos(node.position);
+      rec.rotation = m3From(node.quaternion);
+      recordEdit(rec);
+    }
+    showSelected();
+    updateSelectionBoxes();
+  }
   else if (state.selected) fromNode(state.selected);
 });
 
@@ -94,8 +121,9 @@ new ResizeObserver(resize).observe(view);     // the header can wrap, so watch t
 // ------------------------------------------------------------------ state
 const state = {
   map: null, terrain: null, records: [], byId: new Map(),
-  moved: {}, copies: [], removed: new Set(), selected: null, dirty: false, nodes: new Set(),
+  moved: {}, copies: [], removed: new Set(), selected: null, selection: [], dirty: false, nodes: new Set(),
 };
+window.foundryEditor.state = state;     // (debugging: the selection, copies, moves)
 const ghostMat = new THREE.MeshBasicMaterial({color: 0xff4040, transparent: true, opacity: 0.35, depthWrite: false});
 let terrainMesh = null, boxes = null;
 const loader = new GLTFLoader();
@@ -289,7 +317,7 @@ function ghost(node) {
 }
 
 function dropNode(rec, force = false) {
-  if (!rec.node || (rec === state.selected && !force)) return;
+  if (!rec.node || ((rec === state.selected || state.selection.includes(rec)) && !force)) return;
   scene.remove(rec.node);
   rec.node = null;
   state.nodes.delete(rec);
@@ -336,6 +364,10 @@ async function loadMap(name) {
   if (boxes) scene.remove(boxes);
   state.records = []; state.byId.clear(); state.moved = {}; state.copies = []; state.removed = new Set();
   state.marks = new Map();
+  state.selection = [];
+  state.selected = null;
+  updateSelectionBoxes();
+  clearHistory();
   terrainEdit.reset();
   state.placedFiles = new Set(); state.placing = null;
 
@@ -460,24 +492,85 @@ function lookAt(p, distance = 40) {
 
 // ------------------------------------------------------------------ selection and edits
 function select(rec) {
-  if (rec && layout.hasSelection()) layout.select(null);
-  if (rec && encs.hasSelection()) encs.select(null);
-  state.selected = rec;
+  setSelection(rec ? [rec] : []);
+}
+
+// The selection: one object, or several (Shift+click adds or takes one away,
+// Shift+drag a box). state.selected is the last one picked.
+function selectionRecs() {
+  return state.selection.length ? state.selection : (state.selected ? [state.selected] : []);
+}
+function setSelection(recs) {
+  recs = [...new Set(recs.filter((r) => r && !r.removed))];
+  if (recs.length && layout.hasSelection()) layout.select(null);
+  if (recs.length && encs.hasSelection()) encs.select(null);
+  state.selection = recs;
+  state.selected = recs.length ? recs[recs.length - 1] : null;
   gizmo.detach();
-  $('selected').hidden = !rec;
-  $('hint').hidden = !!rec;
-  if (!rec) return;
-  const node = ensureNode(rec);
-  if (!rec.deleted && !rec.context) {
-    gizmo.attach(node);
+  $('selected').hidden = !recs.length;
+  $('hint').hidden = !!recs.length;
+  updateSelectionBoxes();
+  if (!recs.length) return;
+  for (const r of recs) ensureNode(r);
+  const movable = recs.filter((r) => !r.deleted && !r.context);
+  if (recs.length === 1 && movable.length) {
+    gizmo.attach(state.selected.node);
+    setMode(gizmo.getMode());
+  } else if (movable.length > 1) {
+    placePivot();
+    gizmo.attach(groupPivot);
     setMode(gizmo.getMode());
   }
   showSelected();
+}
+function toggleSelected(rec) {
+  const now = selectionRecs();
+  setSelection(now.includes(rec) ? now.filter((r) => r !== rec) : [...now, rec]);
+}
+function placePivot() {
+  const recs = selectionRecs().filter((r) => !r.deleted && !r.context);
+  if (!recs.length) return;
+  const c = new THREE.Vector3();
+  for (const r of recs) c.add(threePos(r.position));
+  groupPivot.position.copy(c.multiplyScalar(1 / recs.length));
+  groupPivot.quaternion.identity();
+  groupPivot.scale.set(1, 1, 1);
+  groupPivot.updateMatrixWorld();
+}
+// Outlines round each object of a group selection.
+const selectionBoxes = [];
+function updateSelectionBoxes() {
+  for (const b of selectionBoxes.splice(0)) { scene.remove(b); b.geometry.dispose(); }
+  if (state.selection.length < 2) return;
+  for (const r of state.selection) {
+    if (!r.node) continue;
+    const b = new THREE.BoxHelper(r.node, 0xffcc33);
+    scene.add(b);
+    selectionBoxes.push(b);
+  }
 }
 
 function showSelected() {
   const rec = state.selected;
   if (!rec) return;
+  const group = state.selection.length > 1;
+  for (const id of ['copy-name-row', 'sel-props-box']) if ($(id)) $(id).hidden = group;
+  if (group) {
+    const recs = state.selection;
+    $('sel-title').textContent = `${recs.length} objects selected`;
+    $('sel-model').textContent = [...new Set(recs.map((r) => r.model))].slice(0, 4).join(', ') + (recs.length > 4 ? '...' : '');
+    $('sel-layer').textContent = [...new Set(recs.map((r) => r.layer))].slice(0, 3).join(', ');
+    const c = groupPivot.position;
+    [$('px').value, $('py').value, $('pz').value] = [c.x, c.y, c.z].map((v) => v.toFixed(2));
+    $('ph').value = '';
+    $('sel-note').textContent = 'Shift+click adds or takes away one; move, turn, drop, copy or remove them together.';
+    const any = (f) => recs.some(f);
+    $('revert').disabled = !any((r) => r.copyName || state.moved[r.id] || r.deleted || state.marks.has(r.id));
+    for (const id of ['mode-move', 'mode-turn', 'ground', 'tilt', 'upright', 'copy', 'delete']) $(id).disabled = false;
+    for (const id of ['px', 'py', 'pz', 'ph']) $(id).disabled = true;
+    if (any((r) => r.mark)) $('copy').disabled = $('delete').disabled = true;
+    return;
+  }
   $('sel-title').textContent = rec.copyName ? `${rec.copyName} (${rec.template ? 'placed from ' + rec.template : 'copy'})`
                                              : (rec.name || '(unnamed)');
   $('copy-name-row').hidden = !rec.copyName;
@@ -493,7 +586,7 @@ function showSelected() {
     : rec.copyName ? `A copy of ${rec.name || rec.model}.`
     : edited ? 'Moved or turned (saved as a rule).' : '';
   $('revert').disabled = !edited || !!rec.context;
-  for (const id of ['mode-move', 'mode-turn', 'ground', 'copy', 'delete', 'px', 'py', 'pz', 'ph']) {
+  for (const id of ['mode-move', 'mode-turn', 'ground', 'tilt', 'upright', 'copy', 'delete', 'px', 'py', 'pz', 'ph']) {
     $(id).disabled = !!rec.deleted || !!rec.context;
   }
   if (rec.mark) $('copy').disabled = $('delete').disabled = true;
@@ -588,21 +681,151 @@ $('sel-ruin-file').onchange = async () => {
 };
 
 function deleteSelected() {
-  const rec = state.selected;
-  if (!rec || rec.deleted) return;
-  if (rec.mark) return status('Remove pilots and arrival points in the Map panel', true);
-  if (rec.copyName) return revert(rec);       // a copy just goes
-  if (rec.name && !confirm(`"${rec.name}" has a name, so scripts may use it. Remove it anyway?`)) return;
+  const recs = selectionRecs().filter((r) => !r.deleted);
+  if (!recs.length) return;
+  if (recs.some((r) => r.mark)) return status('Remove pilots and arrival points in the Map panel', true);
+  const named = recs.filter((r) => r.name && !r.copyName);
+  if (named.length && !confirm(named.length === 1
+    ? `"${named[0].name}" has a name, so scripts may use it. Remove it anyway?`
+    : `${named.length} of these have names, so scripts may use them. Remove them anyway?`)) return;
+  beginBatch('Removed');
+  for (const rec of recs) {
+    if (rec.copyName) {                     // a copy just goes
+      const entry = removeCopy(rec);
+      remember(`Removed ${entry.as}`, () => reviveCopy(rec, entry), () => removeCopy(rec));
+    } else {
+      const before = snap(rec);
+      removeGameObject(rec);
+      remember(`Removed ${recName(rec)}`, () => restoreGameObject(rec, before), () => removeGameObject(rec));
+    }
+  }
+  endBatch();
+  setSelection([]);
+  setDirty(true);
+  refreshChanges();
+}
+
+// ------------------------------------------------------------------ undo / redo
+// Each edit of objects (move, turn, drop, copy, place, remove, undo changes,
+// rename, properties) goes on a history of undo and redo steps, Ctrl+Z and
+// Ctrl+Y; a group edit is one step. Switching maps clears it.
+const history = {past: [], future: []};
+let historyMuted = 0, batch = null;
+function remember(label, undo, redo) {
+  if (historyMuted) return;
+  if (batch) { batch.items.push({label, undo, redo}); return; }
+  history.past.push({label, undo, redo});
+  if (history.past.length > 300) history.past.shift();
+  history.future = [];
+  showHistory();
+}
+// Edits between begin and end are one step.
+function beginBatch(label) { batch = {label, items: []}; }
+function endBatch() {
+  const b = batch;
+  batch = null;
+  if (!b || !b.items.length) return;
+  if (b.items.length === 1) return remember(b.items[0].label, b.items[0].undo, b.items[0].redo);
+  remember(`${b.label} (${b.items.length})`,
+           () => [...b.items].reverse().forEach((i) => i.undo()), () => b.items.forEach((i) => i.redo()));
+}
+function showHistory() {
+  const last = (a) => a[a.length - 1];
+  $('undo').disabled = !history.past.length;
+  $('redo').disabled = !history.future.length;
+  $('undo').title = history.past.length ? `Undo: ${last(history.past).label} (Ctrl+Z)` : 'Nothing to undo (Ctrl+Z)';
+  $('redo').title = history.future.length ? `Redo: ${last(history.future).label} (Ctrl+Y)` : 'Nothing to redo (Ctrl+Y)';
+}
+function stepHistory(redo) {
+  const from = redo ? history.future : history.past, to = redo ? history.past : history.future;
+  const h = from.pop();
+  if (!h) return status(redo ? 'Nothing to redo' : 'Nothing to undo');
+  historyMuted++;
+  try { redo ? h.redo() : h.undo(); } finally { historyMuted--; }
+  to.push(h);
+  setSelection(selectionRecs().filter((r) => !r.removed));
+  if (state.selection.length > 1) placePivot();
+  setDirty(true);
+  refreshChanges();
+  showHistory();
+  status(`${redo ? 'Redid' : 'Undid'}: ${h.label}`);
+}
+function clearHistory() { history.past = []; history.future = []; showHistory(); }
+Object.assign(window.foundryEditor, {setSelection, stepHistory, history});   // (debugging)
+
+const snap = (rec) => ({position: [...rec.position], rotation: [...rec.rotation]});
+const sameSnap = (a, b) => !!a && !!b && a.position.every((v, i) => Math.abs(v - b.position[i]) < 1e-4) &&
+  a.rotation.every((v, i) => Math.abs(v - b.rotation[i]) < 1e-6);
+const recName = (r) => r.copyName || r.name || r.model;
+// Put an object where a snapshot has it (a game object back at its own place
+// is no longer "moved").
+function putTransform(rec, t) {
+  rec.position = [...t.position];
+  rec.rotation = [...t.rotation];
+  if (rec.node) transformOf(rec).decompose(rec.node.position, rec.node.quaternion, rec.node.scale);
+  placeBox(rec);
+  if (!rec.copyName && !rec.mark && sameSnap(t, rec.original)) {
+    delete state.moved[rec.id];
+    live.objectMoved(rec);
+  } else if (rec.mark && sameSnap(t, rec.original)) {
+    state.marks.delete(rec.id);
+  } else {
+    recordEdit(rec);
+  }
+}
+// before: [[rec, snapshot]]; the ones that changed are one step.
+function rememberMoves(label, before) {
+  const changes = before.map(([r, b]) => [r, b, snap(r)]).filter(([, b, a]) => !sameSnap(b, a));
+  if (!changes.length) return;
+  remember(changes.length > 1 ? `${label} ${changes.length} objects` : `${label} ${recName(changes[0][0])}`,
+           () => changes.forEach(([r, b]) => putTransform(r, b)),
+           () => changes.forEach(([r, , a]) => putTransform(r, a)));
+}
+// A copy or placed object taken away (kept, to bring back) and brought back.
+function removeCopy(rec) {
+  const entry = state.copies.find((x) => x.rec === rec);
+  live.objectRemoved(rec);
+  state.copies = state.copies.filter((x) => x.rec !== rec);
+  if (state.selected === rec || state.selection.includes(rec)) setSelection(selectionRecs().filter((r) => r !== rec));
+  if (rec.node) { scene.remove(rec.node); rec.node = null; state.nodes.delete(rec); }
+  state.byId.delete(rec.id);
+  rec.removed = true;     // keeps its slot in the box batch, hidden
+  if (rec.slot < boxes.instanceMatrix.count) {
+    boxes.setMatrixAt(rec.slot, new THREE.Matrix4().makeScale(0, 0, 0));
+    boxes.instanceMatrix.needsUpdate = true;
+  }
+  return entry;
+}
+function reviveCopy(rec, entry) {
+  rec.removed = false;
+  if (!state.copies.includes(entry)) state.copies.push(entry);
+  state.byId.set(rec.id, rec);
+  if (entry.file) state.placedFiles.add(entry.file);
+  placeBox(rec);
+  if (entry.template) live.spawn(entry.template, entry.as, rec.position, heading(rec.rotation));
+}
+function rememberAdded(rec) {
+  const entry = state.copies.find((x) => x.rec === rec);
+  if (!entry) return;
+  remember(`${entry.template ? 'Placed' : 'Copied'} ${entry.as}`, () => removeCopy(rec), () => reviveCopy(rec, entry));
+}
+// A game object removed (saved as a rule), and brought back.
+function removeGameObject(rec) {
   delete state.moved[rec.id];
   rec.position = rec.original.position; rec.rotation = rec.original.rotation;
   rec.deleted = true;
   state.removed.add(rec.id);
   live.objectRemoved(rec);
-  select(null);
+  if (state.selected === rec || state.selection.includes(rec)) setSelection(selectionRecs().filter((r) => r !== rec));
   dropNode(rec, true);
   placeBox(rec);
-  setDirty(true);
-  refreshChanges();
+}
+function restoreGameObject(rec, before) {
+  rec.deleted = false;
+  state.removed.delete(rec.id);
+  dropNode(rec, true);         // the ghost goes; streaming brings the object back
+  placeBox(rec);
+  if (before && !sameSnap(before, rec.original)) putTransform(rec, before);
 }
 
 function fromNode(rec) {
@@ -631,36 +854,33 @@ function recordEdit(rec) {
   refreshChanges();
 }
 
+// Undo changes: a copy goes, a removed object comes back, a moved one goes
+// back to its place (each on the history).
 function revert(rec) {
   if (rec.copyName) {
-    live.objectRemoved(rec);
-    state.copies = state.copies.filter((x) => x.rec !== rec);
-    select(null);
-    scene.remove(rec.node); rec.node = null; state.nodes.delete(rec);
-    state.byId.delete(rec.id);
-    rec.removed = true;     // keeps its slot in the box batch, hidden
-    boxes.setMatrixAt(rec.slot, new THREE.Matrix4().makeScale(0, 0, 0));
-    boxes.instanceMatrix.needsUpdate = true;
+    const entry = removeCopy(rec);
+    remember(`Took away ${entry.as}`, () => reviveCopy(rec, entry), () => removeCopy(rec));
   } else if (rec.deleted) {
     if (live.isOn()) status('Restored here; the game brings it back when it next starts with this mod.');
-    rec.deleted = false;
-    state.removed.delete(rec.id);
-    select(null);
-    dropNode(rec, true);         // the ghost goes; streaming brings the object back
-    placeBox(rec);
-    ensureNode(rec);
-    select(rec);
+    restoreGameObject(rec, null);
+    remember(`Brought back ${recName(rec)}`, () => removeGameObject(rec), () => restoreGameObject(rec, null));
+    if (state.selection.length <= 1) { ensureNode(rec); select(rec); }
   } else {
-    delete state.moved[rec.id];
+    const before = snap(rec);
+    putTransform(rec, rec.original);
     state.marks.delete(rec.id);
-    rec.position = rec.original.position; rec.rotation = rec.original.rotation;
-    if (rec.node) transformOf(rec).decompose(rec.node.position, rec.node.quaternion, rec.node.scale);
-    placeBox(rec);
+    rememberMoves('Put back', [[rec, before]]);
     showSelected();
-    live.objectMoved(rec);
   }
   setDirty(true);
   refreshChanges();
+}
+function revertSelected() {
+  const recs = selectionRecs();
+  beginBatch('Undid changes');
+  for (const r of recs) revert(r);
+  endBatch();
+  if (state.selection.length > 1) placePivot();
 }
 
 // Map marks: what the mod's maps/*.json put on this map (travel pilots, a new
@@ -711,6 +931,7 @@ function addCopy(src, name, position, rotation, select_ = true) {
     // Copies spawn in the running game from the source's own properties (the
     // game finds the source as a move would).
     live.copy(src, name, position, heading(rotation));
+    rememberAdded(rec);
   }
   return rec;
 }
@@ -744,6 +965,7 @@ function addPlaced(from, name, file, position, rotation, select_ = true, set = n
   if (select_) {
     ensureNode(rec); select(rec); setDirty(true); refreshChanges();
     live.spawn(from, name, position, heading(rotation));    // shows at once if the game has it loaded here
+    rememberAdded(rec);
   }
   return rec;
 }
@@ -846,7 +1068,19 @@ function placeAt(ray) {
 }
 
 function copySelected() {
-  const rec = state.selected;
+  const recs = selectionRecs();
+  if (recs.length > 1) {
+    if (recs.some((r) => r.mark)) return status('Add pilots in the Map panel', true);
+    beginBatch('Copied');
+    const made = [];
+    for (const r of recs) { copyOne(r); if (state.selected && state.selected !== r) made.push(state.selected); }
+    endBatch();
+    setSelection(made);
+    return;
+  }
+  copyOne(state.selected);
+}
+function copyOne(rec) {
   if (!rec) return;
   if (rec.mark) return status('Add pilots in the Map panel', true);
   if (rec.template) {         // another of the same template, beside it
@@ -881,8 +1115,14 @@ function renameCopy(rec, name) {
     live.removeNamed(rec.copyName);
     live.spawn(rec.template || rec.name, name, rec.position, heading(rec.rotation));
   }
-  rec.copyName = name;
-  state.copies.find((c) => c.rec === rec).as = name;
+  const old = rec.copyName;
+  const setName = (n) => {
+    rec.copyName = n;
+    state.copies.find((c) => c.rec === rec).as = n;
+    if (state.selected === rec) showSelected();
+  };
+  setName(name);
+  remember(`Renamed ${old} to ${name}`, () => setName(old), () => setName(name));
   status('');
   setDirty(true);
   refreshChanges();
@@ -1045,6 +1285,53 @@ function pick(e) {
   ray.setFromCamera(pointer, camera);
   return ray;
 }
+// Shift+drag on the view: a box; the objects in it join the selection. (In
+// the capture phase, so the camera controls don't take the drag first.)
+const boxEl = document.createElement('div');
+boxEl.id = 'select-box';
+boxEl.hidden = true;
+view.appendChild(boxEl);
+let boxFrom = null;
+view.addEventListener('pointerdown', (e) => {
+  if (!e.shiftKey || e.button !== 0 || terrainEdit.isOn() || gizmo.axis || state.placing) return;
+  const r = renderer.domElement.getBoundingClientRect();
+  boxFrom = [e.clientX - r.left, e.clientY - r.top];
+  controls.enabled = false;
+}, true);
+window.addEventListener('pointermove', (e) => {
+  if (!boxFrom) return;
+  const r = renderer.domElement.getBoundingClientRect();
+  const x = e.clientX - r.left, y = e.clientY - r.top;
+  if (Math.hypot(x - boxFrom[0], y - boxFrom[1]) < 5) return;
+  Object.assign(boxEl.style, {left: `${Math.min(x, boxFrom[0])}px`, top: `${Math.min(y, boxFrom[1])}px`,
+                              width: `${Math.abs(x - boxFrom[0])}px`, height: `${Math.abs(y - boxFrom[1])}px`});
+  boxEl.hidden = false;
+});
+window.addEventListener('pointerup', (e) => {
+  if (!boxFrom) return;
+  const from = boxFrom;
+  boxFrom = null;
+  controls.enabled = true;
+  if (boxEl.hidden) return;              // a Shift+click: the canvas's click handles it
+  boxEl.hidden = true;
+  const r = renderer.domElement.getBoundingClientRect();
+  const x0 = Math.min(from[0], e.clientX - r.left), x1 = Math.max(from[0], e.clientX - r.left);
+  const y0 = Math.min(from[1], e.clientY - r.top), y1 = Math.max(from[1], e.clientY - r.top);
+  const v = new THREE.Vector3(), cam = camera.position;
+  const hits = state.records.filter((rec) => {
+    if (rec.removed || rec.context || rec.hiddenBy) return false;
+    v.copy(threePos(rec.position));
+    if (v.distanceTo(cam) > 1500) return false;
+    v.project(camera);
+    if (v.z > 1) return false;
+    const sx = (v.x + 1) / 2 * r.width, sy = (1 - v.y) / 2 * r.height;
+    return sx >= x0 && sx <= x1 && sy >= y0 && sy <= y1;
+  });
+  if (hits.length > 200) return status(`${hits.length} objects in that box: draw a smaller one (200 at most)`, true);
+  setSelection([...selectionRecs(), ...hits]);
+  status(hits.length ? `${state.selection.length} objects selected` : 'No objects in that box');
+});
+
 renderer.domElement.addEventListener('pointerdown', (e) => {
   downAt = [e.clientX, e.clientY];
   if (terrainEdit.down(e)) { try { renderer.domElement.setPointerCapture(e.pointerId); } catch (err) { /* no capture */ } }
@@ -1077,6 +1364,7 @@ renderer.domElement.addEventListener('pointerup', (e) => {
   const marker = missions.pick(ray);
   if (marker) return marker.apply();
   const candidates = [layout.pick(ray), encs.pick(ray)].filter(Boolean);
+  if (objectHit && e.shiftKey) return toggleSelected(objectHit.rec);
   if (objectHit) candidates.push({distance: objectHit.distance, apply: () => select(objectHit.rec)});
   candidates.sort((a, b) => a.distance - b.distance);
   if (candidates.length) return candidates[0].apply();
@@ -1140,16 +1428,54 @@ renderer.domElement.addEventListener('dblclick', (e) => {
 $('mode-move').onclick = () => setMode('translate');
 $('mode-turn').onclick = () => setMode('rotate');
 $('ground').onclick = () => {
-  const rec = state.selected;
-  if (!rec) return;
-  rec.node.position.y = heightAt(rec.position[0], rec.position[2]);
-  fromNode(rec);
+  const recs = selectionRecs().filter((r) => !r.deleted && !r.context);
+  if (!recs.length) return;
+  const before = recs.map((r) => [r, snap(r)]);
+  for (const rec of recs) {
+    const node = ensureNode(rec);
+    node.position.y = heightAt(rec.position[0], rec.position[2]);
+    rec.position = gamePos(node.position);
+    recordEdit(rec);
+  }
+  rememberMoves('Dropped to ground', before);
+  if (state.selection.length > 1) { placePivot(); updateSelectionBoxes(); }
+  showSelected();
 };
+// Tilt: each selected object leans so its up axis is the ground's normal
+// where it stands (from the heights 2 m around it), keeping its heading;
+// Upright stands it straight again. Saved as the whole rotation; the live
+// link moves the game's copy upright (it sends headings only).
+function groundNormal(x, z) {
+  const d = 2;
+  const n = new THREE.Vector3(heightAt(x - d, z) - heightAt(x + d, z), 2 * d, heightAt(x, z - d) - heightAt(x, z + d));
+  return n.normalize();
+}
+function leanTo(normalOf, label) {
+  const recs = selectionRecs().filter((r) => !r.deleted && !r.context);
+  if (!recs.length) return;
+  const before = recs.map((r) => [r, snap(r)]);
+  for (const rec of recs) {
+    const node = ensureNode(rec);
+    const up = new THREE.Vector3(0, 1, 0).applyQuaternion(node.quaternion);
+    const turn = new THREE.Quaternion().setFromUnitVectors(up, normalOf(rec));
+    node.quaternion.premultiply(turn);
+    rec.position = gamePos(node.position);
+    rec.rotation = m3From(node.quaternion);
+    recordEdit(rec);
+  }
+  rememberMoves(label, before);
+  if (state.selection.length > 1) { placePivot(); updateSelectionBoxes(); }
+  showSelected();
+}
+$('tilt').onclick = () => leanTo((r) => groundNormal(r.position[0], r.position[2]), 'Tilted');
+$('upright').onclick = () => leanTo(() => new THREE.Vector3(0, 1, 0), 'Stood upright');
 $('copy').onclick = copySelected;
 $('place').onclick = startPlace;
 $('delete').onclick = deleteSelected;
 $('copy-name').addEventListener('change', () => state.selected && renameCopy(state.selected, $('copy-name').value));
-$('revert').onclick = () => state.selected && revert(state.selected);
+$('revert').onclick = () => revertSelected();
+$('undo').onclick = () => stepHistory(false);
+$('redo').onclick = () => stepHistory(true);
 $('save').onclick = save;
 for (const id of ['px', 'py', 'pz']) {
   $(id).addEventListener('change', () => {
@@ -1157,8 +1483,10 @@ for (const id of ['px', 'py', 'pz']) {
     if (!rec) return;
     const p = [$('px').value, $('py').value, $('pz').value].map((v) => (v.trim() === '' ? NaN : +v));
     if (p.some((v) => !Number.isFinite(v))) return showSelected();    // ignore a blank or bad entry
+    const before = [[rec, snap(rec)]];
     rec.node.position.copy(threePos(p));
     fromNode(rec);
+    rememberMoves('Moved', before);
   });
 }
 $('ph').addEventListener('change', () => {
@@ -1166,9 +1494,11 @@ $('ph').addEventListener('change', () => {
   if (!rec) return;
   if ($('ph').value.trim() === '' || !Number.isFinite(+$('ph').value)) return showSelected();
   const delta = +$('ph').value - heading(rec.rotation);
+  const before = [[rec, snap(rec)]];
   // A game turn of t degrees is a three.js turn of -t about the vertical.
   rec.node.rotateOnWorldAxis(new THREE.Vector3(0, 1, 0), THREE.MathUtils.degToRad(-delta));
   fromNode(rec);
+  rememberMoves('Turned', before);
 });
 // Search suggestions: objects, zones and paths, encounters and squads.
 function fillNames() {
@@ -1212,6 +1542,8 @@ window.addEventListener('keydown', (e) => {
   else if (k === 'm') minimap.toggle();
   else if (k === 't') terrainEdit.setOn(!terrainEdit.isOn());
   else if (k === 'z' && (e.ctrlKey || e.metaKey) && terrainEdit.isOn()) { e.preventDefault(); terrainEdit.undo(); }
+  else if ((k === 'y' || (k === 'z' && e.shiftKey)) && (e.ctrlKey || e.metaKey)) { e.preventDefault(); stepHistory(true); }
+  else if (k === 'z' && (e.ctrlKey || e.metaKey)) { e.preventDefault(); stepHistory(false); }
   else if (k === 'enter' && terrainEdit.isLayingRoad()) terrainEdit.finishRoad();
   else if (k === 'enter' && layout.isDrawing()) layout.finishDraw();
   else if (k === 'insert' && layout.hasSelection()) layout.addPoint();

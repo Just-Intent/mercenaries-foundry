@@ -22,6 +22,11 @@ def to_three(rows):
     return [rows[c][r] for c in range(3) for r in range(3)]   # columns are the axes
 
 
+def tilted(rows):
+    """Whether a rotation (rows) leans: its up axis isn't straight up."""
+    return abs(float(rows[1][1]) - 1.0) > 1e-4
+
+
 def from_three(m3):
     """Game rotation rows from a column-major 3x3 three.js rotation."""
     return [[m3[c * 3 + r] for r in range(3)] for c in range(3)]
@@ -1900,7 +1905,7 @@ class Scene:
                 continue
             rows = [list(src["rotation"][0:3]), list(src["rotation"][3:6]), list(src["rotation"][6:9])]
             from ..modbuild import _turn
-            new_rows = _turn(rows, float(rule.get("turn", 0)))
+            new_rows = rule["rotation"] if rule.get("rotation") else _turn(rows, float(rule.get("turn", 0)))
             entry = {"source": f"{src['layer']}:{src['index']}",
                      "position": rule.get("position", list(src["position"])),
                      "rotation": to_three(new_rows)}
@@ -2187,7 +2192,8 @@ class Scene:
             for o in doc.get("objects", []):
                 out.append({"file": f.name, "from": o["from"], "name": o["name"],
                             "position": o["position"], "set": o.get("set"),
-                            "rotation": to_three(_rotation(float(o.get("yaw", 0))))})
+                            "rotation": to_three(o["rotation"] if o.get("rotation")
+                                                 else _rotation(float(o.get("yaw", 0))))})
         return out
 
     def save_placed(self, map_name, files):
@@ -2226,6 +2232,8 @@ class Scene:
                 item = {"from": o["from"], "name": o["name"],
                         "position": [round(float(v), 3) for v in o["position"]],
                         "yaw": round(math.degrees(math.atan2(-rows[0][2], rows[0][0])), 2)}
+                if tilted(rows):        # leaning (to the ground's slope): the whole rotation
+                    item["rotation"] = [[round(v, 6) for v in row] for row in rows]
                 if o.get("set"):
                     item["set"] = o["set"]
                 out.append(item)
@@ -2426,7 +2434,11 @@ class Scene:
         rule.pop("move", None)
         rows = [list(src["rotation"][0:3]), list(src["rotation"][3:6]), list(src["rotation"][6:9])]
         rule["position"] = [round(float(v), 3) for v in e["position"]]
-        turn = turn_between(rows, from_three(e["rotation"]))
+        new = from_three(e["rotation"])
+        if tilted(new) or tilted(rows):        # not upright (or wasn't): the whole rotation
+            rule["rotation"] = [[round(v, 6) for v in row] for row in new]
+            return rule
+        turn = turn_between(rows, new)
         if abs(turn) > 1e-3:
             rule["turn"] = turn
         return rule

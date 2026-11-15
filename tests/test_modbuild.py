@@ -432,3 +432,13 @@ class MapTextureLoadTests(unittest.TestCase):
         modbuild._load_textures_with_map(data, "isle", ["nk_tt_dirt", "nw_tt_snow"])
         self.assertEqual(data.added[(name_hash("isle"), name_hash("list"))],
                          b"\n[texture]\n\nload nk_tt_dirt\nload nw_tt_snow\n")
+
+
+class RotationRuleTests(unittest.TestCase):
+    def test_rule_rotation_replaces_the_whole_rotation(self):
+        inst = {"template": "x", "properties": [], "position": [0, 0, 0],
+                "rotation": [[1, 0, 0], [0, 1, 0], [0, 0, 1]]}
+        modbuild._apply_rule(inst, {"rotation": [[1, 0, 0], [0, 0.98, -0.2], [0, 0.2, 0.98]]})
+        self.assertEqual(inst["rotation"][1], [0.0, 0.98, -0.2])
+        with self.assertRaises(ValueError):
+            modbuild._apply_rule(inst, {"rotation": [[1, 0], [0, 1]]})

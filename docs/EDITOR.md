@@ -60,6 +60,20 @@ toolkit bundle run it the same way: `foundry\python\python.exe foundry\mercfound
 - Select an object to move it (W), turn it about the vertical (E), drop it to the
   ground (G) or copy it (C), or type its position and heading in the panel.
   Copies get a name you can change in the panel; names must be new.
+- **Tilt to slope** leans the selected objects to the ground's slope where
+  each stands (keeping its heading); **Upright** stands them straight again. A
+  tilted object is saved with its whole rotation (`"rotation"`, three rows, in
+  its move rule or placed object); upright ones keep a heading. The live link
+  sends headings only, so the game's copy stays upright until the next start.
+- **Several at once**: Shift+click adds an object to the selection (or takes it
+  away), Shift+drag draws a box round more. The gizmo then moves or turns them
+  together about their middle, and Drop to ground, Tilt, Upright, Copy, Remove
+  and Undo changes act on all of them.
+- **Undo** and **Redo** (top bar, Ctrl+Z and Ctrl+Y or Ctrl+Shift+Z) step
+  through the object edits: moves, turns, drops, tilts, copies, placing,
+  removing, Undo changes and renames; an edit of several objects is one step.
+  The history is cleared when you switch maps. (In terrain mode Ctrl+Z steps
+  back terrain strokes, as before.)
 - Remove an object (Remove, or the Delete key). It disappears; pick it in the
   change list to see a red ghost where it was, and **Undo changes** to bring it
   back. Removing a named object asks first, since scripts may use it by name.
@@ -482,8 +496,7 @@ the editor on the south map appeared there in free roam.
 
 ## Not yet
 
-- Tilting objects to the slope: objects turn about the vertical only.
-- Undo history: **Undo changes** puts one object back as the game has it.
+- Undo for paths, zones, squads and mission edits (the history covers objects).
 
 ## How it works
 

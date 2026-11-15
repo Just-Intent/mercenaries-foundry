@@ -492,3 +492,35 @@ class NewMapMissionTests(unittest.TestCase):
             self.assertEqual([m["id"] for m in got["missions"]], ["sw_china10"])
             self.assertEqual(got["next"]["china"], 10)
             self.assertEqual(sc.missions("sw")["missions"], [])     # played on isle, not SW
+
+
+class TiltTests(unittest.TestCase):
+    def test_tilted_rotations_are_saved_whole(self):
+        import json
+        import math
+        import tempfile
+        from pathlib import Path
+        from mercfoundry.editor.scene import Scene, to_three, tilted
+        from mercfoundry.encounters import _rotation
+        upright = _rotation(30)
+        self.assertFalse(tilted(upright))
+        a = math.radians(10)           # 10 degrees about x
+        lean = [[1, 0, 0], [0, math.cos(a), -math.sin(a)], [0, math.sin(a), math.cos(a)]]
+        self.assertTrue(tilted(lean))
+        with tempfile.TemporaryDirectory() as d:
+            sc = Scene.__new__(Scene)
+            sc.mod = Path(d)
+            sc.all_objects = lambda: []
+            sc.names = lambda: {}
+            sc.archives = []
+            sc.editor_layer_file = lambda m: "mod_sw.json"
+            sc._require = lambda v: None
+            sc.save_placed("sw", {"mod_sw.json": [
+                {"from": "template_x", "name": "a", "position": [1, 2, 3], "rotation": to_three(lean)},
+                {"from": "template_x", "name": "b", "position": [1, 2, 3], "rotation": to_three(upright)}]})
+            objs = json.loads((Path(d) / "encounters" / "mod_sw.json").read_text())["objects"]
+            self.assertIn("rotation", objs[0])
+            self.assertNotIn("rotation", objs[1])
+            self.assertAlmostEqual(objs[1]["yaw"], 30.0, places=3)
+            back = sc.load_placed("sw")
+            self.assertAlmostEqual(back[0]["rotation"][4], math.cos(a), places=5)

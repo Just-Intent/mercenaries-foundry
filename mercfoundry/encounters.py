@@ -83,6 +83,14 @@ ENCOUNTER = name_hash("encounter")
 LIST = name_hash("list")
 
 
+def rotation_rows(rows):
+    """A full rotation given as three rows of three numbers."""
+    out = [[float(v) for v in row] for row in rows]
+    if len(out) != 3 or any(len(r) != 3 for r in out):
+        raise ValueError("a rotation is three rows of three numbers")
+    return out
+
+
 def _rotation(yaw_degrees):
     a = math.radians(yaw_degrees)
     c, s = math.cos(a), math.sin(a)
@@ -111,7 +119,8 @@ def _member(source, spec, extra=()):
     if spec.get("model"):
         inst["model"] = str(spec["model"])
     inst["position"] = [float(v) for v in spec["position"]]
-    inst["rotation"] = _rotation(float(spec.get("yaw", 0)))
+    # "rotation" (three rows, as the world's): tilted, e.g. to the ground's slope; else upright at "yaw"
+    inst["rotation"] = rotation_rows(spec["rotation"]) if spec.get("rotation") else _rotation(float(spec.get("yaw", 0)))
     chunks = inst.get("chunks", ["INFO", "XFRM", "PROP"])
     if "XFRM" not in chunks:
         chunks = ["INFO", "XFRM"] + [c for c in chunks if c != "INFO"]

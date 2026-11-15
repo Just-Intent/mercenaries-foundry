@@ -349,6 +349,9 @@ def _apply_rule(inst, rule):
         inst["position"] = [p + float(d) for p, d in zip(inst["position"], rule["move"])]
     if "turn" in rule:
         inst["rotation"] = _turn(inst["rotation"], float(rule["turn"]))
+    if "rotation" in rule:                 # a full rotation (tilted, as to the ground's slope)
+        from .encounters import rotation_rows
+        inst["rotation"] = rotation_rows(rule["rotation"])
 
 
 # obstaclematerialtype values the game knows (0x12B5F0); anything else is 0 ("none")
