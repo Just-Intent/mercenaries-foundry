@@ -27,6 +27,8 @@ POST /api/models/new           {"name", "base", "glb" (base64)}: a new object's 
 POST /api/sky/save             {"map", "doc"}: writes sky/<map>.json
 GET  /api/mapsettings/<map>      a mod's new map: what it copies, arrival point, message, its layers
 POST /api/maps/new               {"name", "from"}: a new map (maps/<name>.json) -> {"name"}
+GET  /api/marks/<map>           travel pilots and arrival points the mod's maps/*.json put on this map
+POST /api/marks/save            {"marks": [{kind, to, index, position, rotation}]}: moved marks
 POST /api/maps/travel           {"op": "add"|"remove", "to", "on", "position"?, "heading"?, "index"?}: travel pilots
 POST /api/maps/save             {"map", "doc"}: a new map's arrival point, message and loading layers
 GET  /api/properties/<ref>     an object's properties: id:<layer>:<index>, or from:<name> / from:model:<model>
@@ -172,6 +174,9 @@ def make_handler(scene: Scene, mod_name: str, live: Live = None):
                 if path == "/api/animations":
                     with objects_lock:
                         return self.send(200, scene.animation_names())
+                if path.startswith("/api/marks/"):
+                    with objects_lock:
+                        return self.send(200, scene.map_marks(path[len("/api/marks/"):]))
                 if path.startswith("/api/mapsettings/"):
                     with objects_lock:
                         doc = scene.map_settings(path[len("/api/mapsettings/"):])
@@ -250,6 +255,9 @@ def make_handler(scene: Scene, mod_name: str, live: Live = None):
                 if path == "/api/maps/new":
                     with objects_lock:
                         return self.send(200, scene.new_map(doc["name"], doc.get("from") or "blank"))
+                if path == "/api/marks/save":
+                    with objects_lock:
+                        return self.send(200, scene.save_map_marks(doc.get("marks") or []))
                 if path == "/api/maps/travel":
                     with objects_lock:
                         if doc.get("op") == "remove":

@@ -159,6 +159,10 @@ toolkit bundle run it the same way: `foundry\python\python.exe foundry\mercfound
   the map's arrival point (`"travel"` in `maps/<name>.json`). On the new
   map, **Pilot back** puts one that takes them back to SW or NW, beside the
   pilot that brought them (`"return"`).
+  Pilots and a new map's arrival point show in the view like objects (a
+  pilot, or a marker figure for the arrival point): move and turn them as
+  objects, and Save writes them back to their `maps/<name>.json`. Add and
+  remove them in the Map panel.
 - **Factions**: new names for the four employers (`factions.json`): name,
   adjective, short form and people, per faction; **Everywhere** for mission
   text too, and voiced lines' subtitles if wanted. **Preview** lists the

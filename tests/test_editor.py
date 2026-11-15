@@ -340,3 +340,31 @@ class TravelPilotTests(unittest.TestCase):
             sc.remove_travel_pilot("isle", 0, "sw")
             sc.save_map_settings("isle", {"return": None})
             self.assertEqual(json.loads((root / "maps" / "isle.json").read_text(encoding="utf-8")), {"from": "blank"})
+
+
+class MapMarkTests(unittest.TestCase):
+    def test_marks_seen_and_moved(self):
+        import json
+        import tempfile
+        from pathlib import Path
+        from mercfoundry.editor.scene import Scene, to_three
+        from mercfoundry.encounters import _rotation
+        with tempfile.TemporaryDirectory() as d:
+            root = Path(d)
+            (root / "maps").mkdir()
+            (root / "maps" / "isle.json").write_text(json.dumps({
+                "from": "blank", "start": {"position": [1, 2, 3], "heading": 0},
+                "return": {"position": [4, 5, 6], "to": "sw"},
+                "travel": [{"map": "sw", "position": [7, 8, 9]}, {"map": "nw", "position": [1, 1, 1]}]}))
+            sc = Scene.__new__(Scene)
+            sc.mod = root
+            self.assertEqual([(m["kind"], m["index"]) for m in sc.map_marks("sw")], [("travel", 0)])
+            self.assertEqual(sorted(m["kind"] for m in sc.map_marks("isle")), ["return", "start"])
+            sc.save_map_marks([{"kind": "travel", "to": "isle", "index": 0, "position": [10, 11, 12],
+                                "rotation": to_three(_rotation(45))},
+                               {"kind": "start", "to": "isle", "index": 0, "position": [0, 0, 0],
+                                "rotation": to_three(_rotation(-90))}])
+            doc = json.loads((root / "maps" / "isle.json").read_text(encoding="utf-8"))
+            self.assertEqual(doc["travel"][0], {"map": "sw", "position": [10.0, 11.0, 12.0], "heading": 45.0})
+            self.assertEqual(doc["start"], {"position": [0.0, 0.0, 0.0], "heading": -90.0})
+            self.assertEqual(doc["travel"][1], {"map": "nw", "position": [1, 1, 1]})

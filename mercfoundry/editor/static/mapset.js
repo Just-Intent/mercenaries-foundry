@@ -3,7 +3,7 @@
 // of the mod's layers on it load with it (its master script loads them).
 
 export function createMapSettings(ctx) {
-  const {$, status, post, viewCentre, switchToMap} = ctx;
+  const {$, status, post, viewCentre, switchToMap, reloadMarks} = ctx;
   const st = {map: null, data: null};
   const esc = (s) => String(s ?? '').replace(/[&<>"]/g, (c) => ({'&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;'}[c]));
 
@@ -105,6 +105,7 @@ export function createMapSettings(ctx) {
                                                      position: here(), heading: Number($('mapset-pilot-heading').value) || 0}),
                    game_maps: st.data.game_maps};
         draw();
+        reloadMarks();
         status(`Added a pilot to ${$('mapset-pilot-to') ? $('mapset-pilot-to').value : 'the map'}; the next game start has it`);
       } catch (err) { status(err.message, true); }
     }
@@ -114,6 +115,7 @@ export function createMapSettings(ctx) {
         st.data = {...await post('/api/maps/travel', {op: 'remove', to, index: Number(index), on: st.map}),
                    game_maps: st.data.game_maps};
         draw();
+        reloadMarks();
         status(`Removed the pilot to ${to}`);
       } catch (err) { status(err.message, true); }
     }
@@ -133,6 +135,7 @@ export function createMapSettings(ctx) {
           return: backNums.length ? {position: backNums, heading: Number($('mapset-back-heading').value) || 0,
                                      to: $('mapset-back-to').value} : null}}), game_maps: st.data.game_maps};
         draw();
+        reloadMarks();
         status(`Saved ${st.map}'s settings; the next game start uses them`);
       } catch (err) { status(err.message, true); }
     }

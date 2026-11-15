@@ -330,6 +330,7 @@ async function loadMap(name) {
   if (terrainMesh) scene.remove(terrainMesh);
   if (boxes) scene.remove(boxes);
   state.records = []; state.byId.clear(); state.moved = {}; state.copies = []; state.removed = new Set();
+  state.marks = new Map();
   terrainEdit.reset();
   state.placedFiles = new Set(); state.placing = null;
 
@@ -382,6 +383,8 @@ async function loadMap(name) {
     addPlaced(p.from, p.name, p.file, p.position, p.rotation, false, p.set);
     state.placedFiles.add(p.file);
   }
+  await loadMarks(name);
+  if (mine !== loadSerial) return;
   for (const id of objs.edits.removed || []) {
     const rec = state.byId.get(id);
     if (!rec) continue;
@@ -478,8 +481,9 @@ function showSelected() {
   $('sel-layer').textContent = rec.layer;
   [$('px').value, $('py').value, $('pz').value] = rec.position.map((v) => v.toFixed(2));
   $('ph').value = heading(rec.rotation).toFixed(1);
-  const edited = rec.copyName || state.moved[rec.id] || rec.deleted;
-  $('sel-note').textContent = rec.context ? `Added or moved by ${rec.by} (read only here: edit it in that mod).`
+  const edited = rec.copyName || state.moved[rec.id] || rec.deleted || state.marks.has(rec.id);
+  $('sel-note').textContent = rec.mark ? `Saved in ${rec.layer}. Move or turn it here; add or remove it in the Map panel.`
+    : rec.context ? `Added or moved by ${rec.by} (read only here: edit it in that mod).`
     : rec.deleted ? 'Removed (saved as a rule). Undo changes brings it back.'
     : rec.copyName ? `A copy of ${rec.name || rec.model}.`
     : edited ? 'Moved or turned (saved as a rule).' : '';
@@ -487,6 +491,7 @@ function showSelected() {
   for (const id of ['mode-move', 'mode-turn', 'ground', 'copy', 'delete', 'px', 'py', 'pz', 'ph']) {
     $(id).disabled = !!rec.deleted || !!rec.context;
   }
+  if (rec.mark) $('copy').disabled = $('delete').disabled = true;
   $('delete').title = rec.name && !rec.copyName
     ? `Delete. Scripts may use "${rec.name}" by name; removing it can break them.` : 'Delete';
   if ($('sel-props-box').open) showProperties(rec);
@@ -580,6 +585,7 @@ $('sel-ruin-file').onchange = async () => {
 function deleteSelected() {
   const rec = state.selected;
   if (!rec || rec.deleted) return;
+  if (rec.mark) return status('Remove pilots and arrival points in the Map panel', true);
   if (rec.copyName) return revert(rec);       // a copy just goes
   if (rec.name && !confirm(`"${rec.name}" has a name, so scripts may use it. Remove it anyway?`)) return;
   delete state.moved[rec.id];
@@ -602,6 +608,12 @@ function fromNode(rec) {
 }
 
 function recordEdit(rec) {
+  if (rec.mark) {
+    state.marks.set(rec.id, rec);
+    setDirty(true);
+    refreshChanges();
+    return;
+  }
   if (rec.copyName) {
     const c = state.copies.find((x) => x.rec === rec);
     c.position = rec.position; c.rotation = rec.rotation;
@@ -635,6 +647,7 @@ function revert(rec) {
     select(rec);
   } else {
     delete state.moved[rec.id];
+    state.marks.delete(rec.id);
     rec.position = rec.original.position; rec.rotation = rec.original.rotation;
     if (rec.node) transformOf(rec).decompose(rec.node.position, rec.node.quaternion, rec.node.scale);
     placeBox(rec);
@@ -642,6 +655,38 @@ function revert(rec) {
     live.objectMoved(rec);
   }
   setDirty(true);
+  refreshChanges();
+}
+
+// Map marks: what the mod's maps/*.json put on this map (travel pilots, a new
+// map's pilot back and its arrival point), drawn and moved like objects and
+// saved back to their map file (not copied or removed here: the Map panel).
+async function loadMarks(name) {
+  let marks = [];
+  try { marks = await getJSON(`/api/marks/${name}`); } catch (e) { console.warn('marks:', e); }
+  if (state.map !== name) return;
+  for (const m of marks) {
+    const rec = {
+      id: `mark:${m.kind}:${m.to}:${m.index}`, layer: `maps/${m.to}.json`, name: m.label, model: m.model,
+      geometry: m.model, type: 'human', position: m.position, rotation: m.rotation, mark: m,
+      original: {position: m.position, rotation: m.rotation},
+    };
+    addRecord(rec);
+  }
+  boxes.count = state.records.length;
+}
+// Marks again after the Map panel adds, removes or moves them (unsaved moves of marks are dropped).
+async function reloadMarks() {
+  for (const rec of state.records.filter((r) => r.mark && !r.removed)) {
+    if (state.selected === rec) select(null);
+    if (rec.node) { scene.remove(rec.node); rec.node = null; state.nodes.delete(rec); }
+    state.byId.delete(rec.id);
+    rec.removed = true;     // keeps its slot in the box batch, hidden
+    boxes.setMatrixAt(rec.slot, new THREE.Matrix4().makeScale(0, 0, 0));
+    boxes.instanceMatrix.needsUpdate = true;
+  }
+  state.marks.clear();
+  await loadMarks(state.map);
   refreshChanges();
 }
 
@@ -780,6 +825,7 @@ function placeAt(ray) {
 function copySelected() {
   const rec = state.selected;
   if (!rec) return;
+  if (rec.mark) return status('Add pilots in the Map panel', true);
   if (rec.template) {         // another of the same template, beside it
     const p = [...rec.position];
     p[0] += 4;
@@ -838,6 +884,7 @@ function refreshChanges() {
     const rec = state.byId.get(id);
     if (rec) items.push([rec, `Removed ${rec.name || rec.model}`]);
   }
+  for (const rec of (state.marks || new Map()).values()) items.push([rec, `Moved ${rec.name}`]);
   $('count').textContent = items.length ? `(${items.length})` : '';
   const ul = $('changes');
   ul.innerHTML = '';
@@ -878,6 +925,14 @@ async function save() {
     };
     const lay = layout.saveBody();
     let note = '';
+    if (state.marks.size) {
+      const done = await post('/api/marks/save', {marks: [...state.marks.values()].map((r) => ({
+        kind: r.mark.kind, to: r.mark.to, index: r.mark.index, position: r.position, rotation: r.rotation}))});
+      for (const r of state.marks.values()) r.original = {position: r.position, rotation: r.rotation};
+      state.marks.clear();
+      mapset.load(state.map).catch((err) => console.warn('map settings:', err));
+      note += `; pilots and arrival points in ${done.files.join(', ')}`;
+    }
     if (Object.keys(placed).length) {
       const done = await post('/api/placed/save', {map: state.map, files: placed});
       for (const f of Object.keys(placed)) state.placedFiles.add(f);
@@ -1200,6 +1255,7 @@ const mapset = createMapSettings({
     return doc;
   },
   viewCentre: () => { const g = gamePos(controls.target); g[1] = round(heightAt(g[0], g[2])); return g; },
+  reloadMarks: () => reloadMarks(),
   switchToMap: async (name) => {
     if (state.dirty && !confirm('Discard unsaved changes?')) return;
     await fillMaps();

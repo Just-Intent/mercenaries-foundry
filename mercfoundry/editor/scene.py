@@ -179,6 +179,65 @@ class Scene:
                 "layers": layers, "own_script": (self.mod / "scripts" / f"{name.lower()}.lua").exists(),
                 "return": doc.get("return"), "travel": doc.get("travel") or []}
 
+    def map_marks(self, map_name):
+        """What the mod's maps/*.json put on this map, to see and move like
+        objects: travel pilots (on SW, NW), a new map's pilot back and its
+        arrival point. [{kind: travel|return|start, to, index, label, model,
+        position, rotation (editor form)}]."""
+        from ..encounters import _rotation
+        m = map_name.lower()
+        out = []
+        mdir = self.mod / "maps"
+        for f in sorted(mdir.glob("*.json")) if mdir.is_dir() else []:
+            doc = json.loads(f.read_text(encoding="utf-8"))
+            name = f.stem.lower()
+
+            def mark(kind, index, spec, label, model):
+                pos = spec.get("position") or []
+                if len(pos) == 3:
+                    out.append({"kind": kind, "to": name, "index": index, "label": label, "model": model,
+                                "position": [float(v) for v in pos],
+                                "rotation": to_three(_rotation(float(spec.get("heading") or 0)))})
+            for k, t in enumerate(doc.get("travel") or []):
+                if str(t.get("map") or "sw").lower() == m:
+                    mark("travel", k, t, f"Pilot to {name}", "allies_hum_pilot")
+            if name == m:
+                if doc.get("return"):
+                    mark("return", 0, doc["return"], f"Pilot back to {str(doc['return'].get('to') or 'sw').upper()}",
+                         "allies_hum_pilot")
+                if doc.get("start"):
+                    mark("start", 0, doc["start"], f"Where you arrive on {name}", "global_humanmarker")
+        return out
+
+    def save_map_marks(self, marks):
+        """Moved or turned marks (map_marks) written back to maps/<to>.json."""
+        docs = {}
+        for mk in marks:
+            to = str(mk["to"]).lower()
+            if to not in docs:
+                p = self.mod / "maps" / f"{to}.json"
+                if not p.exists():
+                    raise ValueError(f"{to} isn't one of this mod's new maps")
+                docs[to] = json.loads(p.read_text(encoding="utf-8"))
+            doc = docs[to]
+            if mk["kind"] == "travel":
+                travel = doc.get("travel") or []
+                if not 0 <= int(mk["index"]) < len(travel):
+                    raise ValueError(f"{to} has no travel pilot {mk['index']}")
+                spec = travel[int(mk["index"])]
+            elif mk["kind"] in ("return", "start"):
+                spec = doc.get(mk["kind"])
+                if not spec:
+                    raise ValueError(f"{to} has no {mk['kind']}")
+            else:
+                raise ValueError(f"no mark kind {mk['kind']!r}")
+            rows = from_three(mk["rotation"])
+            spec["position"] = [round(float(v), 2) for v in mk["position"]]
+            spec["heading"] = round(math.degrees(math.atan2(-rows[0][2], rows[0][0])), 1)
+        for to, doc in docs.items():
+            (self.mod / "maps" / f"{to}.json").write_text(json.dumps(doc, indent=1) + "\n", encoding="utf-8")
+        return {"files": [f"maps/{to}.json" for to in docs]}
+
     def add_travel_pilot(self, to_map, on_map, position, heading=0):
         """A pilot on a free-roam map (sw, nw) that takes the player to one of
         the mod's new maps: added to maps/<to>.json "travel"."""

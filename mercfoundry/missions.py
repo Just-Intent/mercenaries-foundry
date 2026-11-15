@@ -1539,16 +1539,30 @@ def travel_lua(prefix, pilots, by_map=True):
     return "\n".join(out) + "\n"
 
 
-ARRIVE_LUA = """-- Back from another map: put the player where the pilot that brought them said.
+ARRIVE_LUA = """-- Back from another map: put the player where the pilot that brought them
+-- said. Free roam puts the player at the HQ they last worked for
+-- (Mission_PlayerRespawn) after this runs, so the move waits a moment, and
+-- is made twice in case the first is overridden too.
 function foundry_Arrive()
 local x = Utility_ReadNumberFromScribbleMemory('foundry_arrive_x')
 if x then
-Actor_SetPosition('player0', x, Utility_ReadNumberFromScribbleMemory('foundry_arrive_y'),
-Utility_ReadNumberFromScribbleMemory('foundry_arrive_z'))
+tFoundryArrive = { x, Utility_ReadNumberFromScribbleMemory('foundry_arrive_y'),
+Utility_ReadNumberFromScribbleMemory('foundry_arrive_z') }
 Utility_EraseValueFromScribbleMemory('foundry_arrive_x')
 Utility_EraseValueFromScribbleMemory('foundry_arrive_y')
 Utility_EraseValueFromScribbleMemory('foundry_arrive_z')
+Event_RelativeTimer('foundry_ArriveNow', 'b', 1.0)
+Event_RelativeTimer('foundry_ArriveLast', 'b', 3.0)
 end
+end
+function foundry_ArriveNow()
+if tFoundryArrive then
+Actor_SetPosition('player0', tFoundryArrive[1], tFoundryArrive[2], tFoundryArrive[3])
+end
+end
+function foundry_ArriveLast()
+foundry_ArriveNow()
+tFoundryArrive = nil
 end
 """
 
