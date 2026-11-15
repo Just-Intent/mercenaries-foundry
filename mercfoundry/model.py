@@ -182,6 +182,17 @@ def joint_transforms(joints) -> dict:
     return {name_hash(j.name): resolve(j.name) for j in joints}
 
 
+def skeleton(model_record: bytes) -> list:
+    """A model record's joints (none for a model without SKEL)."""
+    fields = dict(ucfb.iter_chunks(ucfb.unwrap(model_record, b"modl")))
+    return read_joints(fields[b"SKEL"]) if b"SKEL" in fields else []
+
+
+def model_name(model_record: bytes) -> str:
+    fields = dict(ucfb.iter_chunks(ucfb.unwrap(model_record, b"modl")))
+    return fields.get(b"NAME", b"").split(b"\0", 1)[0].decode("latin-1")
+
+
 def decode(model_record: bytes, segments_record: bytes) -> Model:
     fields = dict(ucfb.iter_chunks(ucfb.unwrap(model_record, b"modl")))
     info = fields[b"INFO"]

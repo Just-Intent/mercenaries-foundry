@@ -1358,6 +1358,22 @@ def _add_animation(data, name, template, tracks, result):
                           f"from the clip, built on {template}, added to {lists} load lists")
 
 
+def _apply_bone_moves(data, folder, result):
+    """Models this build moved joints of get clips of their own (bones.py),
+    since the game's clips set every joint's translation."""
+    from . import bones
+    moved, seen = {}, set()
+    for a, r in data.records(model.MODEL):
+        if r.ident not in data.replace.get(a, {}) or r.key in seen:
+            continue
+        seen.add(r.key)
+        old, new = (model.skeleton(data.archive(a).read(r)), model.skeleton(data.current(a, r)))
+        moves = bones.moved_joints(old, new)
+        if moves:
+            moved[model.model_name(data.current(a, r)) or f"{r.key:08X}"] = moves
+    bones.apply(data, moved, result)
+
+
 def _apply_animtables(data, folder, result):
     from . import animtable
     from . import modpack
@@ -2261,7 +2277,7 @@ def _swap_model(data, old, new):
 
 STEPS = (_apply_text, _apply_scripts, _apply_objects, _apply_encounters, _apply_missions,
          _apply_textures, _apply_models, _apply_collision_flags, _apply_layout, _apply_game_squads,
-         _apply_animations, _apply_animtables, _apply_maps, _apply_terrain, _apply_sounds, _apply_sky,
+         _apply_animations, _apply_animtables, _apply_bone_moves, _apply_maps, _apply_terrain, _apply_sounds, _apply_sky,
          _apply_factions)
 
 

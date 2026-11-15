@@ -17,8 +17,9 @@ glTF tool:
   follows: pieces, collision, child joints. An empty node under a game joint
   with a new name becomes a new joint (place and rotation from the file),
   added at the end of the skeleton, e.g. a seat or mount for a template's
-  RiderSeatpoint_* or turret properties. Moving skin bones (bone*) is not
-  fully supported: animations that set a bone's translation override it.
+  RiderSeatpoint_* or turret properties. Every game clip sets each bone's
+  translation, so a mod build gives a model with moved bones clips of its
+  own (bones.py).
 
 Positions go back to the decoded model's axes (X and Z negated: the
 export's half turn, undone), winding kept.
@@ -351,10 +352,6 @@ def read_skeleton(path, model):
             progress = True
     if moved:
         notes.append(f"moved joints: {', '.join(moved[:8])}{' ...' if len(moved) > 8 else ''}")
-        bones = [m for m in moved if m.lower().startswith("bone")]
-        if bones:
-            notes.append(f"moved skin bones ({', '.join(bones[:4])}): animations that set these bones' "
-                         f"translation will override the move")
     if added:
         notes.append(f"new joints: {', '.join(added[:8])}{' ...' if len(added) > 8 else ''}")
     return (joints if moved or added else None), notes
