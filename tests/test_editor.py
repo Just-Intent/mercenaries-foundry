@@ -401,7 +401,7 @@ class GroundLayerEditTests(unittest.TestCase):
             self.assertEqual(sorted(f.name for f in (root / "terrain").glob("*.png")),
                              ["isle.layer01.grass.changes.png", "isle.layer02.rock.changes.png"])
             self.assertEqual((root / "terrain" / "isle.layer02.rock.changes.png").read_bytes(), b"x3")
-            with self.assertRaisesRegex(ValueError, "own"):
+            with self.assertRaisesRegex(ValueError, "came with the map"):
                 sc.remove_ground_layer("isle", 0)
             out = sc.change_ground_layer("isle", 1, "sand")
             self.assertEqual(out["layers"][1]["texture"], "sand")
