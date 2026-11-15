@@ -1543,8 +1543,11 @@ def _apply_terrain(data, folder, result):
                 if job.get("layers"):
                     # Only pixels this mod changed from the game's paint
                     # replace the current paint (other mods' included).
-                    _, base_imgs = terrain_paint.layer_images(terrain.tern_chunks(original))
+                    base_w, base_imgs = terrain_paint.layer_images(terrain.tern_chunks(original))
                     _, cur_imgs = terrain_paint.layer_images({**chunks, **replace})
+                    # layers the table adds start unpainted (the original has none)
+                    for k in range(len(table or [])):
+                        base_imgs.setdefault(k, bytes(base_w * base_w))
                 for index, f in job.get("layers", {}).items():
                     w, h, rgba = png.decode(f.read_bytes())
                     if w != h:

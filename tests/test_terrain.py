@@ -240,6 +240,31 @@ class TerrainTests(unittest.TestCase):
             _, got, _ = terrain.decode_height_units(terrain.tern_chunks(rec))
             self.assertEqual(got[5][6], sample_units()[5][6] + 20)
 
+    def test_mod_build_paints_an_added_layer(self):
+        # paint saved for a layer the mod's table adds: the game's map has no
+        # paint for it to change, so it starts empty (this used to stop the build)
+        with tempfile.TemporaryDirectory() as tmp:
+            d = Path(tmp)
+            (d / "data").mkdir()
+            build_dsk(d / "data" / "assets.dsk", [(name_hash("sw"), name_hash("Terrain"),
+                                                   tern_record(sample_units(), paint=painted_chunks()))])
+            modbuild.new_project(d / "proj")
+            table = terrain_paint.layer_table(terrain.tern_chunks(tern_record(sample_units(), paint=painted_chunks())))
+            (d / "proj" / "terrain" / "sw.layers.json").write_text(json.dumps(
+                {"layers": table + [{"texture": "sand", "scale": 8, "axis": 0}]}))
+            w = SIZE + 1
+            la = bytearray(w * w * 2)
+            for y in range(24, w):
+                for x in range(24, w):
+                    la[2 * (y * w + x)], la[2 * (y * w + x) + 1] = 255, 255
+            (d / "proj" / "terrain" / "sw.layer02.sand.changes.png").write_bytes(png.encode(w, w, bytes(la), 2))
+            modbuild.build(d / "proj", d / "data", d / "out")
+            out = dsk.Archive(d / "out" / "assets.dsk")
+            new = terrain.tern_chunks(out.read(out.records[0]))
+            self.assertEqual(terrain_paint.layer_count(new), 3)
+            self.assertEqual(terrain_paint.layer_images(new)[1][2][30 * w + 30], 255)
+            self.assertEqual(terrain_paint.layer_images(new)[1][2][0], 0)
+
 
 if __name__ == "__main__":
     unittest.main()

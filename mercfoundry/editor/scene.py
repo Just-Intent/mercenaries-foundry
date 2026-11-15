@@ -217,12 +217,19 @@ class Scene:
             from .. import modbuild
             gen = getattr(self, "_terrain_gen", 0)
             data = modbuild._Data(self.data)
+            errors = []
             for p in self.context:
                 data.project = modbuild.project_name(p)
-                if (Path(p) / "maps").is_dir():
-                    modbuild._apply_maps(data, Path(p), modbuild.Result())      # new maps, to see and edit
-                if (Path(p) / "terrain").is_dir():
-                    modbuild._apply_terrain(data, Path(p), modbuild.Result())
+                # A mod's file the build refuses leaves its ground as far as it
+                # got (shown as an error), not every map unloadable.
+                for step, folder in ((modbuild._apply_maps, "maps"), (modbuild._apply_terrain, "terrain")):
+                    if (Path(p) / folder).is_dir():
+                        try:
+                            step(data, Path(p), modbuild.Result())
+                        except (ValueError, KeyError, OSError) as e:
+                            errors.append(f"{data.project}: {e}")
+                            print(f"terrain: {data.project}: {e}", flush=True)
+            self.terrain_errors = errors
             # A save during the build makes it stale: use it this once, keep nothing.
             if gen != getattr(self, "_terrain_gen", 0):
                 return data

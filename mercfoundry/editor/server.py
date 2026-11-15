@@ -152,6 +152,7 @@ def make_handler(scene: Scene, mod_name: str, live: Live = None):
                         edits = scene.load_edits()
                         edits["placed"] = scene.load_placed(path[len("/api/objects/"):])
                         edits["layer_file"] = scene.editor_layer_file(path[len("/api/objects/"):])
+                        edits["terrain_errors"] = getattr(scene, "terrain_errors", [])
                     return self.send(200, {"objects": objs, "edits": edits})
                 if path.startswith("/api/bounds/"):
                     with objects_lock:

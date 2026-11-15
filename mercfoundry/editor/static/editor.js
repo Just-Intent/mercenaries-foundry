@@ -404,8 +404,11 @@ async function loadMap(name) {
   minimap.setWater(waterAreas ? waterAreas() : []);
   refreshChanges();
   setDirty(false);
-  const summary = `${state.records.length} objects, ${items} paths and zones, ${encounters} encounters`;
-  status(`${summary}; reading other mods...`);
+  // a mod's ground file the build refuses: the rest of the map still loads, and this says why
+  const groundErrors = (objs.edits.terrain_errors || []).join('; ');
+  const summary = `${state.records.length} objects, ${items} paths and zones, ${encounters} encounters` +
+    (groundErrors ? `; GROUND CHANGES NOT ALL SHOWN (the build would stop on this too): ${groundErrors}` : '');
+  status(`${summary}; reading other mods...`, !!groundErrors);
   loadContext(name, summary);      // in the background: it can take a while the first time
 }
 
