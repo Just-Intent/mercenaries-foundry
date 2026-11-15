@@ -351,7 +351,7 @@ Surface types aren't in the archive. Each level's `ConfigFile` (from `levels.ini
 
 - The grid-index tail (`0x00FF8040`): no retail archive uses it.
 - Models: the extra 8 bytes of 28-byte vertices, and `MTRL` words 0, 2 and 4–6.
-- Collision: what flag bit 4 does; whether rock meshes' mixed results are their collision meshes being smaller than what's drawn; what the walker's carried value (`60`-`68`) is for; 2 of 176 convex hulls have a point up to 13 cm outside one plane.
+- Collision: what flag bit 4 does; rock meshes' mixed bullet results, which the data doesn't explain (checked 2026-11-15 on all 1,875 rock objects: every rock model but two rock-shrub clumps has a triangle mesh with the bullet bit, the same size as what's drawn, closed but for its rim on the ground; meshes are wound at random, but so are vehicles' (the Humvee's bullet-hit shape is such a mesh), so the ray must hit triangles from both sides). Retest with shots clear of the ground; what the walker's carried value (`60`-`68`) is for; 2 of 176 convex hulls have a point up to 13 cm outside one plane.
 - Terrain: the meaning of `INFO`'s 3 trailing floats and of `ROTN`. What animation-table `PRIO` and `FLGS` values mean. Whether DXT2 textures are premultiplied (we treat them as DXT3).
 - `INFO` byte 0 in scripts; `TNAM` and `INFO` in world layers.
 - What `num_components` counts exactly.

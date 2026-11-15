@@ -147,7 +147,7 @@
 - Python 3.12.10 alongside 3.13. The port's `.venv` has its pinned CMake 3.31.6, Ninja 1.13.0 and Capstone 5.0.6.
 
 ## Next steps
-1. Collision flags: what bit 4 does; rock meshes' mixed bullet results (likely collision meshes smaller than drawn).
+1. Collision flags: what bit 4 does; rock meshes' mixed bullet results (the data rules out size, holes, flags and winding: see dsk.md; retest in game).
 2. Moving skin bones on characters (animations override bone translations); what animation-table priorities and flags do.
 3. Function map: name more engine functions (actors, AI commands, missions); find the path from a vehicle actor to its drivetrain, so plugins can change handling live with the setters.
 4. Overlay: spawning and object editing from the in-game panel (now only in the window).
