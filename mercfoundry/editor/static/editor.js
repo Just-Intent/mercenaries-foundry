@@ -1245,6 +1245,8 @@ const terrainEdit = createTerrainEditor({
   terrain: () => ({mesh: terrainMesh, meta: state.terrain.meta, heights: state.terrain.heights}),
   onHeights: () => minimap.setTerrain(state.terrain.meta, state.terrain.heights),
   reloadGround: () => applyGround(terrainMesh, state.map, scene.fog, {...state.terrain.meta, heights: state.terrain.heights}),
+  // a stroke's heights to the running game, when it's on this map (Foundry Console's "heights")
+  liveHeights: ({samples, check}) => live.heights(samples, check),
 });
 // Missions: contracts, their objectives and their layer's squads and zones.
 const missions = createMissions({
@@ -1329,6 +1331,16 @@ const encs = createEncounters({
   layerFile: () => state.layerFile,
   objectNames: () => new Set(state.records.filter((r) => !r.removed)
     .map((r) => (r.copyName || r.name || '').toLowerCase()).filter(Boolean)),
+});
+// A line of Lua to the running game (its reply shows under Game replies).
+$('live-lua').addEventListener('keydown', (e) => {
+  if (e.key !== 'Enter') return;
+  const line = $('live-lua').value.trim();
+  if (!line) return;
+  if (!live.lua(line)) return status('Turn the live link on with the game running first', true);
+  $('game-log-title').hidden = false;
+  status(`Sent to the game: ${line}`);
+  $('live-lua').select();
 });
 const live = createLive({
   scene, threePos, heightAt, status, $, lookAt, heading,

@@ -193,11 +193,23 @@ export function createTerrainEditor(ctx) {
     if (st.stroke) st.pointer = e;
     return true;
   }
+  // Height samples as the game's live link takes them: [column, row, height
+  // units], and a check: one sample's height before the change, which the game
+  // must have there too (so a stroke on another map doesn't change this one's).
+  function liveSamples(before) {
+    const t = terrain();
+    const {size, step} = t.meta;
+    const cell = (i, h) => [i % size, Math.floor(i / size), Math.round(h / step)];
+    const samples = [...before.keys()].map((i) => cell(i, t.heights[i]));
+    const [first, old] = before.entries().next().value || [];
+    return {samples, check: first === undefined ? null : cell(first, old)};
+  }
   function up() {
     if (!st.stroke) return st.on && st.tool === 'road';
     if (st.stroke.heights.size || st.stroke.paint.size) st.undo.push(st.stroke);
     if (st.undo.length > 50) st.undo.shift();
     if (st.stroke.heights.size) ctx.onHeights && ctx.onHeights();
+    if (st.stroke.heights.size && ctx.liveHeights) ctx.liveHeights(liveSamples(st.stroke.heights));
     st.stroke = null;
     $('terrain-undo').disabled = !st.undo.length;
     return true;
@@ -207,9 +219,14 @@ export function createTerrainEditor(ctx) {
     const s = st.undo.pop();
     if (!s) return;
     const h = terrain().heights, g = terrain().mesh.userData.ground;
+    const before = new Map([...s.heights.keys()].map((i) => [i, h[i]]));     // what the game has now
     for (const [i, v] of s.heights) { h[i] = v; st.changed.add(i); }
     if (g) for (const [k, v] of s.paint) { g.paint[k] = v; st.painted.add(k); }
-    if (s.heights.size) { refreshMesh(s.heights.keys()); ctx.onHeights && ctx.onHeights(); }
+    if (s.heights.size) {
+      refreshMesh(s.heights.keys());
+      ctx.onHeights && ctx.onHeights();
+      if (ctx.liveHeights) ctx.liveHeights(liveSamples(before));
+    }
     if (s.paint.size) refreshPaint();
     setDirty(true);
     $('terrain-undo').disabled = !st.undo.length;

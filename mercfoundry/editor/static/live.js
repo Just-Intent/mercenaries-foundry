@@ -172,7 +172,24 @@ export function createLive(ctx) {
                              body: JSON.stringify({commands: [{op: 'loaded'}]})});
   }
 
-  return {objectMoved, objectRemoved, spawn, copy, moveNamed, removeNamed, askLoaded,
+  // Terrain heights and Lua, straight to the game (Foundry Console 0.122+:
+  // older consoles answer "unknown command").
+  function send(commands) {
+    if (!st.on || !st.connected) return false;
+    fetch('/api/live/send', {method: 'POST', headers: {'Content-Type': 'application/json'},
+                             body: JSON.stringify({commands})});
+    return true;
+  }
+  // The game takes them only if it has the check sample's height (before the
+  // change) there: the game reports no map name, so that's how it knows it's
+  // the map being edited.
+  function heights(samples, check) {
+    if (!samples.length || !check || !st.player) return false;
+    return send([{op: 'heights', samples, check}]);
+  }
+  function lua(line) { return send([{op: 'lua', line}]); }
+
+  return {objectMoved, objectRemoved, spawn, copy, moveNamed, removeNamed, askLoaded, heights, lua,
           player: () => (st.on && st.connected ? st.player : null),
           loaded: () => st.loaded || null, isOn: () => st.on && st.connected};
 }

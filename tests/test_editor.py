@@ -447,3 +447,20 @@ class ModManagementTests(unittest.TestCase):
             self.assertEqual(sync.read_loader(game), [])
             with self.assertRaises(ValueError):
                 sc.switch_mod("../x")
+
+
+class LiveCommandTests(unittest.TestCase):
+    def test_lua_and_heights_lines(self):
+        from mercfoundry.editor.live import command_line
+        self.assertEqual(command_line({"op": "lua", "line": "Utility_ReadLevelFile('x')\n"}),
+                         "lua Utility_ReadLevelFile('x')")
+        with self.assertRaises(ValueError):
+            command_line({"op": "lua", "line": " "})
+        samples = [[k, 2 * k, 100 + k] for k in range(45)]
+        text = command_line({"op": "heights", "check": [0, 0, 99], "samples": samples})
+        lines = text.split("\n")
+        self.assertEqual(len(lines), 2)                       # 40 a line, each with the check
+        self.assertTrue(all(line.startswith("heights 0 0 99 ") for line in lines))
+        self.assertEqual(len(lines[0].split()), 4 + 3 * 40)
+        self.assertTrue(lines[1].endswith("44 88 144"))
+        self.assertTrue(all(len(line) < 640 for line in lines))

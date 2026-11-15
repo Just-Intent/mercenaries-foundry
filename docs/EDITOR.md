@@ -108,6 +108,12 @@ toolkit bundle run it the same way: `foundry\python\python.exe foundry\mercfound
   turning, undoing or removing a game object also does it in the running game
   (drags send when they settle); the status line shows the game's replies. The
   saved mod files still decide what the game has when it next starts.
+  - Live terrain and Lua (with a Foundry Console built from 0.123's source,
+    not yet tested in game): with Live on, each Raise, Lower, Flatten or
+    Smooth stroke (and its undo) changes the running game's ground as well,
+    when the game is on the map being edited; **Lua in the game** (under
+    Game replies) runs a line of Lua there, e.g.
+    `Utility_ReadLevelFile('editor_test_sw')` to load a built layer.
   - Live spawning: new squad members and copies of named objects spawn in the
     game too (the game spawns by name, from templates loaded where the player
     is), and are then moved and removed live by their names. Opening **New

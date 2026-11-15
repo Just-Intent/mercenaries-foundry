@@ -562,24 +562,30 @@ static uint32_t lua_call(uint32_t fn, unsigned n, const uint32_t *args)
     return guest(fn, 0, n, args, &c) ? c.eax : 0;
 }
 
-static void run_lua(int serial, const char *line)
+/* Run a line of Lua in a loaded script's state (serial 0: the newest), as an
+ * expression when it is one. result gets its values, the error, or why it
+ * couldn't run. Returns 0 if it ran, 1 if Lua raised an error, -1 if it
+ * couldn't run. *expression: whether it ran as an expression. */
+static int lua_line(int serial, const char *line, char *result, size_t rsize, int *expression)
 {
     Script target = {0};
+    *expression = 0;
+    result[0] = 0;
     EnterCriticalSection(&lock);
     for (unsigned i = 0; i < script_count; i++)
         if ((serial == 0 && scripts[i].serial > target.serial) || (serial > 0 && scripts[i].serial == (unsigned)serial))
             target = scripts[i];
     LeaveCriticalSection(&lock);
-    if (!target.L) { append_output("> %s\r\n  no script loaded yet", line); return; }
+    if (!target.L) { snprintf(result, rsize, "no script loaded yet"); return -1; }
     /* Only use a state the game still knows. */
     uint32_t args[4];
     args[0] = target.L;
     if (lua_call(MF_FN_LuaScript_FromState, 1, args) != target.object) {
-        append_output("> %s\r\n  script #%u has been unloaded; pick another", line, target.serial);
-        return;
+        snprintf(result, rsize, "script #%u has been unloaded; pick another", target.serial);
+        return -1;
     }
     uint32_t scratch, size;
-    if (!host->guest_scratch(host->context, &scratch, &size) || size < 4096) { append_output("no scratch memory"); return; }
+    if (!host->guest_scratch(host->context, &scratch, &size) || size < 4096) { snprintf(result, rsize, "no scratch memory"); return -1; }
     static const char prefix[] =
         "local function __out(...) local s = '' for i = 1, arg.n do if i > 1 then s = s .. '   ' end "
         "s = s .. tostring(arg[i]) end return s end return __out(";
@@ -588,7 +594,7 @@ static void run_lua(int serial, const char *line)
     host->write_guest(host->context, name, "=console", 9);
     uint32_t top = lua_call(MF_FN_lua_gettop, 1, args);
     /* Try it as an expression (show its values), then as a statement. */
-    int expression = 1;
+    *expression = 1;
     int len = snprintf(chunk, sizeof(chunk), "%s%s\n)", prefix, line);
     host->write_guest(host->context, text, chunk, (size_t)len + 1);
     uint32_t load[4] = {target.L, text, (uint32_t)len, name};
@@ -596,7 +602,7 @@ static void run_lua(int serial, const char *line)
     if (status) {
         uint32_t settop[2] = {target.L, top};
         lua_call(MF_FN_lua_settop, 2, settop);
-        expression = 0;
+        *expression = 0;
         len = snprintf(chunk, sizeof(chunk), "%s", line);
         host->write_guest(host->context, text, chunk, (size_t)len + 1);
         load[2] = (uint32_t)len;
@@ -606,12 +612,21 @@ static void run_lua(int serial, const char *line)
         uint32_t pcall[4] = {target.L, 0, 1, 0};
         status = lua_call(MF_FN_lua_pcall, 4, pcall);
     }
-    char result[1024];
     uint32_t tostr[2] = {target.L, (uint32_t)-1};
-    read_text(lua_call(MF_FN_lua_tostring, 2, tostr), result, sizeof(result));
+    read_text(lua_call(MF_FN_lua_tostring, 2, tostr), result, rsize);
     uint32_t settop[2] = {target.L, top};
     lua_call(MF_FN_lua_settop, 2, settop);
-    if (status) append_output("> %s\r\n  error: %s", line, result[0] ? result : "(no message)");
+    if (status && !result[0]) snprintf(result, rsize, "(no message)");
+    return status ? 1 : 0;
+}
+
+static void run_lua(int serial, const char *line)
+{
+    char result[1024];
+    int expression = 0;
+    int status = lua_line(serial, line, result, sizeof(result), &expression);
+    if (status < 0) append_output("> %s\r\n  %s", line, result);
+    else if (status) append_output("> %s\r\n  error: %s", line, result);
     else if (expression) append_output("> %s\r\n  = %s", line, result);
     else append_output("> %s\r\n  ok", line);
 }
@@ -1503,11 +1518,147 @@ static void live_report_loaded(void)
 static float teleport_to[3];
 static double teleport_check;        /* seconds until checking a teleport stuck */
 
+/* ---------- live terrain heights ----------
+ * The loaded terrain's heights are heap buffers the game reads directly
+ * (Terrain_GetCellHeight 0x146A10, the physics heightfield 0x146F30, the
+ * ground sampler 0x1F1530): byte per cell, block-major in block x block
+ * blocks, height = ((byte << shift) + base) * step with {u8 shift, pad,
+ * s16 base} per block. Changing them moves collision at once; the drawn
+ * ground is patches built on demand (Terrain_BuildPatch 0x21D650) and kept
+ * in a 64-slot cache at *(g_Terrain + 0x14): u16 keys at +8, (patch a << 8)
+ * + patch b, 0xFFFF for empty, and a dirty byte per slot at +0xC8. The game
+ * empties a slot the same way (0x1F0080: key 0xFFFF, dirty 0), so the next
+ * frame builds the patch again from the new heights. Untested in game. */
+#define TERRAIN_CACHE_PTR (TERRAIN_OBJECT + 0x14u)
+#define TERRAIN_PATCH_SHIFT 0x006432DCu     /* log2 of cells per patch (0x1EFFE0) */
+#define TERRAIN_PATCHES 0x0064330Cu         /* patches per side (0x21E040's bound) */
+#define CACHE_SLOTS 64
+#define MAX_HEIGHT_EDITS 64
+
+static void live_heights(char **next)
+{
+    uint32_t heights = 0, blocks = 0;
+    int16_t size = 0, block = 0;
+    host->read_guest(host->context, TERRAIN_HEIGHTS, &heights, 4);
+    host->read_guest(host->context, TERRAIN_BLOCKS, &blocks, 4);
+    host->read_guest(host->context, TERRAIN_SIZE, &size, 2);
+    host->read_guest(host->context, TERRAIN_BLOCK, &block, 2);
+    if (!heights || !blocks || size <= 0 || block <= 0 || block > 64 || size % block) {
+        live_result("heights: no terrain loaded here");
+        return;
+    }
+    /* The check: a cell and its height before the change, as the editor's map
+     * has it. The game reports no map name, so this is how a stroke on another
+     * map is refused here (within the block's rounding). */
+    {
+        char *c = strtok_s(NULL, " ", next), *r = c ? strtok_s(NULL, " ", next) : NULL,
+             *u = r ? strtok_s(NULL, " ", next) : NULL;
+        if (!u) { live_result("heights: no check sample"); return; }
+        int cc = atoi(c) & (size - 1), cr = atoi(r) & (size - 1), want = atoi(u);
+        int blk = (cr / block) * (size / block) + cc / block;
+        uint8_t byte = 0, shift = 0;
+        int16_t base = 0;
+        host->read_guest(host->context, heights + (uint32_t)(blk * block * block + (cr % block) * block + cc % block), &byte, 1);
+        host->read_guest(host->context, blocks + (uint32_t)blk * 4, &shift, 1);
+        host->read_guest(host->context, blocks + (uint32_t)blk * 4 + 2, &base, 2);
+        int have = ((int)byte << (shift & 31)) + base;
+        if (abs(have - want) > (1 << (shift & 31))) {
+            live_result("heights: the game's ground isn't the editor's map here (cell %d,%d is %d, the editor has %d); "
+                        "nothing changed", cc, cr, have, want);
+            return;
+        }
+    }
+    int cols[MAX_HEIGHT_EDITS], rows[MAX_HEIGHT_EDITS], units[MAX_HEIGHT_EDITS], n = 0;
+    for (char *t; n < MAX_HEIGHT_EDITS && (t = strtok_s(NULL, " ", next)) != NULL; n++) {
+        char *r = strtok_s(NULL, " ", next), *u = strtok_s(NULL, " ", next);
+        if (!r || !u) break;
+        cols[n] = atoi(t) & (size - 1);
+        rows[n] = atoi(r) & (size - 1);
+        units[n] = atoi(u);
+    }
+    if (!n) return;
+    /* Each block touched: decode its cells, set the new ones, and encode it
+     * again with the smallest shift that fits (as the build does). */
+    int bpr = size / block, cells = block * block, done_blocks = 0;
+    static uint8_t bytes[64 * 64];
+    static int values[64 * 64];
+    int handled[MAX_HEIGHT_EDITS] = {0};
+    for (int i = 0; i < n; i++) {
+        if (handled[i]) continue;
+        int blk = (rows[i] / block) * bpr + cols[i] / block;
+        uint32_t at = heights + (uint32_t)(blk * cells), info = blocks + (uint32_t)blk * 4;
+        uint8_t shift = 0;
+        int16_t base = 0;
+        host->read_guest(host->context, at, bytes, (size_t)cells);
+        host->read_guest(host->context, info, &shift, 1);
+        host->read_guest(host->context, info + 2, &base, 2);
+        for (int k = 0; k < cells; k++) values[k] = ((int)bytes[k] << (shift & 31)) + base;
+        for (int j = i; j < n; j++) {
+            if ((rows[j] / block) * bpr + cols[j] / block != blk) continue;
+            values[(rows[j] % block) * block + cols[j] % block] = units[j];
+            handled[j] = 1;
+        }
+        int lo = values[0], hi = values[0];
+        for (int k = 1; k < cells; k++) { if (values[k] < lo) lo = values[k]; if (values[k] > hi) hi = values[k]; }
+        if (lo < -32768 || hi > 32767) { live_result("heights: a value is out of range"); continue; }
+        uint8_t ns = 0;
+        while (((hi - lo) >> ns) > 255) ns++;
+        for (int k = 0; k < cells; k++) bytes[k] = (uint8_t)((values[k] - lo) >> ns);
+        int16_t nb = (int16_t)lo;
+        host->write_guest(host->context, at, bytes, (size_t)cells);
+        host->write_guest(host->context, info, &ns, 1);
+        host->write_guest(host->context, info + 2, &nb, 2);
+        done_blocks++;
+    }
+    /* The drawn patches over the changed cells and their neighbours (normals
+     * and seams), either way round (which patch coordinate is the key's high
+     * byte isn't settled): emptied so they're built again. */
+    uint32_t cache = 0, pshift = 0, patches = 0;
+    host->read_guest(host->context, TERRAIN_CACHE_PTR, &cache, 4);
+    host->read_guest(host->context, TERRAIN_PATCH_SHIFT, &pshift, 4);
+    host->read_guest(host->context, TERRAIN_PATCHES, &patches, 4);
+    uint16_t keys[CACHE_SLOTS];
+    int redrawn = 0, sane = cache && pshift < 8 && patches > 0 && patches <= 256 &&
+                  host->read_guest(host->context, cache + 8, keys, sizeof(keys));
+    for (int k = 0; sane && k < CACHE_SLOTS; k++)      /* only a cache that looks like one */
+        if (keys[k] != 0xFFFF && ((uint32_t)(keys[k] >> 8) >= patches || (uint32_t)(keys[k] & 0xFF) >= patches)) sane = 0;
+    if (sane) {
+        for (int k = 0; k < CACHE_SLOTS; k++) {
+            if (keys[k] == 0xFFFF) continue;
+            int a = keys[k] >> 8, b = keys[k] & 0xFF, hit = 0;
+            for (int i = 0; i < n && !hit; i++) {
+                int pc = cols[i] >> pshift, pr = rows[i] >> pshift;
+                hit = (abs(a - pc) <= 1 && abs(b - pr) <= 1) || (abs(a - pr) <= 1 && abs(b - pc) <= 1);
+            }
+            if (!hit) continue;
+            uint16_t empty = 0xFFFF;
+            uint8_t clean = 0;
+            host->write_guest(host->context, cache + 8 + (uint32_t)k * 2, &empty, 2);
+            host->write_guest(host->context, cache + 0xC8 + (uint32_t)k, &clean, 1);
+            redrawn++;
+        }
+    }
+    live_result(sane ? "heights: %d samples in %d blocks; %d drawn patches rebuilt"
+                     : "heights: %d samples in %d blocks (the drawn ground's cache wasn't where expected: it shows when you move away and back)",
+                n, done_blocks, redrawn);
+}
+
 static void live_run(char *line)
 {
     char *next = NULL;
     char *op = strtok_s(line, " ", &next);
     if (!op) return;
+    if (!strcmp(op, "lua")) {
+        /* a line of Lua in the newest script's state (Utility_ReadLevelFile, weather, music...) */
+        char result[400];
+        int expression = 0;
+        const char *code = next ? next : "";
+        int status = lua_line(0, code, result, sizeof(result), &expression);
+        live_result(status < 0 ? "lua: %s" : status ? "lua error: %s" : expression ? "lua = %s" : "lua ok%s",
+                    status == 0 && !expression ? "" : result);
+        return;
+    }
+    if (!strcmp(op, "heights")) { live_heights(&next); return; }
     if (!strcmp(op, "teleport")) {
         float p[3];
         for (int i = 0; i < 3; i++) { char *t = strtok_s(NULL, " ", &next); p[i] = t ? (float)atof(t) : 0; }

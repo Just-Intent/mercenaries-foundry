@@ -12,6 +12,11 @@ lines keep the plugin's side (C) simple:
   editor -> plugin   move <name|-> <model|-> <n> <x y z> * n  <x> <y> <z> <heading>
                      remove <name|-> <model|-> <n> <x y z> * n
                      teleport <x> <y> <z>
+                     lua <a line of Lua>      (run in the newest script's state)
+                     heights <check col> <row> <units> <col row units> * up to 40
+                                              (terrain heights, in height units;
+                                              refused unless the game has the check
+                                              cell's height: the right map)
                      spawn <template> <name> <x> <y> <z> <heading>
                      loaded                   (which templates are loaded here)
 
@@ -120,4 +125,20 @@ def command_line(c: dict) -> str:
         return "loaded"
     if op == "teleport":
         return "teleport " + " ".join(_num(v) for v in c["position"])
+    if op == "lua":
+        line = " ".join(str(c.get("line") or "").split())          # one line
+        if not line:
+            raise ValueError("lua needs a line of Lua")
+        if len(line) > 600:
+            raise ValueError("a live Lua line is 600 characters at most")
+        return "lua " + line
+    if op == "heights":
+        check = [int(v) for v in c["check"]]
+        samples = [[int(v) for v in s] for s in c.get("samples") or []]
+        if len(check) != 3 or any(len(s) != 3 for s in samples):
+            raise ValueError("heights: samples and check are [column, row, units]")
+        head = "heights " + " ".join(map(str, check))
+        # lines of 40 samples, each with the check (the plugin's lines are 640 characters)
+        return "\n".join(head + " " + " ".join(f"{a} {b} {u}" for a, b, u in samples[k:k + 40])
+                         for k in range(0, len(samples), 40))
     raise ValueError(f"unknown live command {op!r}")
