@@ -139,3 +139,33 @@ class LiveLinkTests(unittest.TestCase):
         self.assertEqual(live.poll(""), "respawn - gate 1 1.000 2.000 3.000 fmv_x 4.000 5.000 6.000 0.000\n")
         live.send([{"op": "inspect", "position": [1, 2, 3], "radius": 10}])
         self.assertEqual(live.poll(""), "inspect 1.000 2.000 3.000 10.000\n")
+
+
+class MissionGiverSaveTests(unittest.TestCase):
+    """The Missions panel's giver: the HQ contact, someone placed on the map,
+    or no one, written as the mission file's "contact"."""
+
+    def save(self, d, giver):
+        import json
+        from pathlib import Path
+        from mercfoundry.editor.scene import Scene
+        sc = Scene.__new__(Scene)
+        sc.mod = Path(d)
+        sc.save_mission("sw", {"faction": "china", "number": 9, "title": "T", "objectives": [], "giver": giver})
+        return json.loads((Path(d) / "missions" / "sw_china9.json").read_text(encoding="utf-8"))
+
+    def test_givers(self):
+        import tempfile
+        with tempfile.TemporaryDirectory() as d:
+            doc = self.save(d, {"mode": "placed", "template": "template_civ_civilian01", "name": "Mr Lee",
+                                "prompt": "", "position": [10.123, 2, -30], "heading": 90})
+            self.assertEqual(doc["contact"], {"name": "Mr Lee", "position": [10.12, 2.0, -30.0], "heading": 90.0,
+                                              "template": "template_civ_civilian01"})
+            doc = self.save(d, {"mode": "hq", "name": "Mr Lee", "prompt": "Talk"})
+            self.assertEqual(doc["contact"], {"name": "Mr Lee", "prompt": "Talk"})     # placement dropped
+            doc = self.save(d, {"mode": "none"})
+            self.assertIs(doc["contact"], False)
+            doc = self.save(d, {"mode": "hq", "name": "", "prompt": ""})
+            self.assertNotIn("contact", doc)                                         # the default HQ contact
+            with self.assertRaises(ValueError):
+                self.save(d, {"mode": "placed"})

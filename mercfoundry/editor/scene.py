@@ -275,7 +275,70 @@ class Scene:
         taken = self._arc_numbers(m)
         nxt = {f: max([8] + sorted(taken[f])) + 1 for f in ms.FACTIONS}
         return {"missions": out, "next": nxt, "factions": list(ms.FACTIONS),
-                "squads": shared_squads, "zones": shared_zones}
+                "squads": shared_squads, "zones": shared_zones, "hq": self._hq_points(m)}
+
+    def _mission_titles(self):
+        """{string key: text} of the game's mission titles (MissionInfo.MissionTitle.*)."""
+        if not hasattr(self, "_titles"):
+            from .. import registry
+            self._titles = {}
+            for a in self.archives:
+                if a.path.name.lower() != "english.dsk":
+                    continue
+                for r in a.records:
+                    if r.kind == name_hash("registry"):
+                        try:
+                            strings = registry.Registry(a.read(r)).strings()
+                        except Exception:          # not a text registry
+                            continue
+                        self._titles.update({k: v for k, v in strings.items()
+                                             if k.lower().startswith("missioninfo.missiontitle.")})
+        return self._titles
+
+    def _hq_points(self, map_name):
+        """For the giver's "In the faction's HQ contract sequence": per faction,
+        its retail contracts on the map in arc order ({pos, number, chapter,
+        title}) and the points a mission can go ({after, chapter, default,
+        label}; hqsequence.plan accepts each)."""
+        from .. import missions as ms, hqsequence as hq
+        self._arc_numbers(map_name)                      # reads util_misc once
+        if map_name not in hq.MAP_CHAPTERS:
+            return {}
+        ini_path = self.data / "mission.ini"
+        ini = ini_path.read_bytes().decode("latin-1") if ini_path.exists() else ""
+        titles = self._mission_titles()
+        out = {}
+        for f in ms.FACTIONS:
+            try:
+                arc = ms.arc(self._arcs, f, map_name)
+            except ValueError:
+                continue
+            contracts = hq.retail_contracts(arc, ini, map_name, f, titles)
+            points = []
+            for after in range(0, len(contracts) + 1):
+                try:
+                    default = hq.plan(f"{map_name}_{f}0", {"hq": {"after": after}}, ms.parse_id)["chapter"]
+                except ValueError:
+                    default = None
+                for chapter in hq.MAP_CHAPTERS[map_name]:
+                    try:
+                        hq.plan(f"{map_name}_{f}0", {"hq": {"after": after, "chapter": chapter}}, ms.parse_id)
+                    except ValueError:
+                        continue
+                    if after == 0:
+                        what = "Before contract 1"
+                        c = contracts[0] if contracts else None
+                    else:
+                        what = f"After contract {after}"
+                        c = contracts[after - 1]
+                    if c and c.get("title"):
+                        what += f" ({c['title']})"
+                    when = (f"start of chapter {chapter}" if after and c and c["chapter"] != chapter
+                            else f"chapter {chapter}")
+                    points.append({"after": after, "chapter": chapter, "default": chapter == default,
+                                   "label": f"{what}, {when}"})
+            out[f] = {"contracts": contracts, "points": points}
+        return out
 
     def save_mission(self, map_name, mission):
         """Write missions/<id>.json from the editor's fields (title,
@@ -302,15 +365,89 @@ class Scene:
             doc.setdefault("ini", {})["ContractFee"] = int(mission["fee"])
         if mission.get("bonus") is not None:
             doc.setdefault("ini", {})["BonusFee"] = int(mission["bonus"])
-        doc["objectives"] = [{k: v for k, v in o.items() if k in ("type", "text", "squad", "targets", "zone", "marker", "bonus")
-                              and not (k == "bonus" and not v)}
+        doc["objectives"] = [{k: v for k, v in o.items() if k in ("type", "text", "squad", "targets", "zone", "marker", "bonus", "reveal")
+                              and not (k == "bonus" and not v) and not (k == "reveal" and (v in ("", "start") or not o.get("bonus")))}
                              for o in mission.get("objectives") or []]
+        if "radio" in mission:
+            radio = [{k: v for k, v in r.items() if k in ("when", "sound", "text") and v not in ("", None)}
+                     for r in mission.get("radio") or []]
+            radio = [r for r in radio if r.get("sound") or r.get("text")]     # empty lines aren't kept
+            if radio:
+                doc["radio"] = radio
+            else:
+                doc.pop("radio", None)
+        if "fail" in mission:
+            fails = [{k: v for k, v in c.items() if k in ("type", "text", "squad", "targets", "seconds", "zone", "until")
+                      and v not in ("", None)} for c in mission.get("fail") or []]
+            for k, c in enumerate(fails, 1):
+                if c.get("type") not in ms.FAIL_TYPES:
+                    raise ValueError(f"fail condition {k}: unknown type {c.get('type')!r}")
+            if fails:
+                doc["fail"] = fails
+            else:
+                doc.pop("fail", None)
         start = mission.get("start")
         if start and start.get("position"):
             doc["start"] = {"position": [round(float(v), 2) for v in start["position"]],
                             "heading": round(float(start.get("heading", 0)), 1)}
         elif "start" in mission:
             doc.pop("start", None)
+        if "requires" in mission:
+            req = [str(r).lower() for r in mission.get("requires") or [] if str(r).lower() != asset_id]
+            if req:
+                doc["requires"] = req
+            else:
+                doc.pop("requires", None)
+        giver = mission.get("giver")
+        if giver:
+            # Who offers it: the HQ contact (name and prompt optional), someone
+            # placed on the map, or no one (the mission file's "contact": false).
+            mode = giver.get("mode", "hq")
+            if mode == "sequence":
+                # The faction's own HQ bouncer offers it between its retail
+                # contracts (the mission file's "hq"); an HQ contact as well
+                # only if asked for.
+                from .. import hqsequence
+                seq = {"after": int(giver.get("after") or 0)}
+                if giver.get("chapter") not in (None, ""):
+                    try:
+                        default = hqsequence.plan(asset_id, {"hq": seq}, ms.parse_id)["chapter"]
+                    except ValueError:
+                        default = None             # only valid with the chapter given
+                    if int(giver["chapter"]) != default:
+                        seq["chapter"] = int(giver["chapter"])
+                hqsequence.plan(asset_id, {"hq": seq}, ms.parse_id)          # a point the HQ reaches
+                doc["hq"] = seq
+                self._require("0.74")
+            else:
+                doc.pop("hq", None)
+            if mode == "sequence" and not giver.get("contact"):
+                doc["contact"] = False
+            elif mode == "none":
+                doc["contact"] = False
+            else:
+                old = doc.get("contact") if isinstance(doc.get("contact"), dict) else {}
+                c = {k: v for k, v in old.items() if k not in ("position", "heading", "template", "side", "marker")}
+                for k in ("name", "prompt"):
+                    if (giver.get(k) or "").strip():
+                        c[k] = giver[k].strip()
+                    else:
+                        c.pop(k, None)
+                if mode == "placed":
+                    if not giver.get("position"):
+                        raise ValueError("place the mission giver first")
+                    c["position"] = [round(float(v), 2) for v in giver["position"]]
+                    c["heading"] = round(float(giver.get("heading", 0)), 1)
+                    if (giver.get("template") or "").strip():
+                        c["template"] = giver["template"].strip()
+                    if giver.get("side") and giver["side"] != "civ":
+                        c["side"] = giver["side"]
+                    if giver.get("marker") and giver["marker"] != "gold":
+                        c["marker"] = giver["marker"]
+                if c:
+                    doc["contact"] = c
+                else:
+                    doc.pop("contact", None)
         p.parent.mkdir(parents=True, exist_ok=True)
         p.write_text(json.dumps(doc, indent=1) + "\n", encoding="utf-8")
         lp = self.mod / "encounters" / f"{asset_id}.json"

@@ -19,11 +19,12 @@ How the game runs a mission (all in its scripts, established from retail):
 
 A mod mission, missions/<map>_<faction><number>.json, e.g. sw_allies9.json:
 
-  {"after": 8, "ini": {"ContractFee": 50000, "MissionTitleDbKey": "..."}}
+  {"hq": {"after": 2}, "ini": {"ContractFee": 50000, "MissionTitleDbKey": "..."}}
 
-adds the number to the faction's arc on that map (after asset "after", else
-at the end) and a mission.ini section copied from the faction's first
-mission on the map with "ini" applied.  The mod supplies the script
+adds the number at the end of the faction's arc on that map and a
+mission.ini section copied from the faction's first mission on the map with
+"ini" applied. "hq" has the faction's own HQ bouncer offer it after that
+many of its retail contracts (see hqsequence).  The mod supplies the script
 (scripts/sw_allies9.lua) and the layer (encounters/sw_allies9.json).
 """
 
@@ -64,16 +65,17 @@ def _arc_match(text, faction, map_):
     return m
 
 
-def add_to_arc(script_text, faction, map_, number, after=None):
-    """util_misc text with the number in the arc (unchanged if it's there)."""
+def add_to_arc(script_text, faction, map_, number):
+    """util_misc text with the number at the end of the arc (unchanged if
+    it's there). Always at the end: campaign rules count arc positions
+    (chapters, face cards, aces, the final mission; see hqsequence), so a
+    number in the middle would shift every later retail contract. The HQ
+    offers a mission inside the sequence with the mission file's "hq"."""
     m = _arc_match(script_text, faction, map_)
     nums = [int(v) for v in re.findall(r"\d+", m.group(2))]
     if number in nums:
         return script_text
-    at = nums.index(after) + 1 if after is not None and after in nums else len(nums)
-    if after is not None and after not in nums:
-        raise ValueError(f"{faction} {map_} arc has no mission {after} to go after ({nums})")
-    nums.insert(at, number)
+    nums.append(number)
     return script_text[:m.start(2)] + " " + ", ".join(map(str, nums)) + " " + script_text[m.end(2):]
 
 
@@ -126,6 +128,15 @@ def text_plan(asset_id, doc, section):
         ini["ShortDescriptionDbKey"] = f"MissionInfo.Description.{key}"
     for i, o in enumerate(doc.get("objectives") or [], 1):
         strings[objective_key(asset_id, i)] = o.get("text") or f"Objective {i}"
+        if o.get("type") == "escort":
+            strings[escort_lost_key(asset_id, i)] = o.get("lost") or FAIL_TEXT["escort"]
+    for k, c in enumerate(doc.get("fail") or [], 1):
+        strings[fail_key(asset_id, k)] = c.get("text") or FAIL_TEXT.get(c.get("type"), "The mission failed.")
+    for k, line in enumerate(doc.get("radio") or [], 1):
+        if line.get("text"):
+            # a voiced line's subtitle (vo.<bank>.<cue>, as retail's), or a line's text
+            key = f"vo.{line['sound']}" if line.get("sound") else radio_key(asset_id, k)
+            strings[key] = line["text"]
     mail = None
     if doc.get("mail"):
         m = doc["mail"]
@@ -135,6 +146,17 @@ def text_plan(asset_id, doc, section):
         strings[body] = m.get("body", "")
         mail = (mail_id, m.get("sender", "mail.senders.techgal"), subject, body)
     return strings, ini, mail
+
+
+def fail_key(asset_id, k):
+    """The string key of a generated fail condition's message: sw.allies9.fail.foundry1."""
+    map_, faction, number = parse_id(asset_id)
+    return f"{map_}.{faction}{number}.fail.foundry{k}"
+
+
+def escort_lost_key(asset_id, i):
+    """The message when everyone an escort objective protects is dead."""
+    return objective_key(asset_id, i) + ".lost"
 
 
 def objective_key(asset_id, i):
@@ -147,7 +169,10 @@ def _lua_str(s):
     return "'" + str(s).replace("\\", "\\\\").replace("'", "\\'") + "'"
 
 
-OBJECTIVE_TYPES = ("destroy", "goto")
+OBJECTIVE_TYPES = ("destroy", "goto", "escort")
+FAIL_TYPES = ("dies", "timer", "leave")
+FAIL_TEXT = {"dies": "A target you had to protect was killed.", "timer": "You ran out of time.",
+             "leave": "You left the mission area.", "escort": "Everyone you were escorting was killed."}
 
 
 def bonus_amount(o):
@@ -156,6 +181,54 @@ def bonus_amount(o):
         return max(0, int(float(o.get("bonus") or 0)))
     except (TypeError, ValueError):
         return 0
+
+
+def when_of(text, count, what, own=0):
+    """("start",), ("starts" | "done", k) for objective k, or ("zone", name),
+    from "start", "starts:3", "done:3" or "zone:<name>". own: an objective
+    that can't name itself (0: none)."""
+    r = str(text or "start")
+    if r == "start":
+        return ("start",)
+    when, _, rest = r.partition(":")
+    if when in ("starts", "done"):
+        try:
+            k = int(rest)
+        except ValueError:
+            k = 0
+        if not 1 <= k <= count or k == own:
+            raise ValueError(f"{what}: {r!r} names no {'other ' if own else ''}objective (1 to {count})")
+        return (when, k)
+    if when == "zone" and rest:
+        return ("zone", rest)
+    raise ValueError(f"{what}: when is start, starts:<n>, done:<n> or zone:<name>, not {r!r}")
+
+
+def radio_key(asset_id, k):
+    """The string key of a generated radio line's text with no voice: sw.allies9.radio.foundry1."""
+    map_, faction, number = parse_id(asset_id)
+    return f"{map_}.{faction}{number}.radio.foundry{k}"
+
+
+def reveal_of(o, count, i):
+    """When a bonus objective shows: ("start",), ("starts" | "done", k) for
+    objective k (1-based, another one), or ("zone", name). From its "reveal":
+    "start" (default), "starts:3", "done:3" or "zone:<name>"."""
+    r = str(o.get("reveal") or "start")
+    if r == "start":
+        return ("start",)
+    when, _, what = r.partition(":")
+    if when in ("starts", "done"):
+        try:
+            k = int(what)
+        except ValueError:
+            k = 0
+        if not 1 <= k <= count or k == i:
+            raise ValueError(f"objective {i}: \"reveal\": {r!r} names no other objective (1 to {count})")
+        return (when, k)
+    if when == "zone" and what:
+        return ("zone", what)
+    raise ValueError(f"objective {i}: \"reveal\" is start, starts:<n>, done:<n> or zone:<name>, not {r!r}")
 
 
 def bonus_fee(doc):
@@ -201,13 +274,26 @@ def objectives_script(asset_id, doc, squad_members, layers=(), zone_centre=None)
         reward = bonus_amount(o)
         if reward:
             head += f", bonus = {reward}"
-        if kind == "destroy":
+            when = reveal_of(o, len(objs), i)
+            if when[0] in ("starts", "done"):
+                head += f", reveal = '{when[0]}', after = 'foundry{when[1]}'"
+            elif when[0] == "zone":
+                head += f", reveal = 'zone', rzone = {_lua_str(when[1])}"
+        if kind in ("destroy", "escort"):
             targets = list(o.get("targets") or [])
             if o.get("squad"):
                 targets += squad_members(o["squad"])
             if not targets:
-                raise ValueError(f"objective {i}: nothing to destroy (give \"targets\" or \"squad\")")
-            row = f"{{ {head}, targets = {{ {', '.join(_lua_str(t) for t in targets)} }} }}"
+                raise ValueError(f"objective {i}: nothing to {kind} (give \"targets\" or \"squad\")")
+            row = f"{head}, targets = {{ {', '.join(_lua_str(t) for t in targets)} }}"
+            if kind == "escort":
+                # they follow the player; done when every survivor is in the zone
+                if not o.get("zone"):
+                    raise ValueError(f"objective {i}: an escort objective needs a \"zone\" to bring them to")
+                at = zone_centre(o["zone"]) if zone_centre and o.get("marker", True) else None
+                mark = f", x = {at[0]:.2f}, y = {at[1]:.2f}, z = {at[2]:.2f}" if at else ""
+                row += f", zone = {_lua_str(o['zone'])}{mark}, lost = {_lua_str(escort_lost_key(asset_id, i))}"
+            row = f"{{ {row} }}"
         else:
             if not o.get("zone"):
                 raise ValueError(f"objective {i}: a goto objective needs a \"zone\"")
@@ -215,6 +301,56 @@ def objectives_script(asset_id, doc, squad_members, layers=(), zone_centre=None)
             mark = f", x = {at[0]:.2f}, y = {at[1]:.2f}, z = {at[2]:.2f}" if at else ""
             row = f"{{ {head}, zone = {_lua_str(o['zone'])}{mark} }}"
         (bonus if reward else main).append(row)
+    fails = []
+    for k, c in enumerate(doc.get("fail") or [], 1):
+        kind = c.get("type")
+        if kind not in FAIL_TYPES:
+            raise ValueError(f"fail condition {k}: type is one of {', '.join(FAIL_TYPES)}, not {kind!r}")
+        row = f"kind = '{kind}', reason = {_lua_str(fail_key(asset_id, k))}"
+        if kind == "dies":
+            targets = list(c.get("targets") or []) + (squad_members(c["squad"]) if c.get("squad") else [])
+            if not targets:
+                raise ValueError(f"fail condition {k}: nobody to protect (give \"targets\" or \"squad\")")
+            row += f", targets = {{ {', '.join(_lua_str(t) for t in targets)} }}"
+        elif kind == "timer":
+            seconds = float(c.get("seconds") or 0)
+            if seconds <= 0:
+                raise ValueError(f"fail condition {k}: a timer needs \"seconds\"")
+            row += f", seconds = {seconds:g}"
+        else:
+            if not c.get("zone"):
+                raise ValueError(f"fail condition {k}: \"leave\" needs the \"zone\" the player must stay in")
+            if zone_centre:
+                zone_centre(c["zone"])        # (its layer loads with the script)
+            row += f", zone = {_lua_str(c['zone'])}"
+        if c.get("until"):
+            m = re.fullmatch(r"done:(\d+)", str(c["until"]))
+            if not m or not 1 <= int(m.group(1)) <= len(objs):
+                raise ValueError(f"fail condition {k}: \"until\" is done:<objective number>, not {c['until']!r}")
+            row += f", untilObj = 'foundry{int(m.group(1))}'"
+        fails.append(f"{{ {row} }}")
+    fail_table = ",\n".join("  " + r for r in fails)
+    radio = []
+    for k, line in enumerate(doc.get("radio") or [], 1):
+        when = when_of(line.get("when"), len(objs), f"radio line {k}")
+        row = f"when = '{when[0]}'"
+        if when[0] in ("starts", "done"):
+            row += f", after = 'foundry{when[1]}'"
+        elif when[0] == "zone":
+            row += f", zone = {_lua_str(when[1])}"
+            if zone_centre:
+                zone_centre(when[1])          # (its layer loads with the script)
+        sound = str(line.get("sound") or "").strip()
+        if sound:
+            if not re.fullmatch(r"[A-Za-z0-9_]+\.[A-Za-z0-9_]+", sound):
+                raise ValueError(f"radio line {k}: \"sound\" is <bank>.<cue>, like fio.S10START, not {sound!r}")
+            row += f", sound = {_lua_str(sound)}"
+        elif line.get("text"):
+            row += f", text = {_lua_str(radio_key(asset_id, k))}"
+        else:
+            raise ValueError(f"radio line {k}: give a \"sound\", a \"text\" or both")
+        radio.append(f"{{ {row} }}")
+    radio_table = ",\n".join("  " + r for r in radio)
     main_table = ",\n".join("  " + r for r in main)
     bonus_table = ",\n".join("  " + r for r in bonus)
     flat = bonus_fee(doc) - sum(bonus_amount(o) for o in objs)
@@ -228,10 +364,19 @@ def objectives_script(asset_id, doc, squad_members, layers=(), zone_centre=None)
 tFoundryObjectives = {{    -- main objectives, in order
 {main_table}
 }}
-tFoundryBonus = {{         -- bonus objectives, active from the start
+tFoundryBonus = {{         -- bonus objectives, shown at the start or on their "reveal"
 {bonus_table}
 }}
+tFoundryFail = {{          -- the mission fails if one happens (until its objective is done)
+{fail_table}
+}}
+tFoundryRadio = {{         -- radio lines: voiced (banter queue, with a subtitle) or text
+{radio_table}
+}}
+iFoundryRadioPending = 0   -- voiced lines queued and not yet played
 tFoundryActive = {{}}       -- started objectives by name
+tFoundryWatch = {{}}        -- actor (as int) -> the fail condition or escort objective watching it
+bFoundryOver = false
 iFoundryStep = 0
 iFoundryFlatBonus = {flat}
 iFoundryEarned = 0
@@ -241,12 +386,145 @@ Utility_LoadUtilityScript('mission')
 Utility_LoadUtilityScript('mission_objective')
 Utility_LoadUtilityScript('mission_objectiveverb')
 Utility_LoadUtilityScript('util_misc')
+Utility_LoadUtilityScript('hud')
+Utility_LoadUtilityScript('util_banter')
 mission_GenericInit()
 {loads}end
 
 function post_InitialNotifications()   -- after the contract mail
-for i, o in ipairs(tFoundryBonus) do foundry_Start(o) end
+foundry_SetupFail()
+for i, r in ipairs(tFoundryRadio) do
+if r.when == 'zone' then Event_ActorInBoundary('foundry_RadioZone', 'b', 'player0', r.zone, true) end
+end
+foundry_Radio('start')
+for i, o in ipairs(tFoundryBonus) do
+if not o.reveal then foundry_Start(o)
+elseif o.reveal == 'zone' then Event_ActorInBoundary('foundry_RevealZone', 'b', 'player0', o.rzone, true) end
+end
 foundry_NextObjective()
+end
+
+-- Bonus objectives shown later: when another objective starts or is done
+-- ('starts' / 'done', its name), or when the player enters a zone.
+function foundry_Reveal(sWhen, sName)
+for i, o in ipairs(tFoundryBonus) do
+if o.reveal == sWhen and o.after == sName and not tFoundryActive[o.name] then foundry_Start(o) end
+end
+end
+function foundry_RevealZone(playerActor, boundaryName)
+for i, o in ipairs(tFoundryBonus) do
+if o.reveal == 'zone' and o.rzone == boundaryName and not tFoundryActive[o.name] then foundry_Start(o) end
+end
+end
+
+-- Radio lines: when the mission starts, an objective starts or is done
+-- (its name), or the player enters a zone. Voiced lines go through the
+-- banter queue (no overlaps) 3.5 s late, so their subtitle isn't hidden by
+-- the objective message they come with; the contract completes after the
+-- last one has played.
+function foundry_Radio(sWhen, sName)
+for i, r in ipairs(tFoundryRadio) do
+if not r.said and r.when == sWhen and r.after == sName then foundry_Say(r) end
+end
+end
+function foundry_RadioZone(playerActor, boundaryName)
+for i, r in ipairs(tFoundryRadio) do
+if not r.said and r.when == 'zone' and r.zone == boundaryName then foundry_Say(r) end
+end
+end
+function foundry_Say(r)
+r.said = true
+if r.sound then
+iFoundryRadioPending = iFoundryRadioPending + 1
+banter_Add{{ r.sound, prePad = 3.5, callback = foundry_RadioDone }}
+else
+util_ObjMsgPrint{{ sMsg = Utility_GetStringById(r.text), sType = 'GENERAL' }}
+end
+end
+function foundry_RadioDone()
+iFoundryRadioPending = iFoundryRadioPending - 1
+if iFoundryRadioPending <= 0 and bFoundryFinishing then foundry_Finish() end
+end
+
+-- Fail conditions: someone protected dies, the timer runs out, or the player
+-- leaves a zone. sReasonForFailure is the string mission_MissionFailure shows.
+function foundry_SetupFail()
+for i, f in ipairs(tFoundryFail) do
+if f.kind == 'dies' then
+for j, a in ipairs(f.targets) do
+tFoundryWatch[Utility_GetActorAsInt(a)] = f
+Event_ActorHitPointsLessThan('foundry_Died', 'b', a, 1)
+end
+elseif f.kind == 'timer' then
+tFoundryTimer = f
+f.hud = HUD_AddTrayDisplay{{ {{ DisplayClock = true, nObjStyle = HUD.STYLE.NORMAL, nStart = f.seconds, nLimit = 0,
+                                fCallback = foundry_TimeUp }} }}
+else
+Event_ActorInBoundary('foundry_Left', 'b', 'player0', f.zone, false)
+end
+end
+end
+function foundry_Fail(sReason)
+if bFoundryOver then return end
+bFoundryOver = true
+foundry_StopTimer()
+sReasonForFailure = sReason
+mission_MissionFailure()
+end
+function foundry_StopTimer()
+if tFoundryTimer and tFoundryTimer.hud then HUD_RemoveTrayDisplay(tFoundryTimer.hud) tFoundryTimer.hud = nil end
+end
+function foundry_Died(aActor)
+local w = tFoundryWatch[Utility_GetActorAsInt(aActor)]
+if not w then return end
+if w.kind == 'escort' then foundry_EscortLost(w, aActor)
+elseif not w.off then foundry_Fail(w.reason) end
+end
+function foundry_TimeUp()
+if tFoundryTimer and not tFoundryTimer.off then foundry_Fail(tFoundryTimer.reason) end
+end
+function foundry_Left(playerActor, boundaryName)
+for i, f in ipairs(tFoundryFail) do
+if f.kind == 'leave' and f.zone == boundaryName and not f.off then foundry_Fail(f.reason) end
+end
+end
+-- An objective is done: the fail conditions that last until then end.
+function foundry_EndFail(sName)
+for i, f in ipairs(tFoundryFail) do
+if f.untilObj == sName then
+f.off = true
+if f == tFoundryTimer then foundry_StopTimer() end
+end
+end
+end
+
+-- Escort: they follow the player; done when every survivor has reached the
+-- zone, failed when they're all dead.
+function foundry_EscortIn(aActor, boundaryName)
+local k = Utility_GetActorAsInt(aActor)
+local o = tFoundryWatch[k]
+if not o or o.kind ~= 'escort' or o.done or o.zone ~= boundaryName or o.inZone[k] then return end
+o.inZone[k] = true
+o.arrived = o.arrived + 1
+foundry_EscortCheck(o)
+end
+function foundry_EscortLost(o, aActor)
+if o.done then return end
+local k = Utility_GetActorAsInt(aActor)
+if o.inZone[k] then o.arrived = o.arrived - 1 end
+o.inZone[k] = nil
+o.dead = o.dead + 1
+if o.dead >= table.getn(o.targets) then foundry_Fail(o.lost) else foundry_EscortCheck(o) end
+end
+function foundry_EscortCheck(o)
+local iAlive = table.getn(o.targets) - o.dead
+if o.arrived >= iAlive and iAlive > 0 then
+foundry_Done(o)
+else
+local sMsg, iIdx = foundry_Kind(o)
+util_ObjMsgPrint{{ sMsg = o.text, sType = sMsg .. 'UPD_POS', vIdx = iIdx,
+                  tCounter = {{ vCurr = o.arrived, vLim = iAlive }}, sObjective = o.name }}
+end
 end
 
 function foundry_NextObjective()
@@ -270,7 +548,22 @@ o.text = Utility_GetStringById(o.key)
 o.down = 0
 tFoundryActive[o.name] = o
 local sMsg, iIdx, sObjType, sTargetType = foundry_Kind(o)
-if o.kind == 'destroy' then
+if o.kind == 'escort' then
+o.arrived, o.dead, o.inZone = 0, 0, {{}}
+for j, a in ipairs(o.targets) do
+tFoundryWatch[Utility_GetActorAsInt(a)] = o
+Ai_CommandDefault(a, 'Follow', 'player0', 'loPri')
+Event_ActorInBoundary('foundry_EscortIn', 'b', a, o.zone, true)
+Event_ActorHitPointsLessThan('foundry_Died', 'b', a, 1)
+end
+util_ObjMsgPrint{{ sMsg = o.text, sType = sMsg .. 'ADD', vIdx = iIdx,
+                  tCounter = {{ vCurr = 0, vLim = table.getn(o.targets) }}, sObjective = o.name }}
+if o.x then
+Objective_SetShortDescription(o.name, o.text)
+Objective_SetType(o.name, sObjType)
+Objective_SetTargetVector(o.name, o.zone, o.text, sTargetType, 'location', o.x, o.y, o.z, true, true, false)
+end
+elseif o.kind == 'destroy' then
 mission_ObjectiveDestroy{{ callbackFunc = foundry_TargetDown, objectiveName = o.name, objectiveDesc = o.text,
                           actorName = o.targets, objectiveType = sObjType, targetType = sTargetType }}
 util_ObjMsgPrint{{ sMsg = o.text, sType = sMsg .. 'ADD', vIdx = iIdx,
@@ -285,13 +578,18 @@ Objective_SetTargetVector(o.name, o.zone, o.text, sTargetType, 'location',
 end
 Event_ActorInBoundary('foundry_Arrived', 'b', 'player0', o.zone, true)
 end
+foundry_Reveal('starts', o.name)
+foundry_Radio('starts', o.name)
 end
 
 function foundry_Done(o)
 o.done = true
+foundry_EndFail(o.name)
 local sMsg, iIdx = foundry_Kind(o)
 util_ObjMsgPrint{{ sMsg = o.text, sType = sMsg .. 'CMPL', vIdx = iIdx, sObjective = o.name }}
 mission_RemoveObjective(o.name)
+foundry_Reveal('done', o.name)
+foundry_Radio('done', o.name)
 if o.bonus then
 iFoundryEarned = iFoundryEarned + o.bonus
 else
@@ -320,11 +618,16 @@ if o.kind == 'goto' and o.zone == boundaryName and not o.done then foundry_Done(
 end
 end
 
--- The main objectives are done: bonus objectives still open have failed, and
--- the contract pays the flat bonus plus the rewards earned.
+-- The main objectives are done: bonus objectives shown and still open have
+-- failed (ones never shown are left out), and the contract pays the flat
+-- bonus plus the rewards earned.
 function foundry_Finish()
+if bFoundryOver then return end
+if iFoundryRadioPending > 0 then bFoundryFinishing = true return end   -- after the last radio line
+bFoundryOver = true
+foundry_StopTimer()
 for i, o in ipairs(tFoundryBonus) do
-if not o.done then
+if tFoundryActive[o.name] and not o.done then
 util_ObjMsgPrint{{ sMsg = o.text, sType = 'BON_OBJ_FAIL', vIdx = 2, sObjective = o.name }}
 mission_RemoveObjective(o.name)
 end
@@ -412,6 +715,28 @@ def patch_global_layers(global_text):
 FACTION_NAMES = {"allies": "Allied", "china": "Chinese", "mafia": "Mafia", "sk": "South Korean"}
 
 
+GIVER_MARKERS = ("gold", "primary", "secondary", "none")
+
+
+def marker_type(contact, faction):
+    """The target type a contact is marked with. At the HQ: the faction's, as
+    the bouncers. A placed giver's "marker": "gold" (the HQ bouncers' ring,
+    default), "primary" or "secondary" (objective markers) or "none"."""
+    if not contact.get("position"):
+        return "TARGET_TYPE_HQ_" + faction.upper()
+    m = contact.get("marker") or "gold"
+    if m not in GIVER_MARKERS:
+        raise ValueError(f"the mission giver's \"marker\" is one of {', '.join(GIVER_MARKERS)}, not {m!r}")
+    return {"gold": "TARGET_TYPE_HQ_" + faction.upper(), "primary": "TARGET_TYPE_OBJECTIVE_PRIMARY",
+            "secondary": "TARGET_TYPE_OBJECTIVE_SECONDARY", "none": None}[m]
+
+
+def contact_actor(asset_id):
+    """The actor name of a mission's contact (foundry_ContactName in the
+    contracts script): a placed giver's object in its layer has this name."""
+    return f"foundry_contact_{asset_id}"
+
+
 def contract(asset_id, doc, title_key, description_key):
     """The contact that offers a mod mission at its faction's HQ, and the
     strings it needs ({key: text}; they go in the always-loaded actions and
@@ -431,8 +756,22 @@ def contract(asset_id, doc, title_key, description_key):
             "location": c.get("location", f"loc_hq-{faction}-bouncer"),
             "offset": [float(v) for v in c["offset"]] if "offset" in c else None,
             "yaw": float(c.get("yaw", 0.0)),
+            # Placed on the map instead (the editor's mission giver): x, y, z and
+            # the way it faces (degrees, as the player start's heading).
+            "position": [float(v) for v in c["position"]] if c.get("position") else None,
+            "heading": float(c.get("heading", 0.0)),
             "prompt_key": prompt_key, "name_key": name_key, "desc_key": desc_key,
-            "target_type": "TARGET_TYPE_HQ_" + faction.upper(), "blip": "hq" + faction,
+            # A contact at the HQ is marked like the bouncers; a giver placed on
+            # the map gets an objective marker of its own (the HQ type moves the
+            # faction's HQ icon on the map to it).
+            "target_type": marker_type(c, faction),
+            # the faction's HQ blip would move the faction's HQ icon on the map
+            "blip": "blip" if c.get("position") else "hq" + faction,
+            # A placed giver's side (Ai_SetFaction): civilian unless set, so a
+            # character from another faction doesn't attack the player.
+            "side": str(c.get("side") or "civ"),
+            # Missions that must be done before this one is offered.
+            "requires": [str(r).lower() for r in doc.get("requires") or []],
             "title_key": title_key, "description_key": description_key}, strings
 
 
@@ -440,10 +779,12 @@ def _lua(s):
     return "'" + str(s).replace("\\", "\\\\").replace("'", "\\'") + "'"
 
 
-def contracts_script(contracts):
+def contracts_script(contracts, insertions=()):
     """Lua for foundry_contracts: spawn each contact on its map and start its
     mission (DebugSkipToMission, as the console skip does) when the player
-    uses the contact and says yes."""
+    uses the contact and says yes. insertions: missions the faction's own HQ
+    bouncer offers in its contract sequence (hqsequence.plan, with the
+    title and description keys)."""
     out = ["-- Generated by Mercenaries Foundry: contacts at faction HQs that offer mod contracts.",
            "tFoundryContracts = {"]
     placed = {}
@@ -458,18 +799,64 @@ def contracts_script(contracts):
             dx, dy, dz = c["offset"]
         out.append("{ id = %s, map = %s, faction = %s, number = %d, repeatable = %s, template = %s, "
                    "location = %s, dx = %g, dy = %g, dz = %g, yaw = %g, prompt = %s, name = %s, desc = %s, "
-                   "targettype = %s, blip = %s }," % (
+                   "targettype = %s, blip = %s%s }," % (
                        _lua(c["id"]), _lua(c["map"]), _lua(c["faction"]), c["number"],
                        "TRUE" if c["repeatable"] else "FALSE", _lua(c["template"]),
                        _lua(c["location"]), dx, dy, dz, c["yaw"], _lua(c["prompt_key"]), _lua(c["name_key"]),
-                       _lua(c["desc_key"]), _lua(c["target_type"]), _lua(c["blip"])))
+                       _lua(c["desc_key"]), _lua(c["target_type"]) if c["target_type"] else "nil", _lua(c["blip"]),
+                       (", px = %.2f, py = %.2f, pz = %.2f, heading = %.1f, side = %s" % (
+                           *c["position"], c["heading"], _lua(c["side"])) if c["position"] else "")
+                       + (", requires = { %s }" % ", ".join(_lua(r) for r in c["requires"]) if c["requires"] else "")))
     out.append("}")
     out += [
         "Utility_LoadUtilityScript('util_objectives')",
-        "-- Campaign values a side contract must not change: the faction's arc",
-        "-- position and its completed-mission counters (mission_MissionComplete2).",
-        "function foundry_Kept(f) return { 'current_' .. f .. '_mission', 'total_missions_completed' .. f, "
-        "'num_std_missions_cmpl_' .. f } end",
+        "-- Campaign values a side contract must not change: every faction's arc",
+        "-- position and completed-mission counters (mission_MissionComplete2), and",
+        "-- the chapter. The contract runs at an appended arc position (> 3), so",
+        "-- global's SetupChapter takes it for chapter 2 or 4 and, in chapter 1 or",
+        "-- 3, resets the other factions to that chapter's first missions.",
+        "function foundry_Kept(f)",
+        "local t = { 'chapter', 'SkipTo_Chapter' }",
+        "for i, g in { 'allies', 'china', 'mafia', 'sk' } do",
+        "table.insert(t, 'current_' .. g .. '_mission') table.insert(t, 'total_missions_completed' .. g)",
+        "table.insert(t, 'num_std_missions_cmpl_' .. g)",
+        "end",
+        "return t",
+        "end",
+        "tFoundryMarked = tFoundryMarked or {}   -- contact name -> the actor its marker was set up on",
+        "tFoundryArmed = tFoundryArmed or {}     -- contact name -> the actor its use event is waiting on",
+        "tFoundryGivers = tFoundryGivers or {}   -- a placed giver's actor (as int) -> its contract",
+        "-- A placed giver's side, and no fighting. A character in a layer sleeps",
+        "-- (dormant) until the player comes near, and a side set while it sleeps",
+        "-- doesn't hold: set it again each time it wakes (as nw_sk4 does for its",
+        "-- mole: Event_ActorIsDormant(..., FALSE)).",
+        "function foundry_GiverSide(name, c)",
+        "Ai_SetFaction(name, c.side)",
+        "Ai_SetHostileRange(name, 0.0)",
+        "tFoundryGivers[Utility_GetActorAsInt(name)] = c",
+        "Event_ActorIsDormant('foundry_GiverAwake', 'b', name, FALSE)",
+        "end",
+        "function foundry_GiverAwake(aActor)",
+        "local c = tFoundryGivers[Utility_GetActorAsInt(aActor)]",
+        "if not c then return end",
+        "local name = foundry_ContactName(c)",
+        "Ai_SetFaction(name, c.side)",
+        "Ai_SetHostileRange(name, 0.0)",
+        "Event_ActorIsDormant('foundry_GiverAsleep', 'b', name, TRUE)",
+        "end",
+        "function foundry_GiverAsleep(aActor)",
+        "local c = tFoundryGivers[Utility_GetActorAsInt(aActor)]",
+        "if c then Event_ActorIsDormant('foundry_GiverAwake', 'b', foundry_ContactName(c), FALSE) end",
+        "end",
+        "iFoundryWaits = iFoundryWaits or 0      -- seconds spent waiting for placed givers",
+        "-- Offered only once the missions it requires are done.",
+        "function foundry_Unlocked(c)",
+        "if not c.requires then return true end",
+        "for i, id in c.requires do",
+        "if not Utility_ReadNumberFromScribbleMemory('foundry_done_' .. id) then return false end",
+        "end",
+        "return true",
+        "end",
         "function foundry_ContactName(c) return 'foundry_contact_' .. c.id end",
         "function foundry_IsDone(c) return Utility_ReadNumberFromScribbleMemory('foundry_done_' .. c.id) end",
         "-- First thing in LoadNoMissionState: a side contract just ended (done,",
@@ -482,41 +869,80 @@ def contracts_script(contracts):
         "-- contract isn't over yet.",
         "if Utility_ReadNumberFromScribbleMemory('SkipTo_MissionNumber') then return end",
         "local f = Utility_ReadStringFromScribbleMemory('foundry_active_faction')",
+        "-- An HQ-sequence insertion (foundry_HqYes) ran at a retail arc position:",
+        "-- completing it moved that position on by one (mission_MissionComplete2).",
+        "local done = Utility_ReadStringFromScribbleMemory('JustCompletedStandardMission') == id",
+        "local pos = Utility_ReadNumberFromScribbleMemory('foundry_ins_pos')",
+        "if Utility_ReadStringFromScribbleMemory('foundry_ins_active') == id and pos "
+        "and Utility_ReadNumberFromScribbleMemory('current_' .. f .. '_mission') == pos + 1 then done = true end",
         "for i, key in foundry_Kept(f) do",
         "local v = Utility_ReadNumberFromScribbleMemory('foundry_kept_' .. key)",
         "if v then Utility_WriteNumberToScribbleMemory(key, v) else Utility_EraseValueFromScribbleMemory(key) end",
         "Utility_EraseValueFromScribbleMemory('foundry_kept_' .. key)",
         "end",
+        "if done then Utility_WriteNumberToScribbleMemory('foundry_done_' .. id, 1) end",
         "if Utility_ReadStringFromScribbleMemory('JustCompletedStandardMission') == id then",
-        "Utility_WriteNumberToScribbleMemory('foundry_done_' .. id, 1)",
         "Utility_EraseValueFromScribbleMemory('JustCompletedStandardMission')",
         "end",
         "Utility_EraseValueFromScribbleMemory('foundry_active_contract')",
         "Utility_EraseValueFromScribbleMemory('foundry_active_faction')",
+        "for i, key in { 'foundry_ins_active', 'foundry_ins_faction', 'foundry_ins_pos', 'foundry_ins_num' } do",
+        "Utility_EraseValueFromScribbleMemory(key)",
         "end",
+        "end",
+        "-- A placed giver stands in its own layer (<id>_giver), loaded with the",
+        "-- map just before this runs; its actor can appear a moment later, so",
+        "-- this looks again each second (up to 15 s) until it's there.",
         "function foundry_SetupContracts()",
         "local map = Utility_ReadStringFromScribbleMemory('SkipTo_Map')",
+        "local bWaiting = false",
         "for i, c in tFoundryContracts do",
         "local name = foundry_ContactName(c)",
-        "if c.map == map and foundry_IsDone(c) and not c.repeatable then",
+        "if c.map == map and ((foundry_IsDone(c) and not c.repeatable) or not foundry_Unlocked(c)) then",
         "if Utility_DoesActorExist(name) then Objective_Remove(name) Actor_Remove(name) end",
         "elseif c.map == map then",
         "if not Utility_DoesActorExist(name) then",
+        "if c.px then",
+        "bWaiting = true   -- its layer hasn't brought it yet",
+        "else",
         "local x, y, z = Location_GetPosition(c.location)",
         "-- face the way the location faces, as util_Mission_SpawnAtLocation does",
         "Mission_Spawn(c.template, name, x + c.dx, y + c.dy, z + c.dz, -Location_GetYaw(c.location) + c.yaw)",
-        "-- marked like the HQ bouncers: ring, name above, HQ blip",
+        "end",
+        "end",
+        "if Utility_DoesActorExist(name) then",
+        "-- marked like the HQ bouncers (ring, name above, HQ blip), once per",
+        "-- appearance: a layer's giver is a new actor each time its layer loads",
+        "local iActor = Utility_GetActorAsInt(name)",
+        "if tFoundryMarked[name] ~= iActor then",
+        "tFoundryMarked[name] = iActor",
+        "if c.side then foundry_GiverSide(name, c) end   -- a placed giver: not hostile",
+        "if c.targettype then",
         "util_SetupSingleTargetActorObjective(name, Utility_GetStringById(c.desc), '', 'OBJECTIVE_TYPE_PRIMARY', "
         "name, Utility_GetStringById(c.name), c.targettype, TRUE, TRUE, TRUE, c.blip)",
         "end",
+        "end",
+        "-- one use event per giver at a time (this runs again while waiting and",
+        "-- after the player says no, which re-arms it: foundry_Use_*)",
+        "if tFoundryArmed[name] ~= iActor then",
+        "tFoundryArmed[name] = iActor",
         "Actor_EnableScriptedUse(name, TRUE, c.prompt)",
         "Event_ActorUsed('foundry_Use_' .. c.id, 'b', name)",
         "end",
+        "end",
+        "end",
+        "end",
+        "if bWaiting and iFoundryWaits < 15 then",
+        "iFoundryWaits = iFoundryWaits + 1",
+        "Event_RelativeTimer('foundry_SetupContracts', 'b', 1.0)",
+        "else",
+        "iFoundryWaits = 0",
         "end",
         "end"]
     for c in contracts:
         out += [
             f"function foundry_Use_{c['id']}()",
+            f"tFoundryArmed[{_lua(contact_actor(c['id']))}] = nil   -- used: re-armed if the player says no",
             f"Utility_QuestionBox(Utility_GetStringById({_lua(c['title_key'])}), "
             f"Utility_GetStringById({_lua(c['description_key'])}), true, "
             f"'foundry_Start_{c['id']}', 'foundry_SetupContracts')",
@@ -532,6 +958,9 @@ def contracts_script(contracts):
             f"Objective_Remove(foundry_ContactName(tFoundryContracts[{contracts.index(c) + 1}]))",
             f"DebugSkipToMission(f, {c['number']})",
             "end"]
+    if insertions:
+        from . import hqsequence
+        out.append(hqsequence.lua_block(insertions).rstrip("\n"))
     return "\n".join(out) + "\n"
 
 

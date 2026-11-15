@@ -47,7 +47,7 @@ gizmo.addEventListener('dragging-changed', (e) => {
 gizmo.addEventListener('objectChange', () => {
   if (gizmo.object && gizmo.object.userData.handle) layout.handleMoved(gizmo.object);
   else if (gizmo.object && gizmo.object.userData.pick) encs.moved(gizmo.object);
-  else if (gizmo.object && gizmo.object.userData.start) missions.startMoved();
+  else if (gizmo.object && gizmo.object.userData.missionMarker) missions.markerMoved(gizmo.object);
   else if (state.selected) fromNode(state.selected);
 });
 
@@ -792,7 +792,11 @@ renderer.domElement.addEventListener('pointerup', (e) => {
       if (o) { objectHit = {distance: h.distance, rec: o.userData.rec}; break; }
     }
   }
-  const candidates = [layout.pick(ray), encs.pick(ray), missions.pick(ray)].filter(Boolean);
+  // The mission's start arrow and giver win: they're small and usually stand
+  // in front of a building's bounding box.
+  const marker = missions.pick(ray);
+  if (marker) return marker.apply();
+  const candidates = [layout.pick(ray), encs.pick(ray)].filter(Boolean);
   if (objectHit) candidates.push({distance: objectHit.distance, apply: () => select(objectHit.rec)});
   candidates.sort((a, b) => a.distance - b.distance);
   if (candidates.length) return candidates[0].apply();

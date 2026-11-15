@@ -140,17 +140,39 @@ toolkit bundle run it the same way: `foundry\python\python.exe foundry\mercfound
   - a title, a description (the contact's offer), a briefing (the contract
     mail), a fee and a flat bonus (paid on completion on top of the fee; 0
     unless you set one);
-  - objectives: **Destroy squad** (pick a squad) and **Go to zone** (pick a
-    zone; the zone gets a marker on the minimap and GPS). **Show** looks at
-    an objective's squad or zone. Main objectives are done in order. An
-    objective given a **Bonus $** is a bonus objective: optional, active from
-    the start alongside the main ones and marked as a bonus; the contract
-    pays its reward on top if it's done, and shows it failed if not;
+  - objectives: **Destroy squad** (pick a squad), **Go to zone** (pick a
+    zone; the zone gets a marker on the minimap and GPS) and **Escort squad**
+    (the squad follows the player; done when the survivors reach the zone,
+    failed if they all die). **Show** looks at an objective's squad or zone.
+    Main objectives are done in order. An objective given a **Bonus $** is a
+    bonus objective: optional, marked as a bonus, and **Shown** at the start,
+    when another objective starts or is done, or when the player enters a
+    zone; the contract pays its reward on top if it's done, shows it failed if
+    it was shown and not done, and leaves it out if it never was;
+  - **Radio lines**: each plays **When** the mission starts, an objective
+    starts or is done, or the player enters a zone. A voice (`bank.cue`, the
+    game's or one the mod adds) plays through the game's radio queue with the
+    text as its subtitle; with no voice, the text shows as a message. The
+    contract completes after the last voiced line;
+  - **Fail conditions**: **Protect squad** (fail if one of them dies), **Time
+    limit** (an on-screen clock) and **Stay in zone** (fail on leaving it),
+    each with the message the failure screen shows, lasting the whole mission
+    or until an objective is done;
   - a **Player start**: **Set here** puts it at the middle of the view (a
-    yellow arrow pointing the way the player faces). Click the arrow to move
-    it (it stays on the ground) or press E and drag the ring to turn it; or
-    type a heading. Without one, the player starts where the contract leaves
-    them (the HQ).
+    yellow arrow pointing the way the player faces) and grabs it: drag to
+    move it (it stays on the ground), press E and drag the ring to turn it;
+    **Move/turn** grabs it later, or type a heading. Without one, the player
+    starts where the contract leaves them (the HQ);
+  - a **Mission giver**: a contact at the faction's HQ (name and prompt can be
+    set); someone **placed on the map** (any character template, name,
+    prompt, side and marker; a cyan figure you drag and turn like the start
+    arrow); **in the faction's HQ contract sequence** (the faction's own HQ
+    bouncer offers it after the retail contract you pick, optionally with an
+    HQ contact too); or no one (started by the Lua line). **Available after**
+    ticks other missions that must be done before a contact or placed giver
+    appears, for chains of side contracts. Moving or deleting objectives keeps
+    every "objective N" reference (bonus Shown, radio When, fail Lasts) on the
+    same objective.
 
   **Add squad** and **Add zone** put a squad or zone in the mission's own
   layer, `encounters/<id>.json`, which loads only during the mission; squads
@@ -159,7 +181,8 @@ toolkit bundle run it the same way: `foundry\python\python.exe foundry\mercfound
   saved yet doesn't hold up saving the rest. With objectives and no script of
   its own, the build writes the mission's script (see ENCOUNTERS.md). The panel
   shows the Lua line that starts the mission (paste it in Foundry Console's Lua
-  box); a contact at the faction's HQ offers it too.
+  box). Clicking the start arrow or the giver selects it even with a building
+  behind it.
 - **Whole squad** (on by default): selecting a member of one of the mod's
   squads puts the gizmo at the squad's middle. **Move** (W) drags everyone
   together, each kept on the ground; **Turn** (E) and the ring turn the

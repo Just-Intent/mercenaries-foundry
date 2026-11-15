@@ -208,6 +208,37 @@ A mission file with `"objectives"` and no `scripts/<id>.lua` gets its script fro
 
 Tested in game (2026-11-14): `sw_china9`, made in the editor (a go-to zone in the mod's map layer, then 20 civilians, and in a second run 20 NK soldiers, in the mission's layer). The contract mail arrived, the player started at the set point, the zone's marker showed on the minimap, the destroy objective marked the squad and counted it down, and the contract completed and paid its fee. A bonus objective added later paid its reward on top when done.
 
+### More objectives, fail conditions and radio lines
+
+The generated script also handles:
+
+- `{"type": "escort", "squad": ..., "zone": ...}`: the squad follows the player (`Ai_CommandDefault(actor, 'Follow', 'player0', 'loPri')`, as retail's downed pilots); done when every survivor has entered the zone; the mission fails when they all die (the message is `"lost"`, or a default).
+- A bonus objective's `"reveal"`: `"start"` (default), `"starts:N"` / `"done:N"` (when objective N starts or is done) or `"zone:<name>"`. One never shown pays nothing and isn't marked failed.
+- `"fail"`: a list of conditions, each with an optional `"text"` (the failure screen's reason, set as `sReasonForFailure` before `mission_MissionFailure()`, as retail does) and `"until": "done:N"`:
+  - `{"type": "dies", "squad": ...}` or `"targets"`: fail if any of them dies (`Event_ActorHitPointsLessThan(..., 1)`);
+  - `{"type": "timer", "seconds": 300}`: an on-screen clock (`HUD_AddTrayDisplay{ { DisplayClock = true, ... } }`, as `sw_allies5`);
+  - `{"type": "leave", "zone": ...}`: fail on leaving the zone (`Event_ActorInBoundary(..., false)`, as retail's "out of area" checks).
+- `"radio"`: lines `{"when": ..., "sound": "<bank>.<cue>", "text": ...}`. `"when"` takes the same values as `"reveal"`. A voiced line goes through the banter queue (`banter_Add`, which `Radio_QueueMessage` wraps for Fiona's bank) 3.5 s late so the objective message it comes with doesn't hide its subtitle (`vo.<bank>.<cue>`); a line with no sound shows its text as a message (`util_ObjMsgPrint`, `GENERAL`). The contract completes after the last voiced line has played.
+
+Zones and squads these use load from the mod's map layers like the objectives'.
+
+Tested in game (2026-11-15): a radio line's text, a bonus objective shown on its reveal, and a time limit's clock. Escort, protect and stay-in-zone aren't tested in game yet.
+
+### Mission givers
+
+A mission file's `"contact"` decides who offers it:
+
+- Absent or an object without `"position"`: a contact beside the faction's HQ bouncer (below).
+- With `"position"` and `"heading"`: a giver placed on the map. The build puts the giver in a layer of its own, `<id>_giver`, that loads with the map in free roam, copied from `"template"` (default the faction's bouncer) with that template's loads, so any character works, even one whose template lives in a mission's layer (the Ace of Clubs is in `aclubs_mission1`, loaded only during that mission; spawning from it in free roam fails). The contracts script waits for the actor (up to 15 s: it can appear a moment after its layer loads), then:
+  - sets its side, `"side"` (default `"civ"`), with `Ai_SetFaction` and `Ai_SetHostileRange(name, 0)`, again each time it wakes (a side set while it is dormant doesn't hold; `nw_sk4` does the same for its mole);
+  - marks it per `"marker"`: `"gold"` (the HQ bouncers' target type, default), `"primary"`, `"secondary"` or `"none"`, with a plain blip (the faction's HQ blip would move the faction's HQ icon to it);
+  - and lets the player use it once at a time (saying no re-arms it).
+- `false`: no one (the mission starts from its Lua line, or from the HQ sequence below).
+
+`"requires": ["sw_china9", ...]`: the contact or giver appears only once those missions are done (`foundry_done_<id>`), for chains of side contracts.
+
+Tested in game (2026-11-15): a placed giver copied from the Ace of Clubs stood where placed, with a gold marker and its name, and didn't attack.
+
 ### Offering the mission at the HQ
 
 The HQ's own contract order can't reach a new mission. The bouncers (`bouncer` script) offer the current arc position only while it is within the chapter's range (`util_GetLastMissionNumberInChapterArc`). Positions are also fixed in several other places: ace missions at 3 and 6 for allies (`util_IsAceMission`), chapter starts, the final mission, and gameflow's layer rules. So appending a mission puts it after the province's last contract, and inserting one would shift all of those.
@@ -220,6 +251,19 @@ Instead, each mod mission gets a contact at its faction's HQ, a side contract yo
 - **Campaign progress is kept.** Starting a mission through `DebugSkipToMission` makes it the faction's current arc position, and finishing it adds to `current_<faction>_mission` and the completed-mission counters (`mission_MissionComplete2`). So the contact saves `current_<faction>_mission`, `total_missions_completed<faction>` and `num_std_missions_cmpl_<faction>` before starting. A second hook, the first line of `LoadNoMissionState`, puts them back when the contract ends, however it ends. A failure with a retry isn't an end: `Retry` queues the same mission (`SkipTo_MissionNumber`) before the script closes, and the retried mission reads the arc position again in `mission_GenericInit`, so the values stay until the retried contract ends. (Putting them back there erased China's position on a first China contract, and the retry's script stopped on its first line.) The game runs `LoadNoMissionState` when a mission script closes; it is the first argument of `LoadMission`'s `Utility_RunLuaScript`.
 - **Completions are remembered.** If the mission just completed (`JustCompletedStandardMission`, read before `LoadNoMissionState` erases it), the scribble value `foundry_done_<id>` is set and the contact no longer appears. `"repeatable": true` in the mission file keeps offering it.
 - **Settings.** Change the contact with `"contact": {"name": "Major Kim", "prompt": "Ask about the job", "template": ..., "location": ..., "offset": [3, 0, 0], "yaw": 0}`. Leave it out with `"contact": false`.
+
+### In the faction's HQ contract sequence
+
+`"hq": {"after": <arc position of the retail contract it follows>}` (0: before the first; `"chapter"` when the position is a chapter's last, as China's 3 on `sw`) has the faction's own HQ bouncer offer the mission at that point of its contracts on the map. Retail campaign rules are tied to arc positions (`current_<f>_mission`): ace and face-card missions, chapter starts and ends, the final mission, gameflow's layer rules. So the retail positions never change. The mission is a sub-step at the position of the contract it comes before: while it runs, a scribble flag (`foundry_ins_active`) makes `util_MissionSeqNumToMissionAssetNum` give its number. The build patches (only when a mod mission uses `"hq"`; `mercfoundry/hqsequence.py`):
+
+- `util_misc`: the asset lookup as above, and `util_IsAceMission`, `util_IsFaceCardMission`, `util_IsFinalMission` and `util_IsPlayableIntro` say no while it runs;
+- `bouncer`: the bouncer also appears past the chapter's last contract when an insertion is waiting there, and offers it with a yes/no box (the briefing room has no table for a mod mission);
+- `global` (`SetupChapter`): keeps the chapter while an insertion or a side contract runs (their arc positions would otherwise switch chapter and reset the other factions);
+- `gameflow`: retail in-mission layer rules don't apply while it runs.
+
+The campaign values are saved and put back as for a side contract, and a completed insertion is counted (`foundry_ins_done_*`) so the bouncer moves on. The mission's number is still appended to the arc, so `DebugSkipToMission` and contacts work too. The old `"after"` (inserting a number into the arc) shifted every retail position after it and broke chapters, aces and the final mission; it now appends and warns.
+
+Limits: not before sw allies' first contract (the playable intro); `sw` has no bouncers in chapters 3 and 4; for allies, an insertion after the chapter's last contract sits beside the ace bouncer, and taking the ace first skips it. Not tested in game yet: the build's patches apply to the retail scripts, and the editor offers each faction's points with their contract titles.
 
 To reach free roam at a faction HQ from Skip Intro (Foundry Console's Lua box):
 

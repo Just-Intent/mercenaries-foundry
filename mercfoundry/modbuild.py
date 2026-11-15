@@ -401,7 +401,23 @@ def _apply_encounters(data, folder, result):
     """encounters/<layer>.json: a new world layer (objects, encounter, list)."""
     from . import encounters, find
     files = sorted((folder / "encounters").glob("*.json")) if (folder / "encounters").is_dir() else []
-    if not files:
+    # A mission giver placed on the map stands in a layer of its own that
+    # loads with the map: copied from its template (with the template's
+    # model and texture loads), so any character works, even one whose
+    # template lives in a mission's layer the game loads only then.
+    givers = []
+    for mf in sorted((folder / "missions").glob("*.json")) if (folder / "missions").is_dir() else []:
+        mdoc = json.loads(mf.read_text(encoding="utf-8"))
+        c = mdoc.get("contact")
+        if isinstance(c, dict) and c.get("position"):
+            from . import missions as _ms
+            map_, faction, _ = _ms.parse_id(mf.stem.lower())
+            givers.append((f"{mf.stem.lower()}_giver", {
+                "map": map_.upper(), "load": "map",
+                "objects": [{"from": c.get("template") or f"template_{faction}_bouncer",
+                             "name": _ms.contact_actor(mf.stem.lower()),
+                             "position": [float(v) for v in c["position"]], "yaw": float(c.get("heading", 0))}]}))
+    if not files and not givers:
         return
     archives = [data.archive(n) for n in ARCHIVES if (data.dir / n).exists()]
     existing = {r.key for _, r in data.records(WORLD)}
@@ -474,6 +490,21 @@ def _apply_encounters(data, folder, result):
                  and (doc.get("map") or "").lower() in ("sw", "nw")
                  else f"load it from a script with Utility_ReadLevelFile('{layer}')")
         result.changes.append(f"layer {layer}: {n} objects, {len(doc.get('encounters', []))} encounters ({loads})")
+    for layer, doc in givers:
+        if name_hash(layer) in existing:
+            raise ValueError(f"the game already has a layer named {layer!r} (for a mission giver)")
+        current_map[0] = doc["map"].lower()
+        try:
+            records = encounters.build(layer, doc, find_source, source_loads)
+        except ValueError as e:
+            raise ValueError(f"missions/{layer[:-len('_giver')]}.json: the mission giver: {e}") from None
+        for kind, body in records.items():
+            data.new("assets.dsk", name_hash(layer), kind, body)
+        if doc["map"].lower() in ("sw", "nw"):
+            data.map_layers = getattr(data, "map_layers", []) + [
+                {"map": doc["map"].lower(), "layer": layer, "check": doc["objects"][0]["name"]}]
+        result.changes.append(f"layer {layer}: the mission giver, a copy of {doc['objects'][0]['from']} "
+                              f"(loads with the {doc['map']} map in free roam)")
 
 
 def _mission_order(projects):
@@ -518,9 +549,22 @@ def _apply_missions(data, folder, result, files=None):
         hit = [(a, r) for a, r in data.records(SCRIPT) if r.key == name_hash("util_misc")]
         if not hit:
             raise ValueError("the game data has no util_misc script (needed for mission arcs)")
-        for a, r in hit:
+        from . import hqsequence
+        try:
+            insertion = hqsequence.plan(asset_id, doc, missions.parse_id)
+        except ValueError as e:
+            raise ValueError(f"missions/{f.name}: {e}") from None
+        for k, (a, r) in enumerate(hit):
             old = script.decode(data.current(a, r))
-            text = missions.add_to_arc(old.source, faction, map_, number, doc.get("after"))
+            before = missions.arc(old.source, faction, map_)
+            if k == 0 and doc.get("after") is not None and doc["after"] != (before[-1] if before else None) \
+                    and number not in before:
+                # Once a number in the middle of the arc; that shifts every
+                # later retail position (chapters, face cards, aces, the end).
+                result.warnings.append(f"missions/{f.name}: \"after\": {doc['after']} is ignored; the mission goes "
+                                       f"at the end of the {faction} {map_} arc. To have the HQ offer it between "
+                                       f"retail contracts, use \"hq\": {{\"after\": <arc position>}}")
+            text = missions.add_to_arc(old.source, faction, map_, number)
             data.set(a, r, script.encode(script.with_source(old, text)))
         lists = [(a, r) for a, r in data.records(name_hash("list")) if r.key == name_hash(map_)]
         if not lists:
@@ -536,6 +580,9 @@ def _apply_missions(data, folder, result, files=None):
         overrides = {**ini_text, **(doc.get("ini") or {})}
         if doc.get("objectives"):
             overrides["BonusFee"] = ini_text["BonusFee"]     # flat bonus + bonus objectives' rewards
+        if insertion and not any(k.lower() == "chapter" for k in (doc.get("ini") or {})):
+            # the copied section has the faction's first mission's chapter
+            overrides["Chapter"] = hqsequence.ini_chapter(insertion["chapter"])
         ini, section = missions.add_to_mission_ini(ini, asset_id, overrides)
         data.files[path] = ini.encode("latin-1")
         if mail:
@@ -564,12 +611,17 @@ def _apply_missions(data, folder, result, files=None):
                 text_list = missions.add_to_list(layer_list.decode("latin-1"), "registry", asset_id)
                 data.replace_added(name_hash(asset_id), name_hash("list"), text_list.encode("latin-1"))
         known = {r.key for _, r in data.records(SCRIPT)} | {k for k, kind, _ in data.added() if kind == SCRIPT}
-        drafts = [i for i, o in enumerate(doc.get("objectives") or [], 1)
-                  if (o.get("type") == "destroy" and not (o.get("squad") or o.get("targets")))
-                  or (o.get("type") == "goto" and not o.get("zone"))]
+        drafts = [f"objective {i}" for i, o in enumerate(doc.get("objectives") or [], 1)
+                  if (o.get("type") in ("destroy", "escort") and not (o.get("squad") or o.get("targets")))
+                  or (o.get("type") in ("goto", "escort") and not o.get("zone"))
+                  or str(o.get("reveal") or "") == "zone:"]
+        drafts += [f"fail condition {k}" for k, c in enumerate(doc.get("fail") or [], 1)
+                   if (c.get("type") == "dies" and not (c.get("squad") or c.get("targets")))
+                   or (c.get("type") == "leave" and not c.get("zone"))
+                   or (c.get("type") == "timer" and not c.get("seconds"))]
         if drafts:
-            result.warnings.append(f"missions/{f.name}: objective {', '.join(map(str, drafts))} has no squad or "
-                                   "zone yet, so no script was written for it")
+            result.warnings.append(f"missions/{f.name}: {', '.join(drafts)} isn't finished (no squad, zone or time "
+                                   "yet), so no script was written for it")
         if doc.get("objectives") and not drafts and name_hash(asset_id) not in known:
             # No script of the mod's own: one written from the objectives.
             # Squads: in the mission's layer, or a layer of the mod that loads
@@ -601,10 +653,13 @@ def _apply_missions(data, folder, result, files=None):
                                      "or a layer of this mod that loads with the map")
                 return found
 
-            for o in doc["objectives"]:
-                for stem, ldoc in layers:
-                    if o.get("zone") and o["zone"] in (ldoc.get("boundaries") or {}) and stem.lower() != asset_id:
-                        used.add(stem)
+            # Zones: objectives', bonus reveals' ("zone:<name>") and fail conditions'.
+            zones = {o.get("zone") for o in doc["objectives"]} | {c.get("zone") for c in doc.get("fail") or []}
+            zones |= {str(o["reveal"])[5:] for o in doc["objectives"] if str(o.get("reveal") or "").startswith("zone:")}
+            zones |= {str(r["when"])[5:] for r in doc.get("radio") or [] if str(r.get("when") or "").startswith("zone:")}
+            for stem, ldoc in layers:
+                if stem.lower() != asset_id and zones & set(ldoc.get("boundaries") or {}):
+                    used.add(stem)
             def zone_centre(name):
                 for _, ldoc in layers:
                     zone = (ldoc.get("boundaries") or {}).get(name)
@@ -634,17 +689,24 @@ def _apply_missions(data, folder, result, files=None):
             contracts.append(contact)
             _set_strings(data, contact_strings)
             extras += f"a contact at the {faction} HQ, "
+        if insertion:
+            insertion["title_key"] = missions.section_value(ini, section, "MissionTitleDbKey")
+            insertion["description_key"] = missions.section_value(ini, section, "ShortDescriptionDbKey")
+            data.hq_insertions = getattr(data, "hq_insertions", []) + [insertion]
+            extras += (f"offered by the {faction} HQ bouncer after its contract {insertion['after']} "
+                       f"(chapter {insertion['chapter']}), ")
+            result.warnings += [f"missions/{f.name}: \"hq\": {n}" for n in insertion["notes"]]
         result.changes.append(f"mission {asset_id}: [{section}] in mission.ini, {extras}script listed in {map_}, "
                               f"{faction} {map_} arc now {arc} "
                               f"(start it with DebugSkipToMission('{faction}', {number}))")
     return contracts
 
 
-def _apply_contracts(data, contracts, result):
-    """Contacts at faction HQs that offer mod missions (missions never come up
-    in the HQ's own contract order, which is tied to fixed arc positions)."""
+def _apply_contracts(data, contracts, result, insertions=()):
+    """Contacts at faction HQs that offer mod missions, and missions the HQ
+    bouncers offer in their contract sequence ("hq"; see _apply_hq_sequence)."""
     from . import missions
-    body = missions.contracts_script(contracts)
+    body = missions.contracts_script(contracts, insertions)
     key = name_hash(missions.CONTRACTS_SCRIPT)
     if any(r.key == key for _, r in data.records(SCRIPT)):
         raise ValueError(f"the game already has a script named {missions.CONTRACTS_SCRIPT}")
@@ -661,8 +723,26 @@ def _apply_contracts(data, contracts, result):
     for a, r in hit:
         old = script.decode(data.current(a, r))
         data.set(a, r, script.encode(script.with_source(old, missions.patch_global(old.source))))
-    result.changes.append(f"contacts: {', '.join(c['id'] for c in contracts)} offered at faction HQs "
-                          f"(global's LoadNoMissionState runs {missions.CONTRACTS_SCRIPT})")
+    if contracts:
+        result.changes.append(f"contacts: {', '.join(c['id'] for c in contracts)} offered at faction HQs "
+                              f"(global's LoadNoMissionState runs {missions.CONTRACTS_SCRIPT})")
+
+
+def _apply_hq_sequence(data, insertions, result):
+    """Mod missions offered by their faction's own HQ bouncer between its
+    retail contracts: text patches into util_misc, bouncer, global and
+    gameflow (hqsequence.PATCHES), which foundry_contracts' functions drive."""
+    from . import hqsequence
+    for name, patch in hqsequence.PATCHES:
+        hit = [(a, r) for a, r in data.records(SCRIPT) if r.key == name_hash(name)]
+        if not hit:
+            raise ValueError(f"the game data has no {name} script (needed for \"hq\" missions)")
+        for a, r in hit:
+            old = script.decode(data.current(a, r))
+            data.set(a, r, script.encode(script.with_source(old, patch(old.source))))
+    result.changes.append("HQ sequence: " + "; ".join(
+        f"{c['id']} after {c['faction']} contract {c['after']} on {c['map'].upper()} (chapter {c['chapter']})"
+        for c in insertions) + " (util_misc, bouncer, global and gameflow patched)")
 
 
 def _apply_map_layers(data, result):
@@ -1308,8 +1388,11 @@ def build(projects, data_dir, out_dir, name=None, description=None) -> Result:
             result.warnings += [prefix + w for w in part.warnings]
         if step is _apply_missions:
             data.project = "Foundry"
-            if contracts:
-                _apply_contracts(data, contracts, result)
+            insertions = getattr(data, "hq_insertions", [])
+            if contracts or insertions:
+                _apply_contracts(data, contracts, result, insertions)
+            if insertions:
+                _apply_hq_sequence(data, insertions, result)
             if getattr(data, "map_layers", None):
                 _apply_map_layers(data, result)
             _check_new_scripts(data, result)

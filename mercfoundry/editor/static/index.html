@@ -143,10 +143,53 @@
       <p class="hint" id="ms-start-at">Where the contract leaves the player (the HQ).</p>
       <label class="field">Heading (degrees) <input id="ms-start-heading" type="number" step="5" value="0"></label>
       <div class="buttons"><button id="ms-start-set" title="The point in the middle of the view">Set here</button>
+        <button id="ms-start-grab" title="Put the gizmo on the yellow arrow">Move/turn</button>
         <button id="ms-start-show">Show</button><button id="ms-start-clear">Clear</button></div>
+      <h3>Mission giver</h3>
+      <label class="field">Who offers it <select id="ms-giver-mode">
+        <option value="hq">A contact at the faction's HQ</option>
+        <option value="placed">Someone placed on the map</option>
+        <option value="sequence">In the faction's HQ contract sequence</option>
+        <option value="none">No one (start it with the Lua line)</option></select></label>
+      <div id="ms-giver-seq" hidden>
+        <label class="field">After which contract <select id="ms-giver-after"></select></label>
+        <p class="hint" id="ms-giver-seq-hint">The faction's own HQ bouncer offers it at this point of its contracts on this map.</p>
+        <label class="field"><input id="ms-giver-contact" type="checkbox"> Also a contact at the HQ (any time)</label>
+      </div>
+      <div id="ms-giver-requires">
+        <p class="hint">Available after (the giver appears once these are done):</p>
+        <div id="ms-requires"></div>
+      </div>
+      <div id="ms-giver-who">
+        <label class="field">Name <input id="ms-giver-name" type="text" placeholder="the faction's contact"></label>
+        <label class="field">Prompt <input id="ms-giver-prompt" type="text" placeholder="Discuss contract: (title)"></label>
+      </div>
+      <div id="ms-giver-placed">
+        <label class="field">Character (template) <input id="ms-giver-template" type="text" list="templates" placeholder="the faction's bouncer"></label>
+        <label class="field">Marker <select id="ms-giver-marker" title="How the giver is marked in the world and on the map">
+          <option value="gold">Gold ring, like the HQ mission givers</option><option value="primary">Primary objective</option>
+          <option value="secondary">Secondary objective (blue)</option><option value="none">None</option></select></label>
+        <label class="field">Their side <select id="ms-giver-side" title="Who they side with in the game (Ai_SetFaction); neutral won't attack you">
+          <option value="civ">Neutral (civilian)</option><option value="allies">Allied Nations</option><option value="china">China</option>
+          <option value="mafia">Russian Mafia</option><option value="sk">South Korea</option><option value="nk">North Korea</option></select></label>
+        <p class="hint" id="ms-giver-at"></p>
+        <label class="field">Heading (degrees) <input id="ms-giver-heading" type="number" step="5" value="0"></label>
+        <div class="buttons"><button id="ms-giver-set" title="The point in the middle of the view">Set here</button>
+          <button id="ms-giver-grab" title="Put the gizmo on the cyan figure">Move/turn</button>
+          <button id="ms-giver-show">Show</button></div>
+        <p class="hint">Click the cyan figure (or Move/turn) to drag it; E and the ring turn it.</p>
+      </div>
       <h3>Objectives, in order</h3>
       <div id="ms-objectives"></div>
-      <div class="buttons"><button id="ms-add-destroy">+ Destroy squad</button><button id="ms-add-goto">+ Go to zone</button></div>
+      <div class="buttons"><button id="ms-add-destroy">+ Destroy squad</button><button id="ms-add-goto">+ Go to zone</button>
+        <button id="ms-add-escort" title="A squad that follows the player; done when the survivors reach a zone, failed if they all die">+ Escort squad</button></div>
+      <h3>Radio lines</h3>
+      <div id="ms-radio"></div>
+      <div class="buttons"><button id="ms-add-radio">+ Radio line</button></div>
+      <h3>Fail conditions</h3>
+      <div id="ms-fails"></div>
+      <div class="buttons"><button id="ms-add-protect">+ Protect squad</button><button id="ms-add-timer">+ Time limit</button>
+        <button id="ms-add-leave">+ Stay in zone</button></div>
       <div id="ms-layer-tools">
         <p class="hint">The mission's soldiers and zones go in its layer (loaded only during the mission):</p>
         <div class="buttons"><button id="ms-add-squad">Add squad</button><button id="ms-add-zone">Draw zone</button></div>
