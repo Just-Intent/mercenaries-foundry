@@ -771,3 +771,31 @@ class TravelTests(unittest.TestCase):
         self.assertEqual(luacheck.check(lua), [])
         self.assertIn("ax = 1.00, ay = 2.00, az = 3.00, ah = 0.0", lua)
         self.assertIn("Utility_ResetToBaseLayerOnly(t.to)", lua)
+
+
+class NewMapMissionTests(unittest.TestCase):
+    def test_contract_takes_the_player_to_the_new_map(self):
+        from mercfoundry import luacheck
+        doc = {"title": "Isle job", "map": "isle", "contact": {"position": [1, 2, 3], "heading": 90}}
+        self.assertEqual(missions.play_map("sw_china12", doc), "isle")
+        self.assertIsNone(missions.play_map("sw_china12", {"map": "sw"}))
+        c, _ = missions.contract("sw_china12", doc, "t", "d")
+        self.assertEqual((c["map"], c["play"]), ("isle", "isle"))       # the giver stands there
+        lua = missions.contracts_script([c])
+        self.assertEqual(luacheck.check(lua), [])
+        start = lua[lua.index("function foundry_Start_sw_china12()"):]
+        self.assertIn("Utility_WriteStringToScribbleMemory('foundry_play_map', 'isle')\n"
+                      "Utility_ResetToBaseLayerOnly('isle')", start)
+        self.assertNotIn("DebugSkipToMission", start[:start.index("\nend")])
+        self.assertIn("local map = sFoundryOnMap or Utility_ReadStringFromScribbleMemory('SkipTo_Map')", lua)
+        # an HQ contact for it stays at the HQ, and still takes the player to the island
+        c2, _ = missions.contract("sw_china12", {"map": "isle"}, "t", "d")
+        self.assertEqual((c2["map"], c2["play"]), ("sw", "isle"))
+
+    def test_the_new_maps_script_runs_it(self):
+        from mercfoundry import luacheck
+        start, funcs = missions.map_mission_lua("isle")
+        self.assertEqual(start, ["sFoundryOnMap = 'isle'", "if not foundry_isle_Mission() then foundry_isle_FreeRoam() end"])
+        self.assertEqual(luacheck.check(funcs), [])
+        self.assertIn("Utility_RunLuaScript('foundry_isle_FreeRoam', q .. '_' .. f .. "
+                      "util_MissionSeqNumToMissionAssetNum(q, f, n))", funcs)

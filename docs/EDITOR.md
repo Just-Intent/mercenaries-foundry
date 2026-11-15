@@ -178,6 +178,13 @@ toolkit bundle run it the same way: `foundry\python\python.exe foundry\mercfound
   the map's arrival point (`"travel"` in `maps/<name>.json`). On the new
   map, **Pilot back** puts one that takes them back to SW or NW, beside the
   pilot that brought them (`"return"`).
+  **Missions on a new map**: the Missions panel works there as on SW. A
+  mission made there is a SW contract to the game's mission code (it gets a
+  number in SW's arc, `sw_<faction><n>`) with `"map": "<new map>"`: its
+  giver stands on the new map (or its contact is at the HQ), and taking the
+  contract saves and goes to the new map, whose own script starts it (as
+  global does on SW). When it ends the player is in free roam on the new
+  map, its givers offered again; a retry starts it there again.
   Pilots and a new map's arrival point show in the view like objects (a
   pilot, or a marker figure for the arrival point): move and turn them as
   objects, and Save writes them back to their `maps/<name>.json`. Add and

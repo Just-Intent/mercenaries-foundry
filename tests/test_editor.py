@@ -464,3 +464,31 @@ class LiveCommandTests(unittest.TestCase):
         self.assertEqual(len(lines[0].split()), 4 + 3 * 40)
         self.assertTrue(lines[1].endswith("44 88 144"))
         self.assertTrue(all(len(line) < 640 for line in lines))
+
+
+class NewMapMissionTests(unittest.TestCase):
+    def test_missions_played_on_a_new_map(self):
+        import json
+        import tempfile
+        from pathlib import Path
+        from mercfoundry.editor.scene import Scene
+        with tempfile.TemporaryDirectory() as d:
+            root = Path(d)
+            (root / "maps").mkdir()
+            (root / "maps" / "isle.json").write_text(json.dumps({"from": "blank"}))
+            sc = Scene.__new__(Scene)
+            sc.mod = root
+            sc.context = [root]
+            sc._arc_numbers = lambda m: {"allies": set(), "china": {1, 2, 9} if m == "sw" else set(),
+                                         "mafia": set(), "sk": set()}
+            sc._hq_points = lambda m: {}
+            self.assertEqual(sc.mission_arc("isle"), "sw")
+            self.assertEqual(sc.mission_arc("nw"), "nw")
+            sc.save_mission("isle", {"faction": "china", "number": 10, "title": "Isle job", "objectives": []})
+            doc = json.loads((root / "missions" / "sw_china10.json").read_text(encoding="utf-8"))
+            self.assertEqual(doc["map"], "isle")
+            got = sc.missions("isle")
+            self.assertEqual(got["arc"], "sw")
+            self.assertEqual([m["id"] for m in got["missions"]], ["sw_china10"])
+            self.assertEqual(got["next"]["china"], 10)
+            self.assertEqual(sc.missions("sw")["missions"], [])     # played on isle, not SW

@@ -1542,6 +1542,54 @@ def travel_lua(prefix, pilots, by_map=True):
     return "\n".join(out) + "\n"
 
 
+def map_mission_lua(map_name):
+    """Lua for a mod's new map's master script: free roam there with the mod's
+    contracts (foundry_contracts: its placed givers), and a mission played
+    there, started as global's InitializeMap and LoadMission start one
+    (SkipTo_* from the contract; the arc map stays SkipTo_Map). When the
+    mission's script closes (done, or failed and not retried), the game calls
+    back foundry_<map>_FreeRoam, as global's LoadNoMissionState. Returns
+    (start lines for ScriptInit, functions)."""
+    P = f"foundry_{map_name}_"
+    start = [f"sFoundryOnMap = {_lua(map_name)}",
+             f"if not {P}Mission() then {P}FreeRoam() end"]
+    funcs = f"""-- Missions played on {map_name} (Mercenaries Foundry)
+function {P}Mission()
+if Utility_ReadStringFromScribbleMemory('foundry_play_map') ~= {_lua(map_name)} then return false end
+local f = Utility_ReadStringFromScribbleMemory('SkipTo_Faction')
+local n = Utility_ReadNumberFromScribbleMemory('SkipTo_MissionNumber')
+if not f or not n then return false end
+Utility_LoadUtilityScript('util_debug')
+Utility_LoadUtilityScript('util_misc')
+Utility_LoadUtilityScript('gameflow')
+gameflow_GenericInit()
+local q = Utility_ReadStringFromScribbleMemory('SkipTo_Map')
+Utility_EraseValueFromScribbleMemory('SkipTo_Faction')
+Utility_EraseValueFromScribbleMemory('SkipTo_MissionNumber')
+if not Utility_ReadNumberFromScribbleMemory('mission_accepted') then
+if Utility_ReadStringFromScribbleMemory('skipto_via_cheating') then
+Utility_EraseValueFromScribbleMemory('skipto_via_cheating')
+n = util_MissionAssetNumToMissionSeqNum(q, f, n)
+end
+Utility_WriteStringToScribbleMemory('current_faction', f)
+Utility_WriteNumberToScribbleMemory('current_' .. f .. '_mission', n)
+Utility_WriteNumberToScribbleMemory('mission_accepted', 1)
+end
+util_DefaultSupport()
+Utility_WriteStringToScribbleMemory('full_mission_id', q .. '_' .. f .. n)
+Utility_RunLuaScript({_lua(P + 'FreeRoam')}, q .. '_' .. f .. util_MissionSeqNumToMissionAssetNum(q, f, n))
+return true
+end
+function {P}FreeRoam()
+Utility_EraseValueFromScribbleMemory('foundry_play_map')
+Utility_LoadUtilityScript('foundry_contracts')
+foundry_ReturnFromContract()
+foundry_SetupContracts()
+end
+"""
+    return start, funcs
+
+
 ARRIVE_LUA = """-- Back from another map: put the player where the pilot that brought them
 -- said. Free roam puts the player at the HQ they last worked for
 -- (Mission_PlayerRespawn) after this runs, so the move waits a moment, and
@@ -1651,6 +1699,13 @@ def contact_actor(asset_id):
     return f"foundry_contact_{asset_id}"
 
 
+def play_map(asset_id, doc):
+    """The mod's new map a mission is played on ("map"), or None (its arc's
+    map, SW or NW, as usual)."""
+    m = str(doc.get("map") or "").strip().lower()
+    return m if m and m != parse_id(asset_id)[0] else None
+
+
 def contract(asset_id, doc, title_key, description_key):
     """The contact that offers a mod mission at its faction's HQ, and the
     strings it needs ({key: text}; they go in the always-loaded actions and
@@ -1664,7 +1719,8 @@ def contract(asset_id, doc, title_key, description_key):
     strings = {prompt_key: c.get("prompt", f"Discuss contract: {title}"),
                name_key: c.get("name", f"{FACTION_NAMES[faction]} contact"),
                desc_key: c.get("name", f"{FACTION_NAMES[faction]} contact")}
-    return {"id": asset_id, "map": map_, "faction": faction, "number": number,
+    return {"id": asset_id, "map": (play_map(asset_id, doc) if c.get("position") else None) or map_,
+            "faction": faction, "number": number,
             "repeatable": bool(doc.get("repeatable", False)),
             "template": c.get("template", f"template_{faction}_bouncer"),
             "location": c.get("location", f"loc_hq-{faction}-bouncer"),
@@ -1692,6 +1748,10 @@ def contract(asset_id, doc, title_key, description_key):
             "stay": bool(c.get("stay")) and bool(c.get("position")),
             "invincible": bool(c.get("invincible")) and bool(c.get("position")),
             "lose": bool(c.get("lose_if_killed")) and bool(c.get("position")),
+            # Played on a mod's new map ("map"): the contract takes the player
+            # there (and a giver placed for it stands there); the mission stays in
+            # its arc map's arc, so the game's mission code runs it as usual.
+            "play": play_map(asset_id, doc),
             "title_key": title_key, "description_key": description_key}, strings
 
 
@@ -1727,7 +1787,8 @@ def contracts_script(contracts, insertions=()):
                        (", px = %.2f, py = %.2f, pz = %.2f, heading = %.1f, side = %s" % (
                            *c["position"], c["heading"], _lua(c["side"])) if c["position"] else "")
                        + (", requires = { %s }" % ", ".join(_lua(r) for r in c["requires"]) if c["requires"] else "")
-                       + "".join(f", {k} = true" for k in ("stay", "invincible", "lose") if c.get(k))))
+                       + "".join(f", {k} = true" for k in ("stay", "invincible", "lose") if c.get(k))
+                       + (", play = %s, arc = %s" % (_lua(c["play"]), _lua(parse_id(c["id"])[0])) if c.get("play") else "")))
     out.append("}")
     out += [
         "Utility_LoadUtilityScript('util_objectives')",
@@ -1831,7 +1892,9 @@ def contracts_script(contracts, insertions=()):
         "-- map just before this runs; its actor can appear a moment later, so",
         "-- this looks again each second (up to 15 s) until it's there.",
         "function foundry_SetupContracts()",
-        "local map = Utility_ReadStringFromScribbleMemory('SkipTo_Map')",
+        "-- a mod's new map's own script sets sFoundryOnMap (SkipTo_Map stays the",
+        "-- free-roam map the player came from)",
+        "local map = sFoundryOnMap or Utility_ReadStringFromScribbleMemory('SkipTo_Map')",
         "local bWaiting = false",
         "for i, c in tFoundryContracts do",
         "local name = foundry_ContactName(c)",
@@ -1893,9 +1956,22 @@ def contracts_script(contracts, insertions=()):
             "end",
             f"Utility_WriteStringToScribbleMemory('foundry_active_contract', {_lua(c['id'])})",
             "Utility_WriteStringToScribbleMemory('foundry_active_faction', f)",
-            f"Objective_Remove(foundry_ContactName(tFoundryContracts[{contracts.index(c) + 1}]))",
-            f"DebugSkipToMission(f, {c['number']})",
-            "end"]
+            f"Objective_Remove(foundry_ContactName(tFoundryContracts[{contracts.index(c) + 1}]))"]
+        if c.get("play"):
+            # As DebugSkipToMission, but the level is the new map, whose own
+            # script starts the mission (map_mission_lua); the arc map stays
+            # SkipTo_Map, so the game's mission code finds it in its arc.
+            out += [
+                "Utility_WriteStringToScribbleMemory('SkipTo_Faction', f)",
+                f"Utility_WriteNumberToScribbleMemory('SkipTo_MissionNumber', {c['number']})",
+                "Utility_WriteStringToScribbleMemory('skipto_via_cheating', 'true')",
+                "Utility_EraseValueFromScribbleMemory('mission_accepted')",
+                f"Utility_WriteStringToScribbleMemory('SkipTo_Map', {_lua(parse_id(c['id'])[0])})",
+                f"Utility_WriteStringToScribbleMemory('foundry_play_map', {_lua(c['play'])})",
+                f"Utility_ResetToBaseLayerOnly({_lua(c['play'])})",
+                "end"]
+        else:
+            out += [f"DebugSkipToMission(f, {c['number']})", "end"]
     if insertions:
         from . import hqsequence
         out.append(hqsequence.lua_block(insertions).rstrip("\n"))

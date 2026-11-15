@@ -910,11 +910,24 @@ class Scene:
         }
         return layer, doc
 
+    def _new_map(self, map_name):
+        """Whether the map is one of the mods' new maps (maps/<name>.json)."""
+        return any((Path(p) / "maps" / f"{map_name.lower()}.json").exists() for p in getattr(self, "context", [])) or \
+            (self.mod / "maps" / f"{map_name.lower()}.json").exists()
+
+    def mission_arc(self, map_name):
+        """The arc a map's missions are in: its own (SW, NW), or for a new map
+        SW's (the game's mission code runs them as SW contracts; "map" says
+        they're played on the new map)."""
+        return "sw" if self._new_map(map_name) else map_name.lower()
+
     def missions(self, map_name):
         """The mod's missions on this map, each with its layer's squads and
-        zones, and the next free number per faction."""
+        zones, and the next free number per faction. On a new map: the
+        missions played there ("map"), numbered in SW's arc."""
         from .. import missions as ms
         m = map_name.lower()
+        arc_map = self.mission_arc(m)
         out = []
         mdir = self.mod / "missions"
 
@@ -949,9 +962,10 @@ class Scene:
                 mp, faction, number = ms.parse_id(p.stem)
             except ValueError:
                 continue
-            if mp != m:
-                continue
             doc = json.loads(p.read_text(encoding="utf-8"))
+            plays = ms.play_map(p.stem, doc) or mp          # where it's played
+            if plays != m:
+                continue
             lp = self.mod / "encounters" / f"{p.stem}.json"
             ldoc = json.loads(lp.read_text(encoding="utf-8")) if lp.exists() else {}
             squads, zones = layer_names(ldoc)
@@ -962,9 +976,9 @@ class Scene:
                         "paths": paths + [x for x in shared_paths if x not in paths], "sets": {**shared_sets, **sets},
                         "own": squads,
                         "script": (self.mod / "scripts" / f"{p.stem}.lua").exists()})
-        taken = self._arc_numbers(m)
+        taken = self._arc_numbers(arc_map)
         nxt = {f: max([8] + sorted(taken[f])) + 1 for f in ms.FACTIONS}
-        return {"missions": out, "next": nxt, "factions": list(ms.FACTIONS),
+        return {"missions": out, "next": nxt, "factions": list(ms.FACTIONS), "arc": arc_map,
                 "squads": shared_squads, "zones": shared_zones, "paths": shared_paths, "sets": shared_sets,
                 "hq": self._hq_points(m)}
 
@@ -1377,7 +1391,7 @@ class Scene:
         description, briefing, fee, objectives), keeping anything else the file
         has, and make sure the mission has its layer file."""
         from .. import missions as ms
-        asset_id = f"{map_name.lower()}_{mission['faction']}{int(mission['number'])}"
+        asset_id = f"{self.mission_arc(map_name)}_{mission['faction']}{int(mission['number'])}"
         ms.parse_id(asset_id)
         for i, o in enumerate(mission.get("objectives") or [], 1):
             if o.get("type") not in ms.OBJECTIVE_TYPES:
@@ -1386,6 +1400,8 @@ class Scene:
             # the build skips writing the script until it's complete.
         p = self.mod / "missions" / f"{asset_id}.json"
         doc = json.loads(p.read_text(encoding="utf-8")) if p.exists() else {}
+        if self._new_map(map_name):
+            doc["map"] = map_name.lower()           # played there (the contract takes the player there)
         for key in ("title", "description"):
             if mission.get(key) is not None:
                 doc[key] = mission[key]

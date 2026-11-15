@@ -467,6 +467,7 @@ def _apply_encounters(data, folder, result):
         if isinstance(c, dict) and c.get("position"):
             from . import missions as _ms
             map_, faction, _ = _ms.parse_id(mf.stem.lower())
+            map_ = _ms.play_map(mf.stem.lower(), mdoc) or map_        # played on a new map: it stands there
             givers.append((f"{mf.stem.lower()}_giver", {
                 "map": map_.upper(), "load": "map",
                 "objects": [{"from": c.get("template") or f"template_{faction}_bouncer",
@@ -582,6 +583,9 @@ def _apply_encounters(data, folder, result):
         if doc["map"].lower() in ("sw", "nw"):
             data.map_layers = getattr(data, "map_layers", []) + [
                 {"map": doc["map"].lower(), "layer": layer, "check": doc["objects"][0]["name"]}]
+        else:                    # on a mod's new map: its own script loads it
+            data.new_map_layers = getattr(data, "new_map_layers", {})
+            data.new_map_layers.setdefault(doc["map"].lower(), []).append(layer)
         result.changes.append(f"layer {layer}: the mission giver, a copy of {doc['objects'][0]['from']} "
                               f"(loads with the {doc['map']} map in free roam)")
     # Travel pilots for the mod's new maps (maps/<name>.json "travel" and
@@ -864,6 +868,15 @@ def _apply_missions(data, folder, result, files=None):
         asset_id = f.stem.lower()
         map_, faction, number = missions.parse_id(asset_id)
         doc = json.loads(f.read_text(encoding="utf-8"))
+        play = missions.play_map(asset_id, doc)
+        if play:
+            if play in missions.MAPS:
+                raise ValueError(f"missions/{f.name}: \"map\": {play!r} is a free-roam map; a mission is played "
+                                 f"on its own arc's map ({map_}) or on a mod's new map")
+            if play not in getattr(data, "new_maps", ()):
+                raise ValueError(f"missions/{f.name}: \"map\": {play!r} isn't a mod's new map (maps/{play}.json)")
+            data.map_missions = getattr(data, "map_missions", {})
+            data.map_missions.setdefault(play, []).append(asset_id)
         hit = [(a, r) for a, r in data.records(SCRIPT) if r.key == name_hash("util_misc")]
         if not hit:
             raise ValueError("the game data has no util_misc script (needed for mission arcs)")
@@ -967,6 +980,8 @@ def _apply_missions(data, folder, result, files=None):
             extras += (f"offered by the {faction} HQ bouncer after its contract {insertion['after']} "
                        f"(chapter {insertion['chapter']}), ")
             result.warnings += [f"missions/{f.name}: \"hq\": {n}" for n in insertion["notes"]]
+        if play:
+            extras += f"played on {play} (the contract takes the player there), "
         result.changes.append(f"mission {asset_id}: [{section}] in mission.ini, {extras}script listed in {map_}, "
                               f"{faction} {map_} arc now {arc} "
                               f"(start it with DebugSkipToMission('{faction}', {number}))")
@@ -977,6 +992,7 @@ def _apply_contracts(data, contracts, result, insertions=()):
     """Contacts at faction HQs that offer mod missions, and missions the HQ
     bouncers offer in their contract sequence ("hq"; see _apply_hq_sequence)."""
     from . import missions
+    data.contract_maps = {c["map"] for c in contracts} | {c["play"] for c in contracts if c.get("play")}
     body = missions.contracts_script(contracts, insertions)
     key = name_hash(missions.CONTRACTS_SCRIPT)
     if any(r.key == key for _, r in data.records(SCRIPT)):
@@ -1396,7 +1412,7 @@ def _renamed_record(body, new):
     return ucfb.wrap(tag, ucfb.pack_children(items, pad_last), (outer_pad, inner_pad))
 
 
-def map_script(name, doc, layers, pilots=()):
+def map_script(name, doc, layers, pilots=(), contacts=False):
     """A new map's master script (run as the map loads): blank's set-up, its
     layers, where the player arrives, a message, and its travel pilots
     (missions.travel_lua) armed."""
@@ -1418,9 +1434,15 @@ def map_script(name, doc, layers, pilots=()):
     prefix = f"foundry_{name.lower()}_Travel"
     if pilots:
         lines.append(f"{prefix}Arm()")
+    if contacts:                  # a mission played here, else free roam with its contacts
+        from .missions import map_mission_lua
+        start, funcs = map_mission_lua(name.lower())
+        lines += start
     text = "\n".join(lines + ["end", ""])
     if pilots:
         text += travel_lua(prefix, list(pilots), by_map=False)
+    if contacts:
+        text += funcs
     return text
 
 
@@ -1431,7 +1453,7 @@ def _apply_maps(data, folder, result):
     levels.ini and a copy of its level config. Reshape and paint it with
     terrain/<name>.* like any map; enter it from Foundry Console with
     Utility_ResetToBaseLayerOnly('<name>')."""
-    from . import sky
+    from . import missions, sky
     mdir = folder / "maps"
     for f in sorted(mdir.glob("*.json")) if mdir.is_dir() else []:
         name = f.stem
@@ -1491,14 +1513,30 @@ def _apply_maps(data, folder, result):
         # layers ("load": "map") load with it.
         layers = getattr(data, "new_map_layers", {}).get(name.lower(), [])
         pilots = getattr(data, "new_map_pilots", {}).get(name.lower(), [])
+        played = getattr(data, "map_missions", {}).get(name.lower(), [])
+        contacts = name.lower() in getattr(data, "contract_maps", set()) or bool(played)
+        if contacts:
+            # the scripts its missions and contacts run (in case its list doesn't
+            # load what SW's does)
+            lkey = data.find_added(key, name_hash("list"))
+            if lkey is not None:
+                text = lkey.decode("latin-1")
+                for s_ in ["mission", "mission_objective", "mission_objectiveverb", "mission_objectiveverify",
+                           "util_misc", "util_debug", "gameflow", "hud", "util_banter", "util_objectives",
+                           missions.CONTRACTS_SCRIPT] + played:
+                    if any(r.key == name_hash(s_) for _, r in data.records(SCRIPT)) or \
+                            data.find_added(name_hash(s_), SCRIPT) is not None:
+                        text = missions.add_to_list(text, "script", s_)
+                data.replace_added(key, name_hash("list"), text.encode("latin-1"))
         if not any(r.key == key for _, r in data.records(SCRIPT)) and data.find_added(key, SCRIPT) is None:
-            if mdoc.get("start") or mdoc.get("message") or layers or pilots:
-                source = map_script(name, mdoc, layers, pilots)
+            if mdoc.get("start") or mdoc.get("message") or layers or pilots or contacts:
+                source = map_script(name, mdoc, layers, pilots, contacts)
                 made.append("script (" + ", ".join(
                     (["where you arrive"] if (mdoc.get("start") or {}).get("position") else [])
                     + ([f"loads {', '.join(layers)}"] if layers else [])
                     + (["a message"] if mdoc.get("message") else [])
-                    + (["a pilot back"] if pilots else [])) + ")")
+                    + (["a pilot back"] if pilots else [])
+                    + ([f"missions {', '.join(played)}" if played else "contracts"] if contacts else [])) + ")")
             else:
                 hit = [(a, r) for a, r in data.records(SCRIPT) if r.key == name_hash(src)]
                 source = script.decode(data.current(*hit[0])).source if hit else map_script(name, mdoc, [])

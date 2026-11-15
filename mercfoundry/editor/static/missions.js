@@ -128,6 +128,7 @@ export function createMissions(ctx) {
     if (!r.ok) throw new Error(doc.error || r.statusText);
     st.list = doc.missions;
     st.next = doc.next;
+    st.arc = doc.arc || map;           // a new map's missions are in SW's arc
     st.shared = {squads: doc.squads || [], zones: doc.zones || [], paths: doc.paths || [], sets: doc.sets || {}};
     st.hq = doc.hq || {};
     if (st.current) st.current = st.list.find((m) => m.id === st.current.id) || null;
@@ -202,7 +203,7 @@ export function createMissions(ctx) {
     $('ms-faction').disabled = !isNew;
     if (isNew) {
       $('ms-faction').value = $('ms-faction').value || 'allies';
-      $('ms-number').textContent = `${st.map}_${$('ms-faction').value}${st.next[$('ms-faction').value] || 9}`;
+      $('ms-number').textContent = `${st.arc}_${$('ms-faction').value}${st.next[$('ms-faction').value] || 9}`;
       for (const id of ['ms-title', 'ms-description', 'ms-briefing']) $(id).value = '';
       $('ms-fee').value = 50000;
       $('ms-bonus').value = 0;
@@ -265,9 +266,13 @@ export function createMissions(ctx) {
     drawWaves();
     drawOutline();
     const id = m ? m.id : null;
+    // a mission played on a new map: its arc's map stays SkipTo_Map, and the
+    // new map's own script starts it (foundry_play_map)
+    const onNew = st.arc !== st.map;
     $('ms-start').textContent = id
-      ? `Utility_WriteStringToScribbleMemory('SkipTo_Map','${st.map}') Utility_WriteStringToScribbleMemory('SkipTo_Faction','${m.faction}') `
+      ? `Utility_WriteStringToScribbleMemory('SkipTo_Map','${st.arc}') Utility_WriteStringToScribbleMemory('SkipTo_Faction','${m.faction}') `
         + `Utility_WriteNumberToScribbleMemory('SkipTo_MissionNumber',${m.number}) Utility_WriteStringToScribbleMemory('skipto_via_cheating','true') `
+        + (onNew ? `Utility_WriteStringToScribbleMemory('foundry_play_map','${st.map}') ` : '')
         + `Utility_EraseValueFromScribbleMemory('mission_accepted') Utility_ResetToBaseLayerOnly('${st.map}')`
       : '';
     $('ms-start-row').hidden = !id;
@@ -1076,7 +1081,7 @@ export function createMissions(ctx) {
     const own = $('ms-faction').value, set = MOOD_FACTIONS.filter((f) => $(`ms-mood-${f}`).value !== '');
     const from = set.length === 1 && set[0] !== own && $(`ms-mood-${set[0]}`).value === '20' ? set[0] : null;
     if (from) { $(`ms-mood-${own}`).value = $(`ms-mood-${from}`).value; $(`ms-mood-${from}`).value = ''; }
-    $('ms-number').textContent = `${st.map}_${$('ms-faction').value}${st.next[$('ms-faction').value] || 9}`;
+    $('ms-number').textContent = `${st.arc}_${$('ms-faction').value}${st.next[$('ms-faction').value] || 9}`;
     edited();
   };
   $('ms-list').onchange = () => {
@@ -1085,7 +1090,7 @@ export function createMissions(ctx) {
     showCurrent();
   };
   // The mission's own layer (made when the mission is saved, first in Save).
-  const layerFile = () => `${st.current ? st.current.id : `${st.map}_${$('ms-faction').value}${st.next[$('ms-faction').value] || 9}`}.json`;
+  const layerFile = () => `${st.current ? st.current.id : `${st.arc}_${$('ms-faction').value}${st.next[$('ms-faction').value] || 9}`}.json`;
   $('ms-add-squad').onclick = () => ctx.newSquadIn(layerFile());
   $('ms-add-zone').onclick = () => ctx.drawZoneIn(layerFile());
 
