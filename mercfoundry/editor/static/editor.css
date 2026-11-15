@@ -60,3 +60,8 @@ dd { margin: 0; word-break: break-all; }
 .ms-obj input, .ms-obj select { width: 100%; box-sizing: border-box; }
 code.copyable { display: block; white-space: pre-wrap; word-break: break-all; font-size: 11px; background: #111;
                 padding: 6px; border-radius: 4px; user-select: all; }
+
+/* Missions: Check results */
+#ms-check-out ul { margin: 4px 0; padding-left: 18px; }
+.ms-problem { color: #ff8a80; }
+.ms-note { color: #9fb3c8; }

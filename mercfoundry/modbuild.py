@@ -406,8 +406,10 @@ def _apply_encounters(data, folder, result):
     # model and texture loads), so any character works, even one whose
     # template lives in a mission's layer the game loads only then.
     givers = []
+    mission_docs = {}            # mission id -> its file (for squads that appear later: "waves")
     for mf in sorted((folder / "missions").glob("*.json")) if (folder / "missions").is_dir() else []:
         mdoc = json.loads(mf.read_text(encoding="utf-8"))
+        mission_docs[mf.stem.lower()] = mdoc
         c = mdoc.get("contact")
         if isinstance(c, dict) and c.get("position"):
             from . import missions as _ms
@@ -467,6 +469,17 @@ def _apply_encounters(data, folder, result):
             raise ValueError(f"encounters/{f.name}: the game already has a layer named {layer!r}")
         doc = json.loads(f.read_text(encoding="utf-8"))
         current_map[0] = (doc.get("map") or "").lower()
+        if layer.lower() in mission_docs and mission_docs[layer.lower()].get("waves"):
+            # a mission's squads that appear later go in layers of their own
+            from . import missions as _ms
+            doc, waves = _ms.split_waves(layer.lower(), mission_docs[layer.lower()], doc)
+            for wl, wdoc in waves:
+                if name_hash(wl) in existing:
+                    raise ValueError(f"the game already has a layer named {wl!r} (for a squad that appears later)")
+                for kind, body in encounters.build(wl, wdoc, find_source, source_loads).items():
+                    data.new("assets.dsk", name_hash(wl), kind, body)
+                result.changes.append(f"layer {wl}: {wdoc['encounters'][0]['squads'][0]['name']}, which appears later "
+                                      f"in mission {layer}")
         records = encounters.build(layer, doc, find_source, source_loads)
         for kind, body in records.items():
             data.new("assets.dsk", name_hash(layer), kind, body)
@@ -534,6 +547,147 @@ def _mission_order(projects):
             raise ValueError("missions go after each other in a loop: " +
                              ", ".join(it[4].stem for it in items if it[0] not in done))
     return [(project, pname, f) for _, _, project, pname, f in ordered]
+
+
+def mission_drafts(doc):
+    """What a mission file has left unfinished (no squad, zone, time...): the
+    build writes no script for it until these are done."""
+    drafts = [f"objective {i}" for i, o in enumerate(doc.get("objectives") or [], 1)
+              if (o.get("type") in ("destroy", "escort", "subdue", "use", "verify") and not (o.get("squad") or o.get("targets")))
+              or (o.get("type") in ("goto", "escort", "deliver", "hold") and not o.get("zone"))
+              or (o.get("type") == "hold" and not o.get("seconds"))
+              or (o.get("type") == "deliver" and not o.get("vehicle"))
+              or str(o.get("reveal") or "") == "zone:"]
+    drafts += [f"wave {k}" for k, w in enumerate(doc.get("waves") or [], 1) if not w.get("squad")]
+    drafts += [f"fail condition {k}" for k, c in enumerate(doc.get("fail") or [], 1)
+               if (c.get("type") == "dies" and not (c.get("squad") or c.get("targets")))
+               or (c.get("type") == "leave" and not c.get("zone"))
+               or (c.get("type") == "timer" and not c.get("seconds"))]
+    return drafts
+
+
+def _mission_names(doc):
+    """(zones, paths, named objects) a mission file uses."""
+    objs = doc.get("objectives") or []
+    zones = {o.get("zone") for o in objs} | {c.get("zone") for c in doc.get("fail") or []}
+    for key, items in (("reveal", objs), ("when", doc.get("radio") or []), ("when", doc.get("orders") or []),
+                       ("when", doc.get("waves") or [])):
+        zones |= {str(x[key])[5:] for x in items if str(x.get(key) or "").startswith("zone:")}
+    zones.discard(None)
+    zones.discard("")
+    paths = {o.get("to") for o in doc.get("orders") or [] if o.get("do") == "path"}
+    objects = {t.lower() for o in objs for t in (o.get("targets") or [])}
+    objects |= {o["vehicle"].lower() for o in objs if o.get("vehicle")}
+    return zones, paths, objects
+
+
+def mission_resolvers(folder, asset_id, map_, doc, fname):
+    """(squad_members, zone_centre, used, layers) for writing a mission's
+    script: squads and zones come from the mission's own layer or a layer of
+    the mod that loads with the map; "used" collects those map layers (they
+    load only in free roam, so the script loads them)."""
+    layers = []
+    for lf in sorted((folder / "encounters").glob("*.json")) if (folder / "encounters").is_dir() else []:
+        ldoc = json.loads(lf.read_text(encoding="utf-8"))
+        if lf.stem.lower() == asset_id or ((ldoc.get("map") or "").lower() == map_ and ldoc.get("load") == "map"):
+            layers.append((lf.stem, ldoc))
+    used = set()
+
+    def squad_members(name):
+        # "encounter:squad", or a squad name alone (every squad of that name).
+        enc, _, sq = name.rpartition(":")
+        found = []
+        for stem, ldoc in layers:
+            sqs = [(e["name"], s) for e in ldoc.get("encounters", []) for s in e.get("squads", [])]
+            sqs += [(s.get("encounter", ""), s) for s in ldoc.get("game_squads", [])]
+            got = [mm["name"] for en, s in sqs
+                   if s.get("name", "").lower() == sq.lower() and (not enc or en.lower() == enc.lower())
+                   for mm in s.get("members", [])]
+            if got and stem.lower() != asset_id:
+                used.add(stem)
+            found += got
+        if not found:
+            raise ValueError(f"missions/{fname}: no squad {name!r} in encounters/{asset_id}.json "
+                             "or a layer of this mod that loads with the map")
+        return found
+
+    zones, paths, objects = _mission_names(doc)
+    for stem, ldoc in layers:
+        if stem.lower() != asset_id and (zones & set(ldoc.get("boundaries") or {})
+                                         or paths & set(ldoc.get("paths") or {})
+                                         or objects & {str(x.get("name", "")).lower() for x in ldoc.get("objects") or []}):
+            used.add(stem)
+
+    def zone_centre(name):
+        for _, ldoc in layers:
+            zone = (ldoc.get("boundaries") or {}).get(name)
+            pts = zone.get("points") if isinstance(zone, dict) else None
+            if pts:
+                return [sum(p[k] for p in pts) / len(pts) for k in range(3)]
+        return None
+
+    return squad_members, zone_centre, used, layers
+
+
+def check_mission(folder, asset_id):
+    """The editor's Check: what would stop this mission's script being
+    written, or break it in game, as the build sees it. {"problems": [...],
+    "notes": [...]}; no problems means the build writes its script."""
+    from . import missions, hqsequence
+    folder = Path(folder)
+    problems, notes = [], []
+    p = folder / "missions" / f"{asset_id}.json"
+    if not p.exists():
+        return {"problems": [f"no mission file missions/{asset_id}.json yet (save it first)"], "notes": []}
+    doc = json.loads(p.read_text(encoding="utf-8"))
+    try:
+        map_, faction, number = missions.parse_id(asset_id)
+    except ValueError as e:
+        return {"problems": [str(e)], "notes": []}
+    if not doc.get("objectives"):
+        problems.append("no objectives yet")
+    drafts = mission_drafts(doc)
+    if drafts:
+        problems.append(f"not finished: {', '.join(drafts)}")
+    if (folder / "scripts" / f"{asset_id}.lua").exists():
+        notes.append(f"scripts/{asset_id}.lua is the mod's own script: the objectives aren't used")
+    if not (folder / "encounters" / f"{asset_id}.json").exists():
+        notes.append(f"no layer encounters/{asset_id}.json yet (Add squad or Add zone makes it)")
+    if doc.get("objectives") and not drafts:
+        squad_members, zone_centre, used, layers = mission_resolvers(folder, asset_id, map_, doc, p.name)
+        try:
+            missions.objectives_script(asset_id, doc, squad_members, sorted(used), zone_centre)
+        except ValueError as e:
+            problems.append(str(e))
+        zones, paths, _ = _mission_names(doc)
+        known_zones = set().union(*[set(l.get("boundaries") or {}) for _, l in layers]) if layers else set()
+        known_paths = set().union(*[set(l.get("paths") or {}) for _, l in layers]) if layers else set()
+        for z in sorted(zones - known_zones):
+            problems.append(f"zone {z!r} isn't in the mission's layer or a map layer of this mod")
+        for x in sorted(paths - known_paths):
+            problems.append(f"path {x!r} isn't in the mission's layer or a map layer of this mod")
+        if used:
+            notes.append(f"loads the map layers {', '.join(sorted(used))} during the mission")
+    if doc.get("waves"):
+        lp = folder / "encounters" / f"{asset_id}.json"
+        try:
+            missions.split_waves(asset_id, doc, json.loads(lp.read_text(encoding="utf-8")) if lp.exists() else {})
+        except ValueError as e:
+            problems.append(str(e))
+    contact = doc.get("contact")
+    if isinstance(contact, dict) and contact.get("position"):
+        try:
+            missions.marker_type(contact, faction)
+        except ValueError as e:
+            problems.append(str(e))
+    if doc.get("hq"):
+        try:
+            hqsequence.plan(asset_id, doc, missions.parse_id)
+        except ValueError as e:
+            problems.append(str(e))
+    if contact is False and not doc.get("hq"):
+        notes.append("no mission giver: it starts only from its Lua line")
+    return {"problems": problems, "notes": notes}
 
 
 def _apply_missions(data, folder, result, files=None):
@@ -611,14 +765,7 @@ def _apply_missions(data, folder, result, files=None):
                 text_list = missions.add_to_list(layer_list.decode("latin-1"), "registry", asset_id)
                 data.replace_added(name_hash(asset_id), name_hash("list"), text_list.encode("latin-1"))
         known = {r.key for _, r in data.records(SCRIPT)} | {k for k, kind, _ in data.added() if kind == SCRIPT}
-        drafts = [f"objective {i}" for i, o in enumerate(doc.get("objectives") or [], 1)
-                  if (o.get("type") in ("destroy", "escort") and not (o.get("squad") or o.get("targets")))
-                  or (o.get("type") in ("goto", "escort") and not o.get("zone"))
-                  or str(o.get("reveal") or "") == "zone:"]
-        drafts += [f"fail condition {k}" for k, c in enumerate(doc.get("fail") or [], 1)
-                   if (c.get("type") == "dies" and not (c.get("squad") or c.get("targets")))
-                   or (c.get("type") == "leave" and not c.get("zone"))
-                   or (c.get("type") == "timer" and not c.get("seconds"))]
+        drafts = mission_drafts(doc)
         if drafts:
             result.warnings.append(f"missions/{f.name}: {', '.join(drafts)} isn't finished (no squad, zone or time "
                                    "yet), so no script was written for it")
@@ -626,48 +773,7 @@ def _apply_missions(data, folder, result, files=None):
             # No script of the mod's own: one written from the objectives.
             # Squads: in the mission's layer, or a layer of the mod that loads
             # with the map (there during the mission too).
-            layers = []
-            for lf in sorted((folder / "encounters").glob("*.json")) if (folder / "encounters").is_dir() else []:
-                ldoc = json.loads(lf.read_text(encoding="utf-8"))
-                if lf.stem.lower() == asset_id or ((ldoc.get("map") or "").lower() == map_ and ldoc.get("load") == "map"):
-                    layers.append((lf.stem, ldoc))
-            # Map layers load only in free roam, not during a mission: the
-            # script loads the ones its objectives use.
-            used = set()
-
-            def squad_members(name):
-                # "encounter:squad", or a squad name alone (every squad of that name).
-                enc, _, sq = name.rpartition(":")
-                found = []
-                for stem, ldoc in layers:
-                    sqs = [(e["name"], s) for e in ldoc.get("encounters", []) for s in e.get("squads", [])]
-                    sqs += [(s.get("encounter", ""), s) for s in ldoc.get("game_squads", [])]
-                    got = [mm["name"] for en, s in sqs
-                           if s.get("name", "").lower() == sq.lower() and (not enc or en.lower() == enc.lower())
-                           for mm in s.get("members", [])]
-                    if got and stem.lower() != asset_id:
-                        used.add(stem)
-                    found += got
-                if not found:
-                    raise ValueError(f"missions/{f.name}: no squad {name!r} in encounters/{asset_id}.json "
-                                     "or a layer of this mod that loads with the map")
-                return found
-
-            # Zones: objectives', bonus reveals' ("zone:<name>") and fail conditions'.
-            zones = {o.get("zone") for o in doc["objectives"]} | {c.get("zone") for c in doc.get("fail") or []}
-            zones |= {str(o["reveal"])[5:] for o in doc["objectives"] if str(o.get("reveal") or "").startswith("zone:")}
-            zones |= {str(r["when"])[5:] for r in doc.get("radio") or [] if str(r.get("when") or "").startswith("zone:")}
-            for stem, ldoc in layers:
-                if stem.lower() != asset_id and zones & set(ldoc.get("boundaries") or {}):
-                    used.add(stem)
-            def zone_centre(name):
-                for _, ldoc in layers:
-                    zone = (ldoc.get("boundaries") or {}).get(name)
-                    pts = zone.get("points") if isinstance(zone, dict) else None
-                    if pts:
-                        return [sum(p[k] for p in pts) / len(pts) for k in range(3)]
-                return None
-
+            squad_members, zone_centre, used, _ = mission_resolvers(folder, asset_id, map_, doc, f.name)
             missions.objectives_script(asset_id, doc, squad_members)          # finds the layers used
             body = missions.objectives_script(asset_id, doc, squad_members, sorted(used), zone_centre)
             data.new("assets.dsk", name_hash(asset_id), SCRIPT, script.encode(script.new(asset_id, body)))

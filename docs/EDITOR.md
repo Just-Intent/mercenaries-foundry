@@ -140,10 +140,19 @@ toolkit bundle run it the same way: `foundry\python\python.exe foundry\mercfound
   - a title, a description (the contact's offer), a briefing (the contract
     mail), a fee and a flat bonus (paid on completion on top of the fee; 0
     unless you set one);
-  - objectives: **Destroy squad** (pick a squad), **Go to zone** (pick a
-    zone; the zone gets a marker on the minimap and GPS) and **Escort squad**
-    (the squad follows the player; done when the survivors reach the zone,
-    failed if they all die). **Show** looks at an objective's squad or zone.
+  - objectives: **Destroy** (pick a squad, or objects selected on the map
+    with **+ Add selected object**), **Go to zone** (pick a zone; the zone
+    gets a marker on the minimap and GPS), **Escort squad** (the squad
+    follows the player; done when the survivors reach the zone, failed if
+    they all die), **Deliver vehicle** (a vehicle selected on the map, to a
+    zone; failed if it's destroyed), **Capture alive** (subdue a squad or
+    objects; killing one fails it), **Hold zone** (stay in a zone for a
+    number of seconds; leaving starts the clock again), **Use object** (walk
+    up to objects and use them, with your own prompt; failed if one is
+    destroyed) and **Verify target** (kill and photograph the body, or
+    capture alive, as the Deck of 52; a marker of your choice, a card suit or
+    a person, and an optional **Alive $** paid for each one taken alive).
+    **Show** looks at an objective's squad or zone.
     Main objectives are done in order. An objective given a **Bonus $** is a
     bonus objective: optional, marked as a bonus, and **Shown** at the start,
     when another objective starts or is done, or when the player enters a
@@ -158,6 +167,15 @@ toolkit bundle run it the same way: `foundry\python\python.exe foundry\mercfound
     limit** (an on-screen clock) and **Stay in zone** (fail on leaving it),
     each with the message the failure screen shows, lasting the whole mission
     or until an objective is done;
+  - **Squads that appear later**: a squad of the mission's own layer that
+    isn't there at the start arrives **When** the mission starts, an
+    objective starts or is done, or the player enters a zone (an ambush,
+    reinforcements). The build moves it into a layer of its own, loaded at
+    that moment;
+  - **Squad orders**: at their **When**, a squad **attacks the player**,
+    **holds position**, **moves to a point set**, **closes in on the player**
+    or **walks a path**. An order for a squad that appears later is given
+    once it's there;
   - a **Player start**: **Set here** puts it at the middle of the view (a
     yellow arrow pointing the way the player faces) and grabs it: drag to
     move it (it stays on the ground), press E and drag the ring to turn it;
@@ -173,6 +191,11 @@ toolkit bundle run it the same way: `foundry\python\python.exe foundry\mercfound
     appears, for chains of side contracts. Moving or deleting objectives keeps
     every "objective N" reference (bonus Shown, radio When, fail Lasts) on the
     same objective.
+
+  **Check mission** runs the build's checks on the saved mission: what would
+  stop the build writing its script (unfinished objectives, zones or paths
+  that aren't there, a giver's marker), and notes such as the map layers it
+  loads.
 
   **Add squad** and **Add zone** put a squad or zone in the mission's own
   layer, `encounters/<id>.json`, which loads only during the mission; squads

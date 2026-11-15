@@ -976,6 +976,12 @@ const missions = createMissions({
   // The start marker takes the gizmo (move along the ground, or turn).
   grab: (node) => { select(null); layout.select(null); encs.select(null); gizmo.attach(node); setMode(gizmo.getMode()); },
   release: (node) => { if (gizmo.object === node) gizmo.detach(); },
+  // The selected object (for destroy targets and deliver vehicles): its name in
+  // the game (a copy's or placed object's own), or null if it has none.
+  selectedObject: () => {
+    const r = state.selected;
+    return r ? {name: r.copyName || r.name || null, kind: r.type || '', model: r.geometry || r.model || ''} : null;
+  },
 });
 // The minimap (water areas come from the layout module once it has loaded).
 let waterAreas = null;

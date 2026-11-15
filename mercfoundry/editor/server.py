@@ -27,6 +27,7 @@ POST /api/encounters/save      {"map", "files": {file: [encounter, ...]}}
 POST /api/placed/save          {"map", "files": {file: [{from, name, position, rotation}]}}: objects placed from templates
 POST /api/terrain/save         {"map", "samples": [[column, row, height units], ...]}: painted ground heights
 GET  /api/missions/<map>        the mod's missions on the map (+ their layer's squads and zones)
+GET  /api/missions/check/<id>   what would stop the mission's script being written (the build's checks)
 POST /api/missions/save        {"map", "mission": {faction, number, title, description, briefing, fee, objectives}}
 POST /api/terrain/paint        {"map", "layers": {layer: {"texture", "pixels": [[col, row, opacity]]}}}
 POST /api/terrain/roads        {"map", "roads": [{"texture", "span", "points": [[x, z], ...]}]}
@@ -100,6 +101,9 @@ def make_handler(scene: Scene, mod_name: str, live: Live = None):
                 if path == "/api/info":
                     with objects_lock:
                         return self.send(200, {"mod": mod_name, "maps": scene.maps()})
+                if path.startswith("/api/missions/check/"):     # the build's checks for one mission
+                    with objects_lock:
+                        return self.send(200, scene.check_mission(path[len("/api/missions/check/"):]))
                 if path.startswith("/api/missions/"):
                     with objects_lock:
                         return self.send(200, scene.missions(path[len("/api/missions/"):]))

@@ -197,6 +197,150 @@ class MissionTests(unittest.TestCase):
             with self.assertRaises(ValueError):
                 missions.objectives_script("sw_allies11", dict(doc, radio=[bad]), lambda squad: [])
 
+    def test_deliver_and_destroy_objects(self):
+        doc = {"objectives": [{"type": "destroy", "text": "Blow up the depot", "targets": ["fuel_depot", "radar_copy1"]},
+                              {"type": "deliver", "text": "Bring the truck", "vehicle": "foundry_truck", "zone": "dropoff"}]}
+        lua = missions.objectives_script("sw_allies11", doc, lambda squad: [], (), lambda z: [1, 2, 3])
+        self.assertIn("targets = { 'fuel_depot', 'radar_copy1' } }", lua)          # no squad needed
+        self.assertIn("{ kind = 'deliver', name = 'foundry2', key = 'sw.allies11.obj.foundry2', vehicle = 'foundry_truck', "
+                      "zone = 'dropoff', x = 1.00, y = 2.00, z = 3.00, lost = 'sw.allies11.obj.foundry2.lost' }", lua)
+        self.assertIn("Objective_SetTargetActor(o.name, o.vehicle, o.text, sTargetType, 'blip', true, true, true)", lua)
+        self.assertIn("Event_ActorInBoundary('foundry_Delivered', 'b', o.vehicle, o.zone, true)", lua)
+        self.assertIn("elseif w.kind == 'deliver' then if not w.done then foundry_Fail(w.lost) end", lua)
+        self.assertNotIn("#", lua.split("\n", 1)[1])
+        strings, _, _ = missions.text_plan("sw_allies11", doc, "SW_Allies11")
+        self.assertEqual(strings["sw.allies11.obj.foundry2.lost"], "The vehicle was destroyed.")
+        for bad in ({"type": "deliver", "zone": "z"}, {"type": "deliver", "vehicle": "v"}):
+            with self.assertRaises(ValueError):
+                missions.objectives_script("sw_allies11", {"objectives": [bad]}, lambda squad: [])
+
+    def test_subdue_and_hold(self):
+        doc = {"objectives": [{"type": "subdue", "text": "Take the general alive", "targets": ["nk_general"]},
+                              {"type": "hold", "text": "Hold the bridge", "zone": "bridge", "seconds": 90},
+                              {"type": "subdue", "text": "And his aide", "targets": ["aide"], "bonus": 5000}]}
+        lua = missions.objectives_script("sw_allies11", doc, lambda squad: [], (), lambda z: [1, 2, 3])
+        self.assertIn("targets = { 'nk_general' }, lost = 'sw.allies11.obj.foundry1.lost' }", lua)
+        self.assertIn("mission_ObjectiveSubdue{ callbackFunc = foundry_TargetDown, killCallbackFunc = foundry_TargetKilled,", lua)
+        self.assertIn("{ kind = 'hold', name = 'foundry2', key = 'sw.allies11.obj.foundry2', zone = 'bridge', "
+                      "x = 1.00, y = 2.00, z = 3.00, seconds = 90 }", lua)
+        self.assertIn("Event_ActorInBoundary('foundry_HoldOut', 'b', 'player0', o.zone, false)", lua)
+        self.assertIn("fCallback = foundry_HoldDone", lua)
+        # a killed bonus target loses the bonus; a main one fails the mission
+        self.assertIn("if o.bonus then\no.done = true\nutil_ObjMsgPrint{ sMsg = o.text, sType = 'BON_OBJ_FAIL'", lua)
+        self.assertNotIn("#", lua.split("\n", 1)[1])
+        strings, _, _ = missions.text_plan("sw_allies11", doc, "SW_Allies11")
+        self.assertEqual(strings["sw.allies11.obj.foundry1.lost"], "The target was killed.")
+        for bad in ({"type": "hold", "zone": "z"}, {"type": "hold", "seconds": 5}, {"type": "subdue"}):
+            with self.assertRaises(ValueError):
+                missions.objectives_script("sw_allies11", {"objectives": [bad]}, lambda squad: [])
+
+    def test_check_mission(self):
+        # The editor's Check: the build's checks on a saved mission.
+        import json, tempfile
+        from pathlib import Path
+        from mercfoundry.modbuild import check_mission
+        with tempfile.TemporaryDirectory() as d:
+            root = Path(d)
+            (root / "missions").mkdir()
+            (root / "encounters").mkdir()
+            (root / "encounters" / "sw_allies11.json").write_text(json.dumps({
+                "map": "SW", "boundaries": {"bridge": {"points": [[0, 0, 0], [10, 0, 0], [10, 0, 10]]}},
+                "encounters": [{"name": "camp", "points": {"A": [[0, 0, 0]]},
+                                "squads": [{"name": "Guards", "points": ["A"], "members": [{"name": "G1"}]}]}]}))
+            mission = root / "missions" / "sw_allies11.json"
+            mission.write_text(json.dumps({"objectives": [{"type": "goto", "text": "Go", "zone": "bridge"},
+                                                          {"type": "destroy", "text": "Kill", "squad": "camp:Guards"}]}))
+            self.assertEqual(check_mission(root, "sw_allies11")["problems"], [])
+            mission.write_text(json.dumps({"objectives": [{"type": "goto", "text": "Go", "zone": "nowhere"},
+                                                          {"type": "destroy", "text": "Kill"}]}))
+            self.assertEqual(check_mission(root, "sw_allies11")["problems"], ["not finished: objective 2"])
+            mission.write_text(json.dumps({"objectives": [{"type": "goto", "text": "Go", "zone": "nowhere"}]}))
+            problems = check_mission(root, "sw_allies11")["problems"]
+            self.assertTrue(any("zone 'nowhere'" in p for p in problems), problems)
+            self.assertIn("save it first", check_mission(root, "sw_allies12")["problems"][0])
+
+    def test_use_object(self):
+        doc = {"objectives": [{"type": "use", "text": "Plant the charge", "prompt": "Plant charge", "targets": ["fuel_tank"]}]}
+        lua = missions.objectives_script("sw_allies11", doc, lambda squad: [])
+        self.assertIn("targets = { 'fuel_tank' }, lost = 'sw.allies11.obj.foundry1.lost', act = 'sw.allies11.act.foundry1' }", lua)
+        self.assertIn("mission_ObjectiveAction{ callbackFunc = foundry_TargetDown, killCallbackFunc = foundry_TargetKilled,", lua)
+        self.assertIn("actionCaption = o.act,", lua)
+        strings, _, _ = missions.text_plan("sw_allies11", doc, "SW_Allies11")
+        self.assertEqual(strings["sw.allies11.act.foundry1"], "Plant charge")
+        self.assertEqual(strings["sw.allies11.obj.foundry1.lost"], "What you had to use was destroyed.")
+        with self.assertRaises(ValueError):
+            missions.objectives_script("sw_allies11", {"objectives": [{"type": "use", "prompt": "x"}]}, lambda squad: [])
+
+    def test_verify_target(self):
+        doc = {"ini": {"BonusFee": 1000},
+               "objectives": [{"type": "verify", "text": "Verify the general", "squad": "Brass", "targets": ["nk_general"],
+                               "blip": "spades", "alive": 20000}]}
+        lua = missions.objectives_script("sw_allies11", doc, lambda squad: ["aide"])
+        self.assertIn("targets = { 'nk_general', 'aide' }, blip = 'spades', alive = 20000 }", lua)
+        self.assertIn("mission_ObjectiveVerify{ callbackFunc = foundry_Verified, objectiveName = o.name .. 'v' .. j,", lua)
+        self.assertIn("Utility_LoadUtilityScript('mission_objectiveverify')", lua)
+        self.assertIn("bFoundryPays = true", lua)
+        self.assertIn("iFoundryFlatBonus = 1000", lua)
+        self.assertEqual(missions.bonus_fee(doc), 21000)          # the most it can pay
+        plain = {"objectives": [{"type": "verify", "text": "V", "targets": ["x"]}]}
+        lua = missions.objectives_script("sw_allies11", plain, lambda squad: [])
+        self.assertIn("blip = 'human' }", lua)
+        self.assertIn("bFoundryPays = false", lua)
+        for bad in ({"type": "verify", "text": "V"}, {"type": "verify", "targets": ["x"], "blip": "moon"}):
+            with self.assertRaises(ValueError):
+                missions.objectives_script("sw_allies11", {"objectives": [bad]}, lambda squad: [])
+
+    def test_waves(self):
+        layer = {"map": "SW", "encounters": [{"name": "camp", "points": {"A": [[0, 0, 0]], "B": [[5, 0, 5]]},
+                                               "squads": [{"name": "Guards", "points": ["A"], "members": [{"name": "G1"}]},
+                                                          {"name": "Ambush", "points": ["B"], "members": [{"name": "X1"}]}]}]}
+        mission = {"waves": [{"when": "zone:bridge", "squad": "camp:Ambush"}]}
+        rest, waves = missions.split_waves("sw_allies11", mission, layer)
+        self.assertEqual([s["name"] for s in rest["encounters"][0]["squads"]], ["Guards"])     # moved out
+        self.assertEqual(len(layer["encounters"][0]["squads"]), 2)                             # the input untouched
+        self.assertEqual(waves[0][0], "sw_allies11_w1")
+        enc = waves[0][1]["encounters"][0]
+        self.assertEqual((enc["name"], sorted(enc["points"]), enc["squads"][0]["name"]), ("camp_w1", ["A", "B"], "Ambush"))
+        with self.assertRaises(ValueError):
+            missions.split_waves("sw_allies11", {"waves": [{"squad": "camp:Nobody"}]}, layer)
+        doc = {"objectives": [{"type": "goto", "text": "A", "zone": "a"}], **mission,
+               "orders": [{"when": "zone:bridge", "squad": "camp:Ambush", "do": "attack"}]}
+        lua = missions.objectives_script("sw_allies11", doc, lambda squad: ["X1"])
+        self.assertIn("{ when = 'zone', zone = 'bridge', layer = 'sw_allies11_w1' }", lua)
+        # its order uses the wave's own encounter, and waits until the squad is there
+        self.assertIn("act = 'attack', enc = 'camp_w1', squad = 'Ambush', wave = 'sw_allies11_w1' }", lua)
+        self.assertIn("if o.wave and not tFoundryWaveUp[o.wave] then o.pending = true return end", lua)
+        self.assertIn("Utility_ReadLevelFile(w.layer)", lua)
+        self.assertIn("foundry_Waves('start')\nfoundry_Radio('start')", lua)
+        self.assertNotIn("#", lua.split("\n", 1)[1])
+
+    def test_squad_orders(self):
+        doc = {"objectives": [{"type": "goto", "text": "A", "zone": "a"}],
+               "orders": [{"when": "start", "squad": "camp:Guards", "do": "hold"},
+                          {"when": "done:1", "squad": "camp:Guards", "do": "attack"},
+                          {"when": "zone:ridge", "squad": "camp:Patrol", "do": "path", "to": "foundry_path1"},
+                          {"when": "start", "squad": "camp:Guards", "do": "move", "to": "B"},
+                          {"when": "start", "squad": "camp:Guards", "do": "close"}]}
+        members = {"camp:Guards": ["G1", "G2"], "camp:Patrol": ["P1"]}
+        lua = missions.objectives_script("sw_allies11", doc, lambda squad: members[squad])
+        self.assertIn("{ when = 'start', act = 'hold', enc = 'camp', squad = 'Guards' }", lua)
+        self.assertIn("{ when = 'done', after = 'foundry1', act = 'attack', enc = 'camp', squad = 'Guards' }", lua)
+        self.assertIn("{ when = 'zone', zone = 'ridge', act = 'path', enc = 'camp', squad = 'Patrol', to = 'foundry_path1', "
+                      "members = { 'P1' } }", lua)
+        # retail's own verbs
+        self.assertIn("Squad_Command(o.enc, o.squad, 'Attack', 'player0', 'hiPri')", lua)
+        self.assertIn("Squad_Command(o.enc, o.squad, 'Wait', 'hiPri')", lua)
+        self.assertIn("Squad_Command(o.enc, o.squad, 'TacticalMove', o.to, 'hiPri')", lua)
+        self.assertIn("Squad_Command(o.enc, o.squad, 'MoveToActor', 'player0', 1.0, 1, 'hiPri')", lua)
+        self.assertIn("Ai_CommandQueue(a, 'PathMove', o.to, '1.0', 'hiPri')", lua)
+        self.assertIn("foundry_Orders('start')", lua)
+        self.assertIn("foundry_Orders('done', o.name)", lua)
+        self.assertNotIn("#", lua.split("\n", 1)[1])
+        for bad in ({"squad": "camp:Guards", "do": "dance"}, {"squad": "Guards", "do": "hold"},
+                    {"squad": "camp:Guards", "do": "move"}, {"squad": "camp:Guards", "do": "path"}):
+            with self.assertRaises(ValueError):
+                missions.objectives_script("sw_allies11", dict(doc, orders=[bad]), lambda squad: members.get(squad, ["X"]))
+
     def test_bonus_reveal(self):
         objs = [{"type": "goto", "text": "A", "zone": "a"},
                 {"type": "goto", "text": "B", "zone": "b"},

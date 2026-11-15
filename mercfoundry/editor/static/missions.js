@@ -125,7 +125,7 @@ export function createMissions(ctx) {
     if (!r.ok) throw new Error(doc.error || r.statusText);
     st.list = doc.missions;
     st.next = doc.next;
-    st.shared = {squads: doc.squads || [], zones: doc.zones || []};
+    st.shared = {squads: doc.squads || [], zones: doc.zones || [], paths: doc.paths || [], sets: doc.sets || {}};
     st.hq = doc.hq || {};
     if (st.current) st.current = st.list.find((m) => m.id === st.current.id) || null;
     fill();
@@ -204,6 +204,8 @@ export function createMissions(ctx) {
       st.objectives = [];
       st.fails = [];
       st.radio = [];
+      st.orders = [];
+      st.waves = [];
       st.start = null;
       st.giver = {mode: 'hq'};
       st.requires = [];
@@ -218,6 +220,8 @@ export function createMissions(ctx) {
       st.objectives = (m.doc.objectives || []).map((o) => ({...o}));
       st.fails = (m.doc.fail || []).map((c) => ({...c}));
       st.radio = (m.doc.radio || []).map((r) => ({...r}));
+      st.orders = (m.doc.orders || []).map((o) => ({...o}));
+      st.waves = (m.doc.waves || []).map((w) => ({...w}));
       st.start = m.doc.start ? {...m.doc.start} : null;
       st.giver = giverFrom(m.doc.contact, m.doc.hq);
       st.requires = [...(m.doc.requires || [])];
@@ -230,6 +234,8 @@ export function createMissions(ctx) {
     drawObjectives();
     drawFails();
     drawRadio();
+    drawOrders();
+    drawWaves();
     const id = m ? m.id : null;
     $('ms-start').textContent = id
       ? `Utility_WriteStringToScribbleMemory('SkipTo_Map','${st.map}') Utility_WriteStringToScribbleMemory('SkipTo_Faction','${m.faction}') `
@@ -240,7 +246,10 @@ export function createMissions(ctx) {
   }
 
   // ---------------------------------------------------------------- objectives
-  const OBJ_NAMES = {destroy: 'Destroy squad', goto: 'Go to zone', escort: 'Escort squad (they follow you to the zone)'};
+  const OBJ_NAMES = {destroy: 'Destroy squad / objects', goto: 'Go to zone', escort: 'Escort squad (they follow you to the zone)',
+                     deliver: 'Deliver vehicle to zone', subdue: 'Capture alive (subdue)', hold: 'Hold zone',
+                     use: 'Use object', verify: 'Verify target (kill and photograph, or capture)'};
+  const BLIPS = {human: 'Person', scope: 'Scope', blip: 'Dot', clubs: 'Clubs', diamond: 'Diamonds', hearts: 'Hearts', spades: 'Spades'};
   function drawObjectives() {
     const m = st.current;
     const squads = m ? m.squads : (st.shared || {}).squads || [], zones = m ? m.zones : (st.shared || {}).zones || [];
@@ -249,7 +258,30 @@ export function createMissions(ctx) {
             `<option ${s === o.squad ? 'selected' : ''}>${esc(s)}</option>`).join('')}</select>`;
       const zonePick = `<select data-i="${i}" data-k="zone"><option value="">(${o.type === 'escort' ? 'to zone' : 'zone'})</option>${zones.map((z) =>
             `<option ${z === o.zone ? 'selected' : ''}>${esc(z)}</option>`).join('')}</select>`;
-      const pick = o.type === 'destroy' ? squadPick : o.type === 'escort' ? squadPick + zonePick : zonePick;
+      // Objects picked on the map: destroy targets, or the vehicle to deliver.
+      const targets = (o.type === 'destroy' || o.type === 'subdue' || o.type === 'use' || o.type === 'verify')
+        ? `<span class="ms-targets">${(o.targets || []).map((t, j) => `<span class="ms-tag">${esc(t)}
+            <button data-i="${i}" data-t="${j}" data-a="untarget" title="Remove">×</button></span>`).join('')}
+            <button data-i="${i}" data-a="target" title="Select a named object on the map first">+ Add selected object</button></span>`
+        : '';
+      const vehicle = o.type === 'deliver'
+        ? `<span class="ms-targets">${o.vehicle ? `<span class="ms-tag">${esc(o.vehicle)}</span>` : '(no vehicle)'}
+            <button data-i="${i}" data-a="vehicle" title="Select the vehicle on the map first">Use selected vehicle</button></span>`
+        : '';
+      const seconds = o.type === 'hold'
+        ? `<label>Seconds <input data-i="${i}" data-k="seconds" type="number" min="1" step="10" value="${+o.seconds || ''}"></label>` : '';
+      const prompt = o.type === 'use'
+        ? `<input data-i="${i}" data-k="prompt" type="text" value="${esc(o.prompt)}" placeholder="Prompt on the object, e.g. Plant charge">` : '';
+      const verify = o.type === 'verify'
+        ? `<label title="The marker on the targets">Marker <select data-i="${i}" data-k="blip">${Object.entries(BLIPS).map(([v, n]) =>
+            `<option value="${v}" ${(o.blip || 'human') === v ? 'selected' : ''}>${n}</option>`).join('')}</select></label>
+           <label title="Paid on completion for each target captured alive">Alive $
+            <input data-i="${i}" data-k="alive" type="number" min="0" step="1000" value="${+o.alive > 0 ? +o.alive : ''}" placeholder="none"></label>` : '';
+      const pick = o.type === 'use' ? targets + prompt
+        : o.type === 'verify' ? squadPick + targets + verify
+        : (o.type === 'destroy' || o.type === 'subdue') ? squadPick + targets
+        : o.type === 'escort' ? squadPick + zonePick
+        : o.type === 'deliver' ? vehicle + zonePick : zonePick + seconds;
       return `<div class="ms-obj"><b>${i + 1}. ${OBJ_NAMES[o.type] || o.type}${+o.bonus > 0 ? ' (bonus)' : ''}</b>
         <input data-i="${i}" data-k="text" type="text" value="${esc(o.text)}" placeholder="What the player reads">
         ${pick}
@@ -290,7 +322,7 @@ export function createMissions(ctx) {
       const k = order.indexOf(+m[2] - 1);
       o.reveal = k < 0 ? 'start' : `${m[1]}:${k + 1}`;
     }
-    for (const r of st.radio) {
+    for (const r of [...st.radio, ...st.orders, ...st.waves]) {
       const m = /^(starts|done):(\d+)$/.exec(r.when || '');
       if (!m) continue;
       const k = order.indexOf(+m[2] - 1);
@@ -317,7 +349,7 @@ export function createMissions(ctx) {
     }
     if (k === 'revealZone') { o.reveal = `zone:${e.target.value}`; edited(); return; }
     const wasBonus = +o.bonus > 0;
-    o[k] = k === 'bonus' ? Math.max(0, +e.target.value || 0) : e.target.value;
+    o[k] = (k === 'bonus' || k === 'seconds' || k === 'alive') ? Math.max(0, +e.target.value || 0) : e.target.value;
     if (k === 'bonus' && wasBonus !== +o.bonus > 0) {
       // became a bonus objective or stopped being one: its heading and "Shown"
       if (!(+o.bonus > 0)) delete o.reveal;
@@ -331,8 +363,22 @@ export function createMissions(ctx) {
     const i = +e.target.dataset.i, a = e.target.dataset.a;
     if (!a) return;
     const o = st.objectives;
+    if (a === 'target' || a === 'vehicle') {
+      const sel = ctx.selectedObject();
+      if (!sel) return status('Select an object on the map first', true);
+      if (!sel.name) return status(`That ${sel.model || 'object'} has no name the game can find: copy or place one to target it`, true);
+      if (a === 'target') o[i].targets = [...new Set([...(o[i].targets || []), sel.name])];
+      else o[i].vehicle = sel.name;
+      drawObjectives(); edited();
+      return;
+    }
+    if (a === 'untarget') {
+      o[i].targets.splice(+e.target.dataset.t, 1);
+      drawObjectives(); edited();
+      return;
+    }
     if (a === 'show') {
-      const name = o[i].type === 'goto' ? o[i].zone : o[i].squad || o[i].zone;
+      const name = o[i].type === 'goto' ? o[i].zone : o[i].type === 'deliver' ? o[i].vehicle : o[i].squad || (o[i].targets || [])[0] || o[i].zone;
       if (!name) return status('Pick it first', true);
       ctx.show(name);
       return;
@@ -345,13 +391,35 @@ export function createMissions(ctx) {
     drawObjectives();
     drawFails();
     drawRadio();
+    drawOrders();
+    drawWaves();
     edited();
   });
-  $('ms-add-destroy').onclick = () => { st.objectives.push({type: 'destroy', text: 'Destroy the squad', squad: ''}); drawObjectives(); drawFails(); drawRadio(); edited(); };
-  $('ms-add-goto').onclick = () => { st.objectives.push({type: 'goto', text: 'Go to the marked area', zone: ''}); drawObjectives(); drawFails(); drawRadio(); edited(); };
+  $('ms-add-destroy').onclick = () => { st.objectives.push({type: 'destroy', text: 'Destroy the squad', squad: ''}); drawObjectives(); drawFails(); drawRadio(); drawOrders(); drawWaves(); edited(); };
+  $('ms-add-goto').onclick = () => { st.objectives.push({type: 'goto', text: 'Go to the marked area', zone: ''}); drawObjectives(); drawFails(); drawRadio(); drawOrders(); drawWaves(); edited(); };
+  $('ms-add-verify').onclick = () => {
+    st.objectives.push({type: 'verify', text: 'Verify the target', squad: '', targets: [], blip: 'human'});
+    drawObjectives(); drawFails(); drawRadio(); drawOrders(); drawWaves(); edited();
+  };
+  $('ms-add-use').onclick = () => {
+    st.objectives.push({type: 'use', text: 'Use the marked object', prompt: 'Use', targets: []});
+    drawObjectives(); drawFails(); drawRadio(); drawOrders(); drawWaves(); edited();
+  };
+  $('ms-add-subdue').onclick = () => {
+    st.objectives.push({type: 'subdue', text: 'Capture the target alive', squad: '', targets: []});
+    drawObjectives(); drawFails(); drawRadio(); drawOrders(); drawWaves(); edited();
+  };
+  $('ms-add-hold').onclick = () => {
+    st.objectives.push({type: 'hold', text: 'Hold the area', zone: '', seconds: 60});
+    drawObjectives(); drawFails(); drawRadio(); drawOrders(); drawWaves(); edited();
+  };
+  $('ms-add-deliver').onclick = () => {
+    st.objectives.push({type: 'deliver', text: 'Deliver the vehicle to the marked area', vehicle: '', zone: ''});
+    drawObjectives(); drawFails(); drawRadio(); drawOrders(); drawWaves(); edited();
+  };
   $('ms-add-escort').onclick = () => {
     st.objectives.push({type: 'escort', text: 'Escort them to the marked area', squad: '', zone: ''});
-    drawObjectives(); drawFails(); drawRadio(); edited();
+    drawObjectives(); drawFails(); drawRadio(); drawOrders(); drawWaves(); edited();
   };
 
   // ---------------------------------------------------------------- fail conditions
@@ -440,6 +508,84 @@ export function createMissions(ctx) {
     else if (a === 'up' && k > 0) [st.radio[k - 1], st.radio[k]] = [st.radio[k], st.radio[k - 1]];
     drawRadio(); edited();
   });
+  // ---------------------------------------------------------------- squads that appear later
+  // Only the mission's own squads (its layer is split at build time).
+  function drawWaves() {
+    const m = st.current;
+    const own = m ? (m.squads || []).filter((s) => (m.own || []).includes(s)) : [];
+    const zones = (m || st.shared || {}).zones || [];
+    $('ms-waves').innerHTML = st.waves.map((w, k) => `<div class="ms-obj"><b>Squad ${k + 1}</b>
+        <select data-w="${k}" data-k="squad"><option value="">(squad)</option>${own.map((s) =>
+          `<option ${s === w.squad ? 'selected' : ''}>${esc(s)}</option>`).join('')}</select>
+        appears ${whenPick(w.when, `data-w="${k}"`, zones)}
+        <span class="buttons"><button data-w="${k}" data-a="del">Delete</button></span></div>`)
+      .join('') || '<p class="hint">None: every squad is there from the start.</p>';
+  }
+  $('ms-waves').addEventListener('input', (e) => {
+    const k = e.target.dataset.w, key = e.target.dataset.k;
+    if (k === undefined || !key) return;
+    const w = st.waves[+k];
+    if (key === 'when') {
+      const zones = (st.current || st.shared || {}).zones || [];
+      w.when = e.target.value === 'zone' ? `zone:${zones[0] || ''}` : e.target.value;
+    } else if (key === 'whenZone') w.when = `zone:${e.target.value}`;
+    else w[key] = e.target.value;
+    drawWaves(); edited();
+  });
+  $('ms-waves').addEventListener('click', (e) => {
+    if (e.target.dataset.a !== 'del') return;
+    st.waves.splice(+e.target.dataset.w, 1);
+    drawWaves(); edited();
+  });
+  $('ms-add-wave').onclick = () => { st.waves.push({when: 'start', squad: ''}); drawWaves(); edited(); };
+
+  // ---------------------------------------------------------------- squad orders
+  // At a moment (as radio lines), a squad attacks the player, holds, moves to
+  // one of its encounter's point sets, closes in on the player, or walks a path.
+  const ORDER_NAMES = {attack: 'Attack the player', hold: 'Hold position', move: 'Move to point set',
+                       close: 'Close in on the player', path: 'Walk a path'};
+  function drawOrders() {
+    const m = st.current;
+    const pool = m || st.shared || {};
+    const squads = pool.squads || [], zones = pool.zones || [], paths = pool.paths || [], sets = pool.sets || {};
+    $('ms-orders').innerHTML = st.orders.map((o, k) => {
+      const to = o.do === 'move'
+        ? `<select data-o="${k}" data-k="to"><option value="">(point set)</option>${(sets[o.squad] || ['A', 'B', 'C']).map((x) =>
+            `<option ${x === o.to ? 'selected' : ''}>${esc(x)}</option>`).join('')}</select>`
+        : o.do === 'path'
+          ? `<select data-o="${k}" data-k="to"><option value="">(path)</option>${paths.map((x) =>
+              `<option ${x === o.to ? 'selected' : ''}>${esc(x)}</option>`).join('')}</select>` : '';
+      return `<div class="ms-obj"><b>Order ${k + 1}</b>
+        ${whenPick(o.when, `data-o="${k}"`, zones)}
+        <select data-o="${k}" data-k="squad"><option value="">(squad)</option>${squads.map((s) =>
+          `<option ${s === o.squad ? 'selected' : ''}>${esc(s)}</option>`).join('')}</select>
+        <select data-o="${k}" data-k="do">${Object.entries(ORDER_NAMES).map(([v, t]) =>
+          `<option value="${v}" ${v === o.do ? 'selected' : ''}>${t}</option>`).join('')}</select>
+        ${to}
+        <span class="buttons"><button data-o="${k}" data-a="del">Delete</button></span></div>`;
+    }).join('') || '<p class="hint">No orders: squads stand where they are placed.</p>';
+  }
+  $('ms-orders').addEventListener('input', (e) => {
+    const k = e.target.dataset.o, key = e.target.dataset.k;
+    if (k === undefined || !key) return;
+    const o = st.orders[+k];
+    if (key === 'when') {
+      const zones = (st.current || st.shared || {}).zones || [];
+      o.when = e.target.value === 'zone' ? `zone:${zones[0] || ''}` : e.target.value;
+    } else if (key === 'whenZone') o.when = `zone:${e.target.value}`;
+    else {
+      o[key] = e.target.value;
+      if (key === 'do' || key === 'squad') delete o.to;     // a different list of places
+    }
+    drawOrders(); edited();
+  });
+  $('ms-orders').addEventListener('click', (e) => {
+    if (e.target.dataset.a !== 'del') return;
+    st.orders.splice(+e.target.dataset.o, 1);
+    drawOrders(); edited();
+  });
+  $('ms-add-order').onclick = () => { st.orders.push({when: 'start', squad: '', do: 'attack'}); drawOrders(); edited(); };
+
   $('ms-add-radio').onclick = () => { st.radio.push({when: 'start', sound: '', text: ''}); drawRadio(); edited(); };
 
   $('ms-add-protect').onclick = () => { st.fails.push({type: 'dies', squad: ''}); drawFails(); edited(); };
@@ -454,6 +600,7 @@ export function createMissions(ctx) {
     edited();
   };
   $('ms-list').onchange = () => {
+    $('ms-check-out').hidden = true;
     st.current = st.list.find((m) => m.id === $('ms-list').value) || null;
     showCurrent();
   };
@@ -506,6 +653,25 @@ export function createMissions(ctx) {
   });
   $('ms-giver-show').onclick = () => st.giver.position ? ctx.lookAt(st.giver.position) : status('Not placed yet', true);
 
+  // Check: the build's own checks on the saved mission.
+  $('ms-check').onclick = async () => {
+    const out = $('ms-check-out');
+    out.hidden = false;
+    if (!st.current) { out.innerHTML = '<p class="hint">Save the mission first: Check reads the saved file.</p>'; return; }
+    out.innerHTML = '<p class="hint">Checking...</p>';
+    try {
+      const r = await fetch(`/api/missions/check/${st.current.id}`);
+      const doc = await r.json();
+      if (!r.ok) throw new Error(doc.error || r.statusText);
+      const list = (items, cls) => items.map((x) => `<li class="${cls}">${esc(x)}</li>`).join('');
+      out.innerHTML = (st.dirty ? '<p class="hint">You have unsaved changes: this checks the saved mission.</p>' : '')
+        + (doc.problems.length ? `<p><b>${doc.problems.length} problem${doc.problems.length > 1 ? 's' : ''}</b>: the build won't write its script until they're fixed.</p>`
+          : '<p><b>No problems</b>: the build writes its script.</p>')
+        + `<ul>${list(doc.problems, 'ms-problem')}${list(doc.notes, 'ms-note')}</ul>`;
+    } catch (e) {
+      out.innerHTML = `<p class="hint">Couldn't check: ${esc(e.message)}</p>`;
+    }
+  };
   $('missions-mode').onclick = () => show($('missions').hidden);
   $('ms-close').onclick = () => show(false);
 
@@ -524,7 +690,7 @@ export function createMissions(ctx) {
     return {map: st.map, mission: {
       faction, number, title: $('ms-title').value.trim(), description: $('ms-description').value.trim(),
       briefing: $('ms-briefing').value.trim(), fee: +$('ms-fee').value || 0, bonus: +$('ms-bonus').value || 0, objectives: st.objectives,
-      start: st.start, giver: st.giver, requires: st.requires || [], fail: st.fails, radio: st.radio,
+      start: st.start, giver: st.giver, requires: st.requires || [], fail: st.fails, radio: st.radio, orders: st.orders, waves: st.waves,
     }};
   }
   async function saved(done) {

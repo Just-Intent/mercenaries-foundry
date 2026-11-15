@@ -128,8 +128,10 @@ def text_plan(asset_id, doc, section):
         ini["ShortDescriptionDbKey"] = f"MissionInfo.Description.{key}"
     for i, o in enumerate(doc.get("objectives") or [], 1):
         strings[objective_key(asset_id, i)] = o.get("text") or f"Objective {i}"
-        if o.get("type") == "escort":
-            strings[escort_lost_key(asset_id, i)] = o.get("lost") or FAIL_TEXT["escort"]
+        if o.get("type") in ("escort", "deliver", "subdue", "use"):
+            strings[escort_lost_key(asset_id, i)] = o.get("lost") or FAIL_TEXT[o["type"]]
+        if o.get("type") == "use":
+            strings[use_prompt_key(asset_id, i)] = o.get("prompt") or "Use"
     for k, c in enumerate(doc.get("fail") or [], 1):
         strings[fail_key(asset_id, k)] = c.get("text") or FAIL_TEXT.get(c.get("type"), "The mission failed.")
     for k, line in enumerate(doc.get("radio") or [], 1):
@@ -154,6 +156,13 @@ def fail_key(asset_id, k):
     return f"{map_}.{faction}{number}.fail.foundry{k}"
 
 
+def use_prompt_key(asset_id, i):
+    """The prompt a "use" objective puts on its objects (actionCaption, a key
+    in the mission's text, as nw_allies8's 'nw_allies8.act.missile')."""
+    map_, faction, number = parse_id(asset_id)
+    return f"{map_}.{faction}{number}.act.foundry{i}"
+
+
 def escort_lost_key(asset_id, i):
     """The message when everyone an escort objective protects is dead."""
     return objective_key(asset_id, i) + ".lost"
@@ -169,10 +178,18 @@ def _lua_str(s):
     return "'" + str(s).replace("\\", "\\\\").replace("'", "\\'") + "'"
 
 
-OBJECTIVE_TYPES = ("destroy", "goto", "escort")
+OBJECTIVE_TYPES = ("destroy", "goto", "escort", "deliver", "subdue", "hold", "use", "verify")
+# A verify objective's marker on its targets (retail's blipType: the card suits
+# are the Deck of 52's).
+VERIFY_BLIPS = ("human", "scope", "blip", "clubs", "diamond", "hearts", "spades")
 FAIL_TYPES = ("dies", "timer", "leave")
+# Squad orders (retail's own commands): attack the player, hold, move to one
+# of the encounter's point sets, close in on the player, or walk a path.
+ORDER_TYPES = ("attack", "hold", "move", "close", "path")
 FAIL_TEXT = {"dies": "A target you had to protect was killed.", "timer": "You ran out of time.",
-             "leave": "You left the mission area.", "escort": "Everyone you were escorting was killed."}
+             "leave": "You left the mission area.", "escort": "Everyone you were escorting was killed.",
+             "deliver": "The vehicle was destroyed.", "subdue": "The target was killed.",
+             "use": "What you had to use was destroyed."}
 
 
 def bonus_amount(o):
@@ -231,13 +248,23 @@ def reveal_of(o, count, i):
     raise ValueError(f"objective {i}: \"reveal\" is start, starts:<n>, done:<n> or zone:<name>, not {r!r}")
 
 
+def alive_amount(o):
+    """A verify objective's extra pay for a target captured alive (0: none)."""
+    if o.get("type") != "verify":
+        return 0
+    try:
+        return max(0, int(float(o.get("alive") or 0)))
+    except (TypeError, ValueError):
+        return 0
+
+
 def bonus_fee(doc):
     """mission.ini BonusFee for a mission with objectives: its flat bonus
     ("ini" BonusFee, paid on completion) plus every bonus objective's reward,
     the most the contract can pay. The script pays the flat bonus plus the
     rewards of the bonus objectives done."""
     flat = int(float((doc.get("ini") or {}).get("BonusFee", 0) or 0))
-    return flat + sum(bonus_amount(o) for o in doc.get("objectives") or [])
+    return flat + sum(bonus_amount(o) + alive_amount(o) for o in doc.get("objectives") or [])
 
 
 def objectives_script(asset_id, doc, squad_members, layers=(), zone_centre=None):
@@ -279,13 +306,24 @@ def objectives_script(asset_id, doc, squad_members, layers=(), zone_centre=None)
                 head += f", reveal = '{when[0]}', after = 'foundry{when[1]}'"
             elif when[0] == "zone":
                 head += f", reveal = 'zone', rzone = {_lua_str(when[1])}"
-        if kind in ("destroy", "escort"):
+        if kind in ("destroy", "escort", "subdue", "use", "verify"):
             targets = list(o.get("targets") or [])
             if o.get("squad"):
                 targets += squad_members(o["squad"])
             if not targets:
                 raise ValueError(f"objective {i}: nothing to {kind} (give \"targets\" or \"squad\")")
             row = f"{head}, targets = {{ {', '.join(_lua_str(t) for t in targets)} }}"
+            if kind in ("subdue", "use"):
+                row += f", lost = {_lua_str(escort_lost_key(asset_id, i))}"     # killed / destroyed instead
+            if kind == "use":
+                row += f", act = {_lua_str(use_prompt_key(asset_id, i))}"      # the prompt on the object
+            if kind == "verify":
+                blip = o.get("blip") or "human"
+                if blip not in VERIFY_BLIPS:
+                    raise ValueError(f"objective {i}: \"blip\" is one of {', '.join(VERIFY_BLIPS)}, not {blip!r}")
+                row += f", blip = '{blip}'"
+                if alive_amount(o):
+                    row += f", alive = {alive_amount(o)}"                    # paid for each one taken alive
             if kind == "escort":
                 # they follow the player; done when every survivor is in the zone
                 if not o.get("zone"):
@@ -294,6 +332,22 @@ def objectives_script(asset_id, doc, squad_members, layers=(), zone_centre=None)
                 mark = f", x = {at[0]:.2f}, y = {at[1]:.2f}, z = {at[2]:.2f}" if at else ""
                 row += f", zone = {_lua_str(o['zone'])}{mark}, lost = {_lua_str(escort_lost_key(asset_id, i))}"
             row = f"{{ {row} }}"
+        elif kind == "hold":
+            # stay in a zone for "seconds"; leaving resets the clock
+            seconds = float(o.get("seconds") or 0)
+            if not o.get("zone") or seconds <= 0:
+                raise ValueError(f"objective {i}: a hold objective needs a \"zone\" and \"seconds\"")
+            at = zone_centre(o["zone"]) if zone_centre and o.get("marker", True) else None
+            mark = f", x = {at[0]:.2f}, y = {at[1]:.2f}, z = {at[2]:.2f}" if at else ""
+            row = f"{{ {head}, zone = {_lua_str(o['zone'])}{mark}, seconds = {seconds:g} }}"
+        elif kind == "deliver":
+            # get a vehicle (a named object) into a zone; failed if it's destroyed
+            if not o.get("vehicle") or not o.get("zone"):
+                raise ValueError(f"objective {i}: a deliver objective needs a \"vehicle\" and a \"zone\"")
+            at = zone_centre(o["zone"]) if zone_centre and o.get("marker", True) else None
+            mark = f", x = {at[0]:.2f}, y = {at[1]:.2f}, z = {at[2]:.2f}" if at else ""
+            row = (f"{{ {head}, vehicle = {_lua_str(o['vehicle'])}, zone = {_lua_str(o['zone'])}{mark}, "
+                   f"lost = {_lua_str(escort_lost_key(asset_id, i))} }}")
         else:
             if not o.get("zone"):
                 raise ValueError(f"objective {i}: a goto objective needs a \"zone\"")
@@ -351,9 +405,61 @@ def objectives_script(asset_id, doc, squad_members, layers=(), zone_centre=None)
             raise ValueError(f"radio line {k}: give a \"sound\", a \"text\" or both")
         radio.append(f"{{ {row} }}")
     radio_table = ",\n".join("  " + r for r in radio)
+    # Squads that appear later: their own layers, loaded at "when".
+    waves, wave_of = [], {}
+    for k, w in enumerate(doc.get("waves") or [], 1):
+        what = f"wave {k}"
+        enc, _, sq = str(w.get("squad") or "").rpartition(":")
+        if not enc or not sq:
+            raise ValueError(f"{what}: \"squad\" is \"encounter:squad\"")
+        when = when_of(w.get("when"), len(objs), what)
+        row = f"when = '{when[0]}'"
+        if when[0] in ("starts", "done"):
+            row += f", after = 'foundry{when[1]}'"
+        elif when[0] == "zone":
+            row += f", zone = {_lua_str(when[1])}"
+            if zone_centre:
+                zone_centre(when[1])
+        row += f", layer = {_lua_str(wave_layer(asset_id, k))}"
+        waves.append(f"{{ {row} }}")
+        wave_of[(enc.lower(), sq.lower())] = (wave_encounter(enc, k), wave_layer(asset_id, k))
+    wave_table = ",\n".join("  " + r for r in waves)
+    orders = []
+    for k, o in enumerate(doc.get("orders") or [], 1):
+        what = f"squad order {k}"
+        act = o.get("do")
+        if act not in ORDER_TYPES:
+            raise ValueError(f"{what}: \"do\" is one of {', '.join(ORDER_TYPES)}, not {act!r}")
+        enc, _, sq = str(o.get("squad") or "").rpartition(":")
+        if not enc or not sq:
+            raise ValueError(f"{what}: \"squad\" is \"encounter:squad\"")
+        members = squad_members(o["squad"])         # (and its layer loads with the script)
+        when = when_of(o.get("when"), len(objs), what)
+        row = f"when = '{when[0]}'"
+        if when[0] in ("starts", "done"):
+            row += f", after = 'foundry{when[1]}'"
+        elif when[0] == "zone":
+            row += f", zone = {_lua_str(when[1])}"
+            if zone_centre:
+                zone_centre(when[1])
+        wave = wave_of.get((enc.lower(), sq.lower()))
+        if wave:
+            enc = wave[0]            # its own layer's copy of the encounter; given once it's there
+        row += f", act = '{act}', enc = {_lua_str(enc)}, squad = {_lua_str(sq)}"
+        if wave:
+            row += f", wave = {_lua_str(wave[1])}"
+        if act in ("move", "path"):
+            if not o.get("to"):
+                raise ValueError(f"{what}: \"{act}\" needs \"to\" (a point set letter, or a path's name)")
+            row += f", to = {_lua_str(o['to'])}"
+        if act == "path":
+            row += f", members = {{ {', '.join(_lua_str(m) for m in members)} }}"
+        orders.append(f"{{ {row} }}")
+    order_table = ",\n".join("  " + r for r in orders)
     main_table = ",\n".join("  " + r for r in main)
     bonus_table = ",\n".join("  " + r for r in bonus)
-    flat = bonus_fee(doc) - sum(bonus_amount(o) for o in objs)
+    flat = bonus_fee(doc) - sum(bonus_amount(o) + alive_amount(o) for o in objs)
+    pays = "true" if bonus or any(alive_amount(o) for o in objs) else "false"   # writes fBonusFee
     loads = "".join(f"Utility_ReadLevelFile({_lua_str(n)})   -- its squads or zones\n" for n in layers)
     start = doc.get("start") or {}
     if start.get("position"):     # where the player begins (on foot, as retail missions move the player)
@@ -374,17 +480,27 @@ tFoundryRadio = {{         -- radio lines: voiced (banter queue, with a subtitle
 {radio_table}
 }}
 iFoundryRadioPending = 0   -- voiced lines queued and not yet played
+tFoundryWaves = {{         -- squads that appear later: their layers, loaded when their moment comes
+{wave_table}
+}}
+tFoundryWaveUp = {{}}       -- a wave's layer -> its squad is there
+tFoundryOrders = {{        -- squad orders, given when their moment comes
+{order_table}
+}}
 tFoundryActive = {{}}       -- started objectives by name
 tFoundryWatch = {{}}        -- actor (as int) -> the fail condition or escort objective watching it
 bFoundryOver = false
 iFoundryStep = 0
 iFoundryFlatBonus = {flat}
 iFoundryEarned = 0
+bFoundryPays = {pays}      -- the payout depends on what's done (bonus objectives, targets taken alive)
+tFoundryVerify = {{}}       -- verify target (actor name) -> its objective
 
 function ScriptInit()
 Utility_LoadUtilityScript('mission')
 Utility_LoadUtilityScript('mission_objective')
 Utility_LoadUtilityScript('mission_objectiveverb')
+Utility_LoadUtilityScript('mission_objectiveverify')
 Utility_LoadUtilityScript('util_misc')
 Utility_LoadUtilityScript('hud')
 Utility_LoadUtilityScript('util_banter')
@@ -396,7 +512,15 @@ foundry_SetupFail()
 for i, r in ipairs(tFoundryRadio) do
 if r.when == 'zone' then Event_ActorInBoundary('foundry_RadioZone', 'b', 'player0', r.zone, true) end
 end
+for i, o in ipairs(tFoundryOrders) do
+if o.when == 'zone' then Event_ActorInBoundary('foundry_OrderZone', 'b', 'player0', o.zone, true) end
+end
+for i, w in ipairs(tFoundryWaves) do
+if w.when == 'zone' then Event_ActorInBoundary('foundry_WaveZone', 'b', 'player0', w.zone, true) end
+end
+foundry_Waves('start')
 foundry_Radio('start')
+foundry_Orders('start')
 for i, o in ipairs(tFoundryBonus) do
 if not o.reveal then foundry_Start(o)
 elseif o.reveal == 'zone' then Event_ActorInBoundary('foundry_RevealZone', 'b', 'player0', o.rzone, true) end
@@ -430,6 +554,56 @@ end
 function foundry_RadioZone(playerActor, boundaryName)
 for i, r in ipairs(tFoundryRadio) do
 if not r.said and r.when == 'zone' and r.zone == boundaryName then foundry_Say(r) end
+end
+end
+-- Squad orders: retail's Squad_Command verbs (Attack, Wait, TacticalMove to
+-- a point set, MoveToActor) and, for a path, PathMove for each member.
+function foundry_Orders(sWhen, sName)
+for i, o in ipairs(tFoundryOrders) do
+if not o.given and o.when == sWhen and o.after == sName then foundry_Order(o) end
+end
+end
+function foundry_OrderZone(playerActor, boundaryName)
+for i, o in ipairs(tFoundryOrders) do
+if not o.given and o.when == 'zone' and o.zone == boundaryName then foundry_Order(o) end
+end
+end
+-- Squads that appear later: load their layer; the squad is there a moment
+-- later (2 s), then its orders that came due meanwhile are given.
+function foundry_Waves(sWhen, sName)
+for i, w in ipairs(tFoundryWaves) do
+if not w.loaded and w.when == sWhen and w.after == sName then foundry_Wave(w) end
+end
+end
+function foundry_WaveZone(playerActor, boundaryName)
+for i, w in ipairs(tFoundryWaves) do
+if not w.loaded and w.when == 'zone' and w.zone == boundaryName then foundry_Wave(w) end
+end
+end
+function foundry_Wave(w)
+w.loaded = true
+Utility_ReadLevelFile(w.layer)
+Event_RelativeTimer('foundry_WavesUp', 'b', 2.0)
+end
+function foundry_WavesUp()
+for i, w in ipairs(tFoundryWaves) do
+if w.loaded then tFoundryWaveUp[w.layer] = true end
+end
+for i, o in ipairs(tFoundryOrders) do
+if o.pending and tFoundryWaveUp[o.wave] then o.pending = nil foundry_Order(o) end
+end
+end
+function foundry_Order(o)
+o.given = true
+if o.wave and not tFoundryWaveUp[o.wave] then o.pending = true return end   -- not there yet
+if o.act == 'attack' then Squad_Command(o.enc, o.squad, 'Attack', 'player0', 'hiPri')
+elseif o.act == 'hold' then Squad_Command(o.enc, o.squad, 'Wait', 'hiPri')
+elseif o.act == 'move' then Squad_Command(o.enc, o.squad, 'TacticalMove', o.to, 'hiPri')
+elseif o.act == 'close' then Squad_Command(o.enc, o.squad, 'MoveToActor', 'player0', 1.0, 1, 'hiPri')
+elseif o.act == 'path' then
+for j, a in ipairs(o.members) do
+if Utility_DoesActorExist(a) then Ai_CommandQueue(a, 'PathMove', o.to, '1.0', 'hiPri') end
+end
 end
 end
 function foundry_Say(r)
@@ -478,6 +652,7 @@ function foundry_Died(aActor)
 local w = tFoundryWatch[Utility_GetActorAsInt(aActor)]
 if not w then return end
 if w.kind == 'escort' then foundry_EscortLost(w, aActor)
+elseif w.kind == 'deliver' then if not w.done then foundry_Fail(w.lost) end
 elseif not w.off then foundry_Fail(w.reason) end
 end
 function foundry_TimeUp()
@@ -516,6 +691,54 @@ o.inZone[k] = nil
 o.dead = o.dead + 1
 if o.dead >= table.getn(o.targets) then foundry_Fail(o.lost) else foundry_EscortCheck(o) end
 end
+-- Subdue: a target was killed instead. A main objective fails the mission;
+-- a bonus one is lost.
+function foundry_TargetKilled(sActor, sObjName)
+local o = tFoundryActive[sObjName]
+if not o or o.done then return end
+if o.bonus then
+o.done = true
+util_ObjMsgPrint{{ sMsg = o.text, sType = 'BON_OBJ_FAIL', vIdx = 2, sObjective = o.name }}
+mission_RemoveObjective(o.name)
+else
+foundry_Fail(o.lost)
+end
+end
+
+-- Hold: in the zone, a clock counts down; leaving stops it (and it starts
+-- again from the top on coming back).
+function foundry_HoldIn(playerActor, boundaryName)
+for sName, o in pairs(tFoundryActive) do
+if o.kind == 'hold' and o.zone == boundaryName and not o.done and not o.holding then
+o.holding = true
+tFoundryHolding = o
+o.hud = HUD_AddTrayDisplay{{ {{ DisplayClock = true, nObjStyle = HUD.STYLE.NORMAL, nStart = o.seconds, nLimit = 0,
+                                fCallback = foundry_HoldDone }} }}
+Event_ActorInBoundary('foundry_HoldOut', 'b', 'player0', o.zone, false)
+end
+end
+end
+function foundry_HoldOut(playerActor, boundaryName)
+local o = tFoundryHolding
+if not o or o.done or not o.holding or o.zone ~= boundaryName then return end
+o.holding = false
+if o.hud then HUD_RemoveTrayDisplay(o.hud) o.hud = nil end
+local sMsg, iIdx = foundry_Kind(o)
+util_ObjMsgPrint{{ sMsg = o.text, sType = sMsg .. 'UPD_NEG', vIdx = iIdx, sObjective = o.name }}
+Event_ActorInBoundary('foundry_HoldIn', 'b', 'player0', o.zone, true)
+end
+function foundry_HoldDone()
+local o = tFoundryHolding
+if not o or o.done or not o.holding then return end
+if o.hud then HUD_RemoveTrayDisplay(o.hud) o.hud = nil end
+foundry_Done(o)
+end
+
+-- Deliver: the vehicle is in the zone.
+function foundry_Delivered(aActor, boundaryName)
+local o = tFoundryWatch[Utility_GetActorAsInt(aActor)]
+if o and o.kind == 'deliver' and not o.done and o.zone == boundaryName then foundry_Done(o) end
+end
 function foundry_EscortCheck(o)
 local iAlive = table.getn(o.targets) - o.dead
 if o.arrived >= iAlive and iAlive > 0 then
@@ -548,7 +771,49 @@ o.text = Utility_GetStringById(o.key)
 o.down = 0
 tFoundryActive[o.name] = o
 local sMsg, iIdx, sObjType, sTargetType = foundry_Kind(o)
-if o.kind == 'escort' then
+if o.kind == 'verify' then
+-- kill and photograph the body, or capture alive (retail's verify: the Deck of 52)
+for j, a in ipairs(o.targets) do
+tFoundryVerify[a] = o
+mission_ObjectiveVerify{{ callbackFunc = foundry_Verified, objectiveName = o.name .. 'v' .. j, objectiveDesc = o.text,
+                         actorName = a, objectiveType = sObjType, targetType = sTargetType, blipType = o.blip }}
+end
+util_ObjMsgPrint{{ sMsg = o.text, sType = sMsg .. 'ADD', vIdx = iIdx,
+                  tCounter = {{ vCurr = 0, vLim = table.getn(o.targets) }}, sObjective = o.name }}
+elseif o.kind == 'use' then
+-- walk up and use it (retail's action verb); destroying it fails it
+mission_ObjectiveAction{{ callbackFunc = foundry_TargetDown, killCallbackFunc = foundry_TargetKilled,
+                         objectiveName = o.name, objectiveDesc = o.text, actorName = o.targets,
+                         actionCaption = o.act, objectiveType = sObjType, targetType = sTargetType }}
+util_ObjMsgPrint{{ sMsg = o.text, sType = sMsg .. 'ADD', vIdx = iIdx,
+                  tCounter = {{ vCurr = 0, vLim = table.getn(o.targets) }}, sObjective = o.name }}
+elseif o.kind == 'subdue' then
+-- capture alive (retail's subdue verb); killing them fails it
+mission_ObjectiveSubdue{{ callbackFunc = foundry_TargetDown, killCallbackFunc = foundry_TargetKilled,
+                         objectiveName = o.name, objectiveDesc = o.text, actorName = o.targets,
+                         objectiveType = sObjType, targetType = sTargetType }}
+util_ObjMsgPrint{{ sMsg = o.text, sType = sMsg .. 'ADD', vIdx = iIdx,
+                  tCounter = {{ vCurr = 0, vLim = table.getn(o.targets) }}, sObjective = o.name }}
+elseif o.kind == 'hold' then
+util_ObjMsgPrint{{ sMsg = o.text, sType = sMsg .. 'ADD', vIdx = iIdx, sObjective = o.name }}
+if o.x then
+Objective_SetShortDescription(o.name, o.text)
+Objective_SetType(o.name, sObjType)
+Objective_SetTargetVector(o.name, o.zone, o.text, sTargetType, 'location', o.x, o.y, o.z, true, true, false)
+end
+Event_ActorInBoundary('foundry_HoldIn', 'b', 'player0', o.zone, true)
+elseif o.kind == 'deliver' then
+tFoundryWatch[Utility_GetActorAsInt(o.vehicle)] = o
+util_ObjMsgPrint{{ sMsg = o.text, sType = sMsg .. 'ADD', vIdx = iIdx, sObjective = o.name }}
+Objective_SetShortDescription(o.name, o.text)
+Objective_SetType(o.name, sObjType)
+Objective_SetTargetActor(o.name, o.vehicle, o.text, sTargetType, 'blip', true, true, true)
+if o.x then
+Objective_SetTargetVector(o.name, o.zone, o.text, sTargetType, 'location', o.x, o.y, o.z, true, true, false)
+end
+Event_ActorInBoundary('foundry_Delivered', 'b', o.vehicle, o.zone, true)
+Event_ActorHitPointsLessThan('foundry_Died', 'b', o.vehicle, 1)
+elseif o.kind == 'escort' then
 o.arrived, o.dead, o.inZone = 0, 0, {{}}
 for j, a in ipairs(o.targets) do
 tFoundryWatch[Utility_GetActorAsInt(a)] = o
@@ -579,7 +844,9 @@ end
 Event_ActorInBoundary('foundry_Arrived', 'b', 'player0', o.zone, true)
 end
 foundry_Reveal('starts', o.name)
+foundry_Waves('starts', o.name)
 foundry_Radio('starts', o.name)
+foundry_Orders('starts', o.name)
 end
 
 function foundry_Done(o)
@@ -589,7 +856,9 @@ local sMsg, iIdx = foundry_Kind(o)
 util_ObjMsgPrint{{ sMsg = o.text, sType = sMsg .. 'CMPL', vIdx = iIdx, sObjective = o.name }}
 mission_RemoveObjective(o.name)
 foundry_Reveal('done', o.name)
+foundry_Waves('done', o.name)
 foundry_Radio('done', o.name)
+foundry_Orders('done', o.name)
 if o.bonus then
 iFoundryEarned = iFoundryEarned + o.bonus
 else
@@ -609,6 +878,15 @@ local sMsg, iIdx = foundry_Kind(o)
 util_ObjMsgPrint{{ sMsg = o.text, sType = sMsg .. 'UPD_POS', vIdx = iIdx,
                   tCounter = {{ vCurr = o.down, vLim = iAll }}, sObjective = o.name }}
 end
+end
+
+-- Verify: a target was photographed dead or captured alive (bKilled false),
+-- which pays the objective's "alive" extra.
+function foundry_Verified(sActor, bKilled)
+local o = tFoundryVerify[sActor]
+if not o or o.done then return end
+if not bKilled and o.alive then iFoundryEarned = iFoundryEarned + o.alive end
+foundry_TargetDown(sActor, true, o.name)
 end
 
 function foundry_Arrived(playerActor, boundaryName)
@@ -632,7 +910,7 @@ util_ObjMsgPrint{{ sMsg = o.text, sType = 'BON_OBJ_FAIL', vIdx = 2, sObjective =
 mission_RemoveObjective(o.name)
 end
 end
-if table.getn(tFoundryBonus) > 0 then
+if bFoundryPays then
 Utility_WriteMissionData( {{ fBonusFee = iFoundryFlatBonus + iFoundryEarned }} )
 end
 mission_MissionComplete()
@@ -729,6 +1007,43 @@ def marker_type(contact, faction):
         raise ValueError(f"the mission giver's \"marker\" is one of {', '.join(GIVER_MARKERS)}, not {m!r}")
     return {"gold": "TARGET_TYPE_HQ_" + faction.upper(), "primary": "TARGET_TYPE_OBJECTIVE_PRIMARY",
             "secondary": "TARGET_TYPE_OBJECTIVE_SECONDARY", "none": None}[m]
+
+
+def wave_layer(asset_id, k):
+    """The layer a mission's k-th later squad ("waves") goes in."""
+    return f"{asset_id}_w{k}"
+
+
+def wave_encounter(enc, k):
+    """The encounter name of that squad in its own layer (a copy of its own)."""
+    return f"{enc}_w{k}"
+
+
+def split_waves(asset_id, mission_doc, layer_doc):
+    """(the mission's layer without its later squads, [(layer, doc)]) for the
+    mission file's "waves": [{"when": ..., "squad": "encounter:squad"}].
+    Each squad moves to a layer of its own, with a copy of its encounter (same
+    point sets) named encounter_w<k>; the script loads that layer at "when".
+    The squad must be in the mission's own layer."""
+    import copy
+    waves = mission_doc.get("waves") or []
+    if not waves:
+        return layer_doc, []
+    doc = copy.deepcopy(layer_doc)
+    out = []
+    for k, w in enumerate(waves, 1):
+        enc, _, sq = str(w.get("squad") or "").rpartition(":")
+        e = next((e for e in doc.get("encounters", []) if e.get("name", "").lower() == enc.lower()), None)
+        s = next((s for s in (e or {}).get("squads", []) if s.get("name", "").lower() == sq.lower()), None)
+        if not s:
+            raise ValueError(f"missions/{asset_id}.json: wave {k}: no squad {w.get('squad')!r} in the mission's own layer "
+                             f"(encounters/{asset_id}.json)")
+        e["squads"] = [x for x in e["squads"] if x is not s]
+        out.append((wave_layer(asset_id, k), {
+            "map": doc.get("map"),
+            "encounters": [{"name": wave_encounter(e["name"], k), "points": copy.deepcopy(e.get("points") or {}),
+                            "squads": [s]}]}))
+    return doc, out
 
 
 def contact_actor(asset_id):

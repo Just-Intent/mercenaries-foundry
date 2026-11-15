@@ -248,9 +248,16 @@ class Scene:
             squads += [f"{s['encounter']}:{s['name']}" for s in doc.get("game_squads", [])]
             return squads, sorted((doc.get("boundaries") or {}).keys())
 
+        def layer_extras(doc):
+            # Paths (squad orders walk them) and each squad's encounter's point
+            # sets (squad orders move to them).
+            sets = {f"{e['name']}:{s['name']}": sorted((e.get("points") or {}).keys())
+                    for e in doc.get("encounters", []) for s in e.get("squads", [])}
+            return sorted((doc.get("paths") or {}).keys()), sets
+
         # The mod's layers that load with the map: their squads and zones are
         # there during any mission on it too.
-        shared_squads, shared_zones = [], []
+        shared_squads, shared_zones, shared_paths, shared_sets = [], [], [], {}
         edir = self.mod / "encounters"
         for lp in sorted(edir.glob("*.json")) if edir.is_dir() else []:
             ldoc = json.loads(lp.read_text(encoding="utf-8"))
@@ -258,6 +265,9 @@ class Scene:
                 sq, zn = layer_names(ldoc)
                 shared_squads += sq
                 shared_zones += zn
+                pa, se = layer_extras(ldoc)
+                shared_paths += pa
+                shared_sets.update(se)
         for p in sorted(mdir.glob("*.json")) if mdir.is_dir() else []:
             try:
                 mp, faction, number = ms.parse_id(p.stem)
@@ -267,15 +277,20 @@ class Scene:
                 continue
             doc = json.loads(p.read_text(encoding="utf-8"))
             lp = self.mod / "encounters" / f"{p.stem}.json"
-            squads, zones = layer_names(json.loads(lp.read_text(encoding="utf-8")) if lp.exists() else {})
+            ldoc = json.loads(lp.read_text(encoding="utf-8")) if lp.exists() else {}
+            squads, zones = layer_names(ldoc)
+            paths, sets = layer_extras(ldoc)
             out.append({"id": p.stem, "faction": faction, "number": number, "doc": doc,
                         "squads": squads + [s for s in shared_squads if s not in squads],
                         "zones": zones + [z for z in shared_zones if z not in zones],
+                        "paths": paths + [x for x in shared_paths if x not in paths], "sets": {**shared_sets, **sets},
+                        "own": squads,
                         "script": (self.mod / "scripts" / f"{p.stem}.lua").exists()})
         taken = self._arc_numbers(m)
         nxt = {f: max([8] + sorted(taken[f])) + 1 for f in ms.FACTIONS}
         return {"missions": out, "next": nxt, "factions": list(ms.FACTIONS),
-                "squads": shared_squads, "zones": shared_zones, "hq": self._hq_points(m)}
+                "squads": shared_squads, "zones": shared_zones, "paths": shared_paths, "sets": shared_sets,
+                "hq": self._hq_points(m)}
 
     def _mission_titles(self):
         """{string key: text} of the game's mission titles (MissionInfo.MissionTitle.*)."""
@@ -340,6 +355,11 @@ class Scene:
             out[f] = {"contracts": contracts, "points": points}
         return out
 
+    def check_mission(self, asset_id):
+        """The build's checks for a saved mission (modbuild.check_mission)."""
+        from ..modbuild import check_mission
+        return check_mission(self.mod, asset_id.lower())
+
     def save_mission(self, map_name, mission):
         """Write missions/<id>.json from the editor's fields (title,
         description, briefing, fee, objectives), keeping anything else the file
@@ -365,9 +385,27 @@ class Scene:
             doc.setdefault("ini", {})["ContractFee"] = int(mission["fee"])
         if mission.get("bonus") is not None:
             doc.setdefault("ini", {})["BonusFee"] = int(mission["bonus"])
-        doc["objectives"] = [{k: v for k, v in o.items() if k in ("type", "text", "squad", "targets", "zone", "marker", "bonus", "reveal")
+        doc["objectives"] = [{k: v for k, v in o.items() if k in ("type", "text", "prompt", "squad", "targets", "vehicle", "zone", "seconds", "marker", "blip", "alive",
+                                                            "bonus", "reveal")
                               and not (k == "bonus" and not v) and not (k == "reveal" and (v in ("", "start") or not o.get("bonus")))}
                              for o in mission.get("objectives") or []]
+        if "waves" in mission:
+            waves = [{k: v for k, v in w.items() if k in ("when", "squad") and v not in ("", None)}
+                     for w in mission.get("waves") or []]
+            if waves:
+                doc["waves"] = waves
+            else:
+                doc.pop("waves", None)
+        if "orders" in mission:
+            orders = [{k: v for k, v in o.items() if k in ("when", "squad", "do", "to") and v not in ("", None)}
+                      for o in mission.get("orders") or []]
+            for k, o in enumerate(orders, 1):
+                if o.get("do") not in ms.ORDER_TYPES:
+                    raise ValueError(f"squad order {k}: unknown order {o.get('do')!r}")
+            if orders:
+                doc["orders"] = orders
+            else:
+                doc.pop("orders", None)
         if "radio" in mission:
             radio = [{k: v for k, v in r.items() if k in ("when", "sound", "text") and v not in ("", None)}
                      for r in mission.get("radio") or []]

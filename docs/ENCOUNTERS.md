@@ -213,6 +213,14 @@ Tested in game (2026-11-14): `sw_china9`, made in the editor (a go-to zone in th
 The generated script also handles:
 
 - `{"type": "escort", "squad": ..., "zone": ...}`: the squad follows the player (`Ai_CommandDefault(actor, 'Follow', 'player0', 'loPri')`, as retail's downed pilots); done when every survivor has entered the zone; the mission fails when they all die (the message is `"lost"`, or a default).
+- `{"type": "destroy", "targets": [names]}`: named objects (a building, a vehicle) as well as, or instead of, a `"squad"`.
+- `{"type": "deliver", "vehicle": name, "zone": ...}`: done when the vehicle enters the zone (`Event_ActorInBoundary` on the vehicle); failed if it's destroyed.
+- `{"type": "subdue", "squad": ... or "targets": ...}`: capture alive (`mission_ObjectiveSubdue`); killing one fails a main objective and loses a bonus one.
+- `{"type": "hold", "zone": ..., "seconds": 60}`: a clock counts down while the player is in the zone (`HUD_AddTrayDisplay`); leaving stops it, and it starts again from the top on coming back.
+- `{"type": "use", "targets": [names], "prompt": "Plant charge"}`: walk up and use each one (`mission_ObjectiveAction`, the prompt is its `actionCaption`, a string `<map>.<faction><n>.act.foundry<k>`); destroying one fails it.
+- `{"type": "verify", "squad": ... or "targets": ..., "blip": "spades", "alive": 20000}`: retail's verify (`mission_ObjectiveVerify`, one per target): kill and photograph the body, or capture alive. `"blip"` is the marker (`human` (default), `scope`, `blip`, `clubs`, `diamond`, `hearts`, `spades`); `"alive"` is paid on completion for each target taken alive, and counts toward `BonusFee`, the most the contract pays.
+- `"waves"`: `[{"when": ..., "squad": "encounter:squad"}]`, squads of the mission's layer that arrive later. The build moves each into a layer of its own (`<id>_w<k>`, its encounter `<encounter>_w<k>` with the encounter's points), which the script loads (`Utility_ReadLevelFile`) at `"when"`.
+- `"orders"`: `[{"when": ..., "squad": "encounter:squad", "do": ...}]` with `"do"` one of `attack` (`Squad_Command(..., 'Attack', 'player0')`), `hold` (`Wait`), `move` (`TacticalMove` to the point set `"to"`), `close` (`MoveToActor` the player) and `path` (each member `Ai_CommandQueue(..., 'PathMove', "to")`, a path's name). Orders for a wave's squad are given two seconds after its layer loads.
 - A bonus objective's `"reveal"`: `"start"` (default), `"starts:N"` / `"done:N"` (when objective N starts or is done) or `"zone:<name>"`. One never shown pays nothing and isn't marked failed.
 - `"fail"`: a list of conditions, each with an optional `"text"` (the failure screen's reason, set as `sReasonForFailure` before `mission_MissionFailure()`, as retail does) and `"until": "done:N"`:
   - `{"type": "dies", "squad": ...}` or `"targets"`: fail if any of them dies (`Event_ActorHitPointsLessThan(..., 1)`);
@@ -222,7 +230,9 @@ The generated script also handles:
 
 Zones and squads these use load from the mod's map layers like the objectives'.
 
-Tested in game (2026-11-15): a radio line's text, a bonus objective shown on its reveal, and a time limit's clock. Escort, protect and stay-in-zone aren't tested in game yet.
+Tested in game (2026-11-15): a radio line's text, a bonus objective shown on its reveal, and a time limit's clock. Escort, protect, stay-in-zone, destroying objects, deliver, subdue, hold, use, verify, waves and squad orders aren't tested in game yet.
+
+The editor's Check (`modbuild.check_mission`, `GET /api/missions/check/<id>`) runs these checks on a saved mission without building.
 
 ### Mission givers
 
