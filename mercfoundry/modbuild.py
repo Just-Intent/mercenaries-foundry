@@ -584,6 +584,82 @@ def _apply_encounters(data, folder, result):
                 {"map": doc["map"].lower(), "layer": layer, "check": doc["objects"][0]["name"]}]
         result.changes.append(f"layer {layer}: the mission giver, a copy of {doc['objects'][0]['from']} "
                               f"(loads with the {doc['map']} map in free roam)")
+    # Travel pilots for the mod's new maps (maps/<name>.json "travel" and
+    # "return"): each in a layer of its own that loads with its map.
+    for layer, map_, obj in _travel_pilots(data, folder, result):
+        if name_hash(layer) in existing:
+            raise ValueError(f"the game already has a layer named {layer!r} (for a travel pilot)")
+        current_map[0] = map_
+        doc = {"map": map_.upper(), "objects": [obj]}
+        try:
+            records = encounters.build(layer, doc, find_source, source_loads)
+        except ValueError as e:
+            raise ValueError(f"maps: the travel pilot {obj['name']}: {e}") from None
+        for kind, body in records.items():
+            data.new("assets.dsk", name_hash(layer), kind, body)
+        if map_ in ("sw", "nw"):
+            data.map_layers = getattr(data, "map_layers", []) + [{"map": map_, "layer": layer, "check": obj["name"]}]
+        else:
+            data.new_map_layers = getattr(data, "new_map_layers", {})
+            data.new_map_layers.setdefault(map_, []).append(layer)
+
+
+TRAVEL_PILOT = "template_allies_teleport_pilot"      # retail's quadrant pilot
+
+
+def _travel_pilots(data, folder, result):
+    """Travel pilots from the mod's maps/<name>.json: "travel" [{map (sw or
+    nw), position, heading, template?}] stand on those maps and take the
+    player to the new map (to its "start"); "return" {position, heading,
+    to (sw or nw), template?} stands on the new map and takes them back
+    (next to the pilot that brought them). Records the pilots for the
+    scripts (data.travel_pilots for free roam, data.new_map_pilots[map]);
+    returns [(layer, map, object)]."""
+    from . import missions
+    mdir = folder / "maps"
+    out = []
+    for f in sorted(mdir.glob("*.json")) if mdir.is_dir() else []:
+        name = f.stem.lower()
+        mdoc = json.loads(f.read_text(encoding="utf-8"))
+        title = str(mdoc.get("title") or name.capitalize())
+        brought = {}
+        for k, t in enumerate(mdoc.get("travel") or [], 1):
+            m = str(t.get("map") or "sw").lower()
+            if m not in missions.FREE_ROAM_MAPS:
+                raise ValueError(f"maps/{f.name}: travel {k}: a pilot stands on {', '.join(missions.FREE_ROAM_MAPS)}"
+                                 f" (free roam), not {m!r}")
+            pos = [float(v) for v in t.get("position") or []]
+            if len(pos) != 3:
+                raise ValueError(f"maps/{f.name}: travel {k}: \"position\" is [x, y, z]")
+            actor = f"foundry_travel_{name}_{k}"
+            out.append((actor, m, {"from": t.get("template") or TRAVEL_PILOT, "name": actor, "position": pos,
+                                   "yaw": float(t.get("heading") or 0)}))
+            data.travel_pilots = getattr(data, "travel_pilots", []) + [{
+                "map": m, "actor": actor, "to": name, "prompt": str(t.get("prompt") or f"Travel to {title}"),
+                "title": title, "question": str(t.get("question") or f"Travel to {title}?")}]
+            brought.setdefault(m, [pos[0] + 3, pos[1], pos[2]])      # back beside this pilot
+            result.changes.append(f"travel pilot {actor}: on {m.upper()}, takes you to {name}")
+        back = mdoc.get("return")
+        if back:
+            to = str(back.get("to") or next(iter(brought), "sw")).lower()
+            if to not in missions.FREE_ROAM_MAPS:
+                raise ValueError(f"maps/{f.name}: return: \"to\" is {' or '.join(missions.FREE_ROAM_MAPS)}, not {to!r}")
+            pos = [float(v) for v in back.get("position") or []]
+            if len(pos) != 3:
+                raise ValueError(f"maps/{f.name}: return: \"position\" is [x, y, z]")
+            actor = f"foundry_return_{name}"
+            out.append((actor, name, {"from": back.get("template") or TRAVEL_PILOT, "name": actor, "position": pos,
+                                      "yaw": float(back.get("heading") or 0)}))
+            data.new_map_pilots = getattr(data, "new_map_pilots", {})
+            region = {"sw": "the South", "nw": "the North"}[to]
+            data.new_map_pilots.setdefault(name, []).append({
+                "map": name, "actor": actor, "to": to, "prompt": str(back.get("prompt") or f"Travel back to {region}"),
+                "title": region[4:], "question": str(back.get("question") or f"Travel back to {region}?"),
+                "arrive": brought.get(to)})
+            data.travel_arrive = True
+            result.changes.append(f"travel pilot {actor}: on {name}, takes you back to {to.upper()}"
+                                  + (" (beside the pilot there)" if brought.get(to) else ""))
+    return out
 
 
 def _mission_order(projects):
@@ -938,7 +1014,9 @@ def _apply_map_layers(data, result):
     if any(r.key == key for _, r in data.records(SCRIPT)):
         raise ValueError(f"the game already has a script named {missions.LAYERS_SCRIPT}")
     data.new("assets.dsk", key, SCRIPT, script.encode(script.new(missions.LAYERS_SCRIPT,
-                                                                missions.layers_script(data.map_layers))))
+                                                                missions.layers_script(getattr(data, "map_layers", []),
+                                                                getattr(data, "travel_pilots", []),
+                                                                getattr(data, "travel_arrive", False)))))
     for map_ in missions.FREE_ROAM_MAPS:
         for a, r in data.records(name_hash("list")):
             if r.key == name_hash(map_):
@@ -951,7 +1029,7 @@ def _apply_map_layers(data, result):
         old = script.decode(data.current(a, r))
         data.set(a, r, script.encode(script.with_source(old, missions.patch_global_layers(old.source))))
     by_map = {}
-    for l in data.map_layers:
+    for l in getattr(data, "map_layers", []):
         by_map.setdefault(l["map"], []).append(l["layer"])
     result.changes.append("layers loaded with their map in free roam: " +
                           "; ".join(f"{m.upper()}: {', '.join(ls)}" for m, ls in sorted(by_map.items())))
@@ -1307,10 +1385,11 @@ def _renamed_record(body, new):
     return ucfb.wrap(tag, ucfb.pack_children(items, pad_last), (outer_pad, inner_pad))
 
 
-def map_script(name, doc, layers):
+def map_script(name, doc, layers, pilots=()):
     """A new map's master script (run as the map loads): blank's set-up, its
-    layers, where the player arrives and a message."""
-    from .missions import _lua_str
+    layers, where the player arrives, a message, and its travel pilots
+    (missions.travel_lua) armed."""
+    from .missions import _lua_str, travel_lua
     lines = [f"-- {name}: written by mercfoundry from maps/{name}.json (scripts/{name}.lua replaces it)",
              "function ScriptInit()",
              "Debug_EnableCallStack(false)",
@@ -1325,7 +1404,13 @@ def map_script(name, doc, layers):
         lines.append(f"Actor_SetYaw('player0', {float(start.get('heading', 0)):.1f})")
     if doc.get("message"):
         lines.append(f"Ui_PrintHudMessage({_lua_str(str(doc['message']))})")
-    return "\n".join(lines + ["end", ""])
+    prefix = f"foundry_{name.lower()}_Travel"
+    if pilots:
+        lines.append(f"{prefix}Arm()")
+    text = "\n".join(lines + ["end", ""])
+    if pilots:
+        text += travel_lua(prefix, list(pilots), by_map=False)
+    return text
 
 
 def _apply_maps(data, folder, result):
@@ -1394,13 +1479,15 @@ def _apply_maps(data, folder, result):
         # The map's file can say where the player arrives and what shows; its
         # layers ("load": "map") load with it.
         layers = getattr(data, "new_map_layers", {}).get(name.lower(), [])
+        pilots = getattr(data, "new_map_pilots", {}).get(name.lower(), [])
         if not any(r.key == key for _, r in data.records(SCRIPT)) and data.find_added(key, SCRIPT) is None:
-            if mdoc.get("start") or mdoc.get("message") or layers:
-                source = map_script(name, mdoc, layers)
+            if mdoc.get("start") or mdoc.get("message") or layers or pilots:
+                source = map_script(name, mdoc, layers, pilots)
                 made.append("script (" + ", ".join(
                     (["where you arrive"] if (mdoc.get("start") or {}).get("position") else [])
                     + ([f"loads {', '.join(layers)}"] if layers else [])
-                    + (["a message"] if mdoc.get("message") else [])) + ")")
+                    + (["a message"] if mdoc.get("message") else [])
+                    + (["a pilot back"] if pilots else [])) + ")")
             else:
                 hit = [(a, r) for a, r in data.records(SCRIPT) if r.key == name_hash(src)]
                 source = script.decode(data.current(*hit[0])).source if hit else map_script(name, mdoc, [])
@@ -1999,7 +2086,7 @@ def build(projects, data_dir, out_dir, name=None, description=None) -> Result:
                 _apply_contracts(data, contracts, result, insertions)
             if insertions:
                 _apply_hq_sequence(data, insertions, result)
-            if getattr(data, "map_layers", None):
+            if getattr(data, "map_layers", None) or getattr(data, "travel_arrive", False):
                 _apply_map_layers(data, result)
             _check_new_scripts(data, result)
             _check_lua(data, result)

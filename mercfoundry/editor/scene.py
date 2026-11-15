@@ -156,7 +156,15 @@ class Scene:
         own master script. {"new": false} for the game's maps."""
         p = self.mod / "maps" / f"{name.lower()}.json"
         if not p.exists():
-            return {"new": False}
+            # a game map: the mod's travel pilots standing on it, to its new maps
+            pilots, new_maps = [], []
+            for f in sorted((self.mod / "maps").glob("*.json")) if (self.mod / "maps").is_dir() else []:
+                new_maps.append(f.stem.lower())
+                for k, t in enumerate(json.loads(f.read_text(encoding="utf-8")).get("travel") or []):
+                    if str(t.get("map") or "sw").lower() == name.lower():
+                        pilots.append({"to": f.stem.lower(), "index": k, "position": t.get("position"),
+                                       "heading": t.get("heading", 0)})
+            return {"new": False, "free_roam": name.lower() in ("sw", "nw"), "pilots": pilots, "new_maps": new_maps}
         doc = json.loads(p.read_text(encoding="utf-8"))
         layers = []
         for f in sorted((self.mod / "encounters").glob("*.json")) if (self.mod / "encounters").is_dir() else []:
@@ -168,7 +176,41 @@ class Scene:
                 layers.append({"name": f.stem, "loads": ld.get("load") == "map"})
         return {"new": True, "name": name.lower(), "from": doc.get("from") or "blank",
                 "start": doc.get("start") or {}, "message": doc.get("message") or "",
-                "layers": layers, "own_script": (self.mod / "scripts" / f"{name.lower()}.lua").exists()}
+                "layers": layers, "own_script": (self.mod / "scripts" / f"{name.lower()}.lua").exists(),
+                "return": doc.get("return"), "travel": doc.get("travel") or []}
+
+    def add_travel_pilot(self, to_map, on_map, position, heading=0):
+        """A pilot on a free-roam map (sw, nw) that takes the player to one of
+        the mod's new maps: added to maps/<to>.json "travel"."""
+        p = self.mod / "maps" / f"{str(to_map).lower()}.json"
+        if not p.exists():
+            raise ValueError(f"{to_map} isn't one of this mod's new maps")
+        if str(on_map).lower() not in ("sw", "nw"):
+            raise ValueError("a travel pilot stands on SW or NW (free roam)")
+        pos = [round(float(v), 2) for v in position]
+        if len(pos) != 3:
+            raise ValueError("position is [x, y, z]")
+        doc = json.loads(p.read_text(encoding="utf-8"))
+        doc.setdefault("travel", []).append({"map": str(on_map).lower(), "position": pos,
+                                             "heading": round(float(heading or 0), 1)})
+        p.write_text(json.dumps(doc, indent=1) + "\n", encoding="utf-8")
+        return self.map_settings(on_map)
+
+    def remove_travel_pilot(self, to_map, index, on_map):
+        p = self.mod / "maps" / f"{str(to_map).lower()}.json"
+        if not p.exists():
+            raise ValueError(f"{to_map} isn't one of this mod's new maps")
+        doc = json.loads(p.read_text(encoding="utf-8"))
+        travel = doc.get("travel") or []
+        if not 0 <= int(index) < len(travel):
+            raise ValueError(f"{to_map} has no travel pilot {index}")
+        del travel[int(index)]
+        if travel:
+            doc["travel"] = travel
+        else:
+            doc.pop("travel", None)
+        p.write_text(json.dumps(doc, indent=1) + "\n", encoding="utf-8")
+        return self.map_settings(on_map)
 
     def save_map_settings(self, name, doc):
         """Write a new map's arrival point and message (maps/<name>.json), and
@@ -190,6 +232,18 @@ class Scene:
             out["message"] = msg
         else:
             out.pop("message", None)
+        if "return" in doc:          # the pilot on this map that takes the player back
+            back = doc.get("return") or {}
+            if back.get("position"):
+                pos = [round(float(v), 2) for v in back["position"]]
+                if len(pos) != 3:
+                    raise ValueError("the pilot back's position is [x, y, z]")
+                to = str(back.get("to") or "sw").lower()
+                if to not in ("sw", "nw"):
+                    raise ValueError("the pilot back goes to SW or NW")
+                out["return"] = {"position": pos, "heading": round(float(back.get("heading") or 0), 1), "to": to}
+            else:
+                out.pop("return", None)
         p.write_text(json.dumps(out, indent=1) + "\n", encoding="utf-8")
         for layer, on in (doc.get("layers") or {}).items():
             lp = self.mod / "encounters" / f"{layer}.json"

@@ -27,6 +27,7 @@ POST /api/models/new           {"name", "base", "glb" (base64)}: a new object's 
 POST /api/sky/save             {"map", "doc"}: writes sky/<map>.json
 GET  /api/mapsettings/<map>      a mod's new map: what it copies, arrival point, message, its layers
 POST /api/maps/new               {"name", "from"}: a new map (maps/<name>.json) -> {"name"}
+POST /api/maps/travel           {"op": "add"|"remove", "to", "on", "position"?, "heading"?, "index"?}: travel pilots
 POST /api/maps/save             {"map", "doc"}: a new map's arrival point, message and loading layers
 GET  /api/properties/<ref>     an object's properties: id:<layer>:<index>, or from:<name> / from:model:<model>
 GET  /api/factions             the mod's factions.json (faction re-skins) and the game's names
@@ -249,6 +250,12 @@ def make_handler(scene: Scene, mod_name: str, live: Live = None):
                 if path == "/api/maps/new":
                     with objects_lock:
                         return self.send(200, scene.new_map(doc["name"], doc.get("from") or "blank"))
+                if path == "/api/maps/travel":
+                    with objects_lock:
+                        if doc.get("op") == "remove":
+                            return self.send(200, scene.remove_travel_pilot(doc["to"], doc["index"], doc["on"]))
+                        return self.send(200, scene.add_travel_pilot(doc["to"], doc["on"], doc["position"],
+                                                                     doc.get("heading") or 0))
                 if path == "/api/maps/save":
                     with objects_lock:
                         return self.send(200, scene.save_map_settings(doc["map"], doc.get("doc") or {}))

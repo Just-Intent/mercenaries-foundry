@@ -259,7 +259,7 @@ class NewMapTests(unittest.TestCase):
             with self.assertRaises(ValueError):
                 sc.new_map("isle", "fiefdom")                 # copies game maps only
             self.assertEqual(sc.game_maps(), ["blank", "sw"])
-            self.assertEqual(sc.map_settings("sw"), {"new": False})
+            self.assertEqual(sc.map_settings("sw"), {"new": False, "free_roam": True, "pilots": [], "new_maps": ["fiefdom"]})
             (root / "encounters").mkdir()
             (root / "encounters" / "camp.json").write_text(json.dumps({"map": "FIEFDOM", "objects": []}))
             (root / "encounters" / "other.json").write_text(json.dumps({"map": "SW", "objects": []}))
@@ -317,3 +317,26 @@ class GroundLayerTests(unittest.TestCase):
             layers[:] = [{"texture": "x", "scale": 16.0, "axis": 0}] * 16
             with self.assertRaisesRegex(ValueError, "16 layers"):
                 sc.add_ground_layer("fiefdom", "sw_tt_cliffs")
+
+
+class TravelPilotTests(unittest.TestCase):
+    def test_pilots_there_and_back(self):
+        import json
+        import tempfile
+        from pathlib import Path
+        from mercfoundry.editor.scene import Scene
+        with tempfile.TemporaryDirectory() as d:
+            root = Path(d)
+            (root / "maps").mkdir()
+            (root / "maps" / "isle.json").write_text(json.dumps({"from": "blank"}))
+            sc = Scene.__new__(Scene)
+            sc.mod = root
+            got = sc.add_travel_pilot("isle", "SW", [1, 2.004, 3], 90)
+            self.assertEqual(got["pilots"], [{"to": "isle", "index": 0, "position": [1.0, 2.0, 3.0], "heading": 90.0}])
+            with self.assertRaises(ValueError):
+                sc.add_travel_pilot("isle", "blank", [1, 2, 3])
+            sc.save_map_settings("isle", {"return": {"position": [5, 6, 7], "to": "nw"}})
+            self.assertEqual(sc.map_settings("isle")["return"], {"position": [5.0, 6.0, 7.0], "heading": 0.0, "to": "nw"})
+            sc.remove_travel_pilot("isle", 0, "sw")
+            sc.save_map_settings("isle", {"return": None})
+            self.assertEqual(json.loads((root / "maps" / "isle.json").read_text(encoding="utf-8")), {"from": "blank"})

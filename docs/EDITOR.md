@@ -153,6 +153,12 @@ toolkit bundle run it the same way: `foundry\python\python.exe foundry\mercfound
   own instead. Its config names the script (`MainMasterScript <name>`): a level
   runs only the script its config names, and blank's names none. Enter it with `Utility_ResetToBaseLayerOnly('<name>')` from
   Foundry Console.
+  **Travel**: on SW or NW, the Map panel puts a travel pilot (retail's
+  quadrant pilot) at the middle of the view that takes the player to one of
+  the mod's new maps: use it, say yes, and the game saves and goes there, to
+  the map's arrival point (`"travel"` in `maps/<name>.json`). On the new
+  map, **Pilot back** puts one that takes them back to SW or NW, beside the
+  pilot that brought them (`"return"`).
 - **Factions**: new names for the four employers (`factions.json`): name,
   adjective, short form and people, per faction; **Everywhere** for mission
   text too, and voiced lines' subtitles if wanted. **Preview** lists the

@@ -754,3 +754,20 @@ class MissionTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TravelTests(unittest.TestCase):
+    def test_travel_lua_parses_and_arms_each_pilot(self):
+        from mercfoundry import luacheck
+        pilot = {"map": "sw", "actor": "foundry_travel_isle_1", "to": "isle", "prompt": "Travel to Isle",
+                 "title": "Isle", "question": "Travel to Isle?"}
+        lua = missions.layers_script([{"map": "sw", "layer": "foundry_travel_isle_1", "check": "foundry_travel_isle_1"}],
+                                     [pilot], True)
+        self.assertEqual(luacheck.check(lua), [])
+        self.assertIn("foundry_Arrive()\nfoundry_TravelArm()\nend", lua)
+        self.assertIn("Utility_QuestionBox(t.title, t.question, true, 'foundry_TravelGo1', 'foundry_TravelArm')", lua)
+        back = dict(pilot, map="isle", actor="foundry_return_isle", to="sw", arrive=[1, 2, 3])
+        lua = missions.travel_lua("foundry_isle_Travel", [back], by_map=False)
+        self.assertEqual(luacheck.check(lua), [])
+        self.assertIn("ax = 1.00, ay = 2.00, az = 3.00", lua)
+        self.assertIn("Utility_ResetToBaseLayerOnly(t.to)", lua)
