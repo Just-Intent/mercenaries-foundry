@@ -157,7 +157,10 @@ toolkit bundle run it the same way: `foundry\python\python.exe foundry\mercfound
     capture alive, as the Deck of 52; a marker of your choice, a card suit or
     a person, and an optional **Alive $** paid for each one taken alive).
     **Show** looks at an objective's squad or zone.
-    Main objectives are done in order. An objective given a **Bonus $** is a
+    Main objectives are done in order; one ticked **Together with the one
+    before** starts at the same time as the main objective before it, and
+    the next waits until the whole group is done, in any order. An
+    objective given a **Bonus $** is a
     bonus objective: optional, marked as a bonus, and **Shown** at the start,
     when another objective starts or is done, or when the player enters a
     zone; the contract pays its reward on top if it's done, shows it failed if
@@ -172,8 +175,12 @@ toolkit bundle run it the same way: `foundry\python\python.exe foundry\mercfound
     **Alarm raised** (alarms picked on the map), **Spotted trespassing** (by a
     faction you pick) and **Turns hostile** (a squad or people picked on the
     map turn on the player),
-    each with the message the failure screen shows, lasting the whole mission
-    or until an objective is done;
+    each with the message the failure screen shows. Each **Begins** at the
+    start, when an objective starts or is done, or when the player enters a
+    zone (a time limit's clock starts then: "two minutes once objective 2
+    starts"), and lasts the whole mission or until an objective is done. A
+    Stay in zone condition should begin once the player is in the zone (on
+    entering it, say);
   - **Support**: support items the player gets for the mission (an
     airstrike, a vehicle drop, a supply crate: any of the game's
     `template_support_*`, picked from a list), each with an optional count;
@@ -202,6 +209,22 @@ toolkit bundle run it the same way: `foundry\python\python.exe foundry\mercfound
     appears, for chains of side contracts. Moving or deleting objectives keeps
     every "objective N" reference (bonus Shown, radio When, fail Lasts) on the
     same objective.
+
+  **Duplicate** copies the saved mission and its layer to the next free
+  number (of its faction, or another one picked beside it); names made from
+  the mission's id, such as its encounters, squads and people, take the new
+  id. A giver placed on the map and a place in an HQ contract sequence aren't
+  copied: an HQ contact offers the copy. **Delete** moves the mission's files
+  (its mission file, its layer and its own script, if any) to `.trash/` in the
+  mod; moving them back undoes it, and it warns if another mission lists it
+  under "Available after".
+
+  **Mission outline** shows the mission as a timeline in words, updated as
+  you edit: what happens at the start, when each objective starts and is
+  done, on entering each zone (radio lines, squads arriving, orders, bonus
+  objectives shown, fail conditions starting and ending), and what the
+  contract pays and does to faction moods. Anything tied to an objective
+  that isn't there is flagged.
 
   **Check mission** runs the build's checks on the saved mission: what would
   stop the build writing its script (unfinished objectives, zones or paths

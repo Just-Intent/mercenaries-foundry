@@ -169,3 +169,47 @@ class MissionGiverSaveTests(unittest.TestCase):
             self.assertNotIn("contact", doc)                                         # the default HQ contact
             with self.assertRaises(ValueError):
                 self.save(d, {"mode": "placed"})
+
+
+class MissionFileToolTests(unittest.TestCase):
+    """The Missions panel's Duplicate and Delete."""
+
+    def test_duplicate_and_delete(self):
+        import json
+        import tempfile
+        from pathlib import Path
+        from mercfoundry.editor.scene import Scene
+        with tempfile.TemporaryDirectory() as d:
+            root = Path(d)
+            (root / "missions").mkdir()
+            (root / "encounters").mkdir()
+            (root / "missions" / "sw_china9.json").write_text(json.dumps({
+                "title": "No Russian", "mail": {"subject": "Contract: 'No Russian'", "body": "b"},
+                "objectives": [{"type": "destroy", "text": "Kill", "squad": "sw_china9encounter1:sw_china9squad1"}],
+                "contact": {"name": "Lee", "position": [1, 2, 3]}, "hq": {"after": 2}}))
+            (root / "encounters" / "sw_china9.json").write_text(json.dumps({
+                "map": "SW", "encounters": [{"name": "sw_china9encounter1",
+                                             "squads": [{"name": "sw_china9squad1", "members": [{"name": "sw_china9encounter1_sw_china9squad1_1"}]}]}]}))
+            (root / "missions" / "sw_china10.json").write_text(json.dumps({"title": "Next", "requires": ["sw_china9"]}))
+            sc = Scene.__new__(Scene)
+            sc.mod = root
+            sc._arc_numbers = lambda m: {"allies": set(), "china": {1, 2, 9, 10}, "mafia": set(), "sk": set()}
+            out = sc.duplicate_mission("sw_china9")
+            self.assertEqual(out["id"], "sw_china11")
+            self.assertEqual(len(out["notes"]), 2)                     # the HQ place and the placed giver
+            doc = json.loads((root / "missions" / "sw_china11.json").read_text(encoding="utf-8"))
+            self.assertEqual(doc["title"], "No Russian (copy)")
+            self.assertEqual(doc["mail"]["subject"], "Contract: 'No Russian (copy)'")
+            self.assertEqual(doc["objectives"][0]["squad"], "sw_china11encounter1:sw_china11squad1")
+            self.assertNotIn("contact", doc)
+            self.assertNotIn("hq", doc)
+            layer = json.loads((root / "encounters" / "sw_china11.json").read_text(encoding="utf-8"))
+            self.assertEqual(layer["encounters"][0]["squads"][0]["members"][0]["name"], "sw_china11encounter1_sw_china11squad1_1")
+            self.assertEqual(sc.duplicate_mission("sw_china9", "mafia")["id"], "sw_mafia9")
+            out = sc.delete_mission("sw_china9")
+            self.assertEqual(out["moved"], ["missions/sw_china9.json", "encounters/sw_china9.json"])
+            self.assertEqual(out["required_by"], ["sw_china10"])
+            self.assertFalse((root / "missions" / "sw_china9.json").exists())
+            self.assertTrue((root / out["trash"] / "missions" / "sw_china9.json").exists())
+            with self.assertRaises(ValueError):
+                sc.delete_mission("sw_china9")

@@ -338,6 +338,35 @@ class MissionTests(unittest.TestCase):
             with self.assertRaises(ValueError):
                 missions.objectives_script("sw_allies11", {"objectives": doc["objectives"], "fail": [bad]}, lambda squad: [])
 
+    def test_fail_from(self):
+        doc = {"objectives": [{"type": "goto", "text": "A", "zone": "a"}, {"type": "goto", "text": "B", "zone": "b"}],
+               "fail": [{"type": "timer", "seconds": 120, "from": "starts:2"},
+                        {"type": "leave", "zone": "base", "from": "zone:base"},
+                        {"type": "spotted", "faction": "sk", "from": "start"}]}
+        lua = missions.objectives_script("sw_allies11", doc, lambda squad: [])
+        self.assertIn("seconds = 120, from = 'starts', after = 'foundry2' }", lua)
+        self.assertIn("zone = 'base', from = 'zone', fzone = 'base' }", lua)
+        self.assertIn("cb = 'foundry_Failed3', faction = 'sk' }", lua)          # "start" is the default
+        self.assertIn("if not f.from then foundry_ArmFail(f)", lua)
+        self.assertIn("foundry_Waves('starts', o.name)\nfoundry_FailsFrom('starts', o.name)", lua)
+        self.assertIn("foundry_Waves('done', o.name)\nfoundry_FailsFrom('done', o.name)", lua)
+        self.assertIn("if f.armed or f.off or bFoundryOver then return end", lua)
+        with self.assertRaises(ValueError):
+            missions.objectives_script("sw_allies11", {**doc, "fail": [{"type": "timer", "seconds": 5, "from": "starts:9"}]},
+                                       lambda squad: [])
+
+    def test_together(self):
+        doc = {"objectives": [{"type": "goto", "text": "A", "zone": "a", "together": True},     # the first: nothing before
+                              {"type": "goto", "text": "B", "zone": "b", "together": True},
+                              {"type": "goto", "text": "Bonus", "zone": "c", "bonus": 1000, "together": True},
+                              {"type": "goto", "text": "D", "zone": "d"}]}
+        lua = missions.objectives_script("sw_allies11", doc, lambda squad: [])
+        self.assertIn("zone = 'a' }", lua)
+        self.assertIn("zone = 'b', together = true }", lua)
+        self.assertIn("zone = 'c' }", lua)                                  # a bonus objective isn't in a group
+        self.assertIn("while tFoundryObjectives[iFoundryStep + 1] and tFoundryObjectives[iFoundryStep + 1].together do", lua)
+        self.assertIn("iFoundryGroupLeft = iFoundryGroupLeft - 1\nif iFoundryGroupLeft <= 0 then foundry_NextObjective() end", lua)
+
     def test_waves(self):
         layer = {"map": "SW", "encounters": [{"name": "camp", "points": {"A": [[0, 0, 0]], "B": [[5, 0, 5]]},
                                                "squads": [{"name": "Guards", "points": ["A"], "members": [{"name": "G1"}]},

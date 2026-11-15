@@ -399,6 +399,9 @@ def objectives_script(asset_id, doc, squad_members, layers=(), zone_centre=None)
             at = zone_centre(o["zone"]) if zone_centre and o.get("marker", True) else None   # "marker": false: none
             mark = f", x = {at[0]:.2f}, y = {at[1]:.2f}, z = {at[2]:.2f}" if at else ""
             row = f"{{ {head}, zone = {_lua_str(o['zone'])}{mark} }}"
+        if not reward and main and o.get("together"):
+            # starts with the main objective before it; the next waits for both
+            row = row[:-1].rstrip() + ", together = true }"
         (bonus if reward else main).append(row)
     fails = []
     for k, c in enumerate(doc.get("fail") or [], 1):
@@ -432,6 +435,15 @@ def objectives_script(asset_id, doc, squad_members, layers=(), zone_centre=None)
             if zone_centre:
                 zone_centre(c["zone"])        # (its layer loads with the script)
             row += f", zone = {_lua_str(c['zone'])}"
+        if c.get("from") not in (None, "", "start"):
+            # when it begins: an objective starts or is done, or the player enters a zone
+            when = when_of(c["from"], len(objs), f"fail condition {k}")
+            if when[0] in ("starts", "done"):
+                row += f", from = '{when[0]}', after = 'foundry{when[1]}'"
+            else:
+                row += f", from = 'zone', fzone = {_lua_str(when[1])}"
+                if zone_centre:
+                    zone_centre(when[1])        # (its layer loads with the script)
         if c.get("until"):
             m = re.fullmatch(r"done:(\d+)", str(c["until"]))
             if not m or not 1 <= int(m.group(1)) <= len(objs):
@@ -551,6 +563,7 @@ tFoundryActive = {{}}       -- started objectives by name
 tFoundryWatch = {{}}        -- actor (as int) -> the fail condition or escort objective watching it
 bFoundryOver = false
 iFoundryStep = 0
+iFoundryGroupLeft = 0       -- main objectives running together not done yet
 iFoundryFlatBonus = {flat}
 iFoundryEarned = 0
 {mood_lua(asset_id, doc)}bFoundryPays = {pays}      -- the payout depends on what's done (bonus objectives, targets taken alive)
@@ -682,8 +695,27 @@ end
 
 -- Fail conditions: someone protected dies, the timer runs out, or the player
 -- leaves a zone. sReasonForFailure is the string mission_MissionFailure shows.
+-- Each begins at the start, or at its "from": an objective starts or is done
+-- (foundry_FailsFrom), or the player enters a zone.
 function foundry_SetupFail()
 for i, f in ipairs(tFoundryFail) do
+if not f.from then foundry_ArmFail(f)
+elseif f.from == 'zone' then Event_ActorInBoundary('foundry_FailZone', 'b', 'player0', f.fzone, true) end
+end
+end
+function foundry_FailsFrom(sWhen, sName)
+for i, f in ipairs(tFoundryFail) do
+if f.from == sWhen and f.after == sName then foundry_ArmFail(f) end
+end
+end
+function foundry_FailZone(playerActor, boundaryName)
+for i, f in ipairs(tFoundryFail) do
+if f.from == 'zone' and f.fzone == boundaryName then foundry_ArmFail(f) end
+end
+end
+function foundry_ArmFail(f)
+if f.armed or f.off or bFoundryOver then return end
+f.armed = true
 if f.kind == 'dies' then
 for j, a in ipairs(f.targets) do
 tFoundryWatch[Utility_GetActorAsInt(a)] = f
@@ -701,7 +733,6 @@ f.hud = HUD_AddTrayDisplay{{ {{ DisplayClock = true, nObjStyle = HUD.STYLE.NORMA
                                 fCallback = foundry_TimeUp }} }}
 else
 Event_ActorInBoundary('foundry_Left', 'b', 'player0', f.zone, false)
-end
 end
 end
 function foundry_Fail(sReason)
@@ -730,7 +761,7 @@ if tFoundryTimer and not tFoundryTimer.off then foundry_Fail(tFoundryTimer.reaso
 end
 function foundry_Left(playerActor, boundaryName)
 for i, f in ipairs(tFoundryFail) do
-if f.kind == 'leave' and f.zone == boundaryName and not f.off then foundry_Fail(f.reason) end
+if f.kind == 'leave' and f.zone == boundaryName and f.armed and not f.off then foundry_Fail(f.reason) end
 end
 end
 -- An objective is done: the fail conditions that last until then end.
@@ -820,6 +851,8 @@ util_ObjMsgPrint{{ sMsg = o.text, sType = sMsg .. 'UPD_POS', vIdx = iIdx,
 end
 end
 
+-- The next main objective, with any marked "together" after it: they run at
+-- once, and the one after waits until they're all done.
 function foundry_NextObjective()
 iFoundryStep = iFoundryStep + 1
 local o = tFoundryObjectives[iFoundryStep]
@@ -827,7 +860,13 @@ if not o then
 foundry_Finish()
 return
 end
-foundry_Start(o)
+local tGroup = {{ o }}
+while tFoundryObjectives[iFoundryStep + 1] and tFoundryObjectives[iFoundryStep + 1].together do
+iFoundryStep = iFoundryStep + 1
+table.insert(tGroup, tFoundryObjectives[iFoundryStep])
+end
+iFoundryGroupLeft = table.getn(tGroup)
+for i, g in ipairs(tGroup) do foundry_Start(g) end
 end
 
 -- Main objectives are primary (vIdx 1); bonus ones secondary (vIdx 2), as retail's.
@@ -922,6 +961,7 @@ Event_ActorInBoundary('foundry_Arrived', 'b', 'player0', o.zone, true)
 end
 foundry_Reveal('starts', o.name)
 foundry_Waves('starts', o.name)
+foundry_FailsFrom('starts', o.name)
 foundry_Radio('starts', o.name)
 foundry_Orders('starts', o.name)
 end
@@ -934,12 +974,14 @@ util_ObjMsgPrint{{ sMsg = o.text, sType = sMsg .. 'CMPL', vIdx = iIdx, sObjectiv
 mission_RemoveObjective(o.name)
 foundry_Reveal('done', o.name)
 foundry_Waves('done', o.name)
+foundry_FailsFrom('done', o.name)
 foundry_Radio('done', o.name)
 foundry_Orders('done', o.name)
 if o.bonus then
 iFoundryEarned = iFoundryEarned + o.bonus
 else
-foundry_NextObjective()
+iFoundryGroupLeft = iFoundryGroupLeft - 1
+if iFoundryGroupLeft <= 0 then foundry_NextObjective() end
 end
 end
 

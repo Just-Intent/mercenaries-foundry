@@ -28,6 +28,8 @@ POST /api/placed/save          {"map", "files": {file: [{from, name, position, r
 POST /api/terrain/save         {"map", "samples": [[column, row, height units], ...]}: painted ground heights
 GET  /api/missions/<map>        the mod's missions on the map (+ their layer's squads and zones)
 GET  /api/missions/check/<id>   what would stop the mission's script being written (the build's checks)
+POST /api/missions/duplicate   {"id", "faction"?}: a copy at the next free number -> {"id", "notes"}
+POST /api/missions/delete      {"id"}: its files go to the mod's .trash/ -> {"moved", "trash", "required_by"}
 POST /api/missions/save        {"map", "mission": {faction, number, title, description, briefing, fee, objectives}}
 POST /api/terrain/paint        {"map", "layers": {layer: {"texture", "pixels": [[col, row, opacity]]}}}
 POST /api/terrain/roads        {"map", "roads": [{"texture", "span", "points": [[x, z], ...]}]}
@@ -189,6 +191,12 @@ def make_handler(scene: Scene, mod_name: str, live: Live = None):
                 if path == "/api/missions/save":
                     with objects_lock:
                         return self.send(200, scene.save_mission(doc["map"], doc["mission"]))
+                if path == "/api/missions/duplicate":
+                    with objects_lock:
+                        return self.send(200, scene.duplicate_mission(doc["id"], doc.get("faction")))
+                if path == "/api/missions/delete":
+                    with objects_lock:
+                        return self.send(200, scene.delete_mission(doc["id"]))
                 if path == "/api/terrain/paint":
                     with objects_lock, terrain_lock:      # not while a ground read is building
                         return self.send(200, scene.save_paint(doc["map"], doc.get("layers", {})))

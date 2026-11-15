@@ -128,6 +128,10 @@
     <div id="missions" hidden>
       <h2>Missions</h2>
       <label class="field">Mission <select id="ms-list"></select></label>
+      <div class="buttons" id="ms-file-tools"><button id="ms-duplicate" title="Copy this mission (and its layer) to the faction's next free number">Duplicate</button>
+        <select id="ms-dup-faction" title="The copy's faction"><option value="">same faction</option><option value="allies">as Allies</option>
+          <option value="china">as China</option><option value="mafia">as Mafia</option><option value="sk">as South Korea</option></select>
+        <button id="ms-delete" title="Move this mission's files to the mod's .trash folder">Delete</button></div>
       <div id="ms-new">
         <label class="field">Faction <select id="ms-faction">
           <option value="allies">Allies</option><option value="china">China</option>
@@ -223,6 +227,7 @@
         here aren't used.</p>
       <p class="hint">Save writes the mission. On the next game start a contact at the faction's HQ offers it;
         after the last objective the contract completes.</p>
+      <details id="ms-outline-box" open><summary>Mission outline</summary><div id="ms-outline"></div></details>
       <div class="buttons"><button id="ms-check" title="Run the build's checks on the saved mission">Check mission</button></div>
       <div id="ms-check-out" hidden></div>
       <div id="ms-start-row" hidden><p class="hint">To start it straight away, run in Foundry Console's Lua box:</p>

@@ -564,7 +564,8 @@ def mission_drafts(doc):
                or (c.get("type") == "alarm" and not c.get("targets"))
                or (c.get("type") == "spotted" and not c.get("faction"))
                or (c.get("type") == "leave" and not c.get("zone"))
-               or (c.get("type") == "timer" and not c.get("seconds"))]
+               or (c.get("type") == "timer" and not c.get("seconds"))
+               or str(c.get("from") or "") == "zone:"]
     return drafts
 
 
@@ -573,7 +574,7 @@ def _mission_names(doc):
     objs = doc.get("objectives") or []
     zones = {o.get("zone") for o in objs} | {c.get("zone") for c in doc.get("fail") or []}
     for key, items in (("reveal", objs), ("when", doc.get("radio") or []), ("when", doc.get("orders") or []),
-                       ("when", doc.get("waves") or [])):
+                       ("when", doc.get("waves") or []), ("from", doc.get("fail") or [])):
         zones |= {str(x[key])[5:] for x in items if str(x.get(key) or "").startswith("zone:")}
     zones.discard(None)
     zones.discard("")

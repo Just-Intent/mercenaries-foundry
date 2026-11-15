@@ -70,3 +70,9 @@ code.copyable { display: block; white-space: pre-wrap; word-break: break-all; fo
 .ms-mood { display: flex; gap: 6px; }
 .ms-mood label { flex: 1; font-size: 11px; }
 .ms-mood input { width: 100%; }
+
+/* Missions: outline */
+#ms-outline-box summary { cursor: pointer; font-weight: bold; margin: 8px 0 4px; }
+.ms-outline { margin: 0; padding-left: 14px; font-size: 12px; }
+.ms-outline > li { margin: 4px 0; }
+.ms-outline ul { margin: 2px 0; padding-left: 16px; color: #9fb3c8; }

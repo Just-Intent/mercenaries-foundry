@@ -355,6 +355,73 @@ class Scene:
             out[f] = {"contracts": contracts, "points": points}
         return out
 
+    def duplicate_mission(self, asset_id, faction=None):
+        """Copy a mission and its layer to the next free number (of its own
+        faction, or another). Names made from the id (its encounters, squads
+        and people, "sw_china9encounter1") take the new id. A giver placed on
+        the map or a place in an HQ sequence isn't copied: the copy is offered
+        by an HQ contact. Returns {"id", "notes"}."""
+        import re
+        from .. import missions as ms
+        old = asset_id.lower()
+        map_, own, _ = ms.parse_id(old)
+        faction = faction or own
+        if faction not in ms.FACTIONS:
+            raise ValueError(f"no faction {faction!r}")
+        src = self.mod / "missions" / f"{old}.json"
+        if not src.exists():
+            raise ValueError(f"no mission {old}")
+        taken = self._arc_numbers(map_)[faction]
+        number = max([8] + sorted(taken)) + 1
+        new = f"{map_}_{faction}{number}"
+        swap = re.compile(rf"(?<![A-Za-z0-9]){re.escape(old)}(?![0-9])", re.IGNORECASE)
+        doc = json.loads(swap.sub(new, src.read_text(encoding="utf-8")))
+        notes = []
+        doc["title"] = f"{doc.get('title') or old} (copy)"
+        if (doc.get("mail") or {}).get("subject"):
+            doc["mail"]["subject"] = f"Contract: '{doc['title']}'"
+        if doc.pop("hq", None):
+            notes.append("its place in the HQ contract sequence isn't copied")
+        contact = doc.get("contact")
+        if isinstance(contact, dict) and contact.get("position"):
+            doc.pop("contact")
+            notes.append("its giver placed on the map isn't copied: an HQ contact offers the copy")
+        if faction != own and doc.get("mood"):
+            notes.append("check its mood changes: the contract's faction changed")
+        (self.mod / "missions" / f"{new}.json").write_text(json.dumps(doc, indent=2) + "\n", encoding="utf-8")
+        lsrc = self.mod / "encounters" / f"{old}.json"
+        if lsrc.exists():
+            (self.mod / "encounters" / f"{new}.json").write_text(swap.sub(new, lsrc.read_text(encoding="utf-8")),
+                                                                  encoding="utf-8")
+        if (self.mod / "scripts" / f"{old}.lua").exists():
+            notes.append(f"scripts/{old}.lua (the mod's own script) isn't copied")
+        return {"id": new, "notes": notes}
+
+    def delete_mission(self, asset_id):
+        """Move a mission's files (missions/, its layer, its own script) to
+        .trash/<id>-<time>/ in the mod: the build no longer sees them, and
+        moving them back undoes it. Returns {"moved", "trash", "required_by"}."""
+        import time
+        from .. import missions as ms
+        aid = asset_id.lower()
+        ms.parse_id(aid)
+        files = [p for p in (self.mod / "missions" / f"{aid}.json", self.mod / "encounters" / f"{aid}.json",
+                             self.mod / "scripts" / f"{aid}.lua") if p.exists()]
+        if not files or files[0].parent.name != "missions":
+            raise ValueError(f"no mission {aid}")
+        trash = self.mod / ".trash" / f"{aid}-{time.strftime('%Y%m%d-%H%M%S')}"
+        moved = []
+        for p in files:
+            rel = p.relative_to(self.mod)
+            (trash / rel.parent).mkdir(parents=True, exist_ok=True)
+            p.replace(trash / rel)
+            moved.append(rel.as_posix())
+        required_by = []
+        for p in sorted((self.mod / "missions").glob("*.json")):
+            if aid in [str(r).lower() for r in json.loads(p.read_text(encoding="utf-8")).get("requires") or []]:
+                required_by.append(p.stem)
+        return {"moved": moved, "trash": trash.relative_to(self.mod).as_posix(), "required_by": required_by}
+
     def check_mission(self, asset_id):
         """The build's checks for a saved mission (modbuild.check_mission)."""
         from ..modbuild import check_mission
@@ -392,7 +459,7 @@ class Scene:
                 doc["mood"] = mood
             else:
                 doc.pop("mood", None)
-        doc["objectives"] = [{k: v for k, v in o.items() if k in ("type", "text", "prompt", "squad", "targets", "vehicle", "zone", "seconds", "marker", "blip", "alive", "extract",
+        doc["objectives"] = [{k: v for k, v in o.items() if k in ("type", "text", "prompt", "squad", "targets", "vehicle", "zone", "seconds", "marker", "blip", "alive", "extract", "together",
                                                             "bonus", "reveal")
                               and not (k == "bonus" and not v) and not (k == "reveal" and (v in ("", "start") or not o.get("bonus")))}
                              for o in mission.get("objectives") or []]
@@ -435,7 +502,7 @@ class Scene:
             else:
                 doc.pop("radio", None)
         if "fail" in mission:
-            fails = [{k: v for k, v in c.items() if k in ("type", "text", "squad", "targets", "seconds", "zone", "faction", "until")
+            fails = [{k: v for k, v in c.items() if k in ("type", "text", "squad", "targets", "seconds", "zone", "faction", "from", "until")
                       and v not in ("", None)} for c in mission.get("fail") or []]
             for k, c in enumerate(fails, 1):
                 if c.get("type") not in ms.FAIL_TYPES:

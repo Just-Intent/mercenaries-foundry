@@ -194,6 +194,7 @@ export function createMissions(ctx) {
     const m = st.current;
     const isNew = !m;
     $('ms-new').hidden = !isNew;
+    $('ms-file-tools').hidden = isNew;
     $('ms-faction').disabled = !isNew;
     if (isNew) {
       $('ms-faction').value = $('ms-faction').value || 'allies';
@@ -241,6 +242,7 @@ export function createMissions(ctx) {
     drawRadio();
     drawOrders();
     drawWaves();
+    drawOutline();
     const id = m ? m.id : null;
     $('ms-start').textContent = id
       ? `Utility_WriteStringToScribbleMemory('SkipTo_Map','${st.map}') Utility_WriteStringToScribbleMemory('SkipTo_Faction','${m.faction}') `
@@ -285,6 +287,10 @@ export function createMissions(ctx) {
             <input data-i="${i}" data-k="alive" type="number" min="0" step="1000" value="${+o.alive > 0 ? +o.alive : ''}" placeholder="none"></label>` : '';
       const extract = o.type === 'subdue'
         ? `<label title="Done when they're flown out by the extraction chopper, not when knocked down"><input data-i="${i}" data-k="extract" type="checkbox" ${o.extract ? 'checked' : ''}> Extract them</label>` : '';
+      const firstMain = st.objectives.findIndex((x) => !(+x.bonus > 0));
+      const together = !(+o.bonus > 0) && firstMain >= 0 && i > firstMain
+        ? `<label title="Starts with the main objective before it, in any order; the next one waits until both are done">`
+          + `<input data-i="${i}" data-k="together" type="checkbox" ${o.together ? 'checked' : ''}> Together with the one before</label>` : '';
       const pick = o.type === 'use' ? targets + prompt
         : o.type === 'verify' ? squadPick + targets + verify
         : o.type === 'subdue' ? squadPick + targets + extract
@@ -293,7 +299,7 @@ export function createMissions(ctx) {
         : o.type === 'deliver' ? vehicle + zonePick : zonePick + seconds;
       return `<div class="ms-obj"><b>${i + 1}. ${OBJ_NAMES[o.type] || o.type}${+o.bonus > 0 ? ' (bonus)' : ''}</b>
         <input data-i="${i}" data-k="text" type="text" value="${esc(o.text)}" placeholder="What the player reads">
-        ${pick}
+        ${pick} ${together}
         <label class="ms-bonus" title="A reward makes this a bonus objective: optional, active from the start alongside the main ones, paid on completion if done">Bonus $
           <input data-i="${i}" data-k="bonus" type="number" min="0" step="1000" value="${+o.bonus > 0 ? +o.bonus : ''}" placeholder="none"></label>
         ${+o.bonus > 0 ? revealPick(o, i, zones) : ''}
@@ -338,6 +344,12 @@ export function createMissions(ctx) {
       r.when = k < 0 ? 'start' : `${m[1]}:${k + 1}`;
     }
     for (const c of st.fails) {
+      const m = /^(starts|done):(\d+)$/.exec(c.from || '');
+      if (!m) continue;
+      const k = order.indexOf(+m[2] - 1);
+      if (k < 0) delete c.from; else c.from = `${m[1]}:${k + 1}`;
+    }
+    for (const c of st.fails) {
       const m = /^done:(\d+)$/.exec(c.until || '');
       if (!m) continue;
       const k = order.indexOf(+m[1] - 1);
@@ -345,7 +357,83 @@ export function createMissions(ctx) {
     }
   }
 
-  function edited() { st.dirty = true; setDirty(true); }
+  function edited() { st.dirty = true; setDirty(true); queueOutline(); }
+
+  // ---------------------------------------------------------------- outline
+  // The mission as a timeline, in words: what happens at the start, when each
+  // objective starts and is done, on entering each zone, and what it pays.
+  let outlineQueued = false;
+  function queueOutline() {
+    if (outlineQueued) return;
+    outlineQueued = true;
+    setTimeout(() => { outlineQueued = false; drawOutline(); }, 0);   // after the change that called edited()
+  }
+  const money = (n) => '$' + Math.round(+n || 0).toLocaleString('en-US');
+  const clock = (s) => `${Math.floor(s / 60)}:${String(Math.round(s % 60)).padStart(2, '0')}`;
+  function failWords(c) {
+    const who = [c.squad, ...(c.targets || [])].filter(Boolean).join(', ') || '(nobody picked)';
+    return {dies: `someone in ${who} dies`, timer: `time runs out (${clock(+c.seconds || 0)})`,
+            leave: `the player leaves zone ${c.zone || '(none picked)'}`,
+            alarm: `an alarm sounds (${(c.targets || []).join(', ') || 'none picked'})`,
+            spotted: `${c.faction ? c.faction.toUpperCase() : '(no faction)'} spots the player trespassing`,
+            hostile: `${who} turn hostile`}[c.type] || c.type;
+  }
+  function drawOutline() {
+    const box = $('ms-outline');
+    if (!box) return;
+    const objs = st.objectives;
+    const objName = (i) => `${i + 1}. ${OBJ_NAMES[objs[i].type] || objs[i].type}: "${objs[i].text || ''}"`;
+    const at = {};
+    const add = (when, line) => (at[when || 'start'] = at[when || 'start'] || []).push(line);
+    for (const s of st.support) if (s.item) add('start', `Support: ${s.item.replace(/^template_support_/i, '')}${+s.count > 0 ? ` x${s.count}` : ''}`);
+    objs.forEach((o, i) => { if (+o.bonus > 0) add(o.reveal || 'start', `Bonus objective shown: ${objName(i)} (${money(o.bonus)})`); });
+    st.fails.forEach((c) => {
+      add(c.from || 'start', `Fails if ${failWords(c)}${c.until ? ` (until objective ${c.until.slice(5)} is done)` : ''}`);
+      if (c.until) add(c.until, `No longer fails if ${failWords(c)}`);
+    });
+    st.waves.forEach((w) => add(w.when, `Squad ${w.squad || '(none picked)'} arrives`));
+    st.orders.forEach((o) => add(o.when, `${o.squad || '(no squad)'}: ${(ORDER_NAMES[o.do] || o.do || '').toLowerCase()}${o.to ? ` (${o.to})` : ''}`));
+    st.radio.forEach((r) => add(r.when, `Radio: ${r.text ? `"${r.text}"` : ''}${r.sound ? ` [${r.sound}]` : ''}`));
+    const used = new Set();
+    const block = (title, key, extra = []) => {
+      used.add(key);
+      const lines = [...extra, ...(at[key] || [])];
+      return `<li><b>${esc(title)}</b>${lines.length ? `<ul>${lines.map((l) => `<li>${esc(l)}</li>`).join('')}</ul>` : ''}</li>`;
+    };
+    const main = objs.map((o, i) => i).filter((i) => !(+objs[i].bonus > 0));
+    const bonus = objs.map((o, i) => i).filter((i) => +objs[i].bonus > 0);
+    let html = block('Mission starts', 'start', st.start ? ['The player starts at the set point'] : []);
+    // main objectives in groups: one, then any "together" after it
+    const groups = [];
+    for (const i of main) {
+      if (objs[i].together && groups.length) groups[groups.length - 1].push(i); else groups.push([i]);
+    }
+    for (const g of groups) {
+      for (const i of g) {
+        html += block(`Objective ${objName(i)} starts${g.length > 1 && i !== g[0] ? ` (with objective ${g[0] + 1})` : ''}`, `starts:${i + 1}`);
+      }
+      for (const i of g) html += block(`Objective ${i + 1} is done`, `done:${i + 1}`);
+      if (g.length > 1) html += `<li class="ms-note">The next objective waits for ${g.map((i) => i + 1).join(' and ')}, in any order</li>`;
+    }
+    for (const i of bonus) {
+      if (at[`starts:${i + 1}`]) html += block(`Bonus objective ${i + 1} is shown`, `starts:${i + 1}`);
+      if (at[`done:${i + 1}`]) html += block(`Bonus objective ${i + 1} is done`, `done:${i + 1}`);
+    }
+    for (const key of Object.keys(at)) {
+      if (key.startsWith('zone:')) html += block(`The player enters zone ${key.slice(5) || '(none picked)'}`, key);
+    }
+    const flat = +$('ms-bonus').value || 0;
+    const extras = objs.reduce((n, o) => n + (+o.bonus > 0 ? +o.bonus : 0), 0);
+    const moods = MOOD_FACTIONS.map((f) => [f, +$(`ms-mood-${f}`).value || 0]).filter(([, n]) => n)
+      .map(([f, n]) => `${f === 'sk' ? 'SK' : f[0].toUpperCase() + f.slice(1)} ${n > 0 ? '+' : ''}${n}`);
+    const pay = [`Pays ${money($('ms-fee').value)}${flat ? ` + ${money(flat)} bonus` : ''}${extras ? ` + up to ${money(extras)} more for bonuses` : ''}`];
+    objs.forEach((o, i) => { if (o.type === 'verify' && +o.alive > 0) pay.push(`+ ${money(o.alive)} for each target of objective ${i + 1} taken alive`); });
+    if (moods.length) pay.push(`Mood: ${moods.join(', ')}`);
+    html += block(main.length ? 'Contract complete' : 'No main objective: the mission can\'t complete', '(end)', main.length ? pay : []);
+    const stray = Object.keys(at).filter((k) => !used.has(k));
+    if (stray.length) html += `<li class="ms-problem">Nothing triggers ${stray.map(esc).join(', ')} (an objective that isn't there)</li>`;
+    box.innerHTML = `<ul class="ms-outline">${html}</ul>`;
+  }
 
   $('ms-objectives').addEventListener('input', (e) => {
     const i = e.target.dataset.i, k = e.target.dataset.k;
@@ -358,7 +446,10 @@ export function createMissions(ctx) {
     }
     if (k === 'revealZone') { o.reveal = `zone:${e.target.value}`; edited(); return; }
     const wasBonus = +o.bonus > 0;
-    if (k === 'extract') { if (e.target.checked) o.extract = true; else delete o.extract; edited(); return; }
+    if (k === 'extract' || k === 'together') {
+      if (e.target.checked) o[k] = true; else delete o[k];
+      queueOutline(); edited(); return;
+    }
     o[k] = (k === 'bonus' || k === 'seconds' || k === 'alive') ? Math.max(0, +e.target.value || 0) : e.target.value;
     if (k === 'bonus' && wasBonus !== +o.bonus > 0) {
       // became a bonus objective or stopped being one: its heading and "Shown"
@@ -462,7 +553,7 @@ export function createMissions(ctx) {
           `<option value="done:${j + 1}" ${c.until === `done:${j + 1}` ? 'selected' : ''}>until objective ${j + 1} is done</option>`).join('')}</select></label>`;
       return `<div class="ms-obj"><b>${FAIL_NAMES[c.type] || c.type}</b>
         <input data-k="text" data-f="${k}" type="text" value="${esc(c.text)}" placeholder="What the failure screen says">
-        ${pick} ${until}
+        ${pick} <label>Begins ${whenPick(c.from, `data-f="${k}"`, zones, 'from')}</label> ${until}
         <span class="buttons"><button data-f="${k}" data-a="del">Delete</button></span></div>`;
     }).join('') || '<p class="hint">None: the mission can only end in success.</p>';
   }
@@ -471,6 +562,12 @@ export function createMissions(ctx) {
     if (k === undefined || !key) return;
     const c = st.fails[+k];
     if (key === 'seconds') c.seconds = Math.max(0, +e.target.value || 0);
+    else if (key === 'from') {
+      const zones = (st.current || st.shared || {}).zones || [];
+      if (e.target.value === 'start') delete c.from;
+      else c.from = e.target.value === 'zone' ? `zone:${zones[0] || ''}` : e.target.value;
+      drawFails();
+    } else if (key === 'fromZone') c.from = `zone:${e.target.value}`;
     else if (e.target.value) c[key] = e.target.value;
     else delete c[key];
     edited();
@@ -496,7 +593,7 @@ export function createMissions(ctx) {
   // A line plays when the mission starts, an objective starts or is done, or
   // the player enters a zone: a voice ("<bank>.<cue>", with the text as its
   // subtitle) or, with no voice, the text as an on-screen message.
-  function whenPick(value, attrs, zones) {
+  function whenPick(value, attrs, zones, key = 'when') {
     const r = value || 'start';
     const opts = [['start', 'When the mission starts']];
     st.objectives.forEach((x, j) => opts.push([`starts:${j + 1}`, `When objective ${j + 1} starts`],
@@ -504,9 +601,9 @@ export function createMissions(ctx) {
     opts.push(['zone', 'When the player enters a zone']);
     const isZone = r.startsWith('zone:');
     const zone = isZone ? r.slice(5) : '';
-    return `<select ${attrs} data-k="when">${opts.map(([v, t]) =>
+    return `<select ${attrs} data-k="${key}">${opts.map(([v, t]) =>
         `<option value="${v}" ${(isZone ? v === 'zone' : v === r) ? 'selected' : ''}>${t}</option>`).join('')}</select>${isZone
-      ? `<select ${attrs} data-k="whenZone"><option value="">(zone)</option>${zones.map((z) =>
+      ? `<select ${attrs} data-k="${key}Zone"><option value="">(zone)</option>${zones.map((z) =>
           `<option ${z === zone ? 'selected' : ''}>${esc(z)}</option>`).join('')}</select>` : ''}`;
   }
   function drawRadio() {
@@ -664,6 +761,7 @@ export function createMissions(ctx) {
   for (const id of ['ms-title', 'ms-description', 'ms-briefing', 'ms-fee', 'ms-bonus', ...MOOD_FACTIONS.map((f) => `ms-mood-${f}`)]) {
     $(id).addEventListener('input', edited);
   }
+  $('ms-outline-box').addEventListener('toggle', drawOutline);
   // A new mission's faction picks its number only; what's typed stays.
   $('ms-faction').onchange = () => {
     // a new mission's own-faction mood (20 by default) goes with the faction
@@ -745,6 +843,38 @@ export function createMissions(ctx) {
     } catch (e) {
       out.innerHTML = `<p class="hint">Couldn't check: ${esc(e.message)}</p>`;
     }
+  };
+  // Duplicate and delete: the server copies or moves the saved files.
+  async function post(url, body) {
+    const r = await fetch(url, {method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(body)});
+    const doc = await r.json();
+    if (!r.ok) throw new Error(doc.error || r.statusText);
+    return doc;
+  }
+  $('ms-duplicate').onclick = async () => {
+    if (!st.current) return;
+    if (st.dirty && !confirm('Duplicate copies the saved mission: your unsaved changes aren\'t in the copy. Go on?')) return;
+    try {
+      const doc = await post('/api/missions/duplicate', {id: st.current.id, faction: $('ms-dup-faction').value || undefined});
+      st.current = {id: doc.id};
+      st.dirty = false;   // (the editor's other unsaved edits stay)
+      await load(st.map);
+      status(`Copied to ${doc.id}${doc.notes.length ? ': ' + doc.notes.join('; ') : ''}`);
+    } catch (e) { status(e.message, true); }
+  };
+  $('ms-delete').onclick = async () => {
+    if (!st.current) return;
+    const id = st.current.id;
+    if (!confirm(`Delete ${id}? Its files move to the mod's .trash folder (move them back to undo).`)) return;
+    try {
+      const doc = await post('/api/missions/delete', {id});
+      st.current = null;
+      st.dirty = false;   // (the editor's other unsaved edits stay)
+      await load(st.map);
+      status(`Deleted ${id}: moved to ${doc.trash}`
+        + (doc.required_by.length ? `. Still listed under "Available after" by ${doc.required_by.join(', ')}` : ''),
+        doc.required_by.length > 0);
+    } catch (e) { status(e.message, true); }
   };
   $('missions-mode').onclick = () => show($('missions').hidden);
   $('ms-close').onclick = () => show(false);
