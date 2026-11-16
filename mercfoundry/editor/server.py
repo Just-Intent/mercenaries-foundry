@@ -16,7 +16,8 @@ GET  /api/bounds/<map>         each drawn model's bounds, for far-away stand-ins
 GET  /api/context-bounds/<map> the same for other mods' objects
 GET  /api/layout/<map>         paths and zones: the game's (with the mod's layout
                                changes) and the mod's own (encounters/*.json)
-POST /api/layout/save          {"map", "game": [...], "mod": {file: {...}}}
+POST /api/layout/save          {"map", "game": [...], "mod": {file: {...}}, "own"?: {zone: {...}}}
+                               (own: the zones the mod adds to the map's own record: water)
 GET  /api/context/<map>        objects other enabled mods add, move or remove
 POST /api/live/poll            the running game's plugin: its state in, commands out
 GET  /api/live/state           connected?, the player's position, command results
@@ -363,7 +364,7 @@ def make_handler(scene: Scene, mod_name: str, live: Live = None):
                                                                     doc.get("game", []), doc.get("game_squads", {})))
                 if path == "/api/layout/save":
                     with objects_lock:
-                        done = scene.save_layout(doc["map"], doc.get("game", []), doc.get("mod", {}))
+                        done = scene.save_layout(doc["map"], doc.get("game", []), doc.get("mod", {}), doc.get("own"))
                     return self.send(200, done)
                 return self.fail(404, "not found")
             except (ValueError, KeyError) as err:

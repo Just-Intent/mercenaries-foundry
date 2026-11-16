@@ -23,6 +23,7 @@
   <label class="check"><input id="show-squads" type="checkbox" checked> Squads</label>
   <button id="new-path">New path</button>
   <button id="new-zone">New zone</button>
+  <button id="new-water" title="Draw a water area's outline: it goes in the map's own zones, where the game makes water">New water</button>
   <button id="new-squad">New squad</button>
   <input id="place-template" type="text" list="placeables" spellcheck="false" placeholder="Template, object or model: to place"
          title="Anything from any map: a template (vehicle, prop, character), a named object, or model:<model> for a building or prop. Click Place, then the ground.">
@@ -94,7 +95,7 @@
       <h2 id="draw-title"></h2>
       <p class="hint">Click the ground to add points (<span id="draw-count">0 points</span>). Enter finishes, Esc cancels.</p>
       <label class="field">Name <input id="draw-name" type="text" spellcheck="false"></label>
-      <label class="field">Layer file (in encounters/) <select id="draw-file"></select></label>
+      <label class="field">Goes in <select id="draw-file"></select></label>
       <label class="field" id="draw-type-row">Zone type
         <select id="draw-type">
           <option value="">Trigger zone (scripts watch it)</option>
@@ -105,6 +106,7 @@
         </select></label>
       <label class="field" id="draw-weather-row" hidden title="Inside the zone, the game uses this preset (the zone takes its name)">Weather preset
         <select id="draw-weather"></select></label>
+      <p id="draw-water-hint" class="hint" hidden></p>
       <div class="buttons"><button id="draw-finish">Finish</button><button id="draw-cancel">Cancel</button></div>
     </div>
     <div id="item" hidden>
@@ -137,6 +139,17 @@
           <label>at point <input id="link-their" type="number" min="0" step="1" value="0"></label>
           <button id="link-add" title="Link this path's selected point (or its last) to that point of another path">Link</button>
         </div>
+      </div>
+      <div id="water-extras" hidden>
+        <label class="field" title="The water surface's height in metres (the points' own heights don't matter)">Surface height
+          <input id="wa-height" type="number" step="0.1"></label>
+        <div class="buttons"><button id="wa-ground" title="The average ground height at the zone's points (on the shore)">To the ground at its points</button></div>
+        <label class="field">Colour <input id="wa-colour" type="color"></label>
+        <label class="field" title="0 clear to 255 solid (the game's water is 180-185)">Thickness (alpha) <input id="wa-alpha" type="number" min="0" max="255" step="1"></label>
+        <label class="field" title="Wave height (the game's: .2; none for still water)">Waves <input id="wa-waves" type="number" min="0" step="0.05"></label>
+        <label class="field" title="A game texture for the surface (default oceanwater)">Texture <input id="wa-texture" type="text" placeholder="oceanwater" spellcheck="false"></label>
+        <div class="buttons"><button id="wa-move" hidden>Move to the map's own zones</button></div>
+        <p id="wa-note" class="hint"></p>
       </div>
       <datalist id="anims"></datalist>
       <datalist id="path-names"></datalist>

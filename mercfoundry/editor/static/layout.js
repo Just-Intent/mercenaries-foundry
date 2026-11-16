@@ -3,12 +3,15 @@
 // Game items (from the game's own layers) can have their points moved; the
 // point count stays, because a path's orientations, pauses and links are
 // indexed by point. The mod's own items (its encounters/*.json layers) can
-// also gain and lose points, be created and be deleted.
+// also gain and lose points, be created and be deleted. So can the zones the
+// mod adds to the map's own record (source "map"): the game makes water only
+// from those (layout/<map>.lineregion.changes.json on a game map,
+// maps/<map>/boundaries.json on a new one).
 import * as THREE from 'three';
 
 const COLOURS = {
   'game-path': 0x46a6ff, 'mod-path': 0x8cff5a,
-  'game-boundary': 0xff9a3c, 'mod-boundary': 0xffe14d, killbox: 0xff4a4a, selected: 0xffffff,
+  'game-boundary': 0xff9a3c, 'mod-boundary': 0xffe14d, 'map-boundary': 0x5ad1ff, killbox: 0xff4a4a, selected: 0xffffff,
 };
 const WALL = 6;            // metres: how tall zone walls are drawn
 const LIFT = 0.4;          // draw lines a little above their points
@@ -28,8 +31,13 @@ export function createLayout(ctx) {
   const st = {
     map: null, items: [], files: [], selected: null, handles: [], point: null,
     gameEdits: new Map(), dirtyFiles: new Set(), deleted: [], draw: null, show: {path: true, boundary: true},
-    showWater: true,
+    showWater: true, own: null, ownDirty: false,
   };
+  // The mod's own items and the zones it adds to the map's record can be reshaped and deleted.
+  const editable = (it) => it.source === 'mod' || (it.source === 'map' && it.editable !== false);
+  // Water as the game's SW harbour has it (nampowater): small waves, a grey-green tint.
+  const WATER_DEFAULTS = {type: 'water', numgrids: '16', gridsize: '2', amplitude: '.2',
+                          red: '86', green: '101', blue: '100', alpha: '180'};
 
   const colourOf = (it) => (it === st.selected ? COLOURS.selected
     : it.kind === 'boundary' && /killbox/i.test(it.properties.type || '') ? COLOURS.killbox
@@ -134,6 +142,8 @@ export function createLayout(ctx) {
     st.map = map;
     st.items = doc.items;
     st.files = doc.files;
+    st.own = doc.own || null;
+    st.ownDirty = false;
     st.gameEdits.clear(); st.dirtyFiles.clear(); st.deleted = [];
     for (const it of st.items) {
       it.original = it.points.map((p) => [...p]);
@@ -218,6 +228,7 @@ export function createLayout(ctx) {
 
   function edited(it) {
     if (it.source === 'game') st.gameEdits.set(it.id, it);
+    else if (it.source === 'map') st.ownDirty = true;
     else st.dirtyFiles.add(it.file);
     ctx.setDirty(true);
     refreshList();
@@ -252,7 +263,7 @@ export function createLayout(ctx) {
 
   function addPoint() {
     const it = st.selected;
-    if (!it || it.source !== 'mod') return;
+    if (!it || !editable(it)) return;
     const i = st.point ?? it.points.length - 1;
     const a = it.points[i], b = it.points[(i + 1) % it.points.length];
     const last = it.kind === 'path' && i === it.points.length - 1;
@@ -266,7 +277,7 @@ export function createLayout(ctx) {
 
   function deletePoint() {
     const it = st.selected;
-    if (!it || it.source !== 'mod' || st.point === null) return;
+    if (!it || !editable(it) || st.point === null) return;
     const need = it.kind === 'path' ? 2 : 3;
     if (it.points.length <= need) return status(`A ${label(it)} needs at least ${need} points`, true);
     it.points.splice(st.point, 1);
@@ -277,7 +288,7 @@ export function createLayout(ctx) {
 
   function deleteItem() {
     const it = st.selected;
-    if (!it || it.source !== 'mod') return;
+    if (!it || !editable(it)) return;
     if (!confirm(`Delete ${label(it)} ${it.name}? Scripts that use it by name will fail.`)) return;
     removeItem(it);
     ctx.remember && ctx.remember(`Deleted ${label(it)} ${it.name}`, () => restoreItem(it), () => removeItem(it));
@@ -292,7 +303,7 @@ export function createLayout(ctx) {
     it.points = d.points;
     if (d.spec) it.spec = d.spec;
     it.properties = d.properties;
-    if (it.spec && it.source === 'mod') it.spec.points = it.points;
+    if (it.spec && it.source !== 'game') { it.spec.points = it.points; it.spec.properties = it.properties; }
     edited(it);
     buildVisual(it);
     if (st.selected === it) select(it, null);
@@ -303,6 +314,7 @@ export function createLayout(ctx) {
     if (it.water) { waterGroup.remove(it.water); it.water = null; }
     st.items = st.items.filter((x) => x !== it);
     if (it.source === 'mod') st.dirtyFiles.add(it.file);
+    if (it.source === 'map') st.ownDirty = true;
     ctx.setDirty(true);
     refreshList();
   }
@@ -346,7 +358,12 @@ export function createLayout(ctx) {
   // ---------------------------------------------------------------- new paths and zones
   function slug(s) { return s.toLowerCase().replace(/[^a-z0-9]+/g, '_').replace(/^_|_$/g, '') || 'mod'; }
 
-  function startDraw(kind, file) {
+  const OWN = '@map';            // the draw-file choice for the map's own record
+  // The map's water zones as the game will have them: its own and the mod's added ones.
+  const ownWater = () => st.items.filter((x) => isWater(x) && x.layer.toLowerCase() === String(st.map).toLowerCase()
+                                          && (x.source === 'game' || x.source === 'map'));
+
+  function startDraw(kind, file, type) {
     ctx.deselectObject();
     select(null);
     cancelDraw();
@@ -358,14 +375,18 @@ export function createLayout(ctx) {
     $('draw-name').value = `${base}${k}`;
     const fresh = `${slug(ctx.modName())}_${st.map}.json`;
     for (const f of ctx.encounterFiles()) if (!st.files.includes(f)) st.files.push(f);
-    const want = typeof file === 'string' ? file : null;
+    const want = typeof file === 'string' && file !== OWN ? file : null;
     const files = [...new Set([...st.files, fresh, ...(want ? [want] : [])])];
-    $('draw-file').innerHTML = files.map((f) => `<option>${f}</option>`).join('');
+    $('draw-file').innerHTML = files.map((f) => `<option value="${f}">encounters/${f}</option>`).join('')
+      + (kind === 'boundary' && st.own ? `<option value="${OWN}">The map's own zones (${st.own.file}): water shows only from these</option>` : '');
     $('draw-file').value = want || st.files[0] || fresh;
     $('draw-type-row').hidden = kind !== 'boundary';
+    if (kind === 'boundary') $('draw-type').value = type || '';
+    if (type === 'water') $('draw-name').value = `foundry_water${k}`;
     drawWeatherRow();
     $('draw').hidden = false;
-    $('draw-title').textContent = kind === 'path' ? 'New path' : 'New zone';
+    $('draw-title').textContent = kind === 'path' ? 'New path' : type === 'water' ? 'New water' : 'New zone';
+    drawWaterHint();
     showPanel();
     status(`Click the ground to add ${label({kind})} points; Enter finishes, Esc cancels.`);
   }
@@ -398,7 +419,20 @@ export function createLayout(ctx) {
       || '<option value="">(no presets on this map)</option>';
     if ($('draw-weather').value) $('draw-name').value = $('draw-weather').value;
   }
+  // Water goes in the map's own record: picking it as the type picks that.
+  function drawWaterHint() {
+    const water = !$('draw-type-row').hidden && $('draw-type').value === 'water';
+    if (water && st.own && $('draw-file').value !== OWN) $('draw-file').value = OWN;
+    const n = ownWater().length;
+    $('draw-water-hint').hidden = !water;
+    $('draw-water-hint').textContent = !water ? '' : $('draw-file').value !== OWN
+      ? 'Water in a layer file doesn\'t show in the game: pick the map\'s own zones.'
+      : `Draw the water's outline along the shore: its surface starts at the points' average height (change it after). `
+        + `${n} of the ${(st.own && st.own.water_limit) || 16} water zones the game holds on this map are used.`;
+  }
   $('draw-type').addEventListener('change', drawWeatherRow);
+  $('draw-type').addEventListener('change', drawWaterHint);
+  $('draw-file').addEventListener('change', drawWaterHint);
   $('draw-weather').addEventListener('change', () => { $('draw-name').value = $('draw-weather').value; });
 
   function finishDraw() {
@@ -419,12 +453,24 @@ export function createLayout(ctx) {
       return status(`There is already a ${label(d)} named ${name}`, true);
     }
     const file = $('draw-file').value;
-    const props = d.kind === 'boundary' && $('draw-type').value ? {type: $('draw-type').value} : {};
+    const type = d.kind === 'boundary' ? $('draw-type').value : '';
+    const props = type === 'water' ? {...WATER_DEFAULTS, height: averageHeight(d.points)} : type ? {type} : {};
     const spec = {points: d.points};
     if (Object.keys(props).length) spec.properties = props;
-    const it = {id: `mod:${file}:${d.kind}:${name}`, source: 'mod', file, layer: file.replace(/\.json$/, ''),
-                kind: d.kind, name, points: d.points, properties: props, spec};
-    if (!st.files.includes(file)) st.files.push(file);
+    let it;
+    if (file === OWN) {
+      if (!st.own.editable) return status(st.own.note, true);
+      const limit = st.own.water_limit || 16;
+      if (type === 'water' && ownWater().length >= limit) {
+        return status(`This map already has ${limit} water zones, all the game holds: make one bigger instead`, true);
+      }
+      it = {id: `map:${st.map}:boundary:${name}`, source: 'map', file: st.own.file, layer: st.map,
+            kind: 'boundary', name, points: d.points, properties: props, spec, editable: true};
+    } else {
+      it = {id: `mod:${file}:${d.kind}:${name}`, source: 'mod', file, layer: file.replace(/\.json$/, ''),
+            kind: d.kind, name, points: d.points, properties: props, spec};
+      if (!st.files.includes(file)) st.files.push(file);
+    }
     cancelDraw();
     st.items.push(it);
     it.original = it.points.map((p) => [...p]);
@@ -432,8 +478,10 @@ export function createLayout(ctx) {
     edited(it);
     select(it);
     ctx.remember && ctx.remember(`Added ${label(it)} ${name}`, () => removeItem(it), () => restoreItem(it));
-    status(`${name} added`);
+    status(type === 'water' ? `${name} added: set its surface height and colour in the panel` : `${name} added`);
   }
+  // A water surface's starting height: the drawn points' average (they're on the shore), to 0.1 m.
+  const averageHeight = (pts) => (Math.round(pts.reduce((s, p) => s + p[1], 0) / pts.length * 10) / 10).toFixed(1);
 
   function cancelDraw() {
     if (st.draw && st.draw.line) group.remove(st.draw.line);
@@ -447,24 +495,109 @@ export function createLayout(ctx) {
     $('item').hidden = !it;
     if (!it) return;
     $('item-title').textContent = it.name;
-    $('item-kind').textContent = `${it.source === 'game' ? 'Game' : 'Mod'} ${label(it)}, ${it.points.length} points`;
+    $('item-kind').textContent = `${it.source === 'game' ? 'Game' : it.source === 'map' ? 'The map\'s own' : 'Mod'} ${label(it)}, ${it.points.length} points`;
     $('item-layer').textContent = it.layer;
     const props = Object.entries(it.properties || {}).map(([k, v]) => `${k} = ${v}`).join(', ');
     $('item-props').textContent = props || '(none)';
-    const mod = it.source === 'mod';
+    const mod = editable(it);
     $('item-add').hidden = $('item-del-point').hidden = $('item-delete').hidden = !mod;
-    $('item-revert').hidden = mod;
+    $('item-revert').hidden = it.source !== 'game';
     $('item-del-point').disabled = st.point === null;
-    $('item-note').textContent = mod
-      ? `Saved in encounters/${it.file}.`
+    $('item-note').textContent = it.source === 'map'
+      ? (it.editable === false ? st.own.note : `Saved in ${it.file}, with the map's own zones.`)
+      : mod ? `Saved in encounters/${it.file}.`
       : 'A game item: drag its points (click a point first). The number of points stays the same.';
     showExtras(it);
+    showWaterPanel(it);
     $('point-xyz').hidden = st.point === null;
     if (st.point !== null) {
       const p = it.points[st.point];
       $('point-label').textContent = `Point ${st.point}`;
       [$('qx').value, $('qy').value, $('qz').value] = p.map((v) => v.toFixed(2));
     }
+  }
+
+  // ---------------------------------------------------------------- water settings
+  // A water zone's surface: height, tint, see-through, waves and texture
+  // (the game's keys: height, red/green/blue/alpha 0-255, amplitude, texture).
+  const hex2 = (n) => Math.max(0, Math.min(255, Math.round(+n || 0))).toString(16).padStart(2, '0');
+  function showWaterPanel(it) {
+    const on = isWater(it);
+    $('water-extras').hidden = !on;
+    if (!on) return;
+    const can = editable(it);
+    for (const el of $('water-extras').querySelectorAll('input, button')) el.disabled = !can;
+    const v = (k, d) => { const x = prop(it, k); return x === undefined ? d : x; };
+    const set = (id, val) => { if (document.activeElement !== $(id)) $(id).value = val; };
+    set('wa-height', v('height', ''));
+    set('wa-colour', `#${hex2(v('red', 86))}${hex2(v('green', v('greeb', 101)))}${hex2(v('blue', 100))}`);
+    set('wa-alpha', v('alpha', 180));
+    set('wa-waves', v('amplitude', 0));
+    set('wa-texture', v('texture', ''));
+    const inLayer = it.source === 'mod';
+    $('wa-move').hidden = !inLayer || !st.own;
+    $('wa-note').textContent = inLayer
+      ? 'This water is in a layer file, and the game makes water only from the map\'s own zones: move it there.'
+      : it.source === 'game' ? 'The game\'s own water (read only here).'
+      : `${ownWater().length} of the ${st.own.water_limit || 16} water zones the game holds on this map.`;
+  }
+  // Set (or, with '', drop) a property, keeping the game's spelling of its key.
+  function setProp(it, key, value) {
+    const have = Object.keys(it.properties).find((k) => k.trim().toLowerCase() === key);
+    if (value === '' || value === null) { if (have) delete it.properties[have]; } else it.properties[have || key] = String(value);
+    if (it.spec) it.spec.properties = it.properties;
+  }
+  function waterEdited() {
+    const it = st.selected;
+    if (!it || !isWater(it) || !editable(it)) return;
+    const h = $('wa-height').value.trim();
+    if (h === '' || !Number.isFinite(+h)) return status('A water surface needs a height (metres)', true), showPanel();
+    setProp(it, 'height', (+h).toFixed(2).replace(/\.?0+$/, ''));
+    const c = $('wa-colour').value;
+    setProp(it, 'red', parseInt(c.slice(1, 3), 16));
+    setProp(it, 'green', parseInt(c.slice(3, 5), 16));
+    if (prop(it, 'greeb') !== undefined) setProp(it, 'greeb', '');
+    setProp(it, 'blue', parseInt(c.slice(5, 7), 16));
+    setProp(it, 'alpha', Math.max(0, Math.min(255, Math.round(+$('wa-alpha').value || 0))));
+    const w = $('wa-waves').value.trim();
+    setProp(it, 'amplitude', w === '' || +w === 0 ? '' : String(+w));
+    const t = $('wa-texture').value.trim();
+    if (t && !/^[A-Za-z0-9_]+$/.test(t)) return status('A texture name is letters, digits and _', true), showPanel();
+    setProp(it, 'texture', t);
+    edited(it);
+    buildVisual(it);
+    showPanel();
+    status('');
+  }
+  function waterToGround() {
+    const it = st.selected;
+    if (!it || !editable(it)) return;
+    $('wa-height').value = averageHeight(it.points.map((p) => [p[0], heightAt(p[0], p[2]), p[2]]));
+    waterEdited();
+  }
+  // A water zone in a layer file, moved to the map's own record (one undo step).
+  function moveToOwn() {
+    const it = st.selected;
+    if (!it || it.source !== 'mod' || !st.own) return;
+    if (!st.own.editable) return status(st.own.note, true);
+    if (ownWater().length >= (st.own.water_limit || 16)) return status('This map already has all the water zones the game holds', true);
+    if (st.items.some((x) => x !== it && x.source === 'map' && x.name.toLowerCase() === it.name.toLowerCase())) {
+      return status(`The map already has a zone named ${it.name}`, true);
+    }
+    const before = {source: it.source, file: it.file, layer: it.layer, id: it.id};
+    const after = {source: 'map', file: st.own.file, layer: st.map, id: `map:${st.map}:boundary:${it.name}`, editable: true};
+    const put = (to) => {
+      st.dirtyFiles.add(it.source === 'mod' ? it.file : before.file);
+      Object.assign(it, to);
+      st.ownDirty = true;
+      ctx.setDirty(true);
+      buildVisual(it);
+      refreshList();
+      if (st.selected === it) showPanel();
+    };
+    put(after);
+    ctx.remember && ctx.remember(`Moved ${it.name} to the map's own zones`, () => put(before), () => put(after));
+    status(`${it.name} is now one of the map's own zones (${st.own.file})`);
   }
 
   // ---------------------------------------------------------------- path extras
@@ -588,6 +721,7 @@ export function createLayout(ctx) {
     ul.innerHTML = '';
     const items = [...st.gameEdits.values()].map((it) => [it, `Moved points of ${it.name}`]);
     for (const f of st.dirtyFiles) items.push([null, `Changed encounters/${f}`]);
+    if (st.ownDirty && st.own) items.push([null, `Changed the map's own zones (${st.own.file})`]);
     for (const [it, text] of items) {
       const li = document.createElement('li');
       li.textContent = text;
@@ -608,7 +742,7 @@ export function createLayout(ctx) {
 
   // ---------------------------------------------------------------- saving
   function saveBody() {
-    if (!st.gameEdits.size && !st.dirtyFiles.size) return null;
+    if (!st.gameEdits.size && !st.dirtyFiles.size && !st.ownDirty) return null;
     const game = [...st.gameEdits.values()].map((it) => ({layer: it.layer, kind: it.kind, name: it.name, points: it.points}));
     const mod = {};
     for (const f of st.dirtyFiles) {
@@ -618,12 +752,20 @@ export function createLayout(ctx) {
       }
       mod[f] = part;
     }
-    return {map: st.map, game, mod};
+    const body = {map: st.map, game, mod};
+    if (st.ownDirty) {
+      body.own = {};
+      for (const it of st.items.filter((x) => x.source === 'map' && x.editable !== false)) {
+        body.own[it.name] = {points: it.points, properties: it.properties};
+      }
+    }
+    return body;
   }
 
   function saved() {
     st.gameEdits.clear();
     st.dirtyFiles.clear();
+    st.ownDirty = false;
     for (const it of st.items) it.original = it.points.map((p) => [...p]);
     refreshList();
   }
@@ -638,6 +780,12 @@ export function createLayout(ctx) {
   addLink = onItem('Added a link to', addLink);
   $('new-path').onclick = () => startDraw('path');
   $('new-zone').onclick = () => startDraw('boundary');
+  $('new-water').onclick = () => startDraw('boundary', OWN, 'water');
+  waterEdited = onItem('Changed the water of', waterEdited);
+  waterToGround = onItem('Changed the water of', waterToGround);
+  for (const id of ['wa-height', 'wa-colour', 'wa-alpha', 'wa-waves', 'wa-texture']) $(id).addEventListener('change', waterEdited);
+  $('wa-ground').onclick = waterToGround;
+  $('wa-move').onclick = moveToOwn;
   $('draw-finish').onclick = finishDraw;
   $('draw-cancel').onclick = () => { cancelDraw(); status(''); };
   $('item-add').onclick = addPoint;

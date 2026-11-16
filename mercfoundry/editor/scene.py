@@ -2163,10 +2163,39 @@ class Scene:
         p = self.mod / "layout" / f"{layer}.{rkind}.changes.json"
         return json.loads(p.read_text(encoding="utf-8")) if p.exists() else None
 
+    # The map's own zones: the game makes water only from a map's own
+    # lineregion record (all 26 retail water zones are in one; none in a
+    # layer), and holds 16 water zones a map. Zones the mod adds there go in
+    # layout/<map>.lineregion.changes.json on a game map, and in
+    # maps/<map>/boundaries.json on a new map (in the mod that makes it).
+    WATER_LIMIT = 16
+
+    def _map_owner(self, m):
+        """The mod folder whose maps/<m>.json makes this new map (the edited mod first), or None."""
+        for p in [self.mod, *getattr(self, "context", [])]:
+            if (Path(p) / "maps" / f"{m}.json").exists():
+                return Path(p)
+        return None
+
+    def _own_zones(self, m):
+        owner = self._map_owner(m)
+        if owner is not None:
+            mine = owner.resolve() == self.mod.resolve()
+            return {"new_map": True, "owner": owner, "editable": mine, "file": f"maps/{m}/boundaries.json",
+                    "note": None if mine else f"{m} is made by the mod in {owner.name}: switch to it (Mods) to change its own zones"}
+        return {"new_map": False, "owner": None, "editable": True, "file": f"layout/{m}.lineregion.changes.json", "note": None}
+
+    @staticmethod
+    def _own_item(m, layer, name, points, props, file, editable):
+        return {"id": f"map:{m}:boundary:{name}", "source": "map", "layer": layer, "file": file,
+                "kind": "boundary", "name": name, "points": points, "properties": props,
+                "spec": {"points": points, "properties": props}, "editable": editable}
+
     def layout(self, map_name):
         from .. import aidata, modpack
         m = map_name.lower()
         items = []
+        own = self._own_zones(m)
         for a in self.archives:
             for r in a.records:
                 rkind = aidata.KINDS.get(r.kind)
@@ -2176,9 +2205,11 @@ class Scene:
                 if not layer or not self._in_map(layer, m):
                     continue
                 doc = aidata.to_json(a.read(r), rkind)
+                base = {(t, (n or "").lower()) for t, n, _ in aidata.items(doc)}
                 ch = self._layout_changes(layer, rkind)
                 if ch:
                     doc = modpack.apply_layout_changes(doc, ch)
+                own_record = rkind == "lineregion" and layer.lower() == m
                 for tag, name, node in aidata.items(doc):
                     if tag not in ("path", "lrg_") or not name:
                         continue
@@ -2187,9 +2218,21 @@ class Scene:
                     prop = next((c for c in kids if c["tag"] == "PROP"), {})
                     props = dict(prop.get("pairs") or [(k, v) for k, v in prop.get("values", [])])
                     kind = "path" if tag == "path" else "boundary"
+                    props = {k: str(v) for k, v in props.items()}
+                    if own_record and (tag, name.lower()) not in base:
+                        # a zone the mod added to the map's own record
+                        items.append(self._own_item(m, layer, name, pts, props, own["file"], True))
+                        continue
                     items.append({"id": f"game:{layer}:{kind}:{name}", "source": "game", "layer": layer,
-                                  "kind": kind, "name": name, "points": pts,
-                                  "properties": {k: str(v) for k, v in props.items()}})
+                                  "kind": kind, "name": name, "points": pts, "properties": props})
+        # A new map's own zones (maps/<map>/boundaries.json, in the mod that makes the map)
+        if own["new_map"]:
+            bf = own["owner"] / "maps" / m / "boundaries.json"
+            for name, spec in (json.loads(bf.read_text(encoding="utf-8")).get("boundaries", {})
+                               if bf.exists() else {}).items():
+                items.append(self._own_item(m, m, name, spec["points"],
+                                            {k: str(v) for k, v in (spec.get("properties") or {}).items()},
+                                            own["file"], own["editable"]))
         files = []
         edir = self.mod / "encounters"
         for f in sorted(edir.glob("*.json")) if edir.is_dir() else []:
@@ -2203,13 +2246,17 @@ class Scene:
                                   "layer": f.stem, "kind": kind, "name": name, "points": spec["points"],
                                   "properties": {k: str(v) for k, v in (spec.get("properties") or {}).items()},
                                   "spec": spec})
-        return {"items": items, "files": files}
+        return {"items": items, "files": files,
+                "own": {"file": own["file"], "editable": own["editable"], "note": own["note"],
+                        "new_map": own["new_map"], "water_limit": self.WATER_LIMIT}}
 
-    def save_layout(self, map_name, game_edits, mod_files):
+    def save_layout(self, map_name, game_edits, mod_files, own=None):
         """game_edits: [{layer, kind, name, points}] for game items (same
         point count). mod_files: {file name: {"paths": {...}, "boundaries":
         {...}}}, each replacing those two parts of a mod layer file (a new
-        file is made for map_name). Returns a summary."""
+        file is made for map_name). own: {name: spec}, all the zones the mod
+        adds to the map's own record (save_own_zones), or None to leave
+        them. Returns a summary."""
         import copy
         import re
         from .. import aidata
@@ -2276,7 +2323,70 @@ class Scene:
             p.parent.mkdir(parents=True, exist_ok=True)
             p.write_text(json.dumps(doc, indent=1) + "\n", encoding="utf-8")
             done["files"].append(f"encounters/{fname}")
+        if own is not None:
+            f = self.save_own_zones(map_name, own)
+            if f:
+                done["files"].append(f)
         return done
+
+    def save_own_zones(self, map_name, zones):
+        """zones: {name: {points, properties}}, every zone the mod adds to the
+        map's own record (none: the file goes). Returns the file written or
+        removed."""
+        from .. import aidata, encounters
+        m = map_name.lower()
+        own = self._own_zones(m)
+        if not own["editable"]:
+            raise ValueError(own["note"])
+        nodes = []
+        for name, spec in zones.items():
+            if not re.fullmatch(r"[A-Za-z0-9_\-]+", name):
+                raise ValueError(f"zone names use letters, digits, _ and - only: {name!r}")
+            spec["points"] = [[round(float(v), 3) for v in pt] for pt in spec.get("points", [])]
+            spec["properties"] = {str(k): str(v) for k, v in (spec.get("properties") or {}).items()}
+            nodes.append(encounters._boundary_node(name, spec))        # checks it has three points
+        is_water = lambda props: str(dict((k.strip().lower(), v) for k, v in props.items()).get("type", "")).lower() == "water"
+        water = sum(is_water(s["properties"]) for s in zones.values())
+        if own["new_map"]:
+            base_water, taken = 0, set()
+            bf = own["owner"] / "maps" / m / "boundaries.json"
+        else:
+            rec = next(((a, r) for a in self.archives for r in a.records
+                        if r.key == name_hash(m) and aidata.KINDS.get(r.kind) == "lineregion"), None)
+            if rec is None:
+                raise ValueError(f"the game has no zones record of {m}'s own to add to")
+            base = list(aidata.items(aidata.to_json(rec[0].read(rec[1]), "lineregion")))
+            changes = self._layout_changes(m, "lineregion") or {"format": "mercfoundry-ai-changes-1",
+                                                               "kind": "lineregion", "changed": [], "removed": []}
+            gone = {(t, (n or "").lower()) for t, n in changes.get("removed", [])}
+            taken = {(n or "").lower() for t, n, _ in base if t == "lrg_"}
+            base_water = sum(1 for t, n, node in base if t == "lrg_" and (t, (n or "").lower()) not in gone and is_water(
+                dict(next((c for c in node["children"] if c["tag"] == "PROP"), {}).get("pairs") or [])))
+            bf = self.mod / "layout" / f"{m}.lineregion.changes.json"
+        clash = [n for n in zones if n.lower() in taken]
+        if clash:
+            raise ValueError(f"{m} already has a zone named {clash[0]}")
+        if base_water + water > self.WATER_LIMIT:
+            raise ValueError(f"{m} would have {base_water + water} water zones ({base_water} of the game's); "
+                             f"the game holds {self.WATER_LIMIT} a map")
+        if own["new_map"]:
+            if zones:
+                bf.parent.mkdir(parents=True, exist_ok=True)
+                bf.write_text(json.dumps({"boundaries": zones}, indent=1) + "\n", encoding="utf-8")
+            elif bf.exists():
+                bf.unlink()
+        else:
+            def key(item):
+                nm = next((c.get("text") for c in item["children"] if c["tag"] == "NAME"), "")
+                return item["tag"], (nm or "").lower()
+            # the game's zones the mod changed stay; the added ones are replaced
+            changes["changed"] = [c for c in changes["changed"] if c["tag"] != "lrg_" or key(c)[1] in taken] + nodes
+            if changes["changed"] or changes["removed"]:
+                bf.parent.mkdir(parents=True, exist_ok=True)
+                bf.write_text(json.dumps(changes, indent=1) + "\n", encoding="utf-8")
+            elif bf.exists():
+                bf.unlink()
+        return own["file"]
 
     # ------------------------------------------------------------ encounters
     # An encounter has named spawn point sets and squads; a squad's members

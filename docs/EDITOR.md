@@ -104,8 +104,9 @@ toolkit bundle run it the same way: `foundry\python\python.exe foundry\mercfound
     Delete key) and be deleted. Pauses and links stay on the same points.
   - **New path** and **New zone**: click the ground to add points, then name it,
     pick the mod layer file (a new one is offered: `<mod>_<map>.json`) and, for
-    a zone, its type (trigger, killbox, radiation, water), and press Enter or
-    Finish. A script loads the layer with `Utility_ReadLevelFile('<layer>')`;
+    a zone, its type (trigger, killbox, radiation, water, weather), and press
+    Enter or Finish. A zone can also go in **the map's own zones** (see Water
+    below). A script loads the layer with `Utility_ReadLevelFile('<layer>')`;
     then `Event_ActorInBoundary` watches zones and `Ai_Command(..., 'Patrol',
     '<path>', ...)` follows paths (see [ENCOUNTERS.md](ENCOUNTERS.md)).
 - Squads and spawn points: each encounter's spawn point sets show as cones
@@ -494,6 +495,20 @@ toolkit bundle run it the same way: `foundry\python\python.exe foundry\mercfound
   `oceanwater`) and its `red`/`green`/`blue`/`alpha` colour, leaned toward
   blue so it reads as water. The **Water** box hides it. A mod's own water
   zones are drawn the same way, and move with their points.
+- **New water** draws a water area: click its outline along the shore, then
+  Finish. The game makes water only from a map's own zones (all 26 of the
+  game's water zones are in one; a water zone in a layer file gives no water),
+  so New water puts it there: on a game map in
+  `layout/<map>.lineregion.changes.json`, on a new map in
+  `maps/<map>/boundaries.json` (saved from the mod that makes the map; other
+  mods' show read only). Its surface starts at the points' average height.
+  Selecting it shows its **Surface height** (**To the ground at its points**
+  sets it from the ground), **Colour**, **Thickness** (alpha, 0-255; the
+  game's is 180-185), **Waves** (the game's .2) and **Texture** (default
+  `oceanwater`); edits are undoable. These zones show in light blue, can
+  gain and lose points and be deleted. The game holds 16 water zones a map
+  (SW uses 7), and Save refuses more. A water zone already in a layer file
+  has **Move to the map's own zones**.
 - **Place** puts down anything from any map: a template (a vehicle, prop or
   character), one of the game's other named objects, or `model:<model>`, a
   copy of a building or prop that has no name. Type or pick it in the toolbar
