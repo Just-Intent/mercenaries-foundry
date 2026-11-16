@@ -17,6 +17,7 @@ import {createMinimap} from './minimap.js';
 import {createTerrainEditor} from './terrain_edit.js';
 import {createMissions} from './missions.js';
 import {createSky} from './sky.js';
+import {createAnimations} from './animations.js';
 import {createFactions} from './factions.js';
 import {createMapSettings} from './mapset.js';
 import {createMods} from './mods.js';
@@ -748,6 +749,7 @@ function showHistory() {
 function stepHistory(redo) {
   missions.flushUndo();             // edits still waiting to be a step
   sky.flushUndo();
+  animations.flushUndo();
   factions.flushUndo();
   const from = redo ? history.future : history.past, to = redo ? history.past : history.future;
   const h = from.pop();
@@ -1238,6 +1240,11 @@ async function save() {
       sky.saved();
       note += done.empty ? '; sky back to the game\'s' : `; sky and weather in ${done.file}`;
     }
+    for (const body of animations.saveBodies()) {
+      const done = await post('/api/animtable/save', body);
+      animations.saved(body.name, done.file);
+      note += done.file ? `; animation table ${body.name} in ${done.file}` : `; animation table ${body.name} back to the game's`;
+    }
     const terr = terrainEdit.saveBody(), paint = terrainEdit.paintBody(), roads = terrainEdit.roadsBody();
     if (terr) {
       const done = await post('/api/terrain/save', terr);
@@ -1632,6 +1639,8 @@ const missions = createMissions({
 });
 // Sky and weather: the map's base sky and atmosphere presets (sky/<map>.json).
 const sky = createSky({$, status, setDirty: (v) => setDirty(v), remember: (...a) => remember(...a)});
+// Animations: a character's animation table (animtables/<table>.changes.json), with a 3D preview.
+const animations = createAnimations({$, status, setDirty: (v) => setDirty(v), remember: (...a) => remember(...a)});
 const factions = createFactions({$, status, setDirty: (v) => setDirty(v), remember: (...a) => remember(...a)});
 // Mods: the one saved to (the toolbar button), switching, making, editing, deleting.
 createMods({

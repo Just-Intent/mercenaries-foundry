@@ -249,6 +249,21 @@ toolkit bundle run it the same way: `foundry\python\python.exe foundry\mercfound
   zone** is a zone of type Weather (New zone), named after its preset.
   Missions switch weather at a moment on the Events tab (**Weather**). Save
   writes `sky/<map>.json`.
+- **Animations**: a character's animation table, which clip plays for each
+  handle the game asks for (`lb_upright_run_forward`, `ub_reload`,
+  `fb_die`...), per set (default, rifle, smg, driver, ...; the game looks in
+  the character's set, then default, then the table it falls back to). Pick
+  a table (the ones the mod changes are marked); the 3D view plays any
+  entry's clip (**▶**) on a character that uses the table, in place, and
+  you can turn and zoom it. Change an entry's **clip** (any of the game's
+  1,835, typed or picked), its **priority** (a clip cuts in over a lower
+  one, or an equal one with flag 0x4; 0-255) or its **flags** (hover the
+  box for what each does, listed in words below it); changed entries are
+  highlighted and **↺** puts one back. Edits are steps on the undo history.
+  Save writes `animtables/<table>.changes.json` (only the entries that
+  differ; none left removes it), or the whole table when the mod already
+  replaces it (`animtables/<table>.json`). It changes every character with
+  that table.
 - **Missions**: make a contract on the map. Pick a mission, or **New
   mission...** with a faction (it takes that faction's next free number on the
   map). The panel is in tabs (the one last open opens again, and each counts

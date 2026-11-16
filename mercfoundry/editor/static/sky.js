@@ -21,8 +21,8 @@ export function createSky(ctx) {
     }
     st.mod = JSON.parse(JSON.stringify(st.data.mod || {}));
     st.dirty = false;
-    undoBase = JSON.stringify(st.mod);
     draw();
+    undoBase = JSON.stringify(st.mod);      // after drawing, which adds an empty "presets" (not an edit)
   }
 
   function show(on) {

@@ -25,6 +25,11 @@ GET  /api/encounters/<map>     encounters: the game's (read only) and the mod's
 GET  /api/sky/<map>            its base sky and atmosphere presets, and the mod's changes (sky/<map>.json)
 POST /api/models/new           {"name", "base", "glb" (base64)}: a new object's model (models/<name>.glb + .new.json)
 POST /api/sky/save             {"map", "doc"}: writes sky/<map>.json
+GET  /api/animtables          animation tables, with the models of the characters using each
+GET  /api/animtable/<name>    the game's table, the mod's version, its models, the flag meanings
+GET  /api/clips               every clip name
+GET  /api/clip/<model>/<clip>.glb  the model (no textures) carrying the clip, in place: the preview
+POST /api/animtable/save      {"name", "doc"}: animtables/<name>.changes.json (or the whole table's file)
 GET  /api/mapsettings/<map>      a mod's new map: what it copies, arrival point, message, its layers
 POST /api/maps/new               {"name", "from"}: a new map (maps/<name>.json) -> {"name"}
 GET  /api/mods                  the game's source mods (folder, name, description, enabled, current)
@@ -72,6 +77,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from importlib import resources
 from urllib.parse import unquote, urlparse
 
+from . import anims
 from .live import Live
 from .scene import Scene
 
@@ -97,6 +103,7 @@ def make_handler(scene: Scene, mod_name: str, live: Live = None):
     # the first time) doesn't hold up models, the ground or saving. Models and
     # textures need none: at worst one is built twice.
     objects_lock, terrain_lock, context_lock = threading.RLock(), threading.RLock(), threading.RLock()
+    anims_lock = threading.RLock()       # the Animations panel (its first look reads every layer)
     live = live or Live()
 
     class Handler(BaseHTTPRequestHandler):
@@ -199,6 +206,19 @@ def make_handler(scene: Scene, mod_name: str, live: Live = None):
                 if path.startswith("/api/sky/"):
                     with objects_lock:
                         return self.send(200, scene.sky(path[len("/api/sky/"):]))
+                if path == "/api/animtables":
+                    with anims_lock:
+                        return self.send(200, anims.tables(scene))
+                if path.startswith("/api/animtable/"):
+                    with anims_lock:
+                        return self.send(200, anims.table(scene, path[len("/api/animtable/"):]))
+                if path == "/api/clips":
+                    with anims_lock:
+                        return self.send(200, anims.clip_names(scene))
+                if path.startswith("/api/clip/") and path.endswith(".glb"):
+                    model_name, _, clip = path[len("/api/clip/"):-4].partition("/")
+                    with anims_lock:
+                        return self.send(200, anims.clip_glb(scene, model_name, clip), TYPES[".glb"])
                 if path.startswith("/api/properties/"):
                     with objects_lock:
                         return self.send(200, scene.object_properties(path[len("/api/properties/"):]))
@@ -305,6 +325,9 @@ def make_handler(scene: Scene, mod_name: str, live: Live = None):
                 if path == "/api/sky/save":
                     with objects_lock:
                         return self.send(200, scene.save_sky(doc["map"], doc.get("doc") or {}))
+                if path == "/api/animtable/save":
+                    with anims_lock:
+                        return self.send(200, anims.save_table(scene, doc["name"], doc["doc"]))
                 if path == "/api/missions/testmission":
                     with objects_lock:
                         return self.send(200, scene.make_test_mission(doc["map"], doc["centre"], doc.get("faction") or "china",

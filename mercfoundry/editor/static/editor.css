@@ -131,3 +131,17 @@ code.copyable { display: block; white-space: pre-wrap; word-break: break-all; fo
 .fx-sample s { color: #8d98a3; }
 
 #select-box { position: absolute; border: 1px dashed #ffcc33; background: rgba(255, 204, 51, 0.12); pointer-events: none; z-index: 5; }
+
+/* Animations panel */
+#an-view { width: 100%; height: 260px; display: block; border-radius: 4px; margin: 4px 0; }
+.an-bar { display: flex; gap: 6px; align-items: center; margin: 4px 0; flex-wrap: wrap; }
+#an-filter { flex: 1; min-width: 120px; }
+.an-head, .an-row { display: grid; grid-template-columns: 150px 1fr 48px 70px; gap: 4px; align-items: center; font-size: 12px; }
+.an-head { color: #8d98a3; margin-top: 6px; }
+.an-row { margin: 2px 0; padding: 2px 0; border-top: 1px solid #353b43; }
+.an-row input { font: inherit; min-width: 0; }
+.an-handle { color: #8d98a3; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.an-changed .an-handle { color: #e8c46a; }
+.an-words { grid-column: 2 / 4; color: #8d98a3; font-size: 11px; }
+.an-buttons { grid-column: 4; display: flex; gap: 2px; }
+.an-variants { color: #b9c2cc; font-size: 11px; }

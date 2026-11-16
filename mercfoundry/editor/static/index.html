@@ -30,6 +30,7 @@
   <button id="terrain-mode" title="Edit the ground's height (T)">Terrain</button>
   <button id="missions-mode" title="Make and edit contracts">Missions</button>
   <button id="sky-mode" title="The map's sky and weather presets">Sky</button>
+  <button id="anims-mode" title="A character's animation table: which clip plays when, with a 3D preview">Animations</button>
   <button id="factions-mode" title="Give a faction new names in the game's text">Factions</button>
   <button id="mapset-mode" title="Make a new map, or set where you arrive on one and what loads with it">Map</button>
   <datalist id="templates"></datalist>
@@ -325,6 +326,23 @@
       <h2>Map <span id="mapset-map" class="hint"></span></h2>
       <div id="mapset-body"></div>
       <div class="buttons"><button id="mapset-close">Close</button></div>
+    </div>
+    <div id="animations" hidden>
+      <h2>Animations</h2>
+      <label class="field">Table <select id="an-table"></select></label>
+      <p class="hint"><span id="an-file"></span> <span id="an-fallback"></span></p>
+      <canvas id="an-view"></canvas>
+      <div class="an-bar"><label>On <select id="an-model"></select></label>
+        <button id="an-stop" title="Stop the clip">Stop</button> <span id="an-playing" class="hint"></span></div>
+      <div class="an-bar"><label>Set <select id="an-set" title="Weapon or seat: the game looks here first, then in default"></select></label>
+        <input id="an-filter" type="search" placeholder="Find a handle or clip" spellcheck="false"></div>
+      <datalist id="an-clips"></datalist>
+      <div class="an-head"><span>Handle (what the game asks for)</span><span>Clip</span><span>Priority</span><span>Flags</span></div>
+      <div id="an-entries"></div>
+      <p class="hint">A clip starts only if its priority is higher than the playing clip's (or equal, over a
+        clip with flag 0x4). Hover a flags box for what each flag does. Save writes
+        animtables/&lt;table&gt;.changes.json; the next game start uses it, for every character with this table.</p>
+      <div class="buttons"><button id="anims-close">Close</button></div>
     </div>
     <div id="sky" hidden>
       <h2>Sky &amp; weather <span id="sky-map" class="hint"></span></h2>
