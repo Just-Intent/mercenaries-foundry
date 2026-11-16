@@ -248,6 +248,31 @@ ucfb
 
 Clips are streamed only when a load list (`list`, text: `[animation]` then `load <clip>` lines) names them; three lists load the American run. A mod's new clips (`animations/new.json`) are added to `streamed.dsk` and to every load list that loads their template. Tested in-game (2026-11-08): new clips `foundry_<merc>_crossleg_run` (the run with thighs turned inward), pointed to by each player table's `default`/`lb_upright_run_forward` entry, played with the game's own run clip unchanged.
 
+How the game plays an entry (retail code; `RsAnimTable.cpp` and the animation channels, names in `map/manual.json`): `AnimTable_ReadEntry` (`0x00063540`) keeps each entry as clip hash (or variant pointer) +0, flags +4, priority +8 (a byte: the build refuses priorities over 255), variant count +9. `Anim_PlayHandle` (`0x00061E50`) looks a handle up in the actor's current set, then `default`, then the fallback table (`AnimTable_Find`, `0x00063C40`), and plays it on one of three channels: 0 full body, 1 upper body, 2 lower body (the `fb_`, `ub_`, `lb_` handles). `AnimChannel_CanPlay` (`0x00063050`) decides against the clip already playing there: a higher priority always cuts in, an equal one only if the playing clip has flag `0x4`, a lower one never; a playing clip without `0x1` or `0x8` gives way to anything once it has ended, and the same clip doesn't restart. Retail priorities run from 10 (idles) and 20 (fidgets) through 40 (walk, run), 50 (fire), 70 (reload, grenades), 85 (jumps) and 90 (vehicles, dying) to 110 (death falls, ragdoll).
+
+Flags (`animtable.FLAGS`; exported tables list them in words as `"meaning"`, which the build doesn't read back). "Code" means a reader was found in the retail code (`Anim_ChannelFlags`, `0x000611E0`, and `AnimChannel_Play`); "seen" only which clips carry it:
+
+| Flag | Meaning | Evidence | Retail clips |
+|---|---|---|---|
+| `0x1` | loops (becomes the channel's loop bit) | code | idles, walk, run, jump loop, falling |
+| `0x2` | the clip carries the character | code | takedowns, carrying a passenger |
+| `0x4` | a clip of equal priority may cut in | code | walk, run, idle, stops |
+| `0x8` | holds: never gives way by ending | code | subdued, taken down, verification |
+| `0x10` | no aiming while it plays | code | reload, grenades, equip, fidgets |
+| `0x20` | seat change: some actions wait | code | get in, get out, die in a vehicle |
+| `0x40` | firing (read by the shooting code) | code | `ub_upright_fire`, `ub_creep_fire` |
+| `0x80` | cut short when the character moves | code | fidgets, moods |
+| `0x200` | cut short when the character moves | code | walk and run stops |
+| `0x400` | full-body action: no aiming; on the upper body it stops the full-body clip | code | jumps, deaths, ragdoll, melee, airstrike reaction |
+| `0x800` | with `0x2`, the clip moves the character physically | code | staggers, dive and cover rolls, airstrike reaction |
+| `0x1000` | idle | seen | standing idles |
+| `0x2000` | ? | seen | the player tables' upper-body walk, stop, jump, aim |
+| `0x4000` | ? | seen | fidgets, runs, melee, airstrike reaction |
+| `0x8000` | stagger (speed reset when it ends) | code | staggers |
+| `0x10000` | melee strike (the game asks whether one is playing) | code | melee bash |
+
+Bits `0x20000000`, `0x40000000` and `0x80000000` (and `0x2`, `0x8`) are also set at play time by the code asking for the clip. Not tested in game.
+
 ### Animation: `animation` → `anim`
 
 All 1,835 retail animations decode (43,153 joint tracks, 234,640 frames). Established from retail data.

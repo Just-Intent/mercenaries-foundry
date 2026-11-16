@@ -41,6 +41,15 @@ class AnimTableTests(unittest.TestCase):
         self.assertEqual(doc["sets"][0]["entries"][1]["variants"], {"start": 0, "count": 2})
         self.assertEqual(animtable.from_json(json.loads(json.dumps(doc))), rec)
         self.assertEqual(animtable.clips(doc), {"fidget_a", "fidget_b", "test_anim"})
+        # flags read out in words (not read back)
+        self.assertEqual(doc["sets"][0]["entries"][0]["meaning"], ["loops", "replaceable at equal priority"])
+        self.assertEqual(animtable.flag_words("0x20001"), ["loops", "0x20000"])
+
+    def test_priority_is_a_byte(self):
+        doc = animtable.to_json(table())
+        doc["sets"][0]["entries"][0]["priority"] = 300
+        with self.assertRaises(ValueError):
+            animtable.from_json(doc)
 
     def test_counts_recomputed_and_checked(self):
         doc = animtable.to_json(table())

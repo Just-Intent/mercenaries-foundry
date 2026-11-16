@@ -589,6 +589,68 @@
    "address": "0x00147ED0",
    "name": "Airplane_Init",
    "evidence": "retail code: reads physicsMaxVelocity, physicsAccelerationRate, physicsMaxAngularVelocityYaw and Pitch, physicsMaxRoll, physicsRollDragModifier and physicsStandardAltitude"
+  },
+  {
+   "address": "0x00063540",
+   "name": "AnimTable_ReadEntry",
+   "signature": "bool __thiscall AnimTable_ReadEntry(AnimEntry *e, Reader *r, AnimTable *t)",
+   "evidence": "retail code: compares chunk tags ANAM, VARG, HNDL, PRIO, FLGS; ANAM -> clip hash at +0 (single clip, +9 = 1), VARG -> pointer into the variant list at +0 and count at +9, PRIO -> byte at +8, FLGS -> u32 at +4; HNDL hashed and returned",
+   "notes": "Entry layout: +0 clip hash or variant pointer, +4 flags, +8 priority (u8), +9 variant count."
+  },
+  {
+   "address": "0x00063C40",
+   "name": "AnimTable_Find",
+   "signature": "AnimEntry * __cdecl AnimTable_Find(uint32 table, uint32 set, uint32 handle)",
+   "evidence": "retail code: looks the table up by hash in the global table list (0x3219BC, count 0x3219B4), then the set, then set 0x933B5BDE (\"default\"), then the fallback table (+0x28, the DFLT hash) the same way"
+  },
+  {
+   "address": "0x00061C70",
+   "name": "Anim_FindEntry",
+   "signature": "AnimEntry * __thiscall Anim_FindEntry(AnimState *s, uint32 handle, AnimOverride *o)",
+   "evidence": "retail code: with an override (table, set) calls AnimTable_Find; otherwise the actor's current set (+0x28D8), then its sets at +0x28E0, +0x28DC, +0x28E4"
+  },
+  {
+   "address": "0x00061E50",
+   "name": "Anim_PlayHandle",
+   "signature": "bool __thiscall Anim_PlayHandle(AnimState *s, uint32 handle, int channel, AnimParams *p)",
+   "evidence": "retail code: Anim_FindEntry, then sub_00061350 (channel choice, AnimChannel_CanPlay, AnimChannel_Play); callers pass handle hashes such as ub_jump_takeoff (channel 1) and lb_jump_takeoff (channel 2)"
+  },
+  {
+   "address": "0x00060B50",
+   "name": "Anim_Channel",
+   "signature": "AnimChannel * __thiscall Anim_Channel(AnimState *s, int channel)",
+   "evidence": "inferred: returns a channel object; 0 full body, 1 upper body, 2 lower body (sub_00052010 plays ub_jump_takeoff on 1 and lb_jump_takeoff on 2)"
+  },
+  {
+   "address": "0x00063050",
+   "name": "AnimChannel_CanPlay",
+   "signature": "bool __thiscall AnimChannel_CanPlay(AnimChannel *c, AnimEntry *e, AnimParams *p, void *out)",
+   "evidence": "retail code: picks a variant (random), refuses clip 0xADA7AFDB (\"none\"); against the playing clip (+0xB48, flags +0xB44, priority +0xB4D): a clip without flags 0x1|0x8 that has ended (+0xB2A bit 2) gives way; the same clip again only with the params' restart byte (+0x13); a lower priority never plays, an equal one only if the playing clip has flag 0x4 or the params' +0x14 byte",
+   "notes": "Params bytes: +0x10 priority override, +0x11 priority, +0x13 restart, +0x14 cut in at equal priority."
+  },
+  {
+   "address": "0x00063230",
+   "name": "AnimChannel_Play",
+   "signature": "bool __thiscall AnimChannel_Play(AnimChannel *c, AnimEntry *e, AnimParams *p)",
+   "evidence": "retail code: AnimChannel_CanPlay, then stores the clip (+0xB48), flags (+0xB44, with params bytes +0x15..+0x1B setting 0x80000000, 0x40000000, 0x2, 0x8, 0x20000000 and +0x19 clearing 0x802), variant (+0xB4C) and priority (+0xB4D); flag 0x1 becomes the loop bit (+0xB2A bit 0)"
+  },
+  {
+   "address": "0x000611E0",
+   "name": "Anim_ChannelFlags",
+   "signature": "uint32 __thiscall Anim_ChannelFlags(AnimState *s, int channel)",
+   "evidence": "retail code: Anim_Channel(channel)->flags (+0xB44); callers test 0x1, 0x2, 0x10|0x400, 0x20, 0x40, 0x80|0x200, 0x400, 0x2|0x800, 0x8000, 0x10000 (see docs/formats/dsk.md)"
+  },
+  {
+   "address": "0x000610C0",
+   "name": "Anim_SetChannelFlags",
+   "signature": "void __thiscall Anim_SetChannelFlags(AnimState *s, uint32 mask, int channel)",
+   "evidence": "retail code: ORs mask into the channel's flags (both split channels when +0x28E8 is 1 and channel 0)"
+  },
+  {
+   "address": "0x00061120",
+   "name": "Anim_ClearChannelFlags",
+   "signature": "void __thiscall Anim_ClearChannelFlags(AnimState *s, uint32 mask, int channel)",
+   "evidence": "retail code: clears mask from the channel's flags, as Anim_SetChannelFlags"
   }
  ],
  "globals": [
