@@ -195,7 +195,7 @@ def _lua_str(s):
 
 
 OBJECTIVE_TYPES = ("destroy", "goto", "escort", "deliver", "subdue", "hold", "use", "verify", "fast", "defend",
-                   "collect")
+                   "collect", "kill")
 # A verify objective's marker on its targets (retail's blipType: the card suits
 # are the Deck of 52's).
 VERIFY_BLIPS = ("human", "scope", "blip", "clubs", "diamond", "hearts", "spades")
@@ -239,7 +239,19 @@ def when_of(text, count, what, own=0):
         return ("zone", rest)
     if when == "dead" and rest:
         return ("dead", rest)          # every member of the squad ("encounter:squad") is dead
-    raise ValueError(f"{what}: when is start, starts:<n>, done:<n>, zone:<name> or dead:<squad>, not {r!r}")
+    if when == "near" and rest:
+        return ("near", near_of(rest, what))
+    raise ValueError(f"{what}: when is start, starts:<n>, done:<n>, zone:<name>, dead:<squad> or "
+                     f"near:<metres>:<squad>, not {r!r}")
+
+
+def near_of(rest, what):
+    """"20:camp:Runner" (from "near:20:camp:Runner": the player comes within
+    20 m of one of the squad) checked, as is."""
+    m = re.fullmatch(r"(\d+(?:\.\d+)?):([^:]+:[^:]+)", rest)
+    if not m or float(m.group(1)) <= 0:
+        raise ValueError(f"{what}: near is near:<metres>:<encounter:squad>, not near:{rest}")
+    return f"{float(m.group(1)):g}:{m.group(2)}"
 
 
 def radio_key(asset_id, k):
@@ -268,7 +280,10 @@ def reveal_of(o, count, i):
         return ("zone", what)
     if when == "dead" and what:
         return ("dead", what)
-    raise ValueError(f"objective {i}: \"reveal\" is start, starts:<n>, done:<n>, zone:<name> or dead:<squad>, not {r!r}")
+    if when == "near" and what:
+        return ("near", near_of(what, f"objective {i}: \"reveal\""))
+    raise ValueError(f"objective {i}: \"reveal\" is start, starts:<n>, done:<n>, zone:<name>, dead:<squad> or "
+                     f"near:<metres>:<squad>, not {r!r}")
 
 
 def support_table(doc):
@@ -385,6 +400,15 @@ def objectives_script(asset_id, doc, squad_members, layers=(), zone_centre=None)
         if name not in dead_sets:
             dead_sets[name] = squad_members(name)
         return f", after = {_lua_str(name)}"
+    near_sets = {}          # "<metres>:encounter:squad" a moment waits on -> its members
+
+    def squad_after(when):
+        """', after = ...' for a squad's moment: "dead:" or "near:"."""
+        if when[0] == "dead":
+            return dead_after(when[1])
+        if when[1] not in near_sets:
+            near_sets[when[1]] = squad_members(when[1].split(":", 1)[1])
+        return f", after = {_lua_str(when[1])}"
     for i, o in enumerate(objs, 1):
         kind = o.get("type")
         if kind not in OBJECTIVE_TYPES:
@@ -398,8 +422,8 @@ def objectives_script(asset_id, doc, squad_members, layers=(), zone_centre=None)
                 head += f", reveal = '{when[0]}', after = 'foundry{when[1]}'"
             elif when[0] == "zone":
                 head += f", reveal = 'zone', rzone = {_lua_str(when[1])}"
-            elif when[0] == "dead":
-                head += f", reveal = 'dead'" + dead_after(when[1])
+            elif when[0] in ("dead", "near"):
+                head += f", reveal = '{when[0]}'" + squad_after(when)
         if kind in ("destroy", "escort", "subdue", "use", "verify"):
             targets = list(o.get("targets") or [])
             if o.get("squad"):
@@ -439,6 +463,20 @@ def objectives_script(asset_id, doc, squad_members, layers=(), zone_centre=None)
                 mark = f", x = {at[0]:.2f}, y = {at[1]:.2f}, z = {at[2]:.2f}" if at else ""
                 row += f", zone = {_lua_str(o['zone'])}{mark}, lost = {_lua_str(escort_lost_key(asset_id, i))}"
             row = f"{{ {row} }}"
+        elif kind == "kill":
+            # how many of some kinds of thing die (by model: Event_OdfHitPointsLessThan, as retail's
+            # destroy challenges count them), wherever they are
+            kinds = [str(k).strip().lower() for k in (o.get("kinds") or []) if str(k).strip()]
+            if not kinds:
+                raise ValueError(f"objective {i}: a kill objective needs \"kinds\" (model names, like "
+                                 f"nk_hum_soldier)")
+            try:
+                need = int(float(o.get("need") or 0))
+            except (TypeError, ValueError):
+                need = 0
+            if need < 1:
+                raise ValueError(f"objective {i}: a kill objective needs \"need\" (how many), not {o.get('need')!r}")
+            row = f"{{ {head}, kinds = {{ {', '.join(_lua_str(k) for k in kinds)} }}, need = {need} }}"
         elif kind in ("defend", "collect"):
             targets = list(o.get("targets") or [])
             if o.get("squad"):
@@ -544,8 +582,8 @@ def objectives_script(asset_id, doc, squad_members, layers=(), zone_centre=None)
             when = when_of(c["from"], len(objs), f"fail condition {k}")
             if when[0] in ("starts", "done"):
                 row += f", from = '{when[0]}', after = 'foundry{when[1]}'"
-            elif when[0] == "dead":
-                row += ", from = 'dead'" + dead_after(when[1])
+            elif when[0] in ("dead", "near"):
+                row += f", from = '{when[0]}'" + squad_after(when)
             else:
                 row += f", from = 'zone', fzone = {_lua_str(when[1])}"
                 if zone_centre:
@@ -566,8 +604,8 @@ def objectives_script(asset_id, doc, squad_members, layers=(), zone_centre=None)
         row = f"when = '{when[0]}'"
         if when[0] in ("starts", "done"):
             row += f", after = 'foundry{when[1]}'"
-        elif when[0] == "dead":
-            row += dead_after(when[1])
+        elif when[0] in ("dead", "near"):
+            row += squad_after(when)
         elif when[0] == "zone":
             row += f", zone = {_lua_str(when[1])}"
             if zone_centre:
@@ -595,8 +633,8 @@ def objectives_script(asset_id, doc, squad_members, layers=(), zone_centre=None)
         row = f"when = '{when[0]}'"
         if when[0] in ("starts", "done"):
             row += f", after = 'foundry{when[1]}'"
-        elif when[0] == "dead":
-            row += dead_after(when[1])
+        elif when[0] in ("dead", "near"):
+            row += squad_after(when)
         elif when[0] == "zone":
             row += f", zone = {_lua_str(when[1])}"
             if zone_centre:
@@ -617,8 +655,8 @@ def objectives_script(asset_id, doc, squad_members, layers=(), zone_centre=None)
         row = f"when = '{when[0]}'"
         if when[0] in ("starts", "done"):
             row += f", after = 'foundry{when[1]}'"
-        elif when[0] == "dead":
-            row += dead_after(when[1])
+        elif when[0] in ("dead", "near"):
+            row += squad_after(when)
         elif when[0] == "zone":
             row += f", zone = {_lua_str(when[1])}"
             if zone_centre:
@@ -639,8 +677,8 @@ def objectives_script(asset_id, doc, squad_members, layers=(), zone_centre=None)
         row = f"when = '{when[0]}'"
         if when[0] in ("starts", "done"):
             row += f", after = 'foundry{when[1]}'"
-        elif when[0] == "dead":
-            row += dead_after(when[1])
+        elif when[0] in ("dead", "near"):
+            row += squad_after(when)
         elif when[0] == "zone":
             row += f", zone = {_lua_str(when[1])}"
             if zone_centre:
@@ -664,8 +702,8 @@ def objectives_script(asset_id, doc, squad_members, layers=(), zone_centre=None)
         row = f"when = '{when[0]}'"
         if when[0] in ("starts", "done"):
             row += f", after = 'foundry{when[1]}'"
-        elif when[0] == "dead":
-            row += dead_after(when[1])
+        elif when[0] in ("dead", "near"):
+            row += squad_after(when)
         elif when[0] == "zone":
             row += f", zone = {_lua_str(when[1])}"
             if zone_centre:
@@ -686,6 +724,7 @@ def objectives_script(asset_id, doc, squad_members, layers=(), zone_centre=None)
         orders.append(f"{{ {row} }}")
     order_table = ",\n".join("  " + r for r in orders)
     later_lua = "".join(c + "\n" for c in later_cbs)
+    later_lua_near = []
     dead_rows = []
     for name, members in dead_sets.items():
         enc, _, sq = name.rpartition(":")
@@ -693,6 +732,16 @@ def objectives_script(asset_id, doc, squad_members, layers=(), zone_centre=None)
         dead_rows.append(f"{{ squad = {_lua_str(name)}, members = {{ {', '.join(_lua_str(m) for m in members)} }}"
                          + (f", wave = {_lua_str(wave[1])}" if wave else "") + " }")
     dead_table = ",\n".join("  " + r for r in dead_rows)
+    near_rows = []
+    for k, (key, members) in enumerate(near_sets.items(), 1):
+        metres, name = key.split(":", 1)
+        enc, _, sq = name.rpartition(":")
+        wave = wave_of.get((enc.lower(), sq.lower()))
+        near_rows.append(f"{{ key = {_lua_str(key)}, metres = {metres}, cb = 'foundry_Near{k}', "
+                         f"members = {{ {', '.join(_lua_str(m) for m in members)} }}"
+                         + (f", wave = {_lua_str(wave[1])}" if wave else "") + " }")
+        later_lua_near.append(f"function foundry_Near{k}() foundry_NearHit({k}) end")
+    near_table = ",\n".join("  " + r for r in near_rows)
     main_table = ",\n".join("  " + r for r in main)
     bonus_table = ",\n".join("  " + r for r in bonus)
     flat = bonus_fee(doc) - sum(bonus_amount(o) + alive_amount(o) for o in objs)
@@ -753,6 +802,10 @@ tFoundryOrders = {{        -- squad orders, given when their moment comes
 {dead_table}
 }}
 tFoundryDeadOf = {{}}       -- actor (as int) -> the squad it counts for
+tFoundryNear = {{          -- squads a moment waits on the player coming near ("near:")
+{near_table}
+}}
+{"".join(c + chr(10) for c in later_lua_near)}
 tFoundryActive = {{}}       -- started objectives by name
 tFoundryWatch = {{}}        -- actor (as int) -> the fail condition or escort objective watching it
 bFoundryOver = false
@@ -819,6 +872,28 @@ end
 end
 end
 end
+-- The player comes within so many metres of one of a squad.
+function foundry_WatchNear(sWave)
+for i, n in ipairs(tFoundryNear) do
+if n.wave == sWave and not n.watching then
+n.watching = true
+for j, a in ipairs(n.members) do Event_ActorToActorProximity(n.cb, 'b', a, 'player0', n.metres, true) end
+end
+end
+end
+function foundry_NearHit(i)
+local n = tFoundryNear[i]
+if not n or n.hit or bFoundryOver then return end
+n.hit = true
+foundry_Note('player near: ' .. n.key)
+foundry_Reveal('near', n.key)
+foundry_Waves('near', n.key)
+foundry_FailsFrom('near', n.key)
+foundry_Radio('near', n.key)
+foundry_Musics('near', n.key)
+foundry_Weathers('near', n.key)
+foundry_Orders('near', n.key)
+end
 function foundry_SquadMemberDown(aActor)
 local d = tFoundryDeadOf[Utility_GetActorAsInt(aActor)]
 if not d or d.gone then return end
@@ -838,6 +913,7 @@ end
 function post_InitialNotifications()   -- after the contract mail
 foundry_Note('started')
 foundry_WatchSquads(nil)
+foundry_WatchNear(nil)
 foundry_SetupFail()
 for i, r in ipairs(tFoundryRadio) do
 if r.when == 'zone' then Event_ActorInBoundary('foundry_RadioZone', 'b', 'player0', r.zone, true) end
@@ -998,6 +1074,7 @@ for i, w in ipairs(tFoundryWaves) do
 if w.loaded and not tFoundryWaveUp[w.layer] then
 tFoundryWaveUp[w.layer] = true
 foundry_WatchSquads(w.layer)          -- its squad, if a moment waits on it
+foundry_WatchNear(w.layer)
 end
 end
 for i, o in ipairs(tFoundryOrders) do
@@ -1103,7 +1180,9 @@ end
 function foundry_StopTimer()
 if tFoundryTimer and tFoundryTimer.hud then HUD_RemoveTrayDisplay(tFoundryTimer.hud) tFoundryTimer.hud = nil end
 if tFoundryFast and tFoundryFast.hud then HUD_RemoveTrayDisplay(tFoundryFast.hud) tFoundryFast.hud = nil end
-if tFoundryDefending and tFoundryDefending.hud then HUD_RemoveTrayDisplay(tFoundryDefending.hud) tFoundryDefending.hud = nil end
+for sName, o in pairs(tFoundryActive) do
+if o.kind == 'defend' and o.hud then HUD_RemoveTrayDisplay(o.hud) o.hud = nil end
+end
 end
 -- Finish fast: the clock ran out first; the bonus is lost.
 function foundry_TooSlow(hDisplay, eState)
@@ -1332,9 +1411,16 @@ Event_ActorHitPointsLessThan('foundry_Died', 'b', a, 1)
 foundry_Mark(o.name .. 'd' .. j, a, o.text, sObjType, sTargetType)
 end
 util_ObjMsgPrint{{ sMsg = o.text, sType = sMsg .. 'ADD', vIdx = iIdx, sObjective = o.name }}
-tFoundryDefending = o
 o.hud = HUD_AddTrayDisplay{{ {{ DisplayClock = true, nObjStyle = HUD.STYLE.NORMAL, nStart = o.seconds, nLimit = 0,
                                 fCallback = foundry_DefendDone }} }}
+elseif o.kind == 'kill' then
+-- so many of some kinds (models) killed, however they die (counted as retail's destroy challenges do)
+o.got, o.events = 0, {{}}
+util_ObjMsgPrint{{ sMsg = o.text, sType = sMsg .. 'ADD', vIdx = iIdx,
+                  tCounter = {{ vCurr = 0, vLim = o.need }}, sObjective = o.name }}
+for j, k in ipairs(o.kinds) do
+table.insert(o.events, Event_OdfHitPointsLessThan('foundry_KindDown', 'b', k, 1, true))
+end
 elseif o.kind == 'collect' then
 -- pick them up (each marked); done when enough are gone, looked at once a second
 o.got, o.gone = 0, {{}}
@@ -1375,11 +1461,14 @@ end
 
 -- Defend: they live until the clock runs out (at least "keep" of them).
 function foundry_DefendDone(hDisplay, eState)
-if eState ~= HUD.STATE.LIMIT then return end
-local o = tFoundryDefending
-if not o or o.done or bFoundryOver then return end
+if eState ~= HUD.STATE.LIMIT or bFoundryOver then return end
+for sName, o in pairs(tFoundryActive) do          -- several can run at once: the clock says which
+if o.kind == 'defend' and not o.done and o.hud == hDisplay then
 foundry_DefendEnd(o)
 foundry_Done(o)
+return
+end
+end
 end
 function foundry_DefendEnd(o)
 if o.hud then HUD_RemoveTrayDisplay(o.hud) o.hud = nil end
@@ -1398,6 +1487,29 @@ util_ObjMsgPrint{{ sMsg = o.text, sType = 'BON_OBJ_FAIL', vIdx = 2, sObjective =
 mission_RemoveObjective(o.name)
 else
 foundry_Fail(o.lost)
+end
+end
+
+-- Kill: a thing of a counted kind died (sOdf: its model; n: how many).
+function foundry_KindDown(sOdf, fHp, bFlag, aActor, n)
+if bFoundryOver then return end
+for sName, o in pairs(tFoundryActive) do
+if o.kind == 'kill' and not o.done then
+for j, k in ipairs(o.kinds) do
+if k == sOdf then
+o.got = o.got + (n or 1)
+foundry_Note(o.name .. ': ' .. o.got .. ' of ' .. o.need)
+if o.got >= o.need then
+for e, h in ipairs(o.events) do Event_CancelEvent(h) end
+foundry_Done(o)
+else
+local sMsg, iIdx = foundry_Kind(o)
+util_ObjMsgPrint{{ sMsg = o.text, sType = sMsg .. 'UPD_POS', vIdx = iIdx,
+                  tCounter = {{ vCurr = o.got, vLim = o.need }}, sObjective = o.name }}
+end
+end
+end
+end
 end
 end
 

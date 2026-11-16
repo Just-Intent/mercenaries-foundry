@@ -286,8 +286,9 @@ toolkit bundle run it the same way: `foundry\python\python.exe foundry\mercfound
     clock runs out (it counts down from when the bonus is shown; one per
     mission), **Defend** (keep a squad or people and objects picked on the
     map alive until a clock runs out; **At least** sets how many must live)
-    and **Collect items** (pick up items picked on the map; **How many** of
-    them).
+    **Collect items** (pick up items picked on the map; **How many** of
+    them) and **Kill N of a kind** (so many die of the kinds of the objects
+    you pick on the map, anywhere, however they die).
     **Show** looks at an objective's squad or zone.
     Main objectives are done in order; one ticked **Together with the one
     before** starts at the same time as the main objective before it, and
@@ -299,7 +300,8 @@ toolkit bundle run it the same way: `foundry\python\python.exe foundry\mercfound
     it was shown and not done, and leaves it out if it never was;
   - **Radio lines**: each plays **When** the mission starts, an objective
     starts or is done, the player enters a zone, a squad is wiped out
-    (every member dead), or the contract completes (it completes after the
+    (every member dead), the player comes within so many metres of a squad
+    (a runner given a path order then flees), or the contract completes (it completes after the
     line). Squads that appear later, squad orders, a bonus objective's
     **Shown** and a fail condition's **Begins** take the same moments, all
     but the last. Radio lines, squads that appear later and orders can also

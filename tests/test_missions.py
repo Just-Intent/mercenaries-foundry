@@ -251,7 +251,10 @@ class MissionTests(unittest.TestCase):
         self.assertIn("targets = { 'runner' }, zone = 'border'", lua)
         self.assertIn("for j, a in ipairs(f.targets) do Event_ActorInBoundary(f.cb, 'b', a, f.zone, true) end", lua)
         self.assertIn("elseif w.kind == 'defend' then foundry_DefendLost(w)", lua)
-        self.assertIn("function foundry_DefendDone(hDisplay, eState)\nif eState ~= HUD.STATE.LIMIT then return end", lua)
+        self.assertIn("function foundry_DefendDone(hDisplay, eState)\nif eState ~= HUD.STATE.LIMIT or bFoundryOver then return end", lua)
+        # several at once: each clock finds its own objective
+        self.assertIn("if o.kind == 'defend' and not o.done and o.hud == hDisplay then", lua)
+        self.assertNotIn("tFoundryDefending", lua)
         self.assertIn("not Utility_DoesActorExist(a)", lua)
         self.assertNotIn("#", lua.split("\n", 1)[1])
         strings, _, _ = missions.text_plan("sw_allies11", doc, "SW_Allies11")
@@ -266,6 +269,36 @@ class MissionTests(unittest.TestCase):
             with self.assertRaises(ValueError):
                 missions.objectives_script("sw_allies11", {"objectives": [{"type": "goto", "zone": "z"}], "fail": [bad]},
                                            lambda squad: [], (), lambda z: [1, 2, 3])
+
+    def test_kill_and_near(self):
+        from mercfoundry import luacheck
+        members = {"camp:Runner": ["Run1"], "camp:Guards": ["G1", "G2"]}
+        doc = {"objectives": [{"type": "kill", "text": "Kill 10 soldiers", "kinds": ["NK_Hum_Soldier", "nk_hum_heavy"],
+                               "need": 10},
+                              {"type": "destroy", "text": "Catch him", "squad": "camp:Runner"}],
+               "orders": [{"when": "near:25:camp:Runner", "squad": "camp:Runner", "do": "path", "to": "escape"}],
+               "radio": [{"when": "near:25:camp:Runner", "text": "He's running!"}],
+               "fail": [{"type": "escapes", "squad": "camp:Runner", "zone": "out", "from": "near:25:camp:Runner"}]}
+        lua = missions.objectives_script("sw_allies11", doc, lambda squad: members[squad], (), lambda z: [1, 2, 3])
+        self.assertEqual(luacheck.check(lua), [])
+        self.assertIn("kinds = { 'nk_hum_soldier', 'nk_hum_heavy' }, need = 10 }", lua)
+        self.assertIn("Event_OdfHitPointsLessThan('foundry_KindDown', 'b', k, 1, true)", lua)
+        # one watch for the moment, shared by the order, the radio line and the fail condition
+        self.assertIn("{ key = '25:camp:Runner', metres = 25, cb = 'foundry_Near1', members = { 'Run1' } }", lua)
+        self.assertEqual(lua.count("foundry_Near2"), 0)
+        self.assertIn("function foundry_Near1() foundry_NearHit(1) end", lua)
+        self.assertIn("Event_ActorToActorProximity(n.cb, 'b', a, 'player0', n.metres, true)", lua)
+        self.assertIn("when = 'near', after = '25:camp:Runner', act = 'path'", lua)
+        self.assertIn("from = 'near', after = '25:camp:Runner'", lua)
+        self.assertNotIn("#", lua.split("\n", 1)[1])
+        for bad in ({"type": "kill", "kinds": ["x"]}, {"type": "kill", "need": 3}):
+            with self.assertRaises(ValueError):
+                missions.objectives_script("sw_allies11", {"objectives": [bad]}, lambda squad: [])
+        for bad in ("near:camp:Runner", "near:0:camp:Runner", "near:5:Runner"):
+            with self.assertRaises(ValueError):
+                missions.objectives_script("sw_allies11", {"objectives": [{"type": "goto", "zone": "z"}],
+                                                           "radio": [{"when": bad, "text": "x"}]},
+                                           lambda squad: members.get(squad, []))
 
     def test_check_mission(self):
         # The editor's Check: the build's checks on a saved mission.

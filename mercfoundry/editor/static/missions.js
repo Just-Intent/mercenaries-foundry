@@ -285,16 +285,17 @@ export function createMissions(ctx) {
   const OBJ_NAMES = {destroy: 'Destroy squad / objects', goto: 'Go to zone', escort: 'Escort squad (they follow you to the zone)',
                      deliver: 'Deliver vehicle to zone', subdue: 'Capture alive (subdue)', hold: 'Hold zone',
                      use: 'Use object', fast: 'Finish fast', verify: 'Verify target (kill and photograph, or capture)',
-                     defend: 'Defend (keep them alive until the clock runs out)', collect: 'Collect items (pick them up)'};
+                     defend: 'Defend (keep them alive until the clock runs out)', collect: 'Collect items (pick them up)',
+                     kill: 'Kill so many of a kind (anywhere)'};
   const BLIPS = {human: 'Person', scope: 'Scope', blip: 'Dot', clubs: 'Clubs', diamond: 'Diamonds', hearts: 'Hearts', spades: 'Spades'};
   // Folded cards: one line each. Which are open is kept by the objective
   // itself (so it survives moving them up and down).
   const openObjs = new WeakSet();
   function objSummary(o) {
-    const what = [o.squad, ...(o.targets || []), o.vehicle].filter(Boolean);
+    const what = [o.squad, ...(o.targets || []), ...(o.kinds || []), o.vehicle].filter(Boolean);
     const bits = [o.text ? `"${o.text}"` : '(no text)'];
     if (what.length) bits.push(what.length > 2 ? `${what[0]} +${what.length - 1}` : what.join(', '));
-    else if (['destroy', 'subdue', 'use', 'verify', 'escort', 'defend', 'collect'].includes(o.type)) bits.push('(nothing picked)');
+    else if (['destroy', 'subdue', 'use', 'verify', 'escort', 'defend', 'collect', 'kill'].includes(o.type)) bits.push('(nothing picked)');
     if (o.zone) bits.push(`to ${o.zone}`);
     else if (['goto', 'escort', 'deliver', 'hold'].includes(o.type)) bits.push('(no zone)');
     if (+o.seconds > 0) bits.push(clock(+o.seconds));
@@ -321,6 +322,11 @@ export function createMissions(ctx) {
             <button data-i="${i}" data-t="${j}" data-a="untarget" title="Remove">×</button></span>`).join('')}
             <button data-i="${i}" data-a="target" title="Select a named object on the map first">+ Add selected object</button></span>`
         : '';
+      const kinds = o.type === 'kill'
+        ? `<span class="ms-targets">${(o.kinds || []).map((t, j) => `<span class="ms-tag">${esc(t)}
+            <button data-i="${i}" data-t="${j}" data-a="unkind" title="Remove">×</button></span>`).join('')}
+            <button data-i="${i}" data-a="kind" title="Select an object of the kind on the map first: every one of its model counts">+ Add selected object's kind</button></span>`
+        : '';
       const vehicle = o.type === 'deliver'
         ? `<span class="ms-targets">${o.vehicle ? `<span class="ms-tag">${esc(o.vehicle)}</span>` : '(no vehicle)'}
             <button data-i="${i}" data-a="vehicle" title="Select the vehicle on the map first">Use selected vehicle</button></span>`
@@ -343,7 +349,8 @@ export function createMissions(ctx) {
       const needText = {destroy: ['Done after this many (blank: all of them)', 'How many', 'all', ''],
                         escort: ['The mission fails once fewer than this many can still arrive (blank: one)', 'At least', '1', ' must arrive'],
                         defend: ['How many must still be alive when the clock runs out (blank: all of them)', 'At least', 'all', ' must live'],
-                        collect: ['Done after this many are picked up (blank: all of them)', 'How many', 'all', '']}[o.type];
+                        collect: ['Done after this many are picked up (blank: all of them)', 'How many', 'all', ''],
+                        kill: ['Done after this many of these kinds die, anywhere, however they die', 'How many', '10', '']}[o.type];
       const need = needText
         ? `<label title="${needText[0]}">${needText[1]} <input data-i="${i}" data-k="need" type="number" min="1" step="1" value="${+o.need > 0 ? +o.need : ''}" `
           + `placeholder="${needText[2]}">${needText[3]}</label>` : '';
@@ -353,6 +360,7 @@ export function createMissions(ctx) {
         : o.type === 'destroy' ? squadPick + targets
         : o.type === 'defend' ? squadPick + targets + seconds
         : o.type === 'collect' ? targets
+        : o.type === 'kill' ? kinds
         : o.type === 'escort' ? squadPick + zonePick
         : o.type === 'deliver' ? vehicle + zonePick
         : o.type === 'fast' ? seconds : zonePick + seconds;
@@ -382,9 +390,10 @@ export function createMissions(ctx) {
       if (j === i) return;
       opts.push([`starts:${j + 1}`, `When objective ${j + 1} starts`], [`done:${j + 1}`, `When objective ${j + 1} is done`]);
     });
-    opts.push(['zone', 'When the player enters a zone'], ['dead', 'When a squad is wiped out']);
-    const isZone = r.startsWith('zone:'), isDead = r.startsWith('dead:');
-    const sel = (v) => (isZone ? v === 'zone' : isDead ? v === 'dead' : v === r) ? 'selected' : '';
+    opts.push(['zone', 'When the player enters a zone'], ['dead', 'When a squad is wiped out'],
+              ['near', 'When the player comes near a squad']);
+    const isZone = r.startsWith('zone:'), isDead = r.startsWith('dead:') || r.startsWith('near:'), squadKind = r.slice(0, 4);
+    const sel = (v) => (isZone ? v === 'zone' : isDead ? v === squadKind : v === r) ? 'selected' : '';
     const zone = isZone ? r.slice(5) : '';
     return `<label class="ms-reveal">Shown <select data-i="${i}" data-k="reveal">${opts.map(([v, t]) =>
         `<option value="${v}" ${sel(v)}>${t}</option>`).join('')}</select></label>${deadPick(r, `data-i="${i}"`, 'revealSquad')}${isZone
@@ -577,6 +586,8 @@ export function createMissions(ctx) {
     for (const key of Object.keys(at)) {
       if (key.startsWith('zone:')) html += block(`The player enters zone ${key.slice(5) || '(none picked)'}`, key);
       if (key.startsWith('dead:')) html += block(`Squad ${key.slice(5) || '(none picked)'} is wiped out`, key);
+      const near = /^near:([^:]*):(.*)$/.exec(key);
+      if (near) html += block(`The player comes within ${near[1]} m of squad ${near[2] || '(none picked)'}`, key);
     }
     const flat = +$('ms-bonus').value || 0;
     const extras = objs.reduce((n, o) => n + (+o.bonus > 0 ? +o.bonus : 0), 0);
@@ -604,7 +615,8 @@ export function createMissions(ctx) {
       drawObjectives(); edited(); return;
     }
     if (k === 'revealZone') { o.reveal = `zone:${e.target.value}`; edited(); return; }
-    if (k === 'revealSquad') { o.reveal = `dead:${e.target.value}`; edited(); return; }
+    if (k === 'revealSquadMetres') { o.reveal = nearMetres(o.reveal, e.target.value); edited(); return; }
+    if (k === 'revealSquad') { o.reveal = squadMoment(o.reveal, e.target.value); edited(); return; }
     const wasBonus = +o.bonus > 0;
     if (k === 'extract' || k === 'together') {
       if (e.target.checked) o[k] = true; else delete o[k];
@@ -645,6 +657,19 @@ export function createMissions(ctx) {
     }
     if (a === 'untarget') {
       o[i].targets.splice(+e.target.dataset.t, 1);
+      drawObjectives(); edited();
+      return;
+    }
+    if (a === 'kind') {
+      const sel = ctx.selectedObject();
+      const model = sel && (sel.geometry || sel.model);
+      if (!model) return status('Select an object of the kind on the map first', true);
+      o[i].kinds = [...new Set([...(o[i].kinds || []), String(model).toLowerCase()])];
+      drawObjectives(); edited();
+      return;
+    }
+    if (a === 'unkind') {
+      o[i].kinds.splice(+e.target.dataset.t, 1);
       drawObjectives(); edited();
       return;
     }
@@ -694,6 +719,10 @@ export function createMissions(ctx) {
   };
   $('ms-add-defend').onclick = () => {
     pushObjective({type: 'defend', text: 'Defend them until help arrives', squad: '', targets: [], seconds: 120});
+    drawObjectives(); drawFails(); drawRadio(); drawMusic(); drawWeather(); drawOrders(); drawWaves(); edited();
+  };
+  $('ms-add-kill').onclick = () => {
+    pushObjective({type: 'kill', text: 'Kill 10 enemy soldiers', kinds: [], need: 10});
     drawObjectives(); drawFails(); drawRadio(); drawMusic(); drawWeather(); drawOrders(); drawWaves(); edited();
   };
   $('ms-add-collect').onclick = () => {
@@ -751,7 +780,8 @@ export function createMissions(ctx) {
       else c.from = momentOf(e.target.value);
       drawFails();
     } else if (key === 'fromZone') c.from = `zone:${e.target.value}`;
-    else if (key === 'fromSquad') c.from = `dead:${e.target.value}`;
+    else if (key === 'fromSquadMetres') c.from = nearMetres(c.from, e.target.value);
+    else if (key === 'fromSquad') c.from = squadMoment(c.from, e.target.value);
     else if (e.target.value) c[key] = e.target.value;
     else delete c[key];
     edited();
@@ -783,13 +813,27 @@ export function createMissions(ctx) {
     const pool = st.current || st.shared || {};
     if (v === 'zone') return `zone:${(pool.zones || [])[0] || ''}`;
     if (v === 'dead') return `dead:${(pool.squads || [])[0] || ''}`;
+    if (v === 'near') return `near:20:${(pool.squads || [])[0] || ''}`;
     return v;
+  }
+  // a squad picked for a squad's moment: wiped out, or the player near it (keeping its metres)
+  function squadMoment(old, sq) {
+    const m = /^near:([^:]*):/.exec(String(old || ''));
+    return m ? `near:${m[1] || 20}:${sq}` : `dead:${sq}`;
+  }
+  function nearMetres(old, v) {
+    const m = /^near:[^:]*:(.*)$/.exec(String(old || ''));
+    return `near:${Math.max(1, Math.round(+v || 20))}:${m ? m[1] : ''}`;
   }
   // the squad picker for a "dead:" moment
   function deadPick(r, attrs, key) {
-    if (!String(r || '').startsWith('dead:')) return '';
-    const squads = (st.current || st.shared || {}).squads || [], sq = r.slice(5);
-    return `<select ${attrs} data-k="${key}"><option value="">(squad)</option>${squads.map((s) =>
+    r = String(r || '');
+    const near = /^near:([^:]*):(.*)$/.exec(r);
+    if (!r.startsWith('dead:') && !near) return '';
+    const squads = (st.current || st.shared || {}).squads || [], sq = near ? near[2] : r.slice(5);
+    return (near ? `<label title="How close the player comes to one of the squad">within
+        <input ${attrs} data-k="${key}Metres" type="number" min="1" step="5" value="${+near[1] || 20}"> m of</label>` : '')
+      + `<select ${attrs} data-k="${key}"><option value="">(squad)</option>${squads.map((s) =>
       `<option ${s === sq ? 'selected' : ''}>${esc(s)}</option>`).join('')}</select>`;
   }
   // "N seconds after" its moment (radio lines, squads that appear later, orders)
@@ -808,11 +852,12 @@ export function createMissions(ctx) {
     if (withEnd) opts.push(['end', 'When the contract completes']);
     st.objectives.forEach((x, j) => opts.push([`starts:${j + 1}`, `When objective ${j + 1} starts`],
                                               [`done:${j + 1}`, `When objective ${j + 1} is done`]));
-    opts.push(['zone', 'When the player enters a zone'], ['dead', 'When a squad is wiped out']);
-    const isZone = r.startsWith('zone:'), isDead = r.startsWith('dead:');
+    opts.push(['zone', 'When the player enters a zone'], ['dead', 'When a squad is wiped out'],
+              ['near', 'When the player comes near a squad']);
+    const isZone = r.startsWith('zone:'), isDead = r.startsWith('dead:') || r.startsWith('near:'), squadKind = r.slice(0, 4);
     const zone = isZone ? r.slice(5) : '';
     return `<select ${attrs} data-k="${key}">${opts.map(([v, t]) =>
-        `<option value="${v}" ${(isZone ? v === 'zone' : isDead ? v === 'dead' : v === r) ? 'selected' : ''}>${t}</option>`).join('')}</select>`
+        `<option value="${v}" ${(isZone ? v === 'zone' : isDead ? v === squadKind : v === r) ? 'selected' : ''}>${t}</option>`).join('')}</select>`
       + deadPick(r, attrs, `${key}Squad`) + `${isZone
       ? `<select ${attrs} data-k="${key}Zone"><option value="">(zone)</option>${zones.map((z) =>
           `<option ${z === zone ? 'selected' : ''}>${esc(z)}</option>`).join('')}</select>` : ''}`;
@@ -890,7 +935,8 @@ export function createMissions(ctx) {
     if (key === 'delay') { setDelay(x, e.target.value); edited(); return; }
     if (key === 'when') x.when = momentOf(e.target.value);
     else if (key === 'whenZone') x.when = `zone:${e.target.value}`;
-    else if (key === 'whenSquad') x.when = `dead:${e.target.value}`;
+    else if (key === 'whenSquadMetres') x.when = nearMetres(x.when, e.target.value);
+    else if (key === 'whenSquad') x.when = squadMoment(x.when, e.target.value);
     else x[key] = e.target.value;
     drawMusic(); edited();
   });
@@ -926,7 +972,8 @@ export function createMissions(ctx) {
     if (key === 'delay') { setDelay(x, e.target.value); edited(); return; }
     if (key === 'when') x.when = momentOf(e.target.value);
     else if (key === 'whenZone') x.when = `zone:${e.target.value}`;
-    else if (key === 'whenSquad') x.when = `dead:${e.target.value}`;
+    else if (key === 'whenSquadMetres') x.when = nearMetres(x.when, e.target.value);
+    else if (key === 'whenSquad') x.when = squadMoment(x.when, e.target.value);
     else x[key] = e.target.value;
     drawWeather(); edited();
   });
@@ -967,7 +1014,8 @@ export function createMissions(ctx) {
       drawRadio(); drawMusic(); drawWeather(); edited(); return;
     }
     if (key === 'whenZone') r.when = `zone:${e.target.value}`;
-    else if (key === 'whenSquad') r.when = `dead:${e.target.value}`;
+    else if (key === 'whenSquadMetres') r.when = nearMetres(r.when, e.target.value);
+    else if (key === 'whenSquad') r.when = squadMoment(r.when, e.target.value);
     else r[key] = e.target.value.trim();
     edited();
   });
@@ -1001,7 +1049,8 @@ export function createMissions(ctx) {
       const zones = (st.current || st.shared || {}).zones || [];
       w.when = momentOf(e.target.value);
     } else if (key === 'whenZone') w.when = `zone:${e.target.value}`;
-    else if (key === 'whenSquad') w.when = `dead:${e.target.value}`;
+    else if (key === 'whenSquadMetres') w.when = nearMetres(w.when, e.target.value);
+    else if (key === 'whenSquad') w.when = squadMoment(w.when, e.target.value);
     else w[key] = e.target.value;
     drawWaves(); edited();
   });
@@ -1101,7 +1150,8 @@ export function createMissions(ctx) {
       const zones = (st.current || st.shared || {}).zones || [];
       o.when = momentOf(e.target.value);
     } else if (key === 'whenZone') o.when = `zone:${e.target.value}`;
-    else if (key === 'whenSquad') o.when = `dead:${e.target.value}`;
+    else if (key === 'whenSquadMetres') o.when = nearMetres(o.when, e.target.value);
+    else if (key === 'whenSquad') o.when = squadMoment(o.when, e.target.value);
     else {
       o[key] = e.target.value;
       if (key === 'do' || key === 'squad') delete o.to;     // a different list of places
