@@ -767,7 +767,7 @@ class Scene:
             raise ValueError(f"{aid} already exists")
         names = {o["name"].lower() for o in self.all_objects() if o["name"]}
         need = ["template_A6_NK_Soldier", "template_civ_civilian01", "template_allies_officer",
-                "template_allies_humvee_empty"]
+                "template_allies_humvee_empty"] + (["template_pic_money"] if int(which) == 3 else [])
         missing = [t for t in need if t.lower() not in names]
         if missing:
             raise ValueError(f"the game data lacks {', '.join(missing)}")
@@ -800,8 +800,8 @@ class Scene:
                 {"from": "template_allies_humvee_empty", "name": f"{aid}_humvee", "position": at(10, -12), "yaw": 90}],
         }
         squad = lambda s: f"{enc}:{s}"
-        if int(which) == 2:
-            layer, doc = self._test_mission_2(aid, enc, at, square, squad)
+        if int(which) in (2, 3):
+            layer, doc = (self._test_mission_2 if int(which) == 2 else self._test_mission_3)(aid, enc, at, square, squad)
             (self.mod / "missions").mkdir(parents=True, exist_ok=True)
             (self.mod / "encounters").mkdir(parents=True, exist_ok=True)
             (self.mod / "missions" / f"{aid}.json").write_text(json.dumps(doc, indent=1) + "\n", encoding="utf-8")
@@ -918,6 +918,58 @@ class Scene:
                 {"type": "hostile", "targets": [f"{aid}_officer"], "from": "starts:5",
                  "text": "The officer turned hostile (turns hostile works)."},
             ],
+        }
+        return layer, doc
+
+    def _test_mission_3(self, aid, enc, at, square, squad):
+        """Feature test 3: the newer objective types. Defend civilians while
+        a clock runs (an NK squad arrives to attack), collect money pickups,
+        and a chase: a runner walks a path to a zone, and reaching it fails
+        the mission."""
+        layer = {
+            "map": aid.split("_")[0].upper(),
+            "boundaries": {"ft_escape": square(-90, -60, 8)},
+            "paths": {"ft_run": {"points": [at(60, -30), at(20, -45), at(-30, -55), at(-90, -60)]}},
+            "encounters": [{"name": enc,
+                            "points": {"A": [at(25, 20)], "B": [at(70, 40)], "C": [at(60, -30)]},
+                            "squads": [
+                                {"name": "Civilians", "points": ["A"],
+                                 "members": [{"from": "template_civ_civilian01", "name": f"{aid}_civ{k}",
+                                              "position": at(22 + 3 * k, 20), "yaw": 180} for k in (1, 2, 3)]},
+                                {"name": "Attackers", "points": ["B"],
+                                 "members": [{"from": "template_A6_NK_Soldier", "name": f"{aid}_attacker{k}",
+                                              "position": at(70 + 3 * k, 40), "yaw": 200} for k in (1, 2, 3)]},
+                                {"name": "Runner", "points": ["C"],
+                                 "members": [{"from": "template_A6_NK_Soldier", "name": f"{aid}_runner",
+                                              "position": at(60, -30), "yaw": 250}]}]}],
+            "objects": [{"from": "template_pic_money", "name": f"{aid}_cash{k}", "position": at(dx, dz), "yaw": 0}
+                        for k, (dx, dz) in enumerate([(-15, 10), (-25, 25), (-10, 35)], 1)],
+        }
+        doc = {
+            "title": "Foundry feature test 3",
+            "description": "Defend, collect and a chase (a target that fails the mission if he gets away).",
+            "mail": {"sender": "mail.senders.techgal", "subject": "Contract: 'Foundry feature test 3'",
+                     "body": "Play it through once; play it again and let the civilians die or the runner escape."},
+            "ini": {"ContractFee": 1000, "BonusFee": 0},
+            "start": {"position": at(0, 0), "heading": 90},
+            "debug": True, "keep_if_hostile": True,
+            "objectives": [
+                {"type": "defend", "text": "1. Keep at least 2 of the 3 civilians alive for 60 seconds",
+                 "squad": squad("Civilians"), "seconds": 60, "need": 2},
+                {"type": "collect", "text": "2. Collect 2 of the 3 money pickups",
+                 "targets": [f"{aid}_cash{k}" for k in (1, 2, 3)], "need": 2},
+                {"type": "destroy", "text": "3. Stop the runner before he reaches the marked zone",
+                 "squad": squad("Runner")},
+            ],
+            "waves": [{"when": "starts:1", "squad": squad("Attackers"), "delay": 10}],
+            "orders": [{"when": "starts:1", "squad": squad("Attackers"), "do": "attack", "delay": 12},
+                       {"when": "starts:3", "squad": squad("Runner"), "do": "path", "to": "ft_run"}],
+            "radio": [{"when": "start", "text": "Test 3: an NK squad is coming for the civilians. Hold them off."},
+                      {"when": "starts:2", "text": "Now pick up the money."},
+                      {"when": "starts:3", "text": "A runner is heading for the marked zone. Stop him."},
+                      {"when": "end", "text": "Feature test 3 complete."}],
+            "fail": [{"type": "escapes", "squad": squad("Runner"), "zone": "ft_escape", "from": "starts:3",
+                      "until": "done:3", "text": "The runner got away (target escapes works)."}],
         }
         return layer, doc
 

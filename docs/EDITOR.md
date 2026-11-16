@@ -379,6 +379,12 @@ toolkit bundle run it the same way: `foundry\python\python.exe foundry\mercfound
   leave the larger area (step 4), shoot the officer (step 5). Play it
   through once, then use Start at (for testing) to try each.
 
+  **Test 3** lays out the newer objective types: defend three civilians
+  for 60 seconds while an NK squad attacks (at least 2 must live), collect
+  2 of 3 money pickups, and a chase: a runner walks a path to a zone, and
+  reaching it fails the mission (target escapes). Play it once through, then
+  again letting the civilians die or the runner get away.
+
   **Duplicate** copies the saved mission and its layer to the next free
   number (of its faction, or another one picked beside it); names made from
   the mission's id, such as its encounters, squads and people, take the new

@@ -1235,7 +1235,7 @@ export function createMissions(ctx) {
     return doc;
   }
   const makeTest = async (which) => {
-    if (!confirm(`Make feature test${which === 2 ? ' 2' : ''} around the middle of the view? It adds a mission and its layer to the mod (about 150 m of flat-ish ground works best).`)) return;
+    if (!confirm(`Make feature test${which > 1 ? ` ${which}` : ''} around the middle of the view? It adds a mission and its layer to the mod (about 150 m of flat-ish ground works best).`)) return;
     try {
       const doc = await post('/api/missions/testmission', {map: st.map, centre: ctx.viewCentre(), which});
       st.current = {id: doc.id};
@@ -1245,6 +1245,7 @@ export function createMissions(ctx) {
   };
   $('ms-testmission').onclick = () => makeTest(1);
   $('ms-testmission2').onclick = () => makeTest(2);
+  $('ms-testmission3').onclick = () => makeTest(3);
   $('ms-duplicate').onclick = async () => {
     if (!st.current) return;
     if (st.dirty && !confirm('Duplicate copies the saved mission: your unsaved changes aren\'t in the copy. Go on?')) return;

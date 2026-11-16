@@ -1364,7 +1364,9 @@ def _apply_bone_moves(data, folder, result):
     from . import bones
     moved, seen = {}, set()
     for a, r in data.records(model.MODEL):
-        if r.ident not in data.replace.get(a, {}) or r.key in seen:
+        # this mod's changes only (with several mods, each step runs once per mod)
+        if r.ident not in data.replace.get(a, {}) or r.key in seen or \
+                data.changed_by.get((a, r.ident)) != data.project:
             continue
         seen.add(r.key)
         old, new = (model.skeleton(data.archive(a).read(r)), model.skeleton(data.current(a, r)))
