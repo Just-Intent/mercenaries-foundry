@@ -1648,6 +1648,8 @@ def _apply_terrain(data, folder, result):
         work.setdefault(f.name[:-len(".layers.json")], {})["table"] = f
     for f in sorted(tdir.glob("*.decals.json")):
         work.setdefault(f.name[:-len(".decals.json")], {})["decals"] = f
+    for f in sorted(tdir.glob("*.lighting.json")):
+        work.setdefault(f.name[:-len(".lighting.json")], {})["lighting"] = f
     for f in sorted(tdir.glob("*.surfaces.json")):
         _apply_surfaces(data, f, f.name[:-len(".surfaces.json")], result)
     for name, job in work.items():
@@ -1695,7 +1697,9 @@ def _apply_terrain(data, folder, result):
                                           f"that an earlier mod also reshaped; {data.project}'s heights win there")
                 replace = terrain.encode_height_units(chunks, units)
                 note = "lighting kept (relight: false)"
-                if meta.get("relight", True):
+                if "lighting" in job:
+                    note = f"lit from {job['lighting'].name}"
+                elif meta.get("relight", True):
                     colr, note = terrain_light.relight_chunks(chunks, replace)
                     if colr is not None:
                         replace[b"COLR"] = colr
@@ -1755,11 +1759,37 @@ def _apply_terrain(data, folder, result):
                         result.warnings.append(f"terrain/{job['decals'].name}: no game texture named {t!r}")
                 roads = len(doc.get("roads", []))
                 notes.append(f"{count} decals" + (f" ({roads} road{'s' if roads != 1 else ''} laid)" if roads else ""))
+            if "lighting" in job:
+                # the whole ground lit from a chosen sun, after its final heights
+                try:
+                    settings = terrain_light.lighting_settings(
+                        json.loads(job["lighting"].read_text(encoding="utf-8")), _sun_angle(data, folder, name))
+                except ValueError as err:
+                    raise ValueError(f"terrain/{job['lighting'].name}: {err}") from err
+                colr, note = terrain_light.bake({**chunks, **replace}, settings)
+                replace[b"COLR"] = colr
+                notes.append(note)
             if a:
                 data.set(a, r, terrain.rebuild(record, replace))
             else:
                 data.replace_added(key, name_hash("Terrain"), terrain.rebuild(record, replace))
         result.changes.append(f"terrain {name}: " + "; ".join(notes))
+
+
+def _sun_angle(data, folder, name):
+    """The map's SunAngle: the mod's sky/<map>.json, else its level config's."""
+    from . import sky
+    p = folder / "sky" / f"{name.lower()}.json"
+    if p.exists():
+        for k, v in (json.loads(p.read_text(encoding="utf-8")).get("base") or {}).items():
+            if k.lower() == "sunangle":
+                return v
+    texts = sky.level_texts(data.dir, name, data.files)
+    if texts:
+        for k, v in sky.base(next(iter(texts.values()))).items():
+            if k.lower() == "sunangle":
+                return v
+    return None
 
 
 def _apply_surfaces(data, f, name, result):

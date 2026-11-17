@@ -121,7 +121,7 @@ def fit(H, rgb, size, spacing, stride=3):
         diffuse.append(b)
     # shadow strength: how much of the sun term shadowed ground loses
     la, lb = sum(ambient) / 3, sum(diffuse) / 3
-    ks = [1 - (lum[i] - la) / (lb * lams[i]) for i, s in enumerate(shade_flags) if s and lams[i] > 0.2]
+    ks = [1 - (lum[i] - la) / (lb * lams[i]) for i, s in enumerate(shade_flags) if s and lams[i] > 0.2] if lb > 0 else []
     shadow = min(1.0, max(0.0, sorted(ks)[len(ks) // 2])) if ks and lb > 0 else 0.5
     return Light(sun, ambient, diffuse, shadow, math.sqrt(e))
 
@@ -263,3 +263,202 @@ def relight_chunks(chunks, new_height_chunks):
                     for i in range(side * side))
     el = math.degrees(math.asin(max(-1.0, min(1.0, light.sun[1]))))
     return body, f"relit {count} vertex colours (sun {el:.0f} degrees up)"
+
+
+# ---------------------------------------------------------------- a chosen sun
+#
+# A level config's "SunAngle a b" is in degrees.  The config reader (0x211C90)
+# multiplies both by pi/180 and 0x211C00 makes the light's direction from them,
+# stored at 0x841FCC and read by the drawing code: the light travels along
+# (-sin a cos b, cos a, -sin a sin b) (the game's sin table, 0x1F9FD0, and its
+# lookups 0x1F9D70 sin, 0x1F9DA0 cos, 0x1F9DE0 sin and cos).  So the sun stands
+# a - 90 degrees above the horizon, toward (cos b, sin b) in (x, z): what
+# _sun(a - 90, b) points at.  The maps have x east and z south, so the sun's
+# compass bearing (clockwise from north) is b + 90.  SW's "140 180": 50 degrees
+# up in the west; blank's and NW's "130 80": 40 degrees up, a little east of
+# south.
+
+def sun_from_angle(text):
+    """SunAngle's text ("140 180") -> (bearing, height) in degrees."""
+    parts = str(text).split()
+    if len(parts) < 2:
+        raise ValueError(f"SunAngle is two numbers, not {text!r}")
+    a, b = float(parts[0]), float(parts[1])
+    return (b + 90.0) % 360.0, a - 90.0
+
+
+def sun_angle(bearing, height):
+    """(bearing, height) in degrees -> SunAngle's text."""
+    def num(v):
+        return f"{v:.2f}".rstrip("0").rstrip(".")
+    return f"{num(90.0 + float(height))} {num((float(bearing) - 90.0) % 360.0)}"
+
+
+def sun_vector(bearing, height):
+    """The unit vector toward the sun (x east, y up, z south)."""
+    return _sun(float(height), float(bearing) - 90.0)
+
+
+# A lit map's colours, near SW's (its mean vertex colour is about 126 135 139).
+DEFAULT_AMBIENT = (70, 72, 76)
+DEFAULT_DIFFUSE = (110, 110, 108)
+DEFAULT_SHADOW = 0.6
+BAKE_VERSION = b"terrain-light-bake-1"
+
+
+def shadow_mask(H, size, spacing, sun):
+    """rows of bytes, 1 where a hill between the sample and the sun hides it.
+    One sweep from the sun's side: each sample's horizon is the higher of its
+    own height and the horizon one step toward the sun, lowered by the sun's
+    rise over that step."""
+    out = [bytearray(size) for _ in range(size)]
+    sx, sy, sz = sun
+    horiz = math.hypot(sx, sz)
+    if horiz < 1e-6 or sy <= 0:
+        return out
+    ux, uz = sx / horiz, sz / horiz
+    tan = sy / horiz
+    along_x = abs(ux) >= abs(uz)
+    major, minor = (ux, uz) if along_x else (uz, ux)
+    rise = tan * spacing / abs(major)
+    d = minor / abs(major)               # minor-axis offset of the upstream sample
+    k = math.floor(d)
+    t = d - k
+    order = range(size - 1, -1, -1) if major > 0 else range(size)
+    prev = None
+    for m in order:
+        line = [H[m][i] for i in range(size)] if not along_x else [H[i][m] for i in range(size)]
+        hor = list(line)
+        if prev is not None:
+            for i in range(size):
+                a = i + k
+                if a < 0 or a >= size or (t and a + 1 >= size):
+                    continue
+                up = (prev[a] * (1 - t) + prev[a + 1] * t if t else prev[a]) - rise
+                if up > line[i] + 0.5:
+                    if along_x:
+                        out[i][m] = 1
+                    else:
+                        out[m][i] = 1
+                if up > hor[i]:
+                    hor[i] = up
+        prev = hor
+    return out
+
+
+def _rgb3(v, what):
+    if not (isinstance(v, (list, tuple)) and len(v) == 3 and all(isinstance(c, (int, float)) for c in v)):
+        raise ValueError(f"{what} is [red, green, blue] (0-255)")
+    if not all(0 <= c <= 255 for c in v):
+        raise ValueError(f"{what}: each of red, green and blue is 0-255")
+    return tuple(float(c) for c in v)
+
+
+def lighting_settings(doc, sun_text=None):
+    """terrain/<map>.lighting.json, checked and filled in: {"bearing",
+    "height" (the sun; default the map's SunAngle), "ambient", "diffuse"
+    ([r, g, b]), "shadow" (0-1: how much of the sun shadowed ground loses),
+    "tint" (keep painted tint where the map's colours show it)}."""
+    if not isinstance(doc, dict):
+        raise ValueError("lighting: an object of settings")
+    unknown = set(doc) - {"bearing", "height", "ambient", "diffuse", "shadow", "tint"}
+    if unknown:
+        raise ValueError(f"lighting: unknown settings {', '.join(sorted(unknown))}")
+    if ("bearing" in doc) != ("height" in doc):
+        raise ValueError("lighting: give the sun's bearing and height together (or neither, for the map's SunAngle)")
+    if "bearing" in doc:
+        bearing, height = float(doc["bearing"]), float(doc["height"])
+    elif sun_text:
+        bearing, height = sun_from_angle(sun_text)
+    else:
+        raise ValueError("lighting: the map has no SunAngle; give the sun's bearing and height")
+    if not 0 < height <= 90:
+        raise ValueError(f"lighting: the sun's height is 0-90 degrees above the horizon, not {height:g}")
+    shadow = float(doc.get("shadow", DEFAULT_SHADOW))
+    if not 0 <= shadow <= 1:
+        raise ValueError("lighting: shadow is 0 (none) to 1 (only ambient light in shadow)")
+    return {"bearing": bearing % 360.0, "height": height,
+            "ambient": _rgb3(doc.get("ambient", DEFAULT_AMBIENT), "lighting: ambient"),
+            "diffuse": _rgb3(doc.get("diffuse", DEFAULT_DIFFUSE), "lighting: diffuse"),
+            "shadow": shadow, "tint": bool(doc.get("tint", True))}
+
+
+def _shades(H, size, spacing, sun, shadow):
+    """Sun term per sample: lambert, reduced in hill shadow."""
+    mask = shadow_mask(H, size, spacing, sun)
+    out = []
+    for z in range(size):
+        row, mrow = [], mask[z]
+        for x in range(size):
+            n = _normal(H, size, spacing, x, z)
+            lam = n[0] * sun[0] + n[1] * sun[1] + n[2] * sun[2]
+            lam = lam if lam > 0 else 0.0
+            if lam and mrow[x]:
+                lam *= 1 - shadow
+            row.append(lam)
+        out.append(row)
+    return out
+
+
+def bake(chunks, settings):
+    """The whole COLR lit from a chosen sun (settings from lighting_settings).
+    Returns (COLR body, note).  Painted tint is kept where the map's colours
+    follow a sun of their own (fit): each vertex keeps old / old shade."""
+    from . import terrain
+    import hashlib
+    import json
+    h = hashlib.sha256(BAKE_VERSION + json.dumps(settings, sort_keys=True).encode())
+    for tag in (b"INFO", b"HEXP", b"HGT8", b"COLR"):
+        h.update(tag + len(chunks[tag]).to_bytes(4, "little") + chunks[tag])
+    path = cache_dir() / "terrain-bake" / (h.hexdigest() + ".bin")
+    info, units, _ = terrain.decode_height_units(chunks)
+    size, spacing, step = info["size"], info["spacing"], info["step"]
+    sun = sun_vector(settings["bearing"], settings["height"])
+    note = (f"lit from a sun {settings['height']:.0f} degrees up at bearing {settings['bearing']:.0f}"
+            f" (SunAngle {sun_angle(settings['bearing'], settings['height'])})")
+    try:
+        body = path.read_bytes()
+        return body, note
+    except OSError:
+        pass
+    H = [[u * step for u in row] for row in units]
+    side = size // tl.PATCH
+    colours = tl.decode_colr(chunks[b"COLR"], side * side)
+    shades = _shades(H, size, spacing, sun, settings["shadow"])
+    tint = None
+    # tint needs colours that vary (a new map from blank has one colour: nothing to keep)
+    if settings["tint"] and len({v & 0x7FFF for patch in colours for v in patch}) > 1:
+        old = vertex_rgb(colours, size)
+        light = _cached_fit(chunks, lambda: fit(H, old, size, spacing))
+        if light.usable:
+            old_shades = _shades(H, size, spacing, light.sun, light.shadow)
+            tint = (old, old_shades, light)
+            note += "; painted tint kept"
+    amb, dif = settings["ambient"], settings["diffuse"]
+    out = []
+    for pi in range(side * side):
+        pz, px = divmod(pi, side)
+        vals = []
+        for j in range(tl.VERTS):
+            z = (pz * tl.PATCH + j) % size
+            for i in range(tl.VERTS):
+                x = (px * tl.PATCH + i) % size
+                lam = shades[z][x]
+                rgb = [amb[c] + dif[c] * lam for c in range(3)]
+                if tint:
+                    old, old_shades, light = tint
+                    for c in range(3):
+                        base = light.ambient[c] + light.diffuse[c] * old_shades[z][x]
+                        if base > 1:
+                            rgb[c] *= min(4.0, max(0.25, old[z][x][c] / base))
+                r, g, b = (min(248, max(0, int(round(v / 8)) * 8)) for v in rgb)
+                was = colours[pi][j * tl.VERTS + i]
+                vals.append((was & 0x8000) | (tl.rgb_colr(r, g, b) & 0x7FFF))
+        out.append(tl.pack_blob(struct.pack("<81H", *vals)))
+    body = b"".join(out)
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_bytes(body)
+    except OSError:
+        pass
+    return body, note
