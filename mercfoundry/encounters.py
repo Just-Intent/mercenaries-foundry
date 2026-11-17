@@ -70,6 +70,12 @@ last) to another path's point (default: its first), as most retail links do.
 "from" names any world object (a template_* or a placed one), or "model:<name>"
 for the first unnamed object with that model, whose model and properties are copied; "set" changes properties.  Copy objects whose assets
 are already loaded where the layer is used, or add their models to "loads".
+
+Every name goes into the game's named-object table, which holds 2048 (a
+full one hangs the game in HashTable_Find while a layer loads). "unnamed":
+true writes a layer's "objects" without names, as retail's scenery is;
+their names in the file only tell them apart in the editor, and scripts
+can't find them by name.
 """
 
 import math
@@ -365,7 +371,13 @@ def build(layer, doc, find_source, source_loads=None):
             insts.append(_member(find_source(m["from"]), m,
                                  {"encounter": sq["encounter"], "squad": sq["name"], "path": "none"}))
     for o in doc.get("objects", []):
-        insts.append(_member(find_source(o["from"]), o))
+        inst = _member(find_source(o["from"]), o)
+        if doc.get("unnamed"):
+            # "unnamed": true writes the objects as unnamed scenery, as retail's
+            # buildings are: the game's named-object table holds 2048 names
+            # in all, and a full table hangs the game while a layer loads
+            inst["template"] = ""
+        insts.append(inst)
     wdoc = {"format": world.FORMAT, "name": layer, "strings": [], "chunks": [
         {"tag": "NAME"},
         {"tag": "TNAM", "hex": (doc.get("map", "SWN").upper().encode("ascii") + b"\0").hex()},

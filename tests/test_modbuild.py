@@ -166,6 +166,18 @@ class ModBuildTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "already a map"):
             modbuild.build(self.project, self.data, self.out)
 
+    def test_layer_name_limit(self):
+        # more names than the game's named-object table can take are refused
+        # (a full table hangs it); "unnamed" scenery is fine
+        objs = [{"from": "jeep_template", "name": f"b{i}", "position": [i, 0, 0]}
+                for i in range(modbuild.MAX_LAYER_NAMES + 1)]
+        (self.project / "encounters").mkdir(exist_ok=True)
+        self.write("encounters/town.json", json.dumps({"map": "swn", "objects": objs}))
+        with self.assertRaisesRegex(ValueError, "named-object table"):
+            modbuild.build(self.project, self.data, self.out)
+        self.write("encounters/town.json", json.dumps({"map": "swn", "unnamed": True, "objects": objs}))
+        modbuild.build(self.project, self.data, self.out)
+
     def test_rule_new_model(self):
         # a rule giving an object another model (GeometryFile): its model word follows
         self.write("objects/o.json", json.dumps({"template": "jeep_template", "set": {"GeometryFile": "foundry_crate"}}))

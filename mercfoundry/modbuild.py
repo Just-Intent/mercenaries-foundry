@@ -58,6 +58,9 @@ from .hashing import name_hash
 
 SCRIPT, WORLD, REGISTRY = name_hash("script"), name_hash("world"), name_hash("registry")
 ARCHIVES = ("assets.dsk", "english.dsk", "locked.dsk", "streamed.dsk")
+# Most named objects one encounter layer may add: the game's named-object
+# table holds 2048 in all, and a full one hangs it (HashTable_Find).
+MAX_LAYER_NAMES = 500
 
 EXAMPLE_README = """# {name}
 
@@ -532,6 +535,12 @@ def _apply_encounters(data, folder, result):
         if name_hash(layer) in existing:
             raise ValueError(f"encounters/{f.name}: the game already has a layer named {layer!r}")
         doc = json.loads(f.read_text(encoding="utf-8"))
+        named = len(encounters.member_names(doc)) - (len(doc.get("objects", [])) if doc.get("unnamed") else 0)
+        if named > MAX_LAYER_NAMES:
+            raise ValueError(
+                f"encounters/{f.name}: {named} named objects; the game's named-object table holds 2048 in all "
+                f"(its own layers use over a thousand) and a full one hangs the game while the layer loads. "
+                f"For scenery add \"unnamed\": true to the layer (its objects then have no names in game)")
         current_map[0] = (doc.get("map") or "").lower()
         if layer.lower() in mission_docs and mission_docs[layer.lower()].get("waves"):
             # a mission's squads that appear later go in layers of their own

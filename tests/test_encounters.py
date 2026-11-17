@@ -31,6 +31,12 @@ class EncounterTests(unittest.TestCase):
         models = encounters.parse_list(recs[encounters.LIST].decode("latin-1"))["model"]
         self.assertEqual(models, ["foundry_crate", "foundry_crate_ruin"])
 
+    def test_unnamed_layer(self):
+        # "unnamed": plain objects go in without names (squad members keep theirs)
+        rec = self.build(dict(DOC, unnamed=True))[encounters.WORLD]
+        insts = [c for c in world.to_json(rec)["chunks"] if c.get("tag") == "inst"]
+        self.assertEqual([i["template"] for i in insts], ["Nk01", "Nk02", ""])
+
     def test_world(self):
         rec = self.build()[encounters.WORLD]
         doc = world.to_json(rec)
