@@ -5,11 +5,11 @@
  },
  "counts": {
   "functions_in_analysis": 13982,
-  "named": 651,
+  "named": 658,
   "with_file": 1500,
   "file_direct": 224,
   "lua_commands": 360,
-  "manual": 125,
+  "manual": 132,
   "globals": 29,
   "structures": 5,
   "derived": 128
@@ -161,6 +161,26 @@
    "signature": "int __thiscall Vehicle_GetNumPassengers(Vehicle *this)"
   },
   {
+   "address": "0x000465F0",
+   "names": [
+    "WheeledActor_SetupPhysics"
+   ],
+   "evidence": [
+    "retail code: slot +0x1C of vtable 0x2E16D0: WheeledVehicle_Init on WheeledActor_GetPhysics(this), then its steering and body setters (0x132D30, 0x132DA0, 0x132E20)"
+   ],
+   "signature": "void __thiscall WheeledActor_SetupPhysics(Actor *this, ...)"
+  },
+  {
+   "address": "0x000482A0",
+   "names": [
+    "WheeledActor_GetPhysics"
+   ],
+   "evidence": [
+    "retail code: returns this + 0x2C0 (slot +0x290 of the wheeled vehicle actor's vtable 0x2E16D0); the vehicle setup (0x465F0) passes it to WheeledVehicle_Init, which reads the drivetrain at +0xA0 (so actor + 0x360)"
+   ],
+   "signature": "WheeledVehicle * __thiscall WheeledActor_GetPhysics(Actor *this)"
+  },
+  {
    "address": "0x00049A00",
    "names": [
     "ActorVehicle_EnableRotorEffects"
@@ -168,6 +188,16 @@
    "evidence": [
     "inferred: the only engine call of script command ActorVehicle_EnableRotorEffects (binding 0x001175E0), and called from at most three places"
    ]
+  },
+  {
+   "address": "0x0004A1D0",
+   "names": [
+    "HelicopterActor_SetupPhysics"
+   ],
+   "evidence": [
+    "retail code: slot +0x1C of vtable 0x2E1F08: the helicopter's physics is in the actor at +0x2C8 (0x13B0E0 on it, which calls Helicopter_SetPhysicsValue with this = actor + 0x2C8)"
+   ],
+   "signature": "void __thiscall HelicopterActor_SetupPhysics(Actor *this, ...)"
   },
   {
    "address": "0x0004C380",
@@ -262,6 +292,16 @@
    "evidence": [
     "inferred: the only engine call of script command Support_ResetToDefault (binding 0x00113F70), and called from at most three places"
    ]
+  },
+  {
+   "address": "0x0005F450",
+   "names": [
+    "TankActor_SetupPhysics"
+   ],
+   "evidence": [
+    "retail code: slot +0x1C of vtable 0x2E3760: the tank's physics is in the actor at +0x2E4 (0x142810 on it, which calls TrackedVehicle_SetPhysicsValue with this = actor + 0x2E4)"
+   ],
+   "signature": "void __thiscall TankActor_SetupPhysics(Actor *this, ...)"
   },
   {
    "address": "0x00060B50",
@@ -10167,6 +10207,16 @@
    "signature": "float __thiscall Drivetrain_GetPhysicsValue(void *this, uint32_t propertyHash)"
   },
   {
+   "address": "0x00137920",
+   "names": [
+    "Drivetrain_ReadProperties"
+   ],
+   "evidence": [
+    "retail code: reads each physics* property and stores it with Drivetrain_SetPhysicsValue; called by WheeledVehicle_Init with this = vehicle + 0xA0"
+   ],
+   "signature": "void __thiscall Drivetrain_ReadProperties(Drivetrain *this, ...)"
+  },
+  {
    "address": "0x00138FC0",
    "names": [
     "Helicopter_SetPhysicsValue"
@@ -10175,6 +10225,16 @@
     "retail code: a switch on 14 name hashes (physicsclimbspeed and climbaccel, side speed and accel, max pitch and roll, pitch and roll accel, forward and backward speed, yaw values) storing the float argument"
    ],
    "signature": "void __thiscall Helicopter_SetPhysicsValue(void *this, uint32_t propertyHash, float value)"
+  },
+  {
+   "address": "0x0013B0E0",
+   "names": [
+    "Helicopter_ReadProperties"
+   ],
+   "evidence": [
+    "retail code: reads the helicopter's physics* properties into Helicopter_SetPhysicsValue"
+   ],
+   "signature": "void __thiscall Helicopter_ReadProperties(Helicopter *this, ...)"
   },
   {
    "address": "0x00141690",
@@ -10195,6 +10255,16 @@
     "retail code: the matching getter (7 name hashes)"
    ],
    "signature": "float __thiscall TrackedVehicle_GetPhysicsValue(void *this, uint32_t propertyHash)"
+  },
+  {
+   "address": "0x00142810",
+   "names": [
+    "TrackedVehicle_ReadProperties"
+   ],
+   "evidence": [
+    "retail code: reads the tank's physics* properties into TrackedVehicle_SetPhysicsValue"
+   ],
+   "signature": "void __thiscall TrackedVehicle_ReadProperties(TrackedVehicle *this, ...)"
   },
   {
    "address": "0x00145ED0",

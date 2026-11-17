@@ -735,6 +735,48 @@
    "name": "Character_ReadSettings",
    "signature": "void __cdecl Character_ReadSettings(Config *cfg)",
    "evidence": "retail code: character settings from the configs (rs.ini: CorpseCleanUpFifoSize, FidgetWaitTimeBase, FallMinDistanceLight, ...; xbox.ini: the four AnimUpdate tables into g_AnimUpdateRates); called by 0x178B40, which also reads the sky (Sky_ReadConfig)"
+  },
+  {
+   "address": "0x000482A0",
+   "name": "WheeledActor_GetPhysics",
+   "signature": "WheeledVehicle * __thiscall WheeledActor_GetPhysics(Actor *this)",
+   "evidence": "retail code: returns this + 0x2C0 (slot +0x290 of the wheeled vehicle actor's vtable 0x2E16D0); the vehicle setup (0x465F0) passes it to WheeledVehicle_Init, which reads the drivetrain at +0xA0 (so actor + 0x360)"
+  },
+  {
+   "address": "0x000465F0",
+   "name": "WheeledActor_SetupPhysics",
+   "signature": "void __thiscall WheeledActor_SetupPhysics(Actor *this, ...)",
+   "evidence": "retail code: slot +0x1C of vtable 0x2E16D0: WheeledVehicle_Init on WheeledActor_GetPhysics(this), then its steering and body setters (0x132D30, 0x132DA0, 0x132E20)"
+  },
+  {
+   "address": "0x0004A1D0",
+   "name": "HelicopterActor_SetupPhysics",
+   "signature": "void __thiscall HelicopterActor_SetupPhysics(Actor *this, ...)",
+   "evidence": "retail code: slot +0x1C of vtable 0x2E1F08: the helicopter's physics is in the actor at +0x2C8 (0x13B0E0 on it, which calls Helicopter_SetPhysicsValue with this = actor + 0x2C8)"
+  },
+  {
+   "address": "0x0005F450",
+   "name": "TankActor_SetupPhysics",
+   "signature": "void __thiscall TankActor_SetupPhysics(Actor *this, ...)",
+   "evidence": "retail code: slot +0x1C of vtable 0x2E3760: the tank's physics is in the actor at +0x2E4 (0x142810 on it, which calls TrackedVehicle_SetPhysicsValue with this = actor + 0x2E4)"
+  },
+  {
+   "address": "0x00137920",
+   "name": "Drivetrain_ReadProperties",
+   "signature": "void __thiscall Drivetrain_ReadProperties(Drivetrain *this, ...)",
+   "evidence": "retail code: reads each physics* property and stores it with Drivetrain_SetPhysicsValue; called by WheeledVehicle_Init with this = vehicle + 0xA0"
+  },
+  {
+   "address": "0x0013B0E0",
+   "name": "Helicopter_ReadProperties",
+   "signature": "void __thiscall Helicopter_ReadProperties(Helicopter *this, ...)",
+   "evidence": "retail code: reads the helicopter's physics* properties into Helicopter_SetPhysicsValue"
+  },
+  {
+   "address": "0x00142810",
+   "name": "TrackedVehicle_ReadProperties",
+   "signature": "void __thiscall TrackedVehicle_ReadProperties(TrackedVehicle *this, ...)",
+   "evidence": "retail code: reads the tank's physics* properties into TrackedVehicle_SetPhysicsValue"
   }
  ],
  "globals": [

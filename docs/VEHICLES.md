@@ -29,3 +29,15 @@ Every value below is looked up by its name hash in `default.xbe`. The groups fol
 | Any physics object | `0x1319F0`, `0x393F0` | `physicsmass`, `physicsFriction`, `physicsRestitution`, `physicsBumplitude` |
 
 Ground surfaces (`terrainPhysicsType`, [formats/dsk.md](formats/dsk.md)) are a separate system. Whether they change grip is still unknown.
+
+## Changing handling live
+
+Traced 2026-11-17 for plugins: a vehicle actor keeps its physics object inside itself, and the class is told by the actor's vtable (the pointer at +0 of the actor):
+
+| Actor vtable | Kind | Physics in the actor | Set a value |
+|---|---|---|---|
+| `0x2E16D0` | wheeled (jeeps, trucks, cars) | `+0x2C0` (`WheeledActor_GetPhysics`, slot `+0x290`); its drivetrain at `+0x360` | `Drivetrain_SetPhysicsValue(actor + 0x360, hash, value)` for the engine, gears, wheels, suspension, brakes, drag and steering angle (31 keys) |
+| `0x2E1F08` | helicopter | `+0x2C8` | `Helicopter_SetPhysicsValue(actor + 0x2C8, hash, value)` (14 keys) |
+| `0x2E3760` | tank | `+0x2E4` | `TrackedVehicle_SetPhysicsValue(actor + 0x2E4, hash, value)` (7 keys) |
+
+`hash` is the property's name hash (`HashName`, e.g. `physicsenginetorque`). Each class's vehicle setup is slot `+0x1C` of its vtable (`0x465F0`, `0x4A1D0`, `0x5F450`), which reads the template's `physics*` properties through these setters (`Drivetrain_ReadProperties`, `Helicopter_ReadProperties`, `TrackedVehicle_ReadProperties`). Wheel friction is copied to the tyres once (`WheeledVehicle_ApplyWheelFriction`, `0x133640`), so a plugin changing it calls that again. Not yet tried live: whether every value takes effect without the rest of the setup running again.
