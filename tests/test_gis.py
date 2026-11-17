@@ -712,3 +712,31 @@ class LandmarkTest(unittest.TestCase):
         self.assertAlmostEqual(o["position"][1], min(ground.at(x, z) for x, z in o["_rect"] + [(o["position"][0], o["position"][2])]), 2)
         self.assertTrue(any("missing" in l for l in logs))
         self.assertTrue(any("plaza" in l for l in logs))           # 5 m is smaller than the model
+
+
+class HarbourTest(unittest.TestCase):
+    def test_segments_along_lines_in_the_water_and_boats_beside_them(self):
+        kx, ky = gis._local(31.5)
+        shore = 34.45 - 1000 / kx
+        s = strip(rotate=45, along=[[-2, 600], [0, 0], [2, -600]], across=0.6)
+        s.prepare(FlatElevation(lambda lat, lon: 5.0 if lon > shore else -3.0))
+        g = gis.Grid(64)
+        hm = [[15.0] * 64 for _ in range(64)]                    # all water, 4.5 m deep under 19.5
+        line = [(31.5, 34.45), (31.5 + 150 / ky, 34.45)]           # 150 m north
+        with tempfile.TemporaryDirectory() as tmp:
+            (Path(tmp) / "osm").mkdir()
+            doc = {"elements": [{"type": "way", "tags": {"man_made": "breakwater"},
+                                 "geometry": [{"lat": a, "lon": b} for a, b in line]}]}
+            (Path(tmp) / "osm" / "harbour.json").write_text(json.dumps(doc))
+            extras = {"breakwater": [("bw", 10.0, 8.0, 2.5)], "boat": [("boat", 7.0, 2.4, 2.0)]}
+            out = gis.place_harbour({"harbour": {"boats": 5}}, s, gis.Ground(hm, g), 19.5, tmp, extras,
+                                    log=lambda *a: None)
+        segs = [o for o in out if o["from"] == "model:bw"]
+        boats = [o for o in out if o["from"] == "model:boat"]
+        x0, z0 = s.to_map(*line[0])
+        x1, z1 = s.to_map(*line[1])
+        length = math.hypot(x1 - x0, z1 - z0)
+        self.assertEqual(len(segs), int((length - 5) // 10) + 1)      # centres every 10 m from 5 m in
+        self.assertEqual(len(boats), 5)
+        for o in out:
+            self.assertEqual(o["position"][1], 19.5)

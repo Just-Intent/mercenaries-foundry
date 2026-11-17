@@ -548,6 +548,8 @@ def fetch(plan, cache, only=None, log=print, get=_get):
                 t.write_bytes(get(TERRARIUM.format(z=z, x=x, y=y)))
                 got += 1
         log(f"{place.name}: {got} elevation tiles downloaded")
+    if plan.get("harbour") and (not only or "harbour" in only):
+        fetch_harbour(plan, cache, log, get)
     if plan.get("landcover") or plan.get("satellite"):
         # where the map's corners lie in the world needs the strip's shore
         elev = Elevation(cache / "dem", zoom)
@@ -1945,7 +1947,7 @@ def sea_zones(sea, hm, grid, level, tile=2048.0, step_rows=8, margin=24.0, cells
 
 PLANT_KINDS = ("palm", "olive", "citrus")
 # kit kinds that aren't laid out as ordinary buildings
-EXTRA_KINDS = PLANT_KINDS + ("rubble", "mosque", "tent", "aid", "camp", "landmark")
+EXTRA_KINDS = PLANT_KINDS + ("rubble", "mosque", "tent", "aid", "camp", "landmark", "breakwater", "pier", "boat")
 
 
 def load_kit(plan, mod, log=print):
@@ -2128,6 +2130,107 @@ def place_landmarks(plan, strip, ground, extras, log=print):
                 f"(about {r:.0f} m across from its middle): buildings may stand in it")
     if out:
         log(f"landmarks: {len(out)}")
+    return out
+
+
+HARBOUR_WAYS = {"breakwater": "breakwater", "groyne": "breakwater", "pier": "pier", "quay": "pier", "jetty": "pier"}
+HARBOUR = {
+    "boats": 40,             # most boats moored along the piers and breakwaters
+    "moor": (6.0, 10.0),     # m out from a pier's line a boat lies
+    "depth": 1.0,            # m of water a boat needs under the water level
+}
+
+
+def fetch_harbour(plan, cache, log=print, get=_get):
+    """OSM breakwaters, groynes, piers, quays and jetties over the plan's
+    places, into osm/harbour.json (kept once fetched)."""
+    f = Path(cache) / "osm" / "harbour.json"
+    if f.exists():
+        log("harbour: OSM data already in the cache")
+        return
+    boxes = [p.bbox(0.01) if isinstance(p, Strip) else p.bbox() for p in plan["places"]]
+    s, w = min(b[0] for b in boxes), min(b[1] for b in boxes)
+    n, e = max(b[2] for b in boxes), max(b[3] for b in boxes)
+    kinds = "|".join(HARBOUR_WAYS)
+    q = f'[out:json][timeout:120];(way["man_made"~"^({kinds})$"]({s:.6f},{w:.6f},{n:.6f},{e:.6f}););out geom;'
+    data = get(OVERPASS, urllib.parse.urlencode({"data": q}).encode())
+    f.write_bytes(data)
+    log(f"harbour: {len(json.loads(data).get('elements', []))} breakwaters, piers and quays")
+
+
+def place_harbour(plan, place, ground, level, cache, extras, log=print):
+    """The OSM harbour lines (fetch_harbour's) built from the kit's segment
+    models, end to end at the water level: "breakwater" models along
+    breakwaters and groynes, "pier" models along piers, quays and jetties;
+    then the kit's "boat" models moored alongside, in water at least "depth"
+    deep (plan "harbour": {"boats", "moor", "depth"}). Segments on land
+    (ground over the water level by 1.5 m) are left out."""
+    opts = dict(HARBOUR, **(plan.get("harbour") if isinstance(plan.get("harbour"), dict) else {}))
+    f = Path(cache) / "osm" / "harbour.json"
+    if not f.exists():
+        log("harbour: no harbour data in the cache (run gis fetch)")
+        return []
+    rnd = random.Random(int(plan.get("seed", 1)) + 13)
+    out, lines = [], []
+    for tags, geo in read_osm(f):
+        kind = HARBOUR_WAYS.get(tags.get("man_made"))
+        models = extras.get(kind) or []
+        if not models or len(geo) < 2:
+            continue
+        pts = [place.to_map(lat, lon) for lat, lon in geo]
+        if not any(place.contains_map(x, z) or ground.at(x, z) < level for x, z in pts):
+            continue
+        lines.append(pts)
+        name, length, width, _ = models[0]
+        carry = 0.0
+        for (x0, z0), (x1, z1) in zip(pts, pts[1:]):
+            seg = math.hypot(x1 - x0, z1 - z0)
+            if seg < 1e-6:
+                continue
+            ux, uz = (x1 - x0) / seg, (z1 - z0) / seg
+            t = carry + length / 2
+            while t < seg:
+                x, z = x0 + ux * t, z0 + uz * t
+                if ground.at(x, z) <= level + 1.5:
+                    m = rnd.choice(models)
+                    yaw = (-math.degrees(math.atan2(uz, ux)) + 180) % 360 - 180
+                    out.append({"from": f"model:{m[0]}", "name": f"harbour_{len(out) + 1:04d}",
+                                "position": [round(x, 2), round(level, 2), round(z, 2)], "yaw": round(yaw, 1),
+                                "_kind": kind})
+                t += length
+            carry = t - length / 2 - seg
+    n_lines = len(out)
+    boats = extras.get("boat") or []
+    spots = []
+    for pts in lines:
+        for (x0, z0), (x1, z1) in zip(pts, pts[1:]):
+            seg = math.hypot(x1 - x0, z1 - z0)
+            if seg < 1e-6:
+                continue
+            ux, uz = (x1 - x0) / seg, (z1 - z0) / seg
+            t = 4.0
+            while t < seg - 4.0:
+                for side in (-1, 1):
+                    off = rnd.uniform(*opts["moor"])
+                    spots.append((x0 + ux * t - uz * off * side, z0 + uz * t + ux * off * side, ux, uz))
+                t += rnd.uniform(9.0, 16.0)
+    rnd.shuffle(spots)
+    taken = [(o["position"][0], o["position"][2]) for o in out]
+    n_boats = 0
+    for x, z, ux, uz in spots:
+        if n_boats >= int(opts["boats"]) or not boats:
+            break
+        if ground.at(x, z) > level - float(opts["depth"]):
+            continue
+        if any(math.hypot(x - a, z - b) < 7.0 for a, b in taken):
+            continue
+        m = rnd.choice(boats)
+        yaw = (-math.degrees(math.atan2(uz, ux)) + (180 if rnd.random() < 0.5 else 0) + rnd.uniform(-8, 8) + 180) % 360 - 180
+        out.append({"from": f"model:{m[0]}", "name": f"harbour_{len(out) + 1:04d}",
+                    "position": [round(x, 2), round(level, 2), round(z, 2)], "yaw": round(yaw, 1), "_kind": "boat"})
+        taken.append((x, z))
+        n_boats += 1
+    log(f"harbour: {len(lines)} lines, {n_lines} breakwater and pier segments, {n_boats} boats")
     return out
 
 
@@ -2465,7 +2568,7 @@ def build(plan, mod, log=print):
     counts = {}
     base = float(plan.get("base", 20.0))
     kit, plant_kit, geometry = load_kit(plan, mod, log)
-    plants, camps = [], []
+    plants, camps, harbour = [], [], []
     for place in plan["places"]:
         inside = place.contains_map
         mine = {k: bytearray(side * side) for k in paint}
@@ -2517,6 +2620,9 @@ def build(plan, mod, log=print):
             add_mosques(plan, laid, kit, plant_kit, trnd, log)
             apply_timeline(plan, place, laid, kit, plant_kit, trnd, log)
             laid += place_landmarks(plan, place, ground, plant_kit, log)
+            if plan.get("harbour"):
+                harbour += place_harbour(plan, place, ground, base + float(plan.get("water_level", -0.3)), cache,
+                                         plant_kit, log)
             camps += place_camps(plan, place, landcover, ground, hm, base, place_roads, laid, side, ox, oz, plant_kit, log)
             if plan.get("plants") and plant_kit:
                 plants += place_plants(plan, place, landcover, ground, hm, base, place_roads, laid + camps,
@@ -2665,7 +2771,7 @@ def build(plan, mod, log=print):
         bpath.unlink()
     (edir / f"{name}_gis.json").write_text(json.dumps(layer, indent=1) + "\n", encoding="utf-8")
     # plants and camps: layers of their own (encounters/<map>_plants.json, _camps.json)
-    for what, objs in (("plants", plants), ("camps", camps)):
+    for what, objs in (("plants", plants), ("camps", camps), ("harbour", harbour)):
         ppath = edir / f"{name}_{what}.json"
         if objs:
             use_geometry(objs, geometry)
@@ -2686,7 +2792,7 @@ def build(plan, mod, log=print):
     (mod / "gis").mkdir(exist_ok=True)
     (mod / "gis" / f"{name}.preview.png").write_bytes(preview(plan, hm, sea, paint, road_docs, items, objects))
     log(f"preview: gis/{name}.preview.png")
-    return {"objects": len(objects), "plants": len(plants), "camps": len(camps), "roads": len(road_docs), "footprints": len(items), "ways": counts,
+    return {"objects": len(objects), "plants": len(plants), "camps": len(camps), "harbour": len(harbour), "roads": len(road_docs), "footprints": len(items), "ways": counts,
             "sea": bool(zones)}
 
 
