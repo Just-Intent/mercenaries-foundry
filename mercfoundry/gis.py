@@ -1945,7 +1945,7 @@ def sea_zones(sea, hm, grid, level, tile=2048.0, step_rows=8, margin=24.0, cells
 
 PLANT_KINDS = ("palm", "olive", "citrus")
 # kit kinds that aren't laid out as ordinary buildings
-EXTRA_KINDS = PLANT_KINDS + ("rubble", "mosque", "tent", "aid", "camp")
+EXTRA_KINDS = PLANT_KINDS + ("rubble", "mosque", "tent", "aid", "camp", "landmark")
 
 
 def load_kit(plan, mod, log=print):
@@ -2094,6 +2094,41 @@ def apply_timeline(plan, strip, objects, kit, extras, rnd, log=print):
     log(f"timeline: {counts['damaged']} buildings damaged, {counts['ruined']} half collapsed, "
         f"{counts['rubble']} flattened, of {len(objects)}")
     return counts
+
+
+def place_landmarks(plan, strip, ground, extras, log=print):
+    """The plan's marks with a "model" (a kit model, usually of kind
+    "landmark"): that model at the mark, turned by its "yaw" (degrees, from
+    the strip's run), on the lowest ground under it. Give the mark a "plaza"
+    as big as the model so no building stands in it."""
+    dims = {name: (x, z) for k, v in extras.items() if isinstance(v, list) for name, x, z, h in v}
+    rot = math.degrees(strip.rot)
+    out = []
+    for m, fx, fz in mark_zones(plan, strip):
+        model = m.get("model")
+        if not model:
+            continue
+        if model not in dims:
+            log(f"landmark {m.get('name', model)}: no {model} in the kit")
+            continue
+        w, d = dims[model]
+        ang = float(m.get("yaw", 0))
+        c, s_ = math.cos(math.radians(ang)), math.sin(math.radians(ang))
+        corners = [strip.unframe(fx + u * w / 2 * c - v * d / 2 * s_, fz + u * w / 2 * s_ + v * d / 2 * c)
+                   for u, v in ((-1, -1), (1, -1), (1, 1), (-1, 1))]
+        x, z = strip.unframe(fx, fz)
+        h = min([ground.at(x, z)] + [ground.at(px, pz) for px, pz in corners])
+        a = math.radians(ang + rot)
+        out.append({"from": f"model:{model}", "name": f"landmark_{len(out) + 1:02d}",
+                    "position": [round(x, 2), round(h, 2), round(z, 2)], "yaw": round((-math.degrees(a) + 180) % 360 - 180, 1),
+                    "_kind": "landmark", "_style": "landmark", "_rect": corners})
+        r = math.hypot(w, d) / 2
+        if float(m.get("plaza", 0)) < r:
+            log(f"landmark {m.get('name', model)}: its plaza ({m.get('plaza', 0)} m) is smaller than the model "
+                f"(about {r:.0f} m across from its middle): buildings may stand in it")
+    if out:
+        log(f"landmarks: {len(out)}")
+    return out
 
 
 CAMPS = {
@@ -2481,6 +2516,7 @@ def build(plan, mod, log=print):
             trnd = random.Random(int(plan.get("seed", 1)) + 3)
             add_mosques(plan, laid, kit, plant_kit, trnd, log)
             apply_timeline(plan, place, laid, kit, plant_kit, trnd, log)
+            laid += place_landmarks(plan, place, ground, plant_kit, log)
             camps += place_camps(plan, place, landcover, ground, hm, base, place_roads, laid, side, ox, oz, plant_kit, log)
             if plan.get("plants") and plant_kit:
                 plants += place_plants(plan, place, landcover, ground, hm, base, place_roads, laid + camps,

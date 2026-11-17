@@ -689,3 +689,26 @@ class TimelineTest(unittest.TestCase):
             x, _, z = o["position"]
             if abs(x) < 190:
                 self.assertGreater(abs(z), width / 2, o)
+
+
+class LandmarkTest(unittest.TestCase):
+    def test_marks_with_a_model_place_it_on_the_lowest_ground(self):
+        s = strip(rotate=45, along=[[-2, 600], [0, 0], [2, -600]], across=0.6)
+        kx, _ = gis._local(31.5)
+        shore = 34.45 - 1000 / kx
+        s.prepare(FlatElevation(lambda lat, lon: 5.0 if lon > shore else -3.0))
+        g = gis.Grid(64)
+        hm = [[30.0 + c * 0.1 for c in range(64)] for _ in range(64)]
+        extras = {"landmark": [("lm", 20.0, 10.0, 15.0)]}
+        logs = []
+        plan = {"marks": [{"name": "a", "at": [31.5, 34.45], "model": "lm", "plaza": 5},
+                          {"name": "b", "at": [31.5, 34.45]},
+                          {"name": "c", "at": [31.5, 34.45], "model": "missing"}]}
+        out = gis.place_landmarks(plan, s, gis.Ground(hm, g), extras, log=logs.append)
+        self.assertEqual(len(out), 1)
+        o = out[0]
+        self.assertEqual(o["from"], "model:lm")
+        ground = gis.Ground(hm, g)
+        self.assertAlmostEqual(o["position"][1], min(ground.at(x, z) for x, z in o["_rect"] + [(o["position"][0], o["position"][2])]), 2)
+        self.assertTrue(any("missing" in l for l in logs))
+        self.assertTrue(any("plaza" in l for l in logs))           # 5 m is smaller than the model
