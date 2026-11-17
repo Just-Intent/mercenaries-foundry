@@ -2133,10 +2133,73 @@ def place_landmarks(plan, strip, ground, extras, log=print):
     return out
 
 
+PADS = {"margin": 1.5, "feather": 6.0}
+
+
+def level_pads(plan, objects, ground, log=print):
+    """Level the ground under each object with a "_rect" (its footprint's
+    corners) to one height, the average under it, so nothing stands half
+    buried on a slope: samples within "margin" metres of the footprint take
+    that height, and the ground blends back over "feather" metres. A sample
+    already levelled for an earlier object keeps its height. The object
+    goes to its pad's height. Plan "pads": false turns this off."""
+    if plan.get("pads") is False:
+        return 0
+    opts = dict(PADS, **(plan.get("pads") if isinstance(plan.get("pads"), dict) else {}))
+    margin, feather = float(opts["margin"]), float(opts["feather"])
+    hm, g = ground.hm, ground.g
+    n = len(hm)
+    locked = getattr(ground, "locked", None)
+    if locked is None:
+        locked = ground.locked = set()
+    count = 0
+    for o in objects:
+        rect = o.get("_rect")
+        if not rect:
+            continue
+        (ax, az), (bx, bz), _, (dx, dz) = rect
+        ux, uz = bx - ax, bz - az
+        vx, vz = dx - ax, dz - az
+        lu, lv = math.hypot(ux, uz), math.hypot(vx, vz)
+        if lu < 1e-6 or lv < 1e-6:
+            continue
+        ux, uz, vx, vz = ux / lu, uz / lu, vx / lv, vz / lv
+        cx, cz = ax + (bx - ax + dx - ax) / 2, az + (bz - az + dz - az) / 2
+        pts = rect + [(cx, cz)]
+        pad = sum(ground.at(x, z) for x, z in pts) / len(pts)
+        reach = margin + feather + max(lu, lv)
+        c0, c1 = max(0, int(g.col(cx - reach))), min(n - 1, int(g.col(cx + reach)) + 1)
+        r0, r1 = max(0, int(g.row(cz - reach))), min(n - 1, int(g.row(cz + reach)) + 1)
+        for r in range(r0, r1 + 1):
+            for c in range(c0, c1 + 1):
+                if (r, c) in locked:
+                    continue
+                px, pz = g.x(c) - cx, g.z(r) - cz
+                s, t = px * ux + pz * uz, px * vx + pz * vz
+                ds = max(0.0, abs(s) - lu / 2 - margin)
+                dt = max(0.0, abs(t) - lv / 2 - margin)
+                d = math.hypot(ds, dt)
+                if d <= 0:
+                    hm[r][c] = pad
+                    locked.add((r, c))
+                elif d < feather:
+                    w = 1 - d / feather
+                    w = w * w * (3 - 2 * w)
+                    hm[r][c] = hm[r][c] * (1 - w) + pad * w
+        o["position"][1] = round(pad, 2)
+        count += 1
+    log(f"pads: ground levelled under {count} objects")
+    return count
+
+
 HARBOUR_WAYS = {"breakwater": "breakwater", "groyne": "breakwater", "pier": "pier", "quay": "pier", "jetty": "pier"}
 HARBOUR = {
     "boats": 40,             # most boats moored along the piers and breakwaters
-    "moor": (6.0, 10.0),     # m out from a pier's line a boat lies
+    "moor": (9.0, 13.0),     # m out from a pier's line a boat lies
+    "quay": 12.0,            # m wide: a pier, quay or jetty line's paved deck
+    "deck": 1.6,             # m: the deck over the water level
+    "mole": 10.0,            # m wide: a breakwater's ridge
+    "ridge": 1.0,            # m: the ridge over the water level (rock armour on it)
     "depth": 1.0,            # m of water a boat needs under the water level
 }
 
@@ -2158,30 +2221,61 @@ def fetch_harbour(plan, cache, log=print, get=_get):
     log(f"harbour: {len(json.loads(data).get('elements', []))} breakwaters, piers and quays")
 
 
-def place_harbour(plan, place, ground, level, cache, extras, log=print):
-    """The OSM harbour lines (fetch_harbour's) built from the kit's segment
-    models, end to end at the water level: "breakwater" models along
-    breakwaters and groynes, "pier" models along piers, quays and jetties;
-    then the kit's "boat" models moored alongside, in water at least "depth"
-    deep (plan "harbour": {"boats", "moor", "depth"}). Segments on land
-    (ground over the water level by 1.5 m) are left out."""
+def place_harbour(plan, place, ground, level, cache, extras, log=print, sea=None, paint=None, side=None,
+                  ox=0.0, oz=0.0):
+    """The OSM harbour lines (fetch_harbour's), as ground: piers, quays and
+    jetties raised to a paved deck ("deck" m over the water level, "quay"
+    m wide; closed outlines filled), breakwaters and groynes to a ridge
+    ("ridge" m up, "mole" m wide) under the kit's "breakwater" rock armour
+    models, laid end to end along them at the water level; then the kit's
+    "boat" models moored alongside, in water at least "depth" deep (plan
+    "harbour": {"boats", "moor", "depth", ...}). sea and paint (the build's
+    sea mask and ground layers) are updated where ground is raised."""
     opts = dict(HARBOUR, **(plan.get("harbour") if isinstance(plan.get("harbour"), dict) else {}))
     f = Path(cache) / "osm" / "harbour.json"
     if not f.exists():
         log("harbour: no harbour data in the cache (run gis fetch)")
         return []
     rnd = random.Random(int(plan.get("seed", 1)) + 13)
+    hm, g = ground.hm, ground.g
+    n = len(hm)
+    sd = side or n + 1
     out, lines = [], []
+    masks = {"pier": bytearray(sd * sd), "breakwater": bytearray(sd * sd)}
     for tags, geo in read_osm(f):
         kind = HARBOUR_WAYS.get(tags.get("man_made"))
-        models = extras.get(kind) or []
-        if not models or len(geo) < 2:
+        if kind is None or len(geo) < 2:
             continue
         pts = [place.to_map(lat, lon) for lat, lon in geo]
         if not any(place.contains_map(x, z) or ground.at(x, z) < level for x, z in pts):
             continue
-        lines.append(pts)
-        name, length, width, _ = models[0]
+        lines.append((kind, pts))
+        width = float(opts["quay"] if kind == "pier" else opts["mole"])
+        if kind == "pier" and len(pts) > 3 and math.hypot(pts[0][0] - pts[-1][0], pts[0][1] - pts[-1][1]) < 1.0:
+            fill_polygon(masks[kind], sd, pts, 1, SPACING, ox, oz, force=True)
+        paint_line(masks[kind], sd, pts, width, 1, SPACING, ox, oz)
+    raised = 0
+    for kind, top in (("breakwater", level + float(opts["ridge"])), ("pier", level + float(opts["deck"]))):
+        mask = masks[kind]
+        for r in range(n):
+            for c in range(n):
+                if not mask[r * sd + c] or hm[r][c] >= top:
+                    continue
+                hm[r][c] = top
+                raised += 1
+                if sea is not None:
+                    sea[r][c] = False
+                if paint is not None:
+                    i = r * sd + c
+                    for k in paint:
+                        paint[k][i] = 0
+                    paint["urban" if kind == "pier" else "dirt"][i] = 255
+    # rock armour along the breakwaters
+    models = extras.get("breakwater") or []
+    for kind, pts in lines:
+        if kind != "breakwater" or not models:
+            continue
+        length = models[0][1]
         carry = 0.0
         for (x0, z0), (x1, z1) in zip(pts, pts[1:]):
             seg = math.hypot(x1 - x0, z1 - z0)
@@ -2191,7 +2285,7 @@ def place_harbour(plan, place, ground, level, cache, extras, log=print):
             t = carry + length / 2
             while t < seg:
                 x, z = x0 + ux * t, z0 + uz * t
-                if ground.at(x, z) <= level + 1.5:
+                if ground.at(x, z) <= level + float(opts["ridge"]) + 0.5:
                     m = rnd.choice(models)
                     yaw = (-math.degrees(math.atan2(uz, ux)) + 180) % 360 - 180
                     out.append({"from": f"model:{m[0]}", "name": f"harbour_{len(out) + 1:04d}",
@@ -2199,6 +2293,8 @@ def place_harbour(plan, place, ground, level, cache, extras, log=print):
                                 "_kind": kind})
                 t += length
             carry = t - length / 2 - seg
+    lines = [pts for _, pts in lines]
+    log(f"harbour: {raised} ground samples raised for quays and breakwaters")
     n_lines = len(out)
     boats = extras.get("boat") or []
     spots = []
@@ -2230,7 +2326,7 @@ def place_harbour(plan, place, ground, level, cache, extras, log=print):
                     "position": [round(x, 2), round(level, 2), round(z, 2)], "yaw": round(yaw, 1), "_kind": "boat"})
         taken.append((x, z))
         n_boats += 1
-    log(f"harbour: {len(lines)} lines, {n_lines} breakwater and pier segments, {n_boats} boats")
+    log(f"harbour: {len(lines)} lines, {n_lines} rock armour segments, {n_boats} boats")
     return out
 
 
@@ -2620,10 +2716,14 @@ def build(plan, mod, log=print):
             add_mosques(plan, laid, kit, plant_kit, trnd, log)
             apply_timeline(plan, place, laid, kit, plant_kit, trnd, log)
             laid += place_landmarks(plan, place, ground, plant_kit, log)
+            level_pads(plan, laid, ground, log)
             if plan.get("harbour"):
                 harbour += place_harbour(plan, place, ground, base + float(plan.get("water_level", -0.3)), cache,
-                                         plant_kit, log)
-            camps += place_camps(plan, place, landcover, ground, hm, base, place_roads, laid, side, ox, oz, plant_kit, log)
+                                         plant_kit, log, sea=sea, paint=mine, side=side, ox=ox, oz=oz)
+            placed_camps = place_camps(plan, place, landcover, ground, hm, base, place_roads, laid, side, ox, oz,
+                                       plant_kit, log)
+            level_pads(plan, placed_camps, ground, log)
+            camps += placed_camps
             if plan.get("plants") and plant_kit:
                 plants += place_plants(plan, place, landcover, ground, hm, base, place_roads, laid + camps,
                                        mine["urban"], side, ox, oz, plant_kit, log)
