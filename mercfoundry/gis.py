@@ -1944,17 +1944,22 @@ def sea_zones(sea, hm, grid, level, tile=2048.0, step_rows=8, margin=24.0, cells
 # ---------------------------------------------------------------- build
 
 PLANT_KINDS = ("palm", "olive", "citrus")
+# kit kinds that aren't laid out as ordinary buildings
+EXTRA_KINDS = PLANT_KINDS + ("rubble", "mosque", "tent", "aid")
 
 
 def load_kit(plan, mod, log=print):
     """The plan's own models (its "kit": {"file": "models/kit.json", "retail":
-    false}): (building kit, plants, geometry). The file maps a model name to
+    false}): (building kit, extras, geometry). The file maps a model name to
     {"kind", "base", "x", "z", "height"}, as a mod's models/*.new.json models
     are made (a tool's output, e.g. the Gaza mod's tools/make_models.py).
     Kinds house, block, tower and shed replace the retail kit's kind ("retail":
-    true adds to it); palm, olive and citrus are plants. geometry maps each
-    own model to its base model, whose world objects are copied and drawn
-    with the own model (GeometryFile), as the editor's New object does."""
+    true adds to it). extras: the other kinds (plants: palm, olive, citrus;
+    rubble, mosque, tent, aid) as kind -> [(name, x, z, height)], and under
+    "damaged" each building's damaged versions (a model with "damage": 1 or
+    2 and "intact": its building) as {intact: {level: name}}. geometry maps
+    each own model to its base model, whose world objects are copied and
+    drawn with the own model (GeometryFile), as the editor's New object does."""
     spec = plan.get("kit")
     if not spec:
         return KIT, {}, {}
@@ -1971,7 +1976,10 @@ def load_kit(plan, mod, log=print):
         kind = m["kind"]
         geometry[name] = m["base"]
         entry = (name, float(m["x"]), float(m["z"]), float(m["height"]))
-        if kind in PLANT_KINDS:
+        if m.get("damage"):
+            plants.setdefault("damaged", {}).setdefault(m["intact"], {})[int(m["damage"])] = name
+            continue
+        if kind in EXTRA_KINDS:
             plants.setdefault(kind, []).append(entry)
             continue
         if kind not in replaced and not spec.get("retail"):
@@ -1993,6 +2001,223 @@ def use_geometry(objects, geometry):
             o["from"] = f"model:{geometry[model]}"
             o.setdefault("set", {})["GeometryFile"] = model
     return objects
+
+
+def timeline_at(bands, lat):
+    """The plan's "timeline" at a latitude: bands [[lat, {key: value}], ...]
+    (any order), each key's value straight-line between the two bands
+    either side, and the nearest band's beyond the last."""
+    bands = sorted(((float(b[0]), b[1]) for b in bands), key=lambda t: -t[0])
+    if not bands:
+        return {}
+    if lat >= bands[0][0]:
+        return dict(bands[0][1])
+    for (la, a), (lb, b) in zip(bands, bands[1:]):
+        if lb <= lat <= la:
+            t = (la - lat) / max(1e-9, la - lb)
+            return {k: float(a.get(k, 0)) * (1 - t) + float(b.get(k, 0)) * t for k in set(a) | set(b)}
+    return dict(bands[-1][1])
+
+
+def _dims(kit, extras):
+    out = {}
+    for lists in (kit, extras):
+        for k, v in lists.items():
+            if isinstance(v, list):
+                for name, x, z, h in v:
+                    out[name] = (x, z)
+    return out
+
+
+def _model_of(o):
+    return o["from"][len("model:"):] if o["from"].startswith("model:") else None
+
+
+def add_mosques(plan, objects, kit, extras, rnd, log=print):
+    """About one building in "every" (plan "mosques": {"every": 60}) in town
+    styles swapped for a mosque that fits its plot."""
+    mosques = extras.get("mosque") or []
+    opts = plan.get("mosques") if isinstance(plan.get("mosques"), dict) else {}
+    every = float(opts.get("every", 60))
+    if not mosques or every <= 0:
+        return 0
+    dims = _dims(kit, extras)
+    n = 0
+    for o in objects:
+        if o.get("_style") not in ("city", "camp", "oldcity", "suburb", "towers") or rnd.random() >= 1 / every:
+            continue
+        x, z = dims.get(_model_of(o), (0, 0))
+        fits = [m for m in mosques if m[1] <= x + 2 and m[2] <= z + 2]
+        if fits:
+            o["from"] = f"model:{rnd.choice(fits)[0]}"
+            o["_kind"] = "mosque"
+            n += 1
+    log(f"mosques: {n}")
+    return n
+
+
+def apply_timeline(plan, strip, objects, kit, extras, rnd, log=print):
+    """Each building damaged, half collapsed or flattened to rubble by the
+    plan's "timeline" where it stands: bands by latitude giving "damaged",
+    "ruined" and "rubble" (shares of buildings), e.g. intact in the north,
+    more destroyed southwards. Buildings without damaged versions (the retail
+    kit's) are only ever flattened."""
+    bands = (plan.get("timeline") or {}).get("bands") if isinstance(plan.get("timeline"), dict) else None
+    if not bands:
+        return {}
+    damaged = extras.get("damaged") or {}
+    heaps = extras.get("rubble") or []
+    dims = _dims(kit, extras)
+    counts = {"damaged": 0, "ruined": 0, "rubble": 0}
+    for o in objects:
+        model = _model_of(o)
+        if model is None:
+            continue
+        lat, _ = strip.to_world(o["position"][0], o["position"][2])
+        t = timeline_at(bands, lat)
+        r = rnd.random()
+        rubble_p = float(t.get("rubble", 0))
+        ruined_p = rubble_p + float(t.get("ruined", 0))
+        damaged_p = ruined_p + float(t.get("damaged", 0))
+        if r < rubble_p and heaps:
+            x, z = dims.get(model, (12, 12))
+            fit = min(heaps, key=lambda h: abs(h[1] * h[2] - x * z))
+            o["from"] = f"model:{fit[0]}"
+            o["_kind"] = "rubble"
+            counts["rubble"] += 1
+        elif r < ruined_p and 2 in damaged.get(model, {}):
+            o["from"] = f"model:{damaged[model][2]}"
+            counts["ruined"] += 1
+        elif r < damaged_p and 1 in damaged.get(model, {}):
+            o["from"] = f"model:{damaged[model][1]}"
+            counts["damaged"] += 1
+    log(f"timeline: {counts['damaged']} buildings damaged, {counts['ruined']} half collapsed, "
+        f"{counts['rubble']} flattened, of {len(objects)}")
+    return counts
+
+
+CAMPS = {
+    "spacing": 7.0,          # m between tents in a camp (a jittered grid)
+    "cell": 100.0,           # m: camps fill cells this size
+    "fill": 0.75,            # share of a camp cell's grid points with a tent
+    "max": 3000,
+}
+NO_CAMP = {10, 80}       # land cover: tree cover, water
+
+
+def place_camps(plan, strip, landcover, ground, hm, base, roads, buildings, side, ox, oz, extras, log=print):
+    """Tent camps by the plan's "timeline" ("tents": the share of open
+    100 m cells that hold a camp; "aid": a camp cell's chance of an aid
+    canopy or water point): rows of tents and shelters along the strip, off
+    roads, buildings, tree cover and water."""
+    bands = (plan.get("timeline") or {}).get("bands") if isinstance(plan.get("timeline"), dict) else None
+    tents, aid = extras.get("tent") or [], extras.get("aid") or []
+    if not bands or not tents:
+        return []
+    opts = dict(CAMPS, **(plan.get("camps") if isinstance(plan.get("camps"), dict) else {}))
+    rnd = random.Random(int(plan.get("seed", 1)) + 11)
+    cell = 4.0
+    taken = set()
+
+    def mark(x0, z0, x1, z1):
+        for i in range(int(x0 // cell), int(x1 // cell) + 1):
+            for j in range(int(z0 // cell), int(z1 // cell) + 1):
+                taken.add((i, j))
+
+    def free(x, z, r):
+        return all((i, j) not in taken for i in range(int((x - r) // cell), int((x + r) // cell) + 1)
+                   for j in range(int((z - r) // cell), int((z + r) // cell) + 1))
+    for b in buildings:
+        xs = [p[0] for p in b["_rect"]]
+        zs = [p[1] for p in b["_rect"]]
+        mark(min(xs) - 2, min(zs) - 2, max(xs) + 2, max(zs) + 2)
+    clear = bytearray(side * side)
+    for k, pts in roads:
+        paint_line(clear, side, pts, ROADS[k][1] + 4.0, 1, SPACING, ox, oz)
+    inner = bytearray(side * side)
+    if strip.outline:
+        fill_polygon(inner, side, strip.outline, 1, SPACING, ox, oz)
+        fence = bytearray(side * side)
+        paint_line(fence, side, strip.outline + strip.outline[:1], 2 * FENCE_CLEAR, 1, SPACING, ox, oz)
+        for i in range(side * side):
+            if fence[i]:
+                inner[i] = 0
+    else:
+        inner[:] = b"\x01" * (side * side)
+    n = len(hm)
+    rot = math.degrees(strip.rot)
+
+    def ok(x, z):
+        c, r = int(round((x - ox) / SPACING)), int(round((z - oz) / SPACING))
+        if not (0 <= c < side and 0 <= r < side) or not inner[r * side + c] or clear[r * side + c]:
+            return False
+        if hm[min(r, n - 1)][min(c, n - 1)] <= base + 0.8:
+            return False
+        if landcover is not None:
+            lat, lon = strip.to_world(x, z)
+            px = landcover.at(lat, lon)
+            if px and px[0] in NO_CAMP:
+                return False
+        return True
+
+    out = []
+
+    def put(model, x, z, kind, sx, sz, jitter):
+        yaw = (rot + 180 + rnd.uniform(-jitter, jitter)) % 360 - 180
+        h = ground.at(x, z)
+        r = max(sx, sz) / 2
+        out.append({"from": f"model:{model}", "name": f"camp_{len(out) + 1:05d}",
+                    "position": [round(x, 2), round(h, 2), round(z, 2)], "yaw": round(yaw, 1), "_kind": kind,
+                    "_rect": [(x - r, z - r), (x + r, z - r), (x + r, z + r), (x - r, z + r)]})
+        mark(x - r, z - r, x + r, z + r)
+
+    size = float(opts["cell"])
+    sp = float(opts["spacing"])
+    half = (side - 1) * SPACING / 2
+    steps = int(2 * half / size)
+    camps = 0
+    limit = int(opts["max"])
+    # whole camps, in a random order, until the maximum: camps stay dense
+    order = [(ci, cj) for ci in range(steps) for cj in range(steps)]
+    rnd.shuffle(order)
+    for ci, cj in order:
+        if len(out) >= limit:
+            break
+        cx, cz = ox + (ci + 0.5) * size, oz + (cj + 0.5) * size
+        c, r = int(round((cx - ox) / SPACING)), int(round((cz - oz) / SPACING))
+        if not (0 <= c < side and 0 <= r < side) or not inner[r * side + c]:
+            continue
+        lat, _ = strip.to_world(cx, cz)
+        t = timeline_at(bands, lat)
+        if rnd.random() >= float(t.get("tents", 0)):
+            continue
+        camps += 1
+        if aid and rnd.random() < float(t.get("aid", 0)):
+            for _ in range(30):
+                x, z = cx + rnd.uniform(-size / 2.5, size / 2.5), cz + rnd.uniform(-size / 2.5, size / 2.5)
+                m = rnd.choice(aid)
+                if ok(x, z) and free(x, z, max(m[1], m[2]) / 2 + 1):
+                    put(m[0], x, z, "aid", m[1] + 2, m[2] + 2, 5)
+                    break
+        k = int(size / sp)
+        for i in range(k):
+            for j in range(k):
+                if rnd.random() >= float(opts["fill"]):
+                    continue
+                x = cx - size / 2 + (i + 0.5) * sp + rnd.uniform(-1, 1)
+                z = cz - size / 2 + (j + 0.5) * sp + rnd.uniform(-1, 1)
+                m = rnd.choice(tents)
+                if max(m[1], m[2]) > sp + 2 and rnd.random() < 0.8:
+                    m = min(tents, key=lambda t_: t_[1] * t_[2])
+                if ok(x, z) and free(x, z, max(m[1], m[2]) / 2):
+                    put(m[0], x, z, "tent", m[1], m[2], 12)
+    out = out[:limit]
+    kinds = {}
+    for o in out:
+        kinds[o["_kind"]] = kinds.get(o["_kind"], 0) + 1
+    log(f"camps: {camps} camp cells; {', '.join(f'{v} {k}' for k, v in sorted(kinds.items())) or 'nothing placed'}"
+        f" (max {limit})")
+    return out
 
 
 # The plan's "plants": where its trees go.
@@ -2019,6 +2244,7 @@ def place_plants(plan, strip, landcover, ground, hm, base, roads, buildings, urb
     built-up yards, palms along main roads through towns; away from
     buildings, roads, the beach and the border. plants: load_kit's."""
     opts = dict(PLANTS, **(plan.get("plants") if isinstance(plan.get("plants"), dict) else {}))
+    plants = {k: v for k, v in plants.items() if k in PLANT_KINDS}
     if not plants:
         return []
     rnd = random.Random(int(plan.get("seed", 1)) + 7)
@@ -2187,7 +2413,7 @@ def build(plan, mod, log=print):
     counts = {}
     base = float(plan.get("base", 20.0))
     kit, plant_kit, geometry = load_kit(plan, mod, log)
-    plants = []
+    plants, camps = [], []
     for place in plan["places"]:
         inside = place.contains_map
         mine = {k: bytearray(side * side) for k in paint}
@@ -2235,9 +2461,13 @@ def build(plan, mod, log=print):
             keep = set(plan.get("decal_roads", ROAD_ORDER))
             laid = _lay_out_strip(plan, place, dens, [r for r in place_roads if r[0] in keep], mine, hm, ground, side, ox, oz,
                                   base, log, kit=kit)
+            trnd = random.Random(int(plan.get("seed", 1)) + 3)
+            add_mosques(plan, laid, kit, plant_kit, trnd, log)
+            apply_timeline(plan, place, laid, kit, plant_kit, trnd, log)
+            camps += place_camps(plan, place, landcover, ground, hm, base, place_roads, laid, side, ox, oz, plant_kit, log)
             if plan.get("plants") and plant_kit:
-                plants += place_plants(plan, place, landcover, ground, hm, base, place_roads, laid, mine["urban"],
-                                       side, ox, oz, plant_kit, log)
+                plants += place_plants(plan, place, landcover, ground, hm, base, place_roads, laid + camps,
+                                       mine["urban"], side, ox, oz, plant_kit, log)
         # only the place's own ground takes its paint; land no OSM polygon
         # covers gets some dirt, so it isn't all sand; outside a strip's
         # territory, fields
@@ -2381,15 +2611,16 @@ def build(plan, mod, log=print):
     elif bpath.exists():
         bpath.unlink()
     (edir / f"{name}_gis.json").write_text(json.dumps(layer, indent=1) + "\n", encoding="utf-8")
-    # plants: a layer of their own (encounters/<map>_plants.json)
-    ppath = edir / f"{name}_plants.json"
-    if plants:
-        use_geometry(plants, geometry)
-        ppath.write_text(json.dumps({"map": name.upper(), "load": "map", "unnamed": True,
-                                     "objects": [{k: v for k, v in o.items() if not k.startswith("_")} for o in plants]},
-                                    indent=1) + "\n", encoding="utf-8")
-    elif ppath.exists():
-        ppath.unlink()
+    # plants and camps: layers of their own (encounters/<map>_plants.json, _camps.json)
+    for what, objs in (("plants", plants), ("camps", camps)):
+        ppath = edir / f"{name}_{what}.json"
+        if objs:
+            use_geometry(objs, geometry)
+            ppath.write_text(json.dumps({"map": name.upper(), "load": "map", "unnamed": True,
+                                         "objects": [{k: v for k, v in o.items() if not k.startswith("_")} for o in objs]},
+                                        indent=1) + "\n", encoding="utf-8")
+        elif ppath.exists():
+            ppath.unlink()
     if laid is not None:
         log(f"buildings: {len(objects)} placed ({', '.join(f'{v} {k}' for k, v in sorted(kinds.items()))})")
     else:
@@ -2402,7 +2633,7 @@ def build(plan, mod, log=print):
     (mod / "gis").mkdir(exist_ok=True)
     (mod / "gis" / f"{name}.preview.png").write_bytes(preview(plan, hm, sea, paint, road_docs, items, objects))
     log(f"preview: gis/{name}.preview.png")
-    return {"objects": len(objects), "plants": len(plants), "roads": len(road_docs), "footprints": len(items), "ways": counts,
+    return {"objects": len(objects), "plants": len(plants), "camps": len(camps), "roads": len(road_docs), "footprints": len(items), "ways": counts,
             "sea": bool(zones)}
 
 

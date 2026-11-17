@@ -625,3 +625,67 @@ class PlantsTest(unittest.TestCase):
             self.assertIn(o["from"], ("model:gaza_palm_a", "model:gaza_olive_a"))
         self.assertTrue(any(o["_kind"] == "palm" and abs(abs(o["position"][2]) - (width / 2 + 3)) < 0.01
                             for o in out))                                            # palms line the road
+
+
+class TimelineTest(unittest.TestCase):
+    BANDS = [[31.30, {"rubble": 0.6, "tents": 0.5}], [31.50, {"rubble": 0.0, "tents": 0.0}]]
+
+    def test_bands_interpolate_and_clamp(self):
+        self.assertEqual(gis.timeline_at(self.BANDS, 31.6), {"rubble": 0.0, "tents": 0.0})
+        self.assertEqual(gis.timeline_at(self.BANDS, 31.2), {"rubble": 0.6, "tents": 0.5})
+        mid = gis.timeline_at(self.BANDS, 31.40)
+        self.assertAlmostEqual(mid["rubble"], 0.3)
+        self.assertAlmostEqual(mid["tents"], 0.25)
+
+    def test_damage_swaps_models_by_latitude(self):
+        import random
+
+        class Place:                       # latitude from z: north at z = 0, south at z = 1000
+            def to_world(self, x, z):
+                return 31.5 - z / 5000, 34.4
+        kit = {"house": [("h", 10.0, 10.0, 6.0)]}
+        extras = {"damaged": {"h": {1: "h_dmg", 2: "h_ruin"}}, "rubble": [("heap", 10.0, 10.0, 4.0)]}
+        objs = [{"from": "model:h", "position": [0, 0, z]} for z in [0] * 50 + [1000] * 200]
+        plan = {"timeline": {"bands": [[31.5, {}], [31.3, {"damaged": 0.3, "ruined": 0.3, "rubble": 0.3}]]}}
+        gis.apply_timeline(plan, Place(), objs, kit, extras, random.Random(1), log=lambda *a: None)
+        self.assertTrue(all(o["from"] == "model:h" for o in objs[:50]))          # the north stays intact
+        south = [o["from"] for o in objs[50:]]
+        for m in ("model:h", "model:h_dmg", "model:h_ruin", "model:heap"):
+            self.assertGreater(south.count(m), 5, m)
+
+    def test_mosques_replace_town_buildings_that_fit(self):
+        import random
+        kit = {"block": [("b", 20.0, 20.0, 12.0)], "house": [("s", 6.0, 6.0, 4.0)]}
+        extras = {"mosque": [("m", 16.0, 14.0, 20.0)]}
+        objs = [{"from": "model:b", "_style": "city"} for _ in range(300)]
+        objs += [{"from": "model:s", "_style": "city"} for _ in range(300)]
+        objs += [{"from": "model:b", "_style": "industry"} for _ in range(300)]
+        n = gis.add_mosques({"mosques": {"every": 10}}, objs, kit, extras, random.Random(2), log=lambda *a: None)
+        self.assertGreater(n, 10)
+        self.assertTrue(all(o["from"] == "model:s" for o in objs[300:600]))      # too small for one
+        self.assertTrue(all(o["from"] == "model:b" for o in objs[600:]))         # not in industry
+
+    def test_camps_fill_cells_off_roads_up_to_the_max(self):
+        kx, _ = gis._local(31.5)
+        shore = 34.45 - 1000 / kx
+        s = strip(rotate=45, along=[[-2, 600], [0, 0], [2, -600]], across=0.6)
+        s.prepare(FlatElevation(lambda lat, lon: 5.0 if lon > shore else -3.0))
+
+        class Cover:
+            def at(self, lat, lon):
+                return (60,)
+        g = gis.Grid(64)
+        side = 65
+        hm = [[30.0] * 64 for _ in range(64)]
+        road = ("primary", [(-200.0, 0.0), (200.0, 0.0)])
+        extras = {"tent": [("t", 4.0, 3.0, 2.0)], "aid": [("a", 6.0, 6.0, 3.0)]}
+        plan = {"timeline": {"bands": [[0, {"tents": 1.0, "aid": 1.0}]]}, "camps": {"max": 150}}
+        out = gis.place_camps(plan, s, Cover(), gis.Ground(hm, g), hm, 20.0, [road], [], side, g.x0, g.z0, extras,
+                              log=lambda *a: None)
+        self.assertEqual(len(out), 150)
+        self.assertIn("aid", {o["_kind"] for o in out})
+        width = gis.ROADS["primary"][1]
+        for o in out:
+            x, _, z = o["position"]
+            if abs(x) < 190:
+                self.assertGreater(abs(z), width / 2, o)
