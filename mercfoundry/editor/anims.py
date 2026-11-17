@@ -169,3 +169,75 @@ def clip_glb(scene, model_name, clip):
     m = model.decode(mr, sr)
     anim = animation.decode(animation.find(scene.archives, clip))
     return gltf.export(m, 0, False, {}, lambda k: f"{k:08X}", [anim], True)
+
+
+# ---------------------------------------------------------------- update rates
+# How often characters' animations are updated by distance: xbox.ini's
+# [Humans] AnimUpdateLow / Medium / High / Lender lines (see configs.py),
+# changed by the mod's config/xbox.ini.json.
+
+def _xbox_ini(scene):
+    p = scene.data.parent / "xbox.ini"
+    if not p.exists():
+        raise KeyError("the game has no xbox.ini beside DATAxbox")
+    return p.read_bytes().decode("latin-1")
+
+
+def _rate_lines(text):
+    """{key: ["<distance> <every N> <interp>", ...]} from [Humans], in file order."""
+    from .. import configs
+    from ..sky import _lines
+    lines = _lines(text)
+    out = {k: [] for k in configs.ANIM_UPDATE}
+    for name, start, end in configs.sections(text):
+        if name.lower() != "humans":
+            continue
+        for line in lines[start:end]:
+            parts = line.split()
+            key = next((k for k in configs.ANIM_UPDATE if parts and parts[0].lower() == k.lower()), None)
+            if key:
+                out[key].append(" ".join(parts[1:4]))
+    return out
+
+
+def update_rates(scene):
+    """The game's update-rate lines, the mod's (config/xbox.ini.json), and the file."""
+    import json
+    game = _rate_lines(_xbox_ini(scene))
+    p = scene.mod / "config" / "xbox.ini.json"
+    doc = json.loads(p.read_text(encoding="utf-8")) if p.exists() else {}
+    humans = next((v for k, v in doc.items() if k.lower() == "humans"), {}) or {}
+    mod = {k: v for k, v in humans.items() if k in game}
+    return {"game": game, "mod": mod, "file": "config/xbox.ini.json"}
+
+
+def save_update_rates(scene, tables):
+    """tables: {key: [lines]} for the four keys; ones equal to the game's are
+    dropped. Other keys and sections in config/xbox.ini.json stay. Returns
+    {"file", "changed"}."""
+    import json
+    from .. import configs
+    text = _xbox_ini(scene)
+    game = _rate_lines(text)
+    p = scene.mod / "config" / "xbox.ini.json"
+    doc = json.loads(p.read_text(encoding="utf-8")) if p.exists() else {}
+    section = next((k for k in doc if k.lower() == "humans"), "Humans")
+    humans = {k: v for k, v in (doc.get(section) or {}).items() if k not in (tables or {})}
+    for key, rows in (tables or {}).items():
+        if key not in configs.ANIM_UPDATE:
+            raise ValueError(f"{key} isn't one of the update-rate tables ({', '.join(configs.ANIM_UPDATE)})")
+        rows = [" ".join(str(r).split()) for r in rows if str(r).strip()]
+        if rows and rows != game[key]:
+            humans[key] = rows
+    if humans:
+        doc[section] = humans
+    else:
+        doc.pop(section, None)
+    configs.apply(text, doc, "config/xbox.ini.json")          # raises on anything the build would refuse
+    if doc:
+        p.parent.mkdir(parents=True, exist_ok=True)
+        p.write_text(json.dumps(doc, indent=1) + "\n", encoding="utf-8")
+    elif p.exists():
+        p.unlink()
+    return {"file": "config/xbox.ini.json" if doc else None,
+            "changed": sorted(k for k in humans if k in configs.ANIM_UPDATE)}

@@ -238,6 +238,57 @@ export function createAnimations(ctx) {
   $('anims-mode').onclick = () => show($('animations').hidden);
   $('anims-close').onclick = () => show(false);
 
+  // Update rates by distance (xbox.ini's AnimUpdate tables), saved straight away
+  // as config/xbox.ini.json: one textarea a table, a line a row.
+  const RATES = ['AnimUpdateLow', 'AnimUpdateMedium', 'AnimUpdateHigh', 'AnimUpdateLender'];
+  const rates = {data: null};
+  const rateLines = (key) => (rates.data.mod[key] || rates.data.game[key]);
+  function drawRates() {
+    if (!rates.data) return;
+    $('an-rates-body').innerHTML = RATES.map((k) => {
+      const changed = !!rates.data.mod[k];
+      return `<label class="field${changed ? ' an-changed' : ''}"><span class="an-handle">${k.slice(10)}${changed ? ' (changed)' : ''}</span>
+        <textarea data-rate="${k}" rows="${Math.max(2, rateLines(k).length)}" spellcheck="false">${esc(rateLines(k).join('\n'))}</textarea></label>`;
+    }).join('');
+  }
+  async function loadRates() {
+    const r = await fetch('/api/animupdate');
+    const d = await r.json();
+    if (!r.ok) throw new Error(d.error || r.statusText);
+    rates.data = d;
+    drawRates();
+  }
+  const panelRates = () => Object.fromEntries(RATES.map((k) => [k, $('an-rates-body').querySelector(`[data-rate="${k}"]`)
+    .value.split('\n').map((s) => s.trim()).filter(Boolean)]));
+  async function saveRates(tables) {
+    try {
+      const r = await fetch('/api/animupdate/save', {method: 'POST', headers: {'Content-Type': 'application/json'},
+                                                     body: JSON.stringify({tables})});
+      const d = await r.json();
+      if (!r.ok) throw new Error(d.error || r.statusText);
+      await loadRates();
+      status(d.file ? `Update rates saved in ${d.file} (${d.changed.map((k) => k.slice(10)).join(', ') || 'none changed'})`
+                    : 'Update rates back to the game\'s');
+    } catch (err) { status(`Update rates: ${err.message}`, true); }
+  }
+  $('an-rates').addEventListener('toggle', () => {
+    if ($('an-rates').open && !rates.data) loadRates().catch((err) => status(`Update rates: ${err.message}`, true));
+  });
+  $('an-rates-save').onclick = () => saveRates(panelRates());
+  $('an-rates-revert').onclick = () => saveRates(Object.fromEntries(RATES.map((k) => [k, []])));
+  $('an-rates-fix').onclick = () => {
+    if (!rates.data) return;
+    // Medium as retail meant it (its 15 m line restored); Low without the stray line
+    const low = rates.data.game.AnimUpdateLow;
+    const box = (k) => $('an-rates-body').querySelector(`[data-rate="${k}"]`);
+    const sorted = (rows) => [...rows].sort((a, b) => parseFloat(a) - parseFloat(b));
+    const lowRows = low.filter((r, i) => i < 5);
+    const stray = low.slice(5);
+    box('AnimUpdateLow').value = lowRows.join('\n');
+    box('AnimUpdateMedium').value = sorted([...rates.data.game.AnimUpdateMedium, ...stray]).join('\n');
+    status('Medium has its 15 m line back and Low its five rows: Save rates to keep it');
+  };
+
   // The editor's Save: each changed table.
   function saveBodies() {
     return [...st.dirty].map((name) => ({name, doc: st.docs[name]}));

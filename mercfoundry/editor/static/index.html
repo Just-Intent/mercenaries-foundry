@@ -355,6 +355,15 @@
       <p class="hint">A clip starts only if its priority is higher than the playing clip's (or equal, over a
         clip with flag 0x4). Hover a flags box for what each flag does. Save writes
         animtables/&lt;table&gt;.changes.json; the next game start uses it, for every character with this table.</p>
+      <details id="an-rates"><summary>Update rates by distance (every character)</summary>
+        <p class="hint">How often a playing clip is updated, by the character's distance: one line each,
+          "max distance, every N frames, interpolation 0/1"; -1 is for characters out of view; at most four
+          distances, ascending. A clip with flag 0x4000 uses High, 0x2000 Medium, others Low; Lender is for a
+          character lending its pose. From the game's xbox.ini; saved as config/xbox.ini.json.</p>
+        <div id="an-rates-body"></div>
+        <div class="buttons"><button id="an-rates-fix" title="Retail's Medium table has a typo: its 15 m line says AnimUpdateLow, so Medium has three distances">Fix the Medium typo</button>
+          <button id="an-rates-save">Save rates</button> <button id="an-rates-revert">Put back the game's</button></div>
+      </details>
       <div class="buttons"><button id="anims-close">Close</button></div>
     </div>
     <div id="sky" hidden>

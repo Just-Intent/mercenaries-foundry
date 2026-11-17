@@ -301,6 +301,13 @@ toolkit bundle run it the same way: `foundry\python\python.exe foundry\mercfound
     objects; killing one fails it; tick **Extract them** to need them flown
     out by the extraction chopper), **Hold zone** (stay in a zone for a
     number of seconds; leaving starts the clock again), **Use object** (walk
+  **Update rates by distance** (folded under the entries) shows `xbox.ini`'s
+  four tables of how often a playing clip is updated by the character's
+  distance (Low, Medium, High, Lender; a line each: max distance, every N
+  frames, interpolation; -1 is out of view). Edit the lines and **Save
+  rates** (`config/xbox.ini.json`; tables left as the game's aren't
+  written), **Put back the game's**, or **Fix the Medium typo** (retail's
+  15 m Medium line is written as Low). They apply to every character.
     up to objects and use them, with your own prompt; failed if one is
     destroyed) and **Verify target** (kill and photograph the body, or
     capture alive, as the Deck of 52; a marker of your choice, a card suit or

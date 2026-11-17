@@ -2,6 +2,7 @@ import json
 import tempfile
 import unittest
 from pathlib import Path
+from types import SimpleNamespace
 
 from mercfoundry import animation, animtable, dsk
 from mercfoundry.editor import anims
@@ -78,6 +79,41 @@ class AnimationsPanelTests(unittest.TestCase):
         saved = json.loads((s.mod / "animtables" / "guy_table.json").read_text(encoding="utf-8"))
         self.assertEqual(saved["sets"][0]["entries"][0]["priority"], 70)
         self.assertNotIn("meaning", saved["sets"][0]["entries"][0])
+
+
+class UpdateRateTests(unittest.TestCase):
+    XBOX = ("mipbias -0.88\n\n[Humans]\nAnimUpdateLow\t-1\t30\t0\nAnimUpdateLow\t10\t2\t0\n"
+            "AnimUpdateMedium\t-1\t30\t0\nAnimUpdateLow\t15\t4\t0\nAnimUpdateMedium\t60\t6\t0\n"
+            "AnimUpdateHigh\t-1\t30\t0\nAnimUpdateLender\t-1\t2\t0\n\n[FrontEndCanvas]\nX\t1\n")
+
+    def test_read_and_save(self):
+        with tempfile.TemporaryDirectory() as d:
+            d = Path(d)
+            (d / "DATAxbox").mkdir()
+            (d / "xbox.ini").write_text(self.XBOX, encoding="latin-1")
+            s = SimpleNamespace(data=d / "DATAxbox", mod=d / "mod")
+            got = anims.update_rates(s)
+            self.assertEqual(got["game"]["AnimUpdateLow"], ["-1 30 0", "10 2 0", "15 4 0"])
+            self.assertEqual(got["game"]["AnimUpdateMedium"], ["-1 30 0", "60 6 0"])
+            self.assertEqual(got["mod"], {})
+            # another setting in the file stays; a table equal to the game's isn't written
+            (s.mod / "config").mkdir(parents=True)
+            (s.mod / "config" / "xbox.ini.json").write_text(json.dumps({"": {"mipbias": "-0.5"}}), encoding="utf-8")
+            out = anims.save_update_rates(s, {"AnimUpdateMedium": ["-1 30 0", "15  4 0", "60 6 0"],
+                                              "AnimUpdateLow": ["-1 30 0", "10 2 0", "15 4 0"]})
+            self.assertEqual(out, {"file": "config/xbox.ini.json", "changed": ["AnimUpdateMedium"]})
+            doc = json.loads((s.mod / "config" / "xbox.ini.json").read_text(encoding="utf-8"))
+            self.assertEqual(doc, {"": {"mipbias": "-0.5"}, "Humans": {"AnimUpdateMedium": ["-1 30 0", "15 4 0", "60 6 0"]}})
+            self.assertEqual(anims.update_rates(s)["mod"], {"AnimUpdateMedium": ["-1 30 0", "15 4 0", "60 6 0"]})
+            # a table not sent stays; one the build would refuse is refused
+            anims.save_update_rates(s, {"AnimUpdateHigh": ["-1 30 0", "30 1 1"]})
+            self.assertEqual(sorted(anims.update_rates(s)["mod"]), ["AnimUpdateHigh", "AnimUpdateMedium"])
+            with self.assertRaises(ValueError):
+                anims.save_update_rates(s, {"AnimUpdateHigh": ["50 1 0", "30 1 0"]})
+            # all back to the game's: only the other setting is left
+            anims.save_update_rates(s, {k: [] for k in ("AnimUpdateMedium", "AnimUpdateHigh")})
+            self.assertEqual(json.loads((s.mod / "config" / "xbox.ini.json").read_text(encoding="utf-8")),
+                             {"": {"mipbias": "-0.5"}})
 
 
 if __name__ == "__main__":

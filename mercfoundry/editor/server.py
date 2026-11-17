@@ -31,6 +31,8 @@ GET  /api/animtable/<name>    the game's table, the mod's version, its models, t
 GET  /api/clips               every clip name
 GET  /api/clip/<model>/<clip>.glb  the model (no textures) carrying the clip, in place: the preview
 POST /api/animtable/save      {"name", "doc"}: animtables/<name>.changes.json (or the whole table's file)
+GET  /api/animupdate          xbox.ini's animation update rates by distance: the game's and the mod's
+POST /api/animupdate/save     {"tables": {"AnimUpdateHigh": ["30 1 1", ...]}}: config/xbox.ini.json
 GET  /api/mapsettings/<map>      a mod's new map: what it copies, arrival point, message, its layers
 POST /api/maps/new               {"name", "from"}: a new map (maps/<name>.json) -> {"name"}
 GET  /api/mods                  the game's source mods (folder, name, description, enabled, current)
@@ -207,6 +209,9 @@ def make_handler(scene: Scene, mod_name: str, live: Live = None):
                 if path.startswith("/api/sky/"):
                     with objects_lock:
                         return self.send(200, scene.sky(path[len("/api/sky/"):]))
+                if path == "/api/animupdate":
+                    with objects_lock:
+                        return self.send(200, anims.update_rates(scene))
                 if path == "/api/animtables":
                     with anims_lock:
                         return self.send(200, anims.tables(scene))
@@ -335,6 +340,9 @@ def make_handler(scene: Scene, mod_name: str, live: Live = None):
                 if path == "/api/sky/save":
                     with objects_lock:
                         return self.send(200, scene.save_sky(doc["map"], doc.get("doc") or {}))
+                if path == "/api/animupdate/save":
+                    with objects_lock:
+                        return self.send(200, anims.save_update_rates(scene, doc.get("tables") or {}))
                 if path == "/api/animtable/save":
                     with anims_lock:
                         return self.send(200, anims.save_table(scene, doc["name"], doc["doc"]))
