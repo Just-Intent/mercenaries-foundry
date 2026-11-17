@@ -319,11 +319,47 @@ class DecalTests(unittest.TestCase):
         self.assertEqual((a[3][1] - b[2][1]) % 2048, 0)
         self.assertEqual(a[1][0], b[0][0])
         self.assertEqual(round((a[3][1] - a[2][1]) % 2048), round(8 / 24 * 2048))
-        # nothing past the ends, and u stays on the texture
+        # nothing past the ends, and u no further past the texture's edges than its see-through margins
         xs = [c for c, _ in by_cell]
         self.assertGreaterEqual(min(xs), (-100 + 2048) // 8 - 1)
         self.assertLessEqual(max(xs), (100 + 2048) // 8)
-        self.assertTrue(all(0 <= u <= 2048 for uv in by_cell.values() for u, _ in uv))
+        m = terrain_decals.MARGIN * 2048
+        self.assertTrue(all(-m - 1 <= u <= 2048 + m + 1 for uv in by_cell.values() for u, _ in uv))
+
+    def test_diagonal_road_cells_join(self):
+        # a road at 45 degrees: every pair of neighbouring cells agrees on the
+        # corners they share (no clamping that bends each cell's texture)
+        road = {"texture": "asphalt", "points": [[-100, -100], [100, 100]], "span": 30}
+        cells = {tuple(e["cell"]): e["uv"] for e in terrain_decals.road_decals(road, 512, 8.0)}
+        self.assertGreater(len(cells), 40)
+        at = lambda uv: {(dx, dz): uv[i] for i, (dz, dx) in enumerate(terrain_decals.CORNERS)}
+        pairs = 0
+        for (c, r), uv in cells.items():
+            for (nx, nz), mine, theirs in (((1, 0), [(1, 0), (1, 1)], [(0, 0), (0, 1)]),
+                                           ((0, 1), [(0, 1), (1, 1)], [(0, 0), (1, 0)])):
+                other = cells.get((c + nx, r + nz))
+                if other is None:
+                    continue
+                a, b = at(uv), at(other)
+                for p, q in zip(mine, theirs):
+                    self.assertAlmostEqual(a[p][0], b[q][0], delta=1)
+                    self.assertAlmostEqual((a[p][1] - b[q][1] + 1) % 2048, 1, delta=1)
+                pairs += 1
+        self.assertGreater(pairs, 40)
+
+    def test_crossing_roads_nearest_wins(self):
+        chunks = decal_chunks()
+        doc = {"roads": [{"texture": "asphalt", "points": [[-60, 0], [60, 0]], "span": 30},
+                         {"texture": "dirt", "points": [[0, -60], [0, 60]], "span": 30}]}
+        replace, n = terrain_decals.apply(chunks, doc)
+        out = terrain_decals.export({**chunks, **replace})
+        tex = {tuple(d["cell"]): d["texture"] for d in out["decals"]}
+        half = SIZE * 8 / 2
+        cell = lambda x, z: (int((x + half) // 8), int((z + half - 8) // 8))
+        self.assertEqual(tex[cell(-40, 0)], "asphalt")      # on the first road, away from the crossing
+        self.assertEqual(tex[cell(0, -36)], "dirt")         # on the second, away from the first
+        self.assertEqual(tex[cell(4, 0)], "dirt")           # nearer the second's centre line
+        self.assertEqual(tex[cell(-12, 4)], "asphalt")      # nearer the first's
 
     def test_roads_keep_existing_decals(self):
         chunks = decal_chunks()

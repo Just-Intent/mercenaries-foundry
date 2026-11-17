@@ -18,8 +18,16 @@ The mod format, <name>.decals.json:
 outside the patch that stores them carry "patch": [px, pz], so the map
 rebuilds exactly.  "roads" are laid by the build: "points" are world x, z in
 metres (the Foundry Console's Position), and one texture width covers "span"
-metres across the road (25 m, like the game's own roads: about 11 m of
-asphalt), with the texture running along it at the same scale.
+metres across the road (25 m: about 12 m of asphalt; the game's own roads
+use about 37), with the texture running along it at the same scale.
+
+A road covers the cells whose centres lie within span / 2 of it, and its
+texture coordinates follow each corner's true distance across, running past
+the texture's edge into the next repeat's see-through margin as retail roads
+do (u from about -500 to 2550).  Clamping them at the edge instead bends the
+texture differently in each cell, and a road that doesn't run along the grid
+breaks into staggered squares.  Where roads cross, each cell takes the road
+whose centre line is nearest.
 """
 
 import math
@@ -31,6 +39,7 @@ MAX_TEXTURES = 16
 MAX_PER_PATCH = 64      # retail's most, one per cell of an 8 x 8 patch; past it the game crashes or hangs
 EXTRA = b"\0\xff\xff\xff\xff"   # bytes 3..7 of every retail decal
 CORNERS = ((1, 0), (1, 1), (0, 0), (0, 1))   # (dz, dx) of each stored corner
+MARGIN = 0.21      # share of a road texture's width that's see-through at each side (retail u: -497..2553)
 
 
 def _s8(v):
@@ -110,7 +119,8 @@ def road_decals(road, size, spacing):
                 best = (dist, start + t, math.copysign(dist, side) if dist else 0.0)
         return best
 
-    reach = span / 2 + spacing * 0.75
+    reach = span / 2
+    edge = span * MARGIN
     xs = [x for x, _ in pts]
     zs = [z for _, z in pts]
     c0, c1 = int(math.floor((min(xs) - reach + ox) / spacing)), int(math.ceil((max(xs) + reach + ox) / spacing))
@@ -125,10 +135,12 @@ def road_decals(road, size, spacing):
             uv = []
             for dz, dx in CORNERS:
                 _, s, d = project((c + dx) * spacing - ox, (r + dz) * spacing - oz)
-                d = max(-span / 2, min(span / 2, d))     # past the texture's edge: stay on it, not on the next repeat
+                # past the texture's edge into the see-through margin of the
+                # next repeat, but no further (that would show its asphalt)
+                d = max(-span / 2 - edge, min(span / 2 + edge, d))
                 uv.append([d / span * 2048 + 1024, s / span * 2048])
             shift = math.floor(min(v for _, v in uv) / 2048) * 2048   # keep v small: the texture repeats every 2048
-            out.append({"cell": [c, r], "texture": road["texture"],
+            out.append({"cell": [c, r], "texture": road["texture"], "_dist": dist,
                         "uv": [[int(round(u)), int(round(v - shift))] for u, v in uv]})
     return out
 
@@ -147,7 +159,11 @@ def apply(chunks, doc):
     laid = {}
     for road in doc.get("roads", []):
         for e in road_decals(road, size, spacing):
-            laid[tuple(int(v) for v in e["cell"])] = e
+            k = tuple(int(v) for v in e["cell"])
+            if k not in laid or e["_dist"] <= laid[k]["_dist"]:      # crossing roads: the nearer centre line
+                laid[k] = e
+    for e in laid.values():
+        e.pop("_dist", None)
     if laid:
         entries = [e for e in entries if tuple(int(v) for v in e["cell"]) not in laid] + list(laid.values())
 
