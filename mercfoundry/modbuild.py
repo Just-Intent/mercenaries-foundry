@@ -2152,6 +2152,28 @@ def _apply_sky(data, folder, result):
             result.changes.append(f"sky {f.stem}: " + "; ".join(changes))
 
 
+def _apply_configs(data, folder, result):
+    """config/<file>.json: lines of the game's root config files (xbox.ini,
+    rs.ini, vehicles.ini, msh2temp.ini; see configs.py), written whole as
+    loose files beside DATAxbox, which the launcher puts in place of the game's."""
+    from . import configs
+    cdir = folder / "config"
+    for f in sorted(cdir.glob("*.json")) if cdir.is_dir() else []:
+        name = configs.file_name(f.name[:-len(".json")])
+        if name is None:
+            raise ValueError(f"config/{f.name}: name it after one of the game's root config files "
+                             f"({', '.join(c + '.json' for c in configs.ROOT_CONFIGS)})")
+        if name in data.files:
+            text = data.files[name].decode("latin-1")
+        elif (data.dir.parent / name).exists():
+            text = (data.dir.parent / name).read_bytes().decode("latin-1")
+        else:
+            raise ValueError(f"config/{f.name}: the game has no {name} beside DATAxbox")
+        new, changes = configs.apply(text, json.loads(f.read_text(encoding="utf-8")), f"config/{f.name}")
+        data.files[name] = new.encode("latin-1")
+        result.changes.append(f"config {name}: " + "; ".join(changes))
+
+
 def game_strings(data):
     """Every English string as the build has it so far: {key: text}."""
     out = {}
@@ -2310,7 +2332,7 @@ def _swap_model(data, old, new):
 STEPS = (_apply_text, _apply_scripts, _apply_objects, _apply_encounters, _apply_missions,
          _apply_textures, _apply_models, _apply_collision_flags, _apply_layout, _apply_game_squads,
          _apply_animations, _apply_animtables, _apply_bone_moves, _apply_maps, _apply_terrain, _apply_sounds, _apply_sky,
-         _apply_factions)
+         _apply_factions, _apply_configs)
 
 
 def build(projects, data_dir, out_dir, name=None, description=None) -> Result:

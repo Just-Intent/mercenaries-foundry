@@ -103,6 +103,7 @@
 - 357 tests pass.
 
 ## Fixed from retail data
+- `xbox.ini`'s `AnimUpdateMedium` table: its 15 m line says `AnimUpdateLow` (a typo), so Medium has three distances. Not fixed by default; `config/xbox.ini.json` (0.143) can fix it, and sets any line of the game's root config files.
 - Text values aren't NUL-terminated. The decoder had assumed they were and found no strings.
 - Text header layout is now known, so new strings can be added.
 
