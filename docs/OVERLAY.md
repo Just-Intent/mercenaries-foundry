@@ -18,6 +18,14 @@ Script commands it adds, for the Lua box or any script:
   routes of 40 bytes at +0x18B58. It shows the zone's density, whether it's
   enabled, its spawners (template hash, then the resolved handle) and how many
   routes joined it.
+- `Foundry_SetHandling('<vehicle>', '<physics key>', value)` changes a
+  vehicle's handling while the game runs, through the class's own setter
+  (wheeled vehicles' drivetrain, helicopters, tanks; see
+  [VEHICLES.md](VEHICLES.md#changing-handling-live)), and returns what it
+  did (`wheeled: physicsenginetorque 2400 -> 3000`). The vehicle is named as
+  in the game's own script commands. Wheel friction is copied to the tyres
+  only at setup. Compiled; not yet run in game (new native builds don't run
+  on the PC it was written on).
 - `Foundry_Range()` runs the [test range](ENCOUNTERS.md#test-range)'s
   `range.lua` in the calling script state. It looks for the file in
   `mods\Foundry Test Range` first, then in the launcher's runtime copy, where

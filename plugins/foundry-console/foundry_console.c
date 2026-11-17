@@ -2000,6 +2000,77 @@ static void MERC_PLUGIN_CALL on_shutdown(void *ud)
     if (window_thread_id) PostThreadMessageW(window_thread_id, WM_QUIT, 0, 0);
 }
 
+/* Foundry_SetHandling('<vehicle>', '<physics key>', value): change a
+ * vehicle's handling while the game runs; returns what it did, as a string.
+ * The vehicle is a name (or 'player0''s...) as Lua_ArgActor reads it; its
+ * actor (+0x24) holds its physics, the class told by the actor's vtable
+ * (docs/VEHICLES.md, Changing handling live): wheeled 0x2E16D0, drivetrain at
+ * +0x360; helicopter 0x2E1F08, physics at +0x2C8; tank 0x2E3760, at +0x2E4.
+ * The key is any physics* name the class's setter takes (e.g.
+ * physicsenginetorque). Wheel friction is copied to the tyres only at setup,
+ * so a friction change may not show until the vehicle is spawned again. */
+#define ACTOR_VT_WHEELED 0x2E16D0u
+#define ACTOR_VT_HELICOPTER 0x2E1F08u
+#define ACTOR_VT_TANK 0x2E3760u
+
+static int MERC_PLUGIN_CALL cmd_set_handling(void *ud, uint32_t L)
+{
+    (void)ud;
+    MercGuestCall c;
+    char key[64] = {0}, out[200];
+    uint32_t args[2] = {L, 1}, obj = 0, actor = 0, vt = 0;
+    if (guest(MF_FN_Lua_ArgActor, 0, 2, args, &c)) obj = c.eax;
+    args[1] = 2;
+    if (guest(MF_FN_Lua_ArgString, 0, 2, args, &c) && c.eax)
+        for (unsigned i = 0; i < sizeof(key) - 1; i++)
+            if (!host->read_guest(host->context, c.eax + i, &key[i], 1) || !key[i]) break;
+    args[1] = 3;
+    float value = guest(MF_FN_Lua_ArgNumber, 0, 2, args, &c) ? (float)c.st0 : 0.0f;
+    if (obj) host->read_guest(host->context, obj + MF_OFF_WorldObject_actor, &actor, 4);
+    if (actor) host->read_guest(host->context, actor, &vt, 4);
+    uint32_t set = 0, get = 0, self = 0;
+    const char *kind = "";
+    if (vt == ACTOR_VT_WHEELED) {
+        set = MF_FN_Drivetrain_SetPhysicsValue; get = MF_FN_Drivetrain_GetPhysicsValue;
+        self = actor + 0x360; kind = "wheeled";
+    } else if (vt == ACTOR_VT_HELICOPTER) {
+        set = MF_FN_Helicopter_SetPhysicsValue; self = actor + 0x2C8; kind = "helicopter";
+    } else if (vt == ACTOR_VT_TANK) {
+        set = MF_FN_TrackedVehicle_SetPhysicsValue; get = MF_FN_TrackedVehicle_GetPhysicsValue;
+        self = actor + 0x2E4; kind = "tank";
+    }
+    uint32_t hash = hash_name(key);
+    if (!obj)
+        snprintf(out, sizeof(out), "no such vehicle");
+    else if (!set)
+        snprintf(out, sizeof(out), "not a wheeled vehicle, helicopter or tank (actor vtable %08X)", vt);
+    else if (!key[0])
+        snprintf(out, sizeof(out), "give a physics* key, e.g. physicsenginetorque");
+    else {
+        float before = 0;
+        int had = get && guest(get, self, 1, &hash, &c);
+        if (had) before = (float)c.st0;
+        uint32_t bits;
+        memcpy(&bits, &value, 4);
+        uint32_t sargs[2] = {hash, bits};
+        int ok = guest(set, self, 2, sargs, &c);
+        if (!ok)
+            snprintf(out, sizeof(out), "%s: the setter refused the call (%s)", kind, c.error);
+        else if (had)
+            snprintf(out, sizeof(out), "%s: %s %g -> %g", kind, key, before, value);
+        else
+            snprintf(out, sizeof(out), "%s: %s set to %g", kind, key, value);
+    }
+    uint32_t scratch, size;
+    if (host->guest_scratch(host->context, &scratch, &size) && size > sizeof(out)) {
+        host->write_guest(host->context, scratch, out, strlen(out) + 1);
+        uint32_t push[2] = {L, scratch};
+        guest(MF_FN_lua_pushstring, 0, 2, push, &c);
+        return 1;
+    }
+    return 0;
+}
+
 /* Foundry_TrafficZone('name'): the traffic manager's view of a zone, as a
  * string. The manager is a static object (Traffic_* commands pass 0x3DC970);
  * zones are a table of 0x294-byte entries at +0x2C, count at +0x28 (at most
@@ -2532,9 +2603,10 @@ MERC_PLUGIN_EXPORT int MERC_PLUGIN_CALL MercenariesPlugin_Init(
         !h->add_lua_command(h->context, "Foundry_TrafficZone", cmd_traffic_zone, NULL) ||
         !h->add_lua_command(h->context, "Foundry_Range", cmd_range, NULL) ||
         !h->add_lua_command(h->context, "Foundry_Sample", cmd_sample, NULL) ||
-        !h->add_lua_command(h->context, "Foundry_Label", cmd_label, NULL))
-        h->log(h->context, "script commands unavailable; Foundry_TrafficZone, Foundry_Range, Foundry_Sample "
-                           "and Foundry_Label may not exist");
+        !h->add_lua_command(h->context, "Foundry_Label", cmd_label, NULL) ||
+        !h->add_lua_command(h->context, "Foundry_SetHandling", cmd_set_handling, NULL))
+        h->log(h->context, "script commands unavailable; Foundry_TrafficZone, Foundry_Range, Foundry_Sample, "
+                           "Foundry_Label and Foundry_SetHandling may not exist");
     sampler_init();
     plugin->on_update = on_update;
     plugin->on_shutdown = on_shutdown;
