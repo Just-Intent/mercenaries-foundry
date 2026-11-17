@@ -526,6 +526,45 @@ class TiltTests(unittest.TestCase):
             self.assertAlmostEqual(back[0]["rotation"][4], math.cos(a), places=5)
 
 
+class ContextStampTests(unittest.TestCase):
+    def test_other_mods_files_and_mod_list(self):
+        # files another mod (or a tool such as `gis build`) writes while the
+        # editor runs, and mods switched on, make it read the mods again
+        import os
+        import tempfile
+        from pathlib import Path
+        from mercfoundry import modbuild, sync
+        from mercfoundry.editor.scene import Scene, context_mods
+        with tempfile.TemporaryDirectory() as d:
+            game = Path(d)
+            (game / "mods").mkdir()
+            for m in ("Mine", "Other", "Later"):
+                modbuild.new_project(game / "mods" / m, m)
+            sync.write_loader(game, [sync.Mod("Mine", True), sync.Mod("Other", True)])
+            sc = Scene.__new__(Scene)
+            sc.mod = game / "mods" / "Mine"
+            sc.context = context_mods(sc.mod)
+            first = sc._maps_stamp()
+            self.assertEqual(sc._maps_stamp(), first)
+            (game / "mods" / "Other" / "terrain" / "isle.heights.json").write_text("{}")
+            second = sc._maps_stamp()
+            self.assertNotEqual(second, first)
+            (game / "mods" / "Other" / "encounters" / "isle_gis.json").write_text("{}")
+            self.assertNotEqual(sc._maps_stamp(), second)
+            # the edited mod's own placed objects don't (its saves refresh them)
+            third = sc._maps_stamp()
+            (game / "mods" / "Mine" / "encounters" / "camp.json").write_text("{}")
+            self.assertEqual(sc._maps_stamp(), third)
+            # a mod switched on in the launcher's list is shown
+            sync.write_loader(game, [sync.Mod("Mine", True), sync.Mod("Other", True),
+                                     sync.Mod("Later", True)])
+            loader = game / "mod-loader.ini"
+            st = loader.stat()
+            os.utime(loader, ns=(st.st_atime_ns, st.st_mtime_ns + 10 ** 9))
+            sc._maps_stamp()
+            self.assertIn("Later", [p.name for p in sc.context])
+
+
 class LivePaintTests(unittest.TestCase):
     def test_paint_lines_encode_as_the_build(self):
         from mercfoundry import terrain_layers as tl, terrain_paint

@@ -527,12 +527,25 @@ class Scene:
         return self._terrain
 
     def _maps_stamp(self):
-        """The context mods' new-map files and when each last changed."""
-        out = []
+        """The shown mods' map, terrain, layer and object-rule files and when
+        each last changed, so files another mod or tool writes while the
+        editor runs show (e.g. `gis build`). A change to the launcher's mod
+        list (a mod switched on or off) re-reads which mods are shown."""
+        game = self.game_dir()
+        loader = game / "mod-loader.ini" if game else None
+        lstamp = loader.stat().st_mtime_ns if loader and loader.exists() else None
+        if lstamp != getattr(self, "_loader_stamp", lstamp):
+            self.context = context_mods(self.mod)
+        self._loader_stamp = lstamp
+        out = [("loader", lstamp)]
+        mine = self.mod.resolve()
         for p in self.context:
-            mdir = Path(p) / "maps"
-            if mdir.is_dir():
-                out += [(str(f), f.stat().st_mtime_ns) for f in sorted(mdir.glob("*.json"))]
+            # the edited mod's own object saves refresh what they change already
+            own = Path(p).resolve() == mine
+            for folder in ("maps", "terrain") if own else ("maps", "terrain", "encounters", "objects"):
+                d = Path(p) / folder
+                if d.is_dir():
+                    out += [(str(f), f.stat().st_mtime_ns, f.stat().st_size) for f in sorted(d.iterdir()) if f.is_file()]
         return tuple(out)
 
     def _forget_terrain(self, map_name):
@@ -2052,7 +2065,11 @@ class Scene:
         """The context mods' object rules and encounter layers, applied as a
         build would (once): this mod's own too, except the editor's rules
         (shown as edits) and its squad members (shown as squads)."""
+        stamp = self._maps_stamp()
+        if stamp != getattr(self, "_ctx_stamp", None):
+            self._ctx_world = None
         if getattr(self, "_ctx_world", None) is None:
+            self._ctx_stamp = stamp
             from .. import modbuild
             data = modbuild._Data(self.data)
             mine = self.mod.resolve()
