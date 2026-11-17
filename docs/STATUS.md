@@ -148,7 +148,7 @@
 - Python 3.12.10 alongside 3.13. The port's `.venv` has its pinned CMake 3.31.6, Ninja 1.13.0 and Capstone 5.0.6.
 
 ## Next steps
-1. Collision flags: what bit 4 does; rock meshes' mixed bullet results (the data rules out size, holes, flags and winding: see dsk.md; retest in game).
+1. Collision flags: bit 4 is traced to line of sight (AI, targeting, HUD and explosion rays test it; bullets don't): confirm in game; rock meshes' mixed bullet results (the data rules out size, holes, flags and winding: see dsk.md; retest in game).
 2. Moved skin bones on characters (0.135: the build gives them clips of their own; test in game). Animation-table flag 0x1000: no reader found (0x2000 and 0x4000 are the medium and high update rates by distance, xbox.ini's AnimUpdate tables, traced to 0x4E790).
 3. Function map: name more engine functions (actors, AI commands, missions); find the path from a vehicle actor to its drivetrain, so plugins can change handling live with the setters.
 4. Overlay: spawning and object editing from the in-game panel (now only in the window).

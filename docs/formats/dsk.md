@@ -339,7 +339,7 @@ The `sinf` "material" word is not a surface material: it is the shape's collisio
 |---|---|---|
 | 1 | Solid to people and vehicles | Static objects (`0x12FCC0`) put a shape with bit 1 in collision layer 1, or layer 2 with bit 8 too, and a shape without bit 1 in layer 7. In game, box shapes with 1, 3, 5 and 7 stopped walking and the Humvee; 2, 4 and 6 didn't. |
 | 2 | Bullets hit it | In game, bullets sparked on box shapes with 2, 3, 6 and 7 but passed through 1, 4 and 5. |
-| 4 | Not seen to change anything in game | Set with 2 on vehicle hull meshes (6). |
+| 4 | Blocks line of sight (by the code; not yet seen in game) | The ray casts (`0x12C650`) that test it are the AI's (`0x69550`, `RsAi.cpp`), the targeting system's (`0x156170`, `RsTargetSystem.cpp`) and the HUD's (`0x102C60`, `RsHud.cpp`), all with mask `0x104`, and explosions' (`0xB6460`, `RsExplosion.cpp`, mask 4: what shelters you from a blast). Bullets (`0x102`) don't test it. In retail, props (7), ruins (15) and vehicle hulls (6) have it; chain-link fences (41 plus 2) and gates (2 plus 33) don't, so they can be seen and targeted through. In game it changed nothing for walking or bullets, as expected. |
 | 8 | Main physics body of a moving object | Vehicles and physics props (`0x1319F0`) take the bit-8 shape as the body that collides with the world. Without one they fall back to a bit-1 shape and treat it as 9. The Humvee's 9 shape stopped it at walls; its 6 shape didn't. |
 | 2, 4, 32 | Second body of a moving object | `0x1319F0` builds it from a shape with any of these bits and neither 1 nor 8, e.g. the Humvee's hull (6). |
 | 16 | No static body | `0x12FCC0` skips these shapes. |
@@ -380,7 +380,7 @@ Surface types aren't in the archive. Each level's `ConfigFile` (from `levels.ini
 
 - The grid-index tail (`0x00FF8040`): no retail archive uses it.
 - Models: the extra 8 bytes of 28-byte vertices, and `MTRL` words 0, 2 and 4–6.
-- Collision: what flag bit 4 does; rock meshes' mixed bullet results, which the data doesn't explain (checked 2026-11-15 on all 1,875 rock objects: every rock model but two rock-shrub clumps has a triangle mesh with the bullet bit, the same size as what's drawn, closed but for its rim on the ground; meshes are wound at random, but so are vehicles' (the Humvee's bullet-hit shape is such a mesh), so the ray must hit triangles from both sides). Retest with shots clear of the ground; what the walker's carried value (`60`-`68`) is for; 2 of 176 convex hulls have a point up to 13 cm outside one plane.
+- Collision: bit 4 in game (does a wall without it let the AI see and target through it?); rock meshes' mixed bullet results, which the data doesn't explain (checked 2026-11-15 on all 1,875 rock objects: every rock model but two rock-shrub clumps has a triangle mesh with the bullet bit, the same size as what's drawn, closed but for its rim on the ground; meshes are wound at random, but so are vehicles' (the Humvee's bullet-hit shape is such a mesh), so the ray must hit triangles from both sides). Retest with shots clear of the ground; what the walker's carried value (`60`-`68`) is for; 2 of 176 convex hulls have a point up to 13 cm outside one plane.
 - Terrain: the meaning of `INFO`'s 3 trailing floats and of `ROTN`. What animation-table `PRIO` and `FLGS` values mean. Whether DXT2 textures are premultiplied (we treat them as DXT3).
 - `INFO` byte 0 in scripts; `TNAM` and `INFO` in world layers.
 - What `num_components` counts exactly.
