@@ -1984,6 +1984,9 @@ def load_kit(plan, mod, log=print):
         entry = (name, float(m["x"]), float(m["z"]), float(m["height"]))
         if m.get("skirt"):
             plants.setdefault("skirted", set()).add(name)
+        if m.get("wreck"):
+            plants.setdefault("wrecks", {})[m["intact"]] = name
+            continue
         if m.get("damage"):
             plants.setdefault("damaged", {}).setdefault(m["intact"], {})[int(m["damage"])] = name
             continue
@@ -1998,6 +2001,24 @@ def load_kit(plan, mod, log=print):
         + ", ".join(f"{len(kit[k])} {k}" for k in sorted(replaced))
         + ", " + ", ".join(f"{len(v)} {k}" for k, v in sorted(plants.items())) + ")")
     return kit, plants, geometry
+
+
+def set_wrecks(objects, extras):
+    """Each own building (and its damaged versions) is destroyed into its
+    kit wreck (a model with "wreck": true and its "intact" building, built
+    on the base model's ruin): geometryNameRuined. Run before use_geometry."""
+    wrecks = extras.get("wrecks") or {}
+    if not wrecks:
+        return 0
+    intact_of = {name: intact for intact, levels in (extras.get("damaged") or {}).items() for name in levels.values()}
+    n = 0
+    for o in objects:
+        model = _model_of(o)
+        wreck = wrecks.get(intact_of.get(model, model))
+        if wreck:
+            o.setdefault("set", {})["geometryNameRuined"] = wreck
+            n += 1
+    return n
 
 
 def use_geometry(objects, geometry):
@@ -2856,6 +2877,9 @@ def build(plan, mod, log=print):
         objects, skipped = laid, 0
     else:
         objects, skipped = place_buildings(items, ground, kit=kit, limit=plan.get("max_buildings"))
+    wrecked = set_wrecks(objects, plant_kit)
+    if wrecked:
+        log(f"wrecks: {wrecked} buildings fall into Gaza rubble when destroyed")
     use_geometry(objects, geometry)
     kinds = {}
     for o in objects:

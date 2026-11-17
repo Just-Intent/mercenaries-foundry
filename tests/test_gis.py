@@ -740,3 +740,11 @@ class HarbourTest(unittest.TestCase):
         self.assertEqual(len(boats), 5)
         for o in out:
             self.assertEqual(o["position"][1], 19.5)
+
+
+class WreckTest(unittest.TestCase):
+    def test_buildings_and_their_damaged_versions_fall_into_their_wreck(self):
+        extras = {"wrecks": {"h": "h_wreck"}, "damaged": {"h": {1: "h_dmg", 2: "h_ruin"}}}
+        objs = [{"from": "model:h"}, {"from": "model:h_dmg"}, {"from": "model:h_ruin"}, {"from": "model:other"}]
+        self.assertEqual(gis.set_wrecks(objs, extras), 3)
+        self.assertEqual([o.get("set", {}).get("geometryNameRuined") for o in objs], ["h_wreck"] * 3 + [None])
