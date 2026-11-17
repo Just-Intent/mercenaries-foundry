@@ -267,6 +267,15 @@ def make_handler(scene: Scene, mod_name: str, live: Live = None):
                 return self.send(200, live.poll(body.decode("utf-8", "replace")), "text/plain; charset=utf-8")
             try:
                 doc = json.loads(body or b"{}")
+                # a change meant for the mod the page shows, not the one this server now saves to
+                # (another tab switched mods, or the server was restarted on another)
+                meant = self.headers.get("X-Foundry-Mod")
+                if meant is not None and not path.startswith("/api/mods/") and path != "/api/live/send":
+                    from urllib.parse import unquote
+                    if unquote(meant) != scene.mod.name:
+                        return self.fail(409, f"This page is editing mods/{unquote(meant)}, but the editor now saves to "
+                                              f"mods/{scene.mod.name} (another editor tab switched it, or it was restarted). "
+                                              f"Nothing was saved: reload the page, or switch back in Mods")
                 if path == "/api/live/send":
                     return self.send(200, {"queued": live.send(doc.get("commands", []))})
                 if path == "/api/save":

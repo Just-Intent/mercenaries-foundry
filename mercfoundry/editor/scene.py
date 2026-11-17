@@ -1802,6 +1802,7 @@ class Scene:
         size x size; light is the baked lighting (RGB per height sample)."""
         if not hasattr(self, "_looks"):
             self._looks = {}
+        self._modded_terrain()          # forgets the looks when a mod's terrain files changed (a save)
         if name not in self._looks:
             from .. import terrain_layers as tl, terrain_light, terrain_paint
             data = self._modded_terrain()
@@ -2508,8 +2509,11 @@ class Scene:
                 if p.stem.lower() in world_layers:
                     raise ValueError(f"the game already has a layer named {p.stem!r}")
                 doc = {"map": map_name.upper()}
+            before = json.dumps(doc, sort_keys=True)
             if fname.lower() == own or not p.exists():
                 doc["load"] = "map"
+            # keys an object has that the editor doesn't edit stay (by its name)
+            old = {str(o.get("name") or "").lower(): o for o in doc.get("objects") or [] if isinstance(o, dict)}
             out = []
             for o in objs:
                 rows = from_three(o["rotation"])
@@ -2520,11 +2524,24 @@ class Scene:
                     item["rotation"] = [[round(v, 6) for v in row] for row in rows]
                 if o.get("set"):
                     item["set"] = o["set"]
+                for k, v in (old.get(o["name"].lower()) or {}).items():
+                    if k not in ("from", "name", "position", "yaw", "rotation", "set"):
+                        item[k] = v
+                prev = old.get(o["name"].lower())
+                if prev and prev.get("from") == item["from"] and "rotation" not in item and "rotation" not in prev:
+                    # unmoved: keep its numbers as written (the editor's round trip can differ in the last digit)
+                    if all(abs(float(a) - float(b)) < 1e-3 for a, b in zip(prev.get("position") or [], item["position"])) \
+                            and abs(float(prev.get("yaw") or 0) - item["yaw"]) < 0.01:
+                        item["position"], item["yaw"] = prev["position"], prev.get("yaw", item["yaw"])
                 out.append(item)
             if out:
                 doc["objects"] = out
             else:
                 doc.pop("objects", None)
+            # every other key of the layer (unnamed, boundaries, copy_loads...) is kept;
+            # a layer nothing changed in isn't written again
+            if p.exists() and json.dumps(doc, sort_keys=True) == before:
+                continue
             p.parent.mkdir(parents=True, exist_ok=True)
             p.write_text(json.dumps(doc, indent=1) + "\n", encoding="utf-8")
         if files:

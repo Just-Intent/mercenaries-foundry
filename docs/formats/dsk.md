@@ -265,11 +265,13 @@ Flags (`animtable.FLAGS`; exported tables list them in words as `"meaning"`, whi
 | `0x200` | cut short when the character moves | code | walk and run stops |
 | `0x400` | full-body action: no aiming; on the upper body it stops the full-body clip | code | jumps, deaths, ragdoll, melee, airstrike reaction |
 | `0x800` | with `0x2`, the clip moves the character physically | code | staggers, dive and cover rolls, airstrike reaction |
-| `0x1000` | idle | seen | standing idles |
-| `0x2000` | ? | seen | the player tables' upper-body walk, stop, jump, aim |
-| `0x4000` | ? | seen | fidgets, runs, melee, airstrike reaction |
+| `0x1000` | idle (no reader found; idles get the low update rate anyway, by default) | seen | standing idles |
+| `0x2000` | medium update rate (`xbox.ini` `AnimUpdateMedium`) | code | the player tables' upper-body walk, stop, jump, aim |
+| `0x4000` | high update rate (`xbox.ini` `AnimUpdateHigh`: every frame within 30 m) | code | fidgets, runs, melee, airstrike reaction |
 | `0x8000` | stagger (speed reset when it ends) | code | staggers |
 | `0x10000` | melee strike (the game asks whether one is playing) | code | melee bash |
+
+How often a playing clip is updated depends on the character's distance (`AnimChannel_UpdateRate`, `0x4E790`). Its class is High with `0x4000` (or `0x61320` true for the channel), Medium with `0x2000`, else Low; a character lending its pose to another uses Lender. The class's row in `xbox.ini` (`AnimUpdateLow`, `AnimUpdateMedium`, `AnimUpdateHigh`, `AnimUpdateLender`: distance, frames between updates, a flag; read by `0x4C380` into `0x320678`) gives the period: retail's High is every frame within 30 m, every 2 to 50, 4 to 100 and 15 beyond; Low every 2 within 10 m and 30 far away. A clip without `0x2000` or `0x4000` that moves a lot looks jerky at a distance. `xbox.ini` is a loose file, so a mod could change the rates.
 
 Bits `0x20000000`, `0x40000000` and `0x80000000` (and `0x2`, `0x8`) are also set at play time by the code asking for the clip. Not tested in game.
 

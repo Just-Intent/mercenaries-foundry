@@ -185,6 +185,20 @@ function standIn(rec) {
   return m.multiply(new THREE.Matrix4().makeScale(...size));
 }
 
+// Every change this page sends names the mod it shows (the toolbar's "Saving
+// to"): the server refuses one meant for another mod, as when another editor
+// tab switched mods or the server was restarted on another one since.
+let pageMod = null;
+{
+  const send = window.fetch.bind(window);
+  window.fetch = (url, opts = {}) => {
+    if (pageMod && opts && opts.method === 'POST' && String(url).startsWith('/api/')) {
+      opts = {...opts, headers: {...(opts.headers || {}), 'X-Foundry-Mod': encodeURIComponent(pageMod)}};
+    }
+    return send(url, opts);
+  };
+}
+
 // ------------------------------------------------------------------ status
 function status(text, error = false) {
   $('status').textContent = text;
@@ -196,6 +210,7 @@ async function fillMaps() {
   $('mod').textContent = info.mod;
   $('mod').title = `Everything you save goes into mods/${info.folder}: click to switch to another mod, make one, rename it or delete one`;
   modName = info.mod;
+  pageMod = info.folder;
   const maps = info.maps.filter((m) => ['swn', 'sw', 'nw'].includes(m)).concat(
     info.maps.filter((m) => !['swn', 'sw', 'nw'].includes(m)));
   $('map').innerHTML = maps.map((m) => `<option>${m}</option>`).join('');

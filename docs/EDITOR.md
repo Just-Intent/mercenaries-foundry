@@ -15,6 +15,13 @@ toolkit bundle run it the same way: `foundry\python\python.exe foundry\mercfound
 ## What it does
 
 - **Saving to** (top left) names the mod everything you save goes into.
+  The editor's server edits one mod at a time for every tab: if another tab
+  switches mods, or the server is restarted (on the mod it was started
+  with), a page still showing the old mod has its saves refused ("Nothing
+  was saved") instead of going into the other mod; reload it, or switch
+  back in Mods. Saving leaves a layer file that nothing changed in as it is,
+  and keeps the keys of one it rewrites that the editor doesn't edit
+  (`unnamed`, `boundaries`, an object's own extra keys).
   Click it for the Mods panel: the game's source mods, **Edit this mod** to
   switch to another (the map reloads from it), **Built by the launcher**
   (its place in the launcher's list), the mod's name and description

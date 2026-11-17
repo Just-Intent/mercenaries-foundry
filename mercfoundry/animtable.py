@@ -54,9 +54,11 @@ FLAGS = {
                                 "deaths, ragdoll, melee, airstrike reaction)"),
     0x800: ("moves the character (physical)", "code: with 0x2, the character is moved by the clip "
                                               "(staggers, dive rolls, cover rolls, airstrike reaction)"),
-    0x1000: ("idle", "seen: standing idles only; no reader found"),
-    0x2000: ("player", "seen: the player's tables' upper-body walk, stop, jump and aim; no reader found"),
-    0x4000: ("?", "seen: fidgets, runs, melee, airstrike reaction; no reader found"),
+    0x1000: ("idle", "seen: standing idles only; no reader found (idles get the low update rate anyway, the default)"),
+    0x2000: ("medium update rate", "code (0x4E790): updated at xbox.ini's AnimUpdateMedium rates by distance "
+             "(\"limited movement, e.g. firing\"); without 0x2000 or 0x4000, AnimUpdateLow (\"e.g. idles\")"),
+    0x4000: ("high update rate", "code (0x4E790): updated at xbox.ini's AnimUpdateHigh rates, every frame within "
+             "30 m (\"significant movement, e.g. walking/running, reloading, fidgets\")"),
     0x8000: ("stagger", "code: the full-body stagger (speed reset when it ends)"),
     0x10000: ("melee strike", "code: the game asks whether one is playing (melee bash)"),
 }

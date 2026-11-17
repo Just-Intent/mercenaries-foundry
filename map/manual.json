@@ -651,6 +651,90 @@
    "name": "Anim_ClearChannelFlags",
    "signature": "void __thiscall Anim_ClearChannelFlags(AnimState *s, uint32 mask, int channel)",
    "evidence": "retail code: clears mask from the channel's flags, as Anim_SetChannelFlags"
+  },
+  {
+   "address": "0x001F9FD0",
+   "name": "SinTable_Init",
+   "signature": "void __thiscall SinTable_Init(float *table)",
+   "evidence": "retail code: fills 8192 floats with fsin(i * k), k = 2 pi / 8192 (called on the table at 0x645AC8 by 0x252A20)"
+  },
+  {
+   "address": "0x001F9D70",
+   "name": "Sin_Lookup",
+   "signature": "float __cdecl Sin_Lookup(float radians)",
+   "evidence": "retail code: g_SinTable[(radians * 8192 / 2pi + 0.5) & 0x1FFF]"
+  },
+  {
+   "address": "0x001F9DA0",
+   "name": "Cos_Lookup",
+   "signature": "float __cdecl Cos_Lookup(float radians)",
+   "evidence": "retail code: -g_SinTable[(i - 0x800) & 0x1FFF], i as Sin_Lookup: -sin(x - pi/2) = cos x"
+  },
+  {
+   "address": "0x001F9DE0",
+   "name": "SinCos_Lookup",
+   "signature": "void __cdecl SinCos_Lookup(float *sin_out, float *cos_out, float radians)",
+   "evidence": "retail code: *sin_out = g_SinTable[i], *cos_out = -g_SinTable[i - 0x800], as Sin_Lookup and Cos_Lookup"
+  },
+  {
+   "address": "0x00211C90",
+   "name": "Sky_ReadConfig",
+   "signature": "void __cdecl Sky_ReadConfig(Config *cfg)",
+   "evidence": "retail code: reads a level config's SunAngle (two floats times pi/180, to Sky_SetSunAngle), then SunRGB and AmbientRGB (each channel / 2, clamped 0-255, packed; SunRGB to 0x30F2D0); called by 0x178B40"
+  },
+  {
+   "address": "0x00211C00",
+   "name": "Sky_SetSunAngle",
+   "signature": "void __cdecl Sky_SetSunAngle(float a, float b)",
+   "evidence": "retail code: g_LightDirection = (-sin a cos b, cos a, -sin a sin b) through Cos_Lookup, Sin_Lookup and SinCos_Lookup; the light travels that way, so the sun stands a - 90 degrees up, at compass bearing b + 90 (x east, z south). Matches the maps' baked ground light (swn: SunAngle 140 180, sun 50 degrees up from -x; its COLR fits 48 from -x/-z)"
+  },
+  {
+   "address": "0x0014A340",
+   "name": "LineRegion_Read",
+   "signature": "void __cdecl LineRegion_Read(Chunk *record)",
+   "evidence": "retail code: walks a lineregion record's lrg_ chunks (3+ points), switches on the PROP type's hash; for water (0x49C69A10) reads height, numgrids, gridsize, amplitude, red, green, blue, alpha (0-255) and texture (default oceanwater1-4) and calls Water_AddZone; called by the record loader 0x17A120"
+  },
+  {
+   "address": "0x00202630",
+   "name": "Water_AddZone",
+   "signature": "WaterZone * __cdecl Water_AddZone(int points, Vec3 *pts, WaterSettings *s)",
+   "evidence": "retail code: allocates a 0x54-byte water zone (RedWaterOcean.cpp line 1652), builds it (0x2020A0) and appends it to g_WaterZones only while g_WaterZoneCount < g_WaterZoneMax (16): later zones are dropped"
+  },
+  {
+   "address": "0x00202560",
+   "name": "Water_Clear",
+   "signature": "void __cdecl Water_Clear(void)",
+   "evidence": "retail code: frees every zone in g_WaterZones and the second list at 0x30F100 and zeroes both counts; called by the game state's teardown 0x185370"
+  },
+  {
+   "address": "0x00201D60",
+   "name": "Water_Draw",
+   "signature": "void __cdecl Water_Draw(void)",
+   "evidence": "retail code: per frame (through 0x213D30): for each zone in g_WaterZones, Water_IsVisible then 0x2019F0 draws it"
+  },
+  {
+   "address": "0x002018B0",
+   "name": "Water_IsVisible",
+   "signature": "bool __thiscall Water_IsVisible(WaterZone *z)",
+   "evidence": "retail code: the zone's bounding box (+0x14 min, +0x20 max) as a sphere against the camera (0x6437B4: position +0x40, view distance +0xA0), then the view frustum (0x1F8DD0); nothing map-specific"
+  },
+  {
+   "address": "0x0004E790",
+   "name": "AnimChannel_UpdateRate",
+   "signature": "int __thiscall AnimChannel_UpdateRate(Character *c, int channel, float distance, uint32 *last)",
+   "evidence": "retail code: the channel's flags (Anim_ChannelFlags): 0x20 none (-1); the character lending its pose (vtable +0x2D0) class 3; flag 0x4000 or 0x61320 class 2; else class 1 with flag 0x2000, 0 without. The class's row of g_AnimUpdateRates by distance gives a period: (tick 0x793564 + the character's +0x6D4) / period changing means update now (bit 2), the row's flag adds bit 4"
+  },
+  {
+   "address": "0x0004C380",
+   "name": "AnimUpdate_ReadRates",
+   "signature": "void __cdecl AnimUpdate_ReadRates(Config *cfg, uint32 key, AnimRate *rows)",
+   "evidence": "retail code: reads one of xbox.ini's AnimUpdateLow / Medium / High / Lender lines (distance, period, flag) into five 12-byte rows"
+  },
+  {
+   "address": "0x0004C5A0",
+   "name": "Character_ReadSettings",
+   "signature": "void __cdecl Character_ReadSettings(Config *cfg)",
+   "evidence": "retail code: character settings from the configs (rs.ini: CorpseCleanUpFifoSize, FidgetWaitTimeBase, FallMinDistanceLight, ...; xbox.ini: the four AnimUpdate tables into g_AnimUpdateRates); called by 0x178B40, which also reads the sky (Sky_ReadConfig)"
   }
  ],
  "globals": [
@@ -778,6 +862,26 @@
    "address": "0x00323F08",
    "name": "g_TerrainLayerEffects",
    "evidence": "retail code: layereffect <slot> effect name hashes (Effects_ReadTerrainEffects)"
+  },
+  {
+   "address": "0x00645AC8",
+   "name": "g_SinTable",
+   "evidence": "retail code: 8192 floats, sin(i * 2pi / 8192), filled by SinTable_Init"
+  },
+  {
+   "address": "0x00841FCC",
+   "name": "g_LightDirection",
+   "evidence": "retail code: Vec3 set by Sky_SetSunAngle (the way the sun's light travels); read by seven drawing functions"
+  },
+  {
+   "address": "0x0030F0B8",
+   "name": "g_WaterZones",
+   "evidence": "retail code: WaterZone *[16]; count at 0x30F0F8 (g_WaterZoneCount), maximum at 0x30F0FC (g_WaterZoneMax, 16 in the XBE's data, never written)"
+  },
+  {
+   "address": "0x00320678",
+   "name": "g_AnimUpdateRates",
+   "evidence": "retail code: 4 classes (Low, Medium, High, Lender) x 0x3C bytes: five rows {float distance, u32 frames between updates, u8 flag} from xbox.ini's AnimUpdate* lines; read by AnimChannel_UpdateRate"
   }
  ],
  "structures": [
