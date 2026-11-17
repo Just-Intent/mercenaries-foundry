@@ -258,9 +258,13 @@ class TerrainTests(unittest.TestCase):
                 for x in range(24, w):
                     la[2 * (y * w + x)], la[2 * (y * w + x) + 1] = 255, 255
             (d / "proj" / "terrain" / "sw.layer02.sand.changes.png").write_bytes(png.encode(w, w, bytes(la), 2))
-            modbuild.build(d / "proj", d / "data", d / "out")
+            # sand is the mod's own texture: no warning about it
+            build_dsk(d / "data" / "streamed.dsk", [])         # where new textures go
+            (d / "proj" / "textures" / "sand.png").write_bytes(png.encode(8, 8, bytes([200, 180, 120, 255]) * 64, 4))
+            result = modbuild.build(d / "proj", d / "data", d / "out")
+            self.assertFalse([x for x in result.warnings if "'sand'" in x], result.warnings)
             out = dsk.Archive(d / "out" / "assets.dsk")
-            new = terrain.tern_chunks(out.read(out.records[0]))
+            new = terrain.tern_chunks(out.read(next(r for r in out.records if r.kind == name_hash("Terrain"))))
             self.assertEqual(terrain_paint.layer_count(new), 3)
             self.assertEqual(terrain_paint.layer_images(new)[1][2][30 * w + 30], 255)
             self.assertEqual(terrain_paint.layer_images(new)[1][2][0], 0)

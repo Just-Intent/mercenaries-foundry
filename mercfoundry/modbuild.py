@@ -1754,10 +1754,15 @@ def _apply_terrain(data, folder, result):
                 table = None
                 if "table" in job:
                     table = json.loads(job["table"].read_text(encoding="utf-8"))["layers"]
+                    # the game's textures, ones added so far, and the mod's own textures/*.png
                     known = {rec.key for _, rec in data.records(name_hash("Texture"))}
+                    known |= {k for k, kind, _ in data.added() if kind == name_hash("Texture")}
+                    tex_dir = folder / "textures"
+                    known |= {name_hash(f.name[:-len(".png")]) for f in tex_dir.glob("*.png")
+                              if not f.name.lower().endswith((".mask.png", ".changes.png"))} if tex_dir.is_dir() else set()
                     for t in table:
                         if name_hash(t["texture"]) not in known:
-                            result.warnings.append(f"terrain/{job['table'].name}: no game texture named {t['texture']!r}")
+                            result.warnings.append(f"terrain/{job['table'].name}: no texture named {t['texture']!r} in the game or the mod")
                     _load_textures_with_map(data, name, [t["texture"] for t in table if t.get("texture")])
                 images = {}
                 if job.get("layers"):
