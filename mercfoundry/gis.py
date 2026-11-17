@@ -2900,7 +2900,12 @@ def build(plan, mod, log=print):
     edir = mod / "encounters"
     edir.mkdir(parents=True, exist_ok=True)
     # unnamed: the game holds 2048 object names in all; its buildings have none
-    layer = {"map": name.upper(), "load": "map", "unnamed": True,
+    # copy_loads false: every object draws its own model (or the kit's), so
+    # the lists of the retail layers the copies come from (their whole areas'
+    # models and textures) would only take the game's memory
+    copy_loads = any(o["from"].startswith("model:") and not o.get("set", {}).get("GeometryFile")
+                         for o in objects)
+    layer = {"map": name.upper(), "load": "map", "unnamed": True, "copy_loads": copy_loads,
              "objects": [{k: v for k, v in o.items() if not k.startswith("_")} for o in objects]}
     level = float(plan.get("base", 20.0)) + float(plan.get("water_level", -0.3))
     # "water_tile": one zone per tile that size (a tile as big as the map: one
@@ -2926,6 +2931,7 @@ def build(plan, mod, log=print):
         if objs:
             use_geometry(objs, geometry)
             ppath.write_text(json.dumps({"map": name.upper(), "load": "map", "unnamed": True,
+                                         "copy_loads": not all(o.get("set", {}).get("GeometryFile") for o in objs),
                                          "objects": [{k: v for k, v in o.items() if not k.startswith("_")} for o in objs]},
                                         indent=1) + "\n", encoding="utf-8")
         elif ppath.exists():

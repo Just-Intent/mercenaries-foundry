@@ -1953,10 +1953,25 @@ def _glb_textures(data, name, f, result):
                     data.set(a, r, body)
             else:
                 data.new("streamed.dsk", key, texture.TEXTURE, body)
+    # textures this file's materials name that the mod added for another
+    # model (a damaged version sharing its building's texture): they load
+    # wherever this model does too, not only where that other model is
+    added = {k for k, kind, _ in data.added() if kind == texture.TEXTURE}
+    shared = []
+    try:
+        from . import gltf_anim
+        doc, _ = gltf_anim.load(f)
+        for mat in doc.get("materials") or []:
+            stem = re.sub(r"\.\d{3}$", "", mat.get("name", ""))
+            if stem and name_hash(stem) in added and stem.lower() not in {t.lower() for _, t, *_ in made}:
+                shared.append(stem)
+    except (OSError, ValueError, KeyError):
+        pass
     if made:
-        names = [t for _, t, *_ in made]
         result.changes.append(f"model {name}: textures from {f.name}: " + ", ".join(
             f"{t} ({w}x{h})" for _, t, w, h, _ in made))
+    if made or shared:
+        names = [t for _, t, *_ in made] + shared
         # every load list that loads the model loads them too (the mod's
         # layers, built earlier, and the game's own lists)
         LIST = name_hash("list")
