@@ -1719,6 +1719,10 @@ def lay_out(plan, strip, dens, blocked, ground, open_at, paint_urban, side, ox, 
 
     cands.sort(key=lambda t: (t[0], t[1]))
     limit = plan.get("max_buildings")
+    # "seat": "high" stands each building on the highest ground under it (for
+    # models with a foundation skirt below their ground floor: nothing is
+    # buried on a slope); "low" (the default) on the lowest
+    seat = max if plan.get("seat") == "high" else min
     objects, dropped, built = [], {"clear": 0, "open": 0, "slope": 0, "over": 0}, {}
     rot = math.degrees(strip.rot)
     for _, _, style, b in cands:
@@ -1744,8 +1748,8 @@ def lay_out(plan, strip, dens, blocked, ground, open_at, paint_urban, side, ox, 
         yaw = (-math.degrees(a) + 180) % 360 - 180
         corners = [pts[0], pts[6], pts[8], pts[2]]
         objects.append({"from": f"model:{model}", "name": f"gis_{len(objects) + 1:05d}",
-                        "position": [round(mx, 2), round(min(hs), 2), round(mz, 2)], "yaw": round(yaw, 1),
-                        "_kind": kind, "_style": style, "_rect": corners})
+                        "position": [round(mx, 2), round(seat(hs), 2), round(mz, 2)], "yaw": round(yaw, 1),
+                        "_kind": kind, "_style": style, "_rect": corners, "_low": round(min(hs), 2)})
         built[style] = built.get(style, 0) + 1
     log("blocks: " + ", ".join(f"{v} {k}" for k, v in sorted(styles.items(), key=lambda t: -t[1])))
     log("buildings by style: " + ", ".join(f"{v} {k}" for k, v in sorted(built.items(), key=lambda t: -t[1]))
@@ -1978,6 +1982,8 @@ def load_kit(plan, mod, log=print):
         kind = m["kind"]
         geometry[name] = m["base"]
         entry = (name, float(m["x"]), float(m["z"]), float(m["height"]))
+        if m.get("skirt"):
+            plants.setdefault("skirted", set()).add(name)
         if m.get("damage"):
             plants.setdefault("damaged", {}).setdefault(m["intact"], {})[int(m["damage"])] = name
             continue
@@ -2715,6 +2721,13 @@ def build(plan, mod, log=print):
             trnd = random.Random(int(plan.get("seed", 1)) + 3)
             add_mosques(plan, laid, kit, plant_kit, trnd, log)
             apply_timeline(plan, place, laid, kit, plant_kit, trnd, log)
+            if plan.get("seat") == "high":
+                # only models with a foundation skirt stand on their highest
+                # ground; the rest (retail models) on their lowest
+                skirted = plant_kit.get("skirted") or set()
+                for o in laid:
+                    if "_low" in o and _model_of(o) not in skirted:
+                        o["position"][1] = o["_low"]
             laid += place_landmarks(plan, place, ground, plant_kit, log)
             level_pads(plan, laid, ground, log)
             if plan.get("harbour"):
