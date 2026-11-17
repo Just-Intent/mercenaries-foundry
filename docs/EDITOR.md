@@ -191,7 +191,9 @@ toolkit bundle run it the same way: `foundry\python\python.exe foundry\mercfound
   layer (dirt) until you add more. **Use for selected layer** gives the selected layer the texture
   in the box (its paint stays); **Remove selected layer** takes off a layer
   the mod added, with its paint (the map's own layers can't go: paint them
-  out).
+  out). Adding a layer and changing a layer's texture go on the undo
+  history (Undo takes the added layer off, or puts the texture back);
+  removing one takes its paint, so it asks first and can't be undone.
 - **New maps**: **Map** > New map makes one: `maps/<name>.json`, a copy
   of a game map (blank: flat and nearly empty), and switches to it. **Ground**
   picks its size: as the copy's, or flat ground 256, 512 or 1024 cells a side
@@ -609,8 +611,10 @@ the editor on the south map appeared there in free roam.
 
 ## Not yet
 
-- Undo for terrain beyond its strokes and the Map panel (saved straight away); the history covers
-  objects, paths, zones, squads, missions, sky and factions.
+- Undo for removing a ground layer (its paint goes with it) and for making a new map; the
+  history covers objects, paths, zones, squads, missions, sky, factions, the Map panel's
+  settings and travel pilots (saved straight away: Undo saves them as they were), and
+  adding a ground layer or changing its texture.
 
 ## How it works
 

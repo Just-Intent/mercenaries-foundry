@@ -12,7 +12,7 @@ const HEIGHT_TOOLS = ['raise', 'lower', 'flatten', 'smooth'];
 const TOOLS = [...HEIGHT_TOOLS, 'paint', 'erase', 'road'];
 
 export function createTerrainEditor(ctx) {
-  const {$, controls, status, setDirty, terrain, pick, gamePos, scene, threePos, reloadGround} = ctx;
+  const {$, controls, status, setDirty, terrain, pick, gamePos, scene, threePos, reloadGround, remember} = ctx;
   const st = {
     on: false, tool: 'raise', radius: 12, strength: 0.5, layer: 0,
     stroke: null,          // {heights: Map(i -> before), paint: Map(k -> before), target}
@@ -365,48 +365,53 @@ export function createTerrainEditor(ctx) {
         `<option value="${t.texture}">${t.map}, scale ${t.scale}</option>`).join('');
     } catch (e) { groundTextures = null; status(e.message, true); }
   });
-  // Change or remove the selected layer: written straight away, like adding one.
+  // Change, add or remove a layer: written straight away. Changing and
+  // adding are undoable (the history puts the texture back, or takes the
+  // added layer off); removing takes the layer's paint, so it asks first.
   async function layerOp(url, body, done) {
-    if (paintBody() || saveBody() || st.roads.length) return status('Save your terrain changes first', true);
+    if (paintBody() || saveBody() || st.roads.length) { status('Save your terrain changes first', true); return null; }
     try {
       const r = await fetch(url, {method: 'POST', headers: {'Content-Type': 'application/json'},
                                   body: JSON.stringify({map: terrain().meta.name, ...body})});
       const doc = await r.json();
       if (!r.ok) throw new Error(doc.error || r.statusText);
+      st.layer = body.index ?? doc.layers.length - 1;
       st.layer = Math.min(st.layer, doc.layers.length - 1);
       await reloadGround();
       $('terrain-layer').dataset.map = '';
       fillLayers();
       status(done(doc));
-    } catch (e) { status(e.message, true); }
+      return doc;
+    } catch (e) { status(e.message, true); return null; }
   }
-  $('terrain-changelayer').onclick = () => {
+  const changeLayer = (index, texture) => layerOp('/api/terrain/changelayer', {index, texture},
+                                                   (doc) => `Layer ${index} now paints ${texture} (${doc.file})`);
+  const addLayer = (texture) => layerOp('/api/terrain/addlayer', {texture},
+                                        (doc) => `Added layer ${doc.layers.length - 1}: ${texture} (${doc.file}); paint it on and Save`);
+  const removeLayer = (index) => layerOp('/api/terrain/removelayer', {index}, (doc) => `Removed layer ${index} (${doc.file})`);
+  $('terrain-changelayer').onclick = async () => {
     const texture = $('terrain-newlayer').value.trim();
     if (!texture) return status('Type or pick the texture for the selected layer in "Add a texture"', true);
     const index = st.layer;
-    layerOp('/api/terrain/changelayer', {index, texture}, (doc) => `Layer ${index} now paints ${texture} (${doc.file})`);
+    const g = terrain().mesh.userData.ground;
+    const old = g && g.layers[index] ? g.layers[index].texture : null;
+    if (await changeLayer(index, texture) && old && old !== texture && remember) {
+      remember(`Layer ${index}: ${old} to ${texture}`, () => changeLayer(index, old), () => changeLayer(index, texture));
+    }
   };
   $('terrain-removelayer').onclick = () => {
     const index = st.layer;
-    if (!confirm(`Remove layer ${index} and its paint from the map?`)) return;
-    layerOp('/api/terrain/removelayer', {index}, (doc) => `Removed layer ${index} (${doc.file})`);
+    if (!confirm(`Remove layer ${index} and its paint from the map? (This can't be undone.)`)) return;
+    removeLayer(index);
   };
   $('terrain-addlayer').onclick = async () => {
     const texture = $('terrain-newlayer').value.trim();
     if (!texture) return status('Type or pick a ground texture to add', true);
-    if (paintBody() || saveBody() || st.roads.length) return status('Save your terrain changes first', true);
-    try {
-      const r = await fetch('/api/terrain/addlayer', {method: 'POST', headers: {'Content-Type': 'application/json'},
-                                                     body: JSON.stringify({map: terrain().meta.name, texture})});
-      const doc = await r.json();
-      if (!r.ok) throw new Error(doc.error || r.statusText);
-      st.layer = doc.layers.length - 1;
-      await reloadGround();
-      $('terrain-layer').dataset.map = '';
-      fillLayers();
-      $('terrain-newlayer').value = '';
-      status(`Added layer ${doc.layers.length - 1}: ${texture} (${doc.file}); paint it on and Save`);
-    } catch (e) { status(e.message, true); }
+    const doc = await addLayer(texture);
+    if (!doc) return;
+    $('terrain-newlayer').value = '';
+    const index = doc.layers.length - 1;
+    remember && remember(`Added layer ${index}: ${texture}`, () => removeLayer(index), () => addLayer(texture));
   };
 
   $('terrain-mode').onclick = () => setOn(!st.on);

@@ -1623,7 +1623,7 @@ let modName = '';
 const slug = (s) => s.toLowerCase().replace(/[^a-z0-9]+/g, '_').replace(/^_|_$/g, '') || 'mod';
 // Terrain editing: brushes on the height samples; the mesh and minimap follow.
 const terrainEdit = createTerrainEditor({
-  $, controls, status, setDirty: (v) => setDirty(v), gamePos: (v) => gamePos(v), pick: (e) => pick(e),
+  $, controls, status, remember: (...a) => remember(...a), setDirty: (v) => setDirty(v), gamePos: (v) => gamePos(v), pick: (e) => pick(e),
   scene, threePos: (p) => threePos(p), heightAt: (x, z) => heightAt(x, z),
   terrain: () => ({mesh: terrainMesh, meta: state.terrain.meta, heights: state.terrain.heights}),
   onHeights: () => minimap.setTerrain(state.terrain.meta, state.terrain.heights),
@@ -1691,7 +1691,7 @@ createMods({
 });
 // New maps: make one, and a new map's arrival point, message and layers.
 const mapset = createMapSettings({
-  $, status,
+  $, status, remember: (...a) => remember(...a),
   post: async (url, body) => {
     const r = await fetch(url, {method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(body)});
     const doc = await r.json();
