@@ -1461,6 +1461,7 @@ PRIORITY = {"towers": 0, "oldcity": 0, "port": 0, "crossing": 0, "camp": 1, "cit
 # share of ground real buildings cover (over ~250 m) -> style; plan "density" overrides
 DENSITY = {"sparse": 0.02, "suburb": 0.07, "city": 0.16, "camp": 0.38}
 GAP = 3.5            # m: at least this between buildings in a block
+FILL = 0.4           # a room takes any model with at least this share of the best fit's area
 ROAD_CLEAR = 6.0     # m: kept clear on each side of a main road
 FENCE_CLEAR = 40.0   # m: kept clear inside the border
 
@@ -1538,8 +1539,17 @@ def _fit(kinds, a, b, rnd, kit=KIT):
             if ml <= hi and mw <= lo:
                 fits.append((ml * mw, model, mx, mz))
         if fits:
+            # any model that fills the room well (at least FILL of the best
+            # fit's area), so a kit's many models all get used, not the
+            # biggest two
             fits.sort(reverse=True)
-            _, model, mx, mz = fits[min(len(fits) - 1, int(rnd.random() * min(2, len(fits))))]
+            pool = [f for f in fits if f[0] >= FILL * fits[0][0]]
+            pick = rnd.random() * sum(f[0] for f in pool)       # bigger ones more often
+            for f in pool:
+                pick -= f[0]
+                if pick <= 0:
+                    break
+            _, model, mx, mz = f
             return kind, model, mx, mz
     return None
 
