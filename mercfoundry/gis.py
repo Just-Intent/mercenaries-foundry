@@ -1814,7 +1814,7 @@ def flatten_towns(plan, strip, dens, hm, sea, grid, base):
             hm[r][c] = h
 
 
-def _lay_out_strip(plan, strip, dens, roads, mine, hm, ground, side, ox, oz, base, log):
+def _lay_out_strip(plan, strip, dens, roads, mine, hm, ground, side, ox, oz, base, log, kit=KIT):
     """lay_out() with what keeps buildings away: main roads, the border, the
     beach and sea, plazas at marks, and open land from OSM."""
     blocked = bytearray(side * side)
@@ -1851,7 +1851,7 @@ def _lay_out_strip(plan, strip, dens, roads, mine, hm, ground, side, ox, oz, bas
 
     def open_at(x, z):
         return any(at(mine[k], x, z) >= 128 for k in ("green", "farm", "scrub"))
-    objects = lay_out(plan, strip, dens, is_blocked, ground, open_at, mine["urban"], side, ox, oz, log=log)
+    objects = lay_out(plan, strip, dens, is_blocked, ground, open_at, mine["urban"], side, ox, oz, kit=kit, log=log)
     for i in range(side * side):              # plazas: open paved squares
         if plazas[i]:
             mine["urban"][i] = 255
@@ -1943,6 +1943,209 @@ def sea_zones(sea, hm, grid, level, tile=2048.0, step_rows=8, margin=24.0, cells
 
 # ---------------------------------------------------------------- build
 
+PLANT_KINDS = ("palm", "olive", "citrus")
+
+
+def load_kit(plan, mod, log=print):
+    """The plan's own models (its "kit": {"file": "models/kit.json", "retail":
+    false}): (building kit, plants, geometry). The file maps a model name to
+    {"kind", "base", "x", "z", "height"}, as a mod's models/*.new.json models
+    are made (a tool's output, e.g. the Gaza mod's tools/make_models.py).
+    Kinds house, block, tower and shed replace the retail kit's kind ("retail":
+    true adds to it); palm, olive and citrus are plants. geometry maps each
+    own model to its base model, whose world objects are copied and drawn
+    with the own model (GeometryFile), as the editor's New object does."""
+    spec = plan.get("kit")
+    if not spec:
+        return KIT, {}, {}
+    spec = {"file": spec} if isinstance(spec, str) else spec
+    path = Path(mod) / spec.get("file", "models/kit.json")
+    if not path.exists():
+        log(f"kit: no {spec.get('file', 'models/kit.json')}; the retail kit")
+        return KIT, {}, {}
+    own = json.loads(path.read_text(encoding="utf-8"))
+    kit = {k: list(v) for k, v in KIT.items()}
+    plants, geometry = {}, {}
+    replaced = set()
+    for name, m in sorted(own.items()):
+        kind = m["kind"]
+        geometry[name] = m["base"]
+        entry = (name, float(m["x"]), float(m["z"]), float(m["height"]))
+        if kind in PLANT_KINDS:
+            plants.setdefault(kind, []).append(entry)
+            continue
+        if kind not in replaced and not spec.get("retail"):
+            kit[kind] = []
+        replaced.add(kind)
+        kit.setdefault(kind, []).append(entry)
+    log(f"kit: {len(own)} own models from {path.name} ("
+        + ", ".join(f"{len(kit[k])} {k}" for k in sorted(replaced))
+        + ", " + ", ".join(f"{len(v)} {k}" for k, v in sorted(plants.items())) + ")")
+    return kit, plants, geometry
+
+
+def use_geometry(objects, geometry):
+    """Objects of own models: copies of their base model's objects drawing
+    the own model."""
+    for o in objects:
+        model = o["from"][len("model:"):] if o["from"].startswith("model:") else None
+        if model in geometry:
+            o["from"] = f"model:{geometry[model]}"
+            o.setdefault("set", {})["GeometryFile"] = model
+    return objects
+
+
+# The plan's "plants": where its trees go.
+PLANTS = {
+    "spacing": 9.0,          # m between grove trees (a jittered grid)
+    "grove": 0.8,            # share of grid points on tree cover planted
+    "fields": 0.02,          # ... on cropland (lone trees)
+    "town": 0.03,            # ... in built-up land (yards, courtyards)
+    "street_every": 24.0,    # m between palms along main roads in towns
+    "street_roads": ["trunk", "primary", "secondary"],
+    "max": 3000,
+    # by latitude, north first: the first band at or north of its latitude
+    # gives each plant kind's share
+    "bands": [[31.45, {"citrus": 3, "olive": 3, "palm": 1}],
+              [31.37, {"palm": 5, "olive": 1}],
+              [-90, {"olive": 3, "palm": 2}]],
+}
+TREE_COVER, CROPLAND, BUILT = 10, 40, 50
+BUILDING_CLEAR = 2.5     # m kept clear around a building
+
+
+def place_plants(plan, strip, landcover, ground, hm, base, roads, buildings, urban, side, ox, oz, plants, log=print):
+    """Trees from land cover: groves on tree cover, a few on cropland and in
+    built-up yards, palms along main roads through towns; away from
+    buildings, roads, the beach and the border. plants: load_kit's."""
+    opts = dict(PLANTS, **(plan.get("plants") if isinstance(plan.get("plants"), dict) else {}))
+    if not plants:
+        return []
+    rnd = random.Random(int(plan.get("seed", 1)) + 7)
+    cell = 4.0
+    taken = set()
+
+    def mark(x, z, r):
+        for i in range(int((x - r) // cell), int((x + r) // cell) + 1):
+            for j in range(int((z - r) // cell), int((z + r) // cell) + 1):
+                taken.add((i, j))
+
+    def free(x, z):
+        return (int(x // cell), int(z // cell)) not in taken
+    for b in buildings:
+        xs = [p[0] for p in b["_rect"]]
+        zs = [p[1] for p in b["_rect"]]
+        cx, cz = (min(xs) + max(xs)) / 2, (min(zs) + max(zs)) / 2
+        r = max(max(xs) - min(xs), max(zs) - min(zs)) / 2 + BUILDING_CLEAR
+        for i in range(int((min(xs) - BUILDING_CLEAR) // cell), int((max(xs) + BUILDING_CLEAR) // cell) + 1):
+            for j in range(int((min(zs) - BUILDING_CLEAR) // cell), int((max(zs) + BUILDING_CLEAR) // cell) + 1):
+                taken.add((i, j))
+    clear = bytearray(side * side)
+    for k, pts in roads:
+        paint_line(clear, side, pts, ROADS[k][1] + 4.0, 1, SPACING, ox, oz)
+    inner = bytearray(side * side)
+    if strip.outline:
+        fill_polygon(inner, side, strip.outline, 1, SPACING, ox, oz)
+        fence = bytearray(side * side)
+        paint_line(fence, side, strip.outline + strip.outline[:1], 2 * FENCE_CLEAR, 1, SPACING, ox, oz)
+        for i in range(side * side):
+            if fence[i]:
+                inner[i] = 0
+    else:
+        inner[:] = b"\x01" * (side * side)
+    n = len(hm)
+
+    def ok(x, z):
+        c, r = int(round((x - ox) / SPACING)), int(round((z - oz) / SPACING))
+        if not (0 <= c < side and 0 <= r < side) or not inner[r * side + c] or clear[r * side + c]:
+            return False
+        return hm[min(r, n - 1)][min(c, n - 1)] > base + 1.5 and free(x, z)
+
+    def kind_at(lat):
+        for limit, shares in opts["bands"]:
+            if lat >= limit:
+                ks = [k for k in shares if k in plants]
+                if ks:
+                    return rnd.choices(ks, [shares[k] for k in ks])[0]
+        return rnd.choice(sorted(plants))
+
+    out = []
+
+    def plant(x, z, kind):
+        name, sx, sz, _ = rnd.choice(plants[kind])
+        out.append({"from": f"model:{name}", "name": f"plant_{len(out) + 1:05d}",
+                    "position": [round(x, 2), round(ground.at(x, z), 2), round(z, 2)],
+                    "yaw": round(rnd.uniform(-180, 180), 1), "_kind": kind})
+        mark(x, z, 1.5 if kind == "citrus" else 2.5)
+
+    # palms along main roads through towns
+    street = []
+    for k, pts in roads:
+        if k not in opts["street_roads"]:
+            continue
+        off = ROADS[k][1] / 2 + 3.0
+        carry = 0.0
+        for (x0, z0), (x1, z1) in zip(pts, pts[1:]):
+            seg = math.hypot(x1 - x0, z1 - z0)
+            if seg < 1e-6:
+                continue
+            ux, uz = (x1 - x0) / seg, (z1 - z0) / seg
+            t = carry
+            while t < seg:
+                x, z = x0 + ux * t, z0 + uz * t
+                c, r = int(round((x - ox) / SPACING)), int(round((z - oz) / SPACING))
+                if 0 <= c < side and 0 <= r < side and urban[r * side + c] >= 128:
+                    for s in (-1, 1):
+                        street.append((x - uz * off * s, z + ux * off * s))
+                t += opts["street_every"]
+            carry = t - seg
+    # streets' palms stand beside the road: only the road itself is kept clear
+    for x, z in street:
+        c, r = int(round((x - ox) / SPACING)), int(round((z - oz) / SPACING))
+        if 0 <= c < side and 0 <= r < side and inner[r * side + c] and free(x, z) \
+                and hm[min(r, n - 1)][min(c, n - 1)] > base + 1.5 and "palm" in plants:
+            plant(x, z, "palm")
+    n_street = len(out)
+    # groves, lone trees and yards, from land cover
+    sp = float(opts["spacing"])
+    half = (side - 1) * SPACING / 2
+    counts = {"grove": 0, "fields": 0, "town": 0}
+    if landcover is not None:
+        steps = int(2 * half / sp)
+        for i in range(steps):
+            for j in range(steps):
+                x = ox + i * sp + rnd.uniform(-sp / 3, sp / 3)
+                z = oz + j * sp + rnd.uniform(-sp / 3, sp / 3)
+                c, r = int(round((x - ox) / SPACING)), int(round((z - oz) / SPACING))
+                if not (0 <= c < side and 0 <= r < side) or not inner[r * side + c]:
+                    continue
+                lat, lon = strip.to_world(x, z)
+                px = landcover.at(lat, lon)
+                cls = px[0] if px else None
+                what = {TREE_COVER: "grove", CROPLAND: "fields", BUILT: "town"}.get(cls)
+                if what is None or rnd.random() >= float(opts[what]):
+                    continue
+                if not ok(x, z):
+                    continue
+                plant(x, z, kind_at(lat))
+                counts[what] += 1
+    limit = int(opts["max"])
+    if len(out) > limit:
+        keep = out[:min(n_street, limit // 3)]
+        rest = out[len(keep):]
+        rnd.shuffle(rest)
+        out = keep + rest[:limit - len(keep)]
+        for k, o in enumerate(out):
+            o["name"] = f"plant_{k + 1:05d}"
+    kinds = {}
+    for o in out:
+        kinds[o["_kind"]] = kinds.get(o["_kind"], 0) + 1
+    log(f"plants: {len(out)} ({', '.join(f'{v} {k}' for k, v in sorted(kinds.items()))}); "
+        f"{n_street} palms along main roads, {counts['grove']} in groves, {counts['fields']} in fields, "
+        f"{counts['town']} in towns (before the max of {limit})")
+    return out
+
+
 def build(plan, mod, log=print):
     """Write the plan's terrain, roads, buildings and sea into a mod folder."""
     mod = Path(mod)
@@ -1983,6 +2186,8 @@ def build(plan, mod, log=print):
             log("land cover: not in the cache (run gis fetch); painting from OSM alone")
     counts = {}
     base = float(plan.get("base", 20.0))
+    kit, plant_kit, geometry = load_kit(plan, mod, log)
+    plants = []
     for place in plan["places"]:
         inside = place.contains_map
         mine = {k: bytearray(side * side) for k in paint}
@@ -2028,7 +2233,11 @@ def build(plan, mod, log=print):
         if layout:
             flatten_towns(plan, place, dens, hm, sea, g, base)
             keep = set(plan.get("decal_roads", ROAD_ORDER))
-            laid = _lay_out_strip(plan, place, dens, [r for r in place_roads if r[0] in keep], mine, hm, ground, side, ox, oz, base, log)
+            laid = _lay_out_strip(plan, place, dens, [r for r in place_roads if r[0] in keep], mine, hm, ground, side, ox, oz,
+                                  base, log, kit=kit)
+            if plan.get("plants") and plant_kit:
+                plants += place_plants(plan, place, landcover, ground, hm, base, place_roads, laid, mine["urban"],
+                                       side, ox, oz, plant_kit, log)
         # only the place's own ground takes its paint; land no OSM polygon
         # covers gets some dirt, so it isn't all sand; outside a strip's
         # territory, fields
@@ -2144,7 +2353,8 @@ def build(plan, mod, log=print):
     if laid is not None:
         objects, skipped = laid, 0
     else:
-        objects, skipped = place_buildings(items, ground, limit=plan.get("max_buildings"))
+        objects, skipped = place_buildings(items, ground, kit=kit, limit=plan.get("max_buildings"))
+    use_geometry(objects, geometry)
     kinds = {}
     for o in objects:
         kinds[o["_kind"]] = kinds.get(o["_kind"], 0) + 1
@@ -2171,6 +2381,15 @@ def build(plan, mod, log=print):
     elif bpath.exists():
         bpath.unlink()
     (edir / f"{name}_gis.json").write_text(json.dumps(layer, indent=1) + "\n", encoding="utf-8")
+    # plants: a layer of their own (encounters/<map>_plants.json)
+    ppath = edir / f"{name}_plants.json"
+    if plants:
+        use_geometry(plants, geometry)
+        ppath.write_text(json.dumps({"map": name.upper(), "load": "map", "unnamed": True,
+                                     "objects": [{k: v for k, v in o.items() if not k.startswith("_")} for o in plants]},
+                                    indent=1) + "\n", encoding="utf-8")
+    elif ppath.exists():
+        ppath.unlink()
     if laid is not None:
         log(f"buildings: {len(objects)} placed ({', '.join(f'{v} {k}' for k, v in sorted(kinds.items()))})")
     else:
@@ -2183,7 +2402,7 @@ def build(plan, mod, log=print):
     (mod / "gis").mkdir(exist_ok=True)
     (mod / "gis" / f"{name}.preview.png").write_bytes(preview(plan, hm, sea, paint, road_docs, items, objects))
     log(f"preview: gis/{name}.preview.png")
-    return {"objects": len(objects), "roads": len(road_docs), "footprints": len(items), "ways": counts,
+    return {"objects": len(objects), "plants": len(plants), "roads": len(road_docs), "footprints": len(items), "ways": counts,
             "sea": bool(zones)}
 
 

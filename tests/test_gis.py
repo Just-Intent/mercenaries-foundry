@@ -569,3 +569,59 @@ class RasterTest(unittest.TestCase):
             self.assertEqual(r.at(31.2, 34.9), (60,))
             self.assertIsNone(r.at(30.0, 34.1))
             self.assertEqual(sorted(r.around(31.6, 34.4, 1)), [(10,), (40,), (50,), (60,)])
+
+
+class KitTest(unittest.TestCase):
+    KIT = {"gaza_house_a": {"kind": "house", "base": "nkvillage_bld_house02", "x": 10, "z": 12, "height": 10},
+           "gaza_palm_a": {"kind": "palm", "base": "haeju_fruittree", "x": 8, "z": 8, "height": 10}}
+
+    def test_own_kit_replaces_kinds_and_draws_own_models(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            (Path(tmp) / "models").mkdir()
+            (Path(tmp) / "models" / "kit.json").write_text(json.dumps(self.KIT))
+            kit, plants, geometry = gis.load_kit({"kit": "models/kit.json"}, tmp, log=lambda *a: None)
+            self.assertEqual(kit["house"], [("gaza_house_a", 10.0, 12.0, 10.0)])
+            self.assertEqual(kit["block"], gis.KIT["block"])                      # kinds it lacks stay retail
+            self.assertEqual(list(plants), ["palm"])
+            kit2, _, _ = gis.load_kit({"kit": {"file": "models/kit.json", "retail": True}}, tmp, log=lambda *a: None)
+            self.assertEqual(len(kit2["house"]), len(gis.KIT["house"]) + 1)
+        objs = gis.use_geometry([{"from": "model:gaza_house_a"}, {"from": "model:city_bld_office03"}], geometry)
+        self.assertEqual(objs[0], {"from": "model:nkvillage_bld_house02", "set": {"GeometryFile": "gaza_house_a"}})
+        self.assertEqual(objs[1], {"from": "model:city_bld_office03"})
+
+    def test_no_kit_is_retail(self):
+        self.assertEqual(gis.load_kit({}, ".", log=lambda *a: None), (gis.KIT, {}, {}))
+
+
+class PlantsTest(unittest.TestCase):
+    def test_trees_from_land_cover_away_from_roads_and_buildings(self):
+        kx, _ = gis._local(31.5)
+        shore = 34.45 - 1000 / kx
+        s = strip(rotate=45, along=[[-2, 600], [0, 0], [2, -600]], across=0.6)
+        s.prepare(FlatElevation(lambda lat, lon: 5.0 if lon > shore else -3.0))
+
+        class Cover:                                           # tree cover everywhere
+            def at(self, lat, lon):
+                return (10,)
+        g = gis.Grid(64)
+        side = 65
+        hm = [[30.0] * 64 for _ in range(64)]
+        ground = gis.Ground(hm, g)
+        road = ("primary", [(-200.0, 0.0), (200.0, 0.0)])
+        house = {"_rect": [(50, 50), (70, 50), (70, 70), (50, 70)]}
+        urban = bytearray(b"\xff" * (side * side))
+        plants = {"palm": [("gaza_palm_a", 8, 8, 10)], "olive": [("gaza_olive_a", 6, 6, 5)]}
+        plan = {"plants": {"max": 400, "spacing": 9.0}}
+        out = gis.place_plants(plan, s, Cover(), ground, hm, 20.0, [road], [house], urban, side, g.x0, g.z0,
+                               plants, log=lambda *a: None)
+        self.assertTrue(0 < len(out) <= 400)
+        width = gis.ROADS["primary"][1]
+        for o in out:
+            x, y, z = o["position"]
+            self.assertEqual(y, 30.0)
+            self.assertFalse(50 - 1 < x < 70 + 1 and 50 - 1 < z < 70 + 1, o)        # not in the house
+            if abs(x) < 190:
+                self.assertGreater(abs(z), width / 2, o)                              # not on the road
+            self.assertIn(o["from"], ("model:gaza_palm_a", "model:gaza_olive_a"))
+        self.assertTrue(any(o["_kind"] == "palm" and abs(abs(o["position"][2]) - (width / 2 + 3)) < 0.01
+                            for o in out))                                            # palms line the road
