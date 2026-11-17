@@ -403,6 +403,18 @@ class GroundLayerEditTests(unittest.TestCase):
             self.assertEqual((root / "terrain" / "isle.layer02.rock.changes.png").read_bytes(), b"x3")
             with self.assertRaisesRegex(ValueError, "came with the map"):
                 sc.remove_ground_layer("isle", 0)
+            # its paint went to .trash/; undo brings the layer and its paint back, the one above up again
+            self.assertEqual(out["removed"]["index"], 2)
+            self.assertEqual((root / out["removed"]["trash"] / "isle.layer02.rock.changes.png").read_bytes(), b"x2")
+            sc.terrain_look = lambda m: (json.loads((root / "terrain" / "isle.layers.json").read_text()), b"", b"")
+            back = sc.restore_ground_layer("isle", 2, out["removed"]["layer"], out["removed"]["trash"])
+            self.assertEqual([t["texture"] for t in back["layers"]], ["dirt", "grass", "rock", "rock"])
+            self.assertEqual((root / "terrain" / "isle.layer02.rock.changes.png").read_bytes(), b"x2")
+            self.assertEqual((root / "terrain" / "isle.layer03.rock.changes.png").read_bytes(), b"x3")
+            self.assertFalse((root / out["removed"]["trash"]).exists())
+            with self.assertRaises(ValueError):
+                sc.restore_ground_layer("isle", 2, out["removed"]["layer"], "../terrain")
+            out = sc.remove_ground_layer("isle", 2)
             out = sc.change_ground_layer("isle", 1, "sand")
             self.assertEqual(out["layers"][1]["texture"], "sand")
             self.assertTrue((root / "terrain" / "isle.layer01.sand.changes.png").exists())

@@ -723,14 +723,60 @@ class Scene:
             raise ValueError(f"layer {index} came with the map (its first {base}): it can't be removed, "
                              f"but you can paint it out or give it another texture"
                              if index < base else f"{map_name} has no layer {index}")
-        for f in self._paint_files(map_name, index):
-            f.unlink()
+        # its paint goes to the mod's .trash/, so Undo can bring it back
+        import time
+        paint = self._paint_files(map_name, index)
+        trash = None
+        if paint:
+            trash = self.mod / ".trash" / f"{map_name.lower()}-layer{index:02d}-{time.strftime('%Y%m%d-%H%M%S')}"
+            n = 1
+            while trash.exists():
+                n += 1
+                trash = trash.with_name(f"{trash.name.split('~')[0]}~{n}")
+            trash.mkdir(parents=True)
+            for f in paint:
+                f.rename(trash / f.name)
         for k in range(index + 1, len(table)):
             for f in self._paint_files(map_name, k):
                 parts = f.name.split(".")
                 parts[1] = f"layer{k - 1:02d}"
                 f.rename(f.with_name(".".join(parts)))
-        del table[index]
+        removed = table.pop(index)
+        return {"file": self._write_layer_table(map_name, table), "layers": table,
+                "removed": {"index": index, "layer": removed,
+                            "trash": trash.relative_to(self.mod).as_posix() if trash else None}}
+
+    def restore_ground_layer(self, map_name, index, layer, trash=None):
+        """Undo remove_ground_layer: the layer back at its place (the ones above
+        move up again) with its paint from the mod's .trash/."""
+        from .. import terrain_paint
+        if not re.fullmatch(r"[A-Za-z0-9_]+", map_name):
+            raise ValueError(f"bad map name {map_name!r}")
+        meta, _, _ = self.terrain_look(map_name)
+        table = [dict(t) for t in meta["layers"]]
+        index = int(index)
+        if not self._base_layer_count(map_name) <= index <= len(table):
+            raise ValueError(f"{map_name} can't take a layer back at {index} now")
+        if len(table) >= terrain_paint.MAX_LAYERS:
+            raise ValueError(f"{map_name} already has {terrain_paint.MAX_LAYERS} layers, the most a map can have")
+        entry = {"texture": str(layer["texture"]), "scale": float(layer["scale"]), "axis": int(layer["axis"])}
+        src = None
+        if trash:
+            src = (self.mod / trash).resolve()
+            if src.parent != (self.mod / ".trash").resolve() or not src.is_dir():
+                raise ValueError(f"{trash} isn't a layer's paint in this mod's .trash/")
+        for k in range(len(table) - 1, index - 1, -1):
+            for f in self._paint_files(map_name, k):
+                parts = f.name.split(".")
+                parts[1] = f"layer{k + 1:02d}"
+                f.rename(f.with_name(".".join(parts)))
+        if src:
+            for f in sorted(src.iterdir()):
+                parts = f.name.split(".")
+                parts[1] = f"layer{index:02d}"
+                f.rename(self.mod / "terrain" / ".".join(parts))
+            src.rmdir()
+        table.insert(index, entry)
         return {"file": self._write_layer_table(map_name, table), "layers": table}
 
     def save_roads(self, map_name, roads):

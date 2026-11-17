@@ -56,6 +56,7 @@ GET  /api/templates            objects a squad member can copy (template_*)
 GET  /api/groundtextures       every ground texture the game's maps paint with (texture, scale, axis, map)
 POST /api/terrain/changelayer  {"map", "index", "texture"}: another texture for a ground layer
 POST /api/terrain/removelayer  {"map", "index"}: take off a ground layer the mod added (and its paint)
+POST /api/terrain/restorelayer {"map", "index", "layer", "trash"?}: undo removelayer (its paint back from .trash/)
 POST /api/terrain/addlayer     {"map", "texture", "scale"?, "axis"?}: a new ground layer (terrain/<map>.layers.json)
 GET  /api/crowns              models whose branches bullets hit (models/<model>.collision.json "crown")
 POST /api/crown                {"model", "on"}: bullets hit that tree model's branches, or not
@@ -370,6 +371,10 @@ def make_handler(scene: Scene, mod_name: str, live: Live = None):
                 if path == "/api/terrain/removelayer":
                     with objects_lock, terrain_lock:
                         return self.send(200, scene.remove_ground_layer(doc["map"], doc["index"]))
+                if path == "/api/terrain/restorelayer":
+                    with objects_lock, terrain_lock:
+                        return self.send(200, scene.restore_ground_layer(doc["map"], doc["index"], doc["layer"],
+                                                                         doc.get("trash")))
                 if path == "/api/terrain/addlayer":
                     with objects_lock, terrain_lock:
                         return self.send(200, scene.add_ground_layer(doc["map"], doc["texture"],

@@ -365,9 +365,8 @@ export function createTerrainEditor(ctx) {
         `<option value="${t.texture}">${t.map}, scale ${t.scale}</option>`).join('');
     } catch (e) { groundTextures = null; status(e.message, true); }
   });
-  // Change, add or remove a layer: written straight away. Changing and
-  // adding are undoable (the history puts the texture back, or takes the
-  // added layer off); removing takes the layer's paint, so it asks first.
+  // Change, add or remove a layer: written straight away, and each is a step
+  // on the editor's history.
   async function layerOp(url, body, done) {
     if (paintBody() || saveBody() || st.roads.length) { status('Save your terrain changes first', true); return null; }
     try {
@@ -399,10 +398,18 @@ export function createTerrainEditor(ctx) {
       remember(`Layer ${index}: ${old} to ${texture}`, () => changeLayer(index, old), () => changeLayer(index, texture));
     }
   };
-  $('terrain-removelayer').onclick = () => {
+  // Removing moves the layer's paint to the mod's .trash/; Undo brings the
+  // layer and its paint back (each redo moves it there again).
+  const restoreLayer = (r) => layerOp('/api/terrain/restorelayer', {index: r.index, layer: r.layer, trash: r.trash},
+                                      () => `Layer ${r.index} (${r.layer.texture}) is back, with its paint`);
+  $('terrain-removelayer').onclick = async () => {
     const index = st.layer;
-    if (!confirm(`Remove layer ${index} and its paint from the map? (This can't be undone.)`)) return;
-    removeLayer(index);
+    if (!confirm(`Remove layer ${index} and its paint from the map? (Undo brings them back.)`)) return;
+    const doc = await removeLayer(index);
+    if (!doc || !doc.removed || !remember) return;
+    let gone = doc.removed;
+    remember(`Removed layer ${index}: ${gone.layer.texture}`, () => restoreLayer(gone),
+             async () => { const again = await removeLayer(index); if (again && again.removed) gone = again.removed; });
   };
   $('terrain-addlayer').onclick = async () => {
     const texture = $('terrain-newlayer').value.trim();
@@ -411,7 +418,11 @@ export function createTerrainEditor(ctx) {
     if (!doc) return;
     $('terrain-newlayer').value = '';
     const index = doc.layers.length - 1;
-    remember && remember(`Added layer ${index}: ${texture}`, () => removeLayer(index), () => addLayer(texture));
+    // undoing takes it off (any paint saved on it since goes to .trash/); redoing puts that back
+    let gone = null;
+    remember && remember(`Added layer ${index}: ${texture}`,
+                         async () => { const d = await removeLayer(index); gone = d && d.removed; },
+                         () => (gone ? restoreLayer(gone) : addLayer(texture)));
   };
 
   $('terrain-mode').onclick = () => setOn(!st.on);
