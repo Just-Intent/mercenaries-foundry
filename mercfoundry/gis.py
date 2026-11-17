@@ -1945,7 +1945,7 @@ def sea_zones(sea, hm, grid, level, tile=2048.0, step_rows=8, margin=24.0, cells
 
 PLANT_KINDS = ("palm", "olive", "citrus")
 # kit kinds that aren't laid out as ordinary buildings
-EXTRA_KINDS = PLANT_KINDS + ("rubble", "mosque", "tent", "aid")
+EXTRA_KINDS = PLANT_KINDS + ("rubble", "mosque", "tent", "aid", "camp")
 
 
 def load_kit(plan, mod, log=print):
@@ -2177,6 +2177,10 @@ def place_camps(plan, strip, landcover, ground, hm, base, roads, buildings, side
     steps = int(2 * half / size)
     camps = 0
     limit = int(opts["max"])
+    blocks = extras.get("camp") or []
+    if blocks:
+        step_b = max(math.hypot(b[1], b[2]) for b in blocks) + 2.0
+        k_blocks = max(1, int(size / step_b))
     # whole camps, in a random order, until the maximum: camps stay dense
     order = [(ci, cj) for ci in range(steps) for cj in range(steps)]
     rnd.shuffle(order)
@@ -2199,6 +2203,19 @@ def place_camps(plan, strip, landcover, ground, hm, base, roads, buildings, side
                 if ok(x, z) and free(x, z, max(m[1], m[2]) / 2 + 1):
                     put(m[0], x, z, "aid", m[1] + 2, m[2] + 2, 5)
                     break
+        if blocks:
+            # camp blocks (a model of many tents: one object, not one per
+            # tent), turned along the strip: room for their diagonal
+            for i in range(k_blocks):
+                for j in range(k_blocks):
+                    m = rnd.choice(blocks)
+                    x = cx - size / 2 + (i + 0.5) * step_b + rnd.uniform(-2, 2)
+                    z = cz - size / 2 + (j + 0.5) * step_b + rnd.uniform(-2, 2)
+                    r = math.hypot(m[1], m[2]) / 2
+                    if all(ok(x + u * r * 0.7, z + v * r * 0.7) for u in (-1, 0, 1) for v in (-1, 0, 1)) \
+                            and free(x, z, r):
+                        put(m[0], x, z, "camp", 2 * r, 2 * r, 3)
+            continue
         k = int(size / sp)
         for i in range(k):
             for j in range(k):
