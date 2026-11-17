@@ -1664,7 +1664,17 @@ def _apply_terrain(data, folder, result):
     from . import png, terrain, terrain_decals, terrain_layers, terrain_light, terrain_paint
     tdir = folder / "terrain"
     work = {}       # terrain name -> {"heights": path, "table": path, "layers": {index: path}}
+    tint_maps = set()       # images a <map>.lighting.json names as its tint map
+    for lj in tdir.glob("*.lighting.json"):
+        try:
+            t = json.loads(lj.read_text(encoding="utf-8")).get("tint_map")
+        except (ValueError, AttributeError):
+            continue
+        if t:
+            tint_maps.add(Path(str(t)).name.lower())
     for f in sorted(tdir.glob("*.png")):
+        if f.name.lower() in tint_maps:
+            continue
         # <name>.layerNN.<texture>.changes.png: changed pixels only (mod pack).
         is_changes = f.name.lower().endswith(".changes.png")
         plain = f.name[:-len(".changes.png")] + ".png" if is_changes else f.name

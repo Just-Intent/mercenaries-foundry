@@ -170,6 +170,7 @@ class BakeTests(unittest.TestCase):
             try:
                 result = modbuild.build(mod, data, d / "out2")
                 self.assertTrue(any("tinted by isle.tint.png" in c for c in result.changes), result.changes)
+                self.assertFalse([w for w in result.warnings if "isle.tint.png" in w], result.warnings)
                 (mod / "terrain" / "isle.lighting.json").write_text(json.dumps({"tint_map": "gone.png"}), encoding="utf-8")
                 with self.assertRaises(ValueError):
                     modbuild.build(mod, data, d / "out3")
