@@ -2232,6 +2232,69 @@ def level_pads(plan, objects, ground, log=print):
     return count
 
 
+PARKED = {
+    "every": 35.0,           # m between parked cars along a main road through town (each side, give or take)
+    "max": 150,
+    "at_start": 2,           # cars parked beside where the player arrives (a map's "start")
+}
+
+
+def place_parked(plan, place, ground, roads, urban, side, ox, oz, start=None, log=print):
+    """Parked cars: the plan's "parked" {"vehicles": [{"template": a game
+    vehicle template, "model", "wheel", "ruin": the models it draws}], ...}
+    beside main roads through built-up land, along the kerb, and a few by
+    the player's start. Each copy is given its models (so its layer loads
+    them; the template's own layer, a whole list of vehicles, isn't
+    copied)."""
+    opts = dict(PARKED, **(plan.get("parked") if isinstance(plan.get("parked"), dict) else {}))
+    vehicles = opts.get("vehicles") or []
+    if not vehicles:
+        return []
+    rnd = random.Random(int(plan.get("seed", 1)) + 17)
+    out = []
+
+    def put(x, z, yaw):
+        v = rnd.choice(vehicles)
+        out.append({"from": v["template"], "position": [round(x, 2), round(ground.at(x, z) + 0.3, 2), round(z, 2)],
+                    "yaw": round(yaw, 1), "set": {"GeometryFile": v["model"], "geometryNameRuined": v["ruin"],
+                                                   "geometrynameruined": v["ruin"], "geometrynamewheel": v["wheel"]},
+                    "_kind": "parked"})
+    if start:
+        sx, _, sz = start
+        for k in range(int(opts["at_start"])):
+            put(sx + 6 + k * 3.2, sz + 6, 0.0)
+    for k, pts in roads:
+        if k not in ("trunk", "primary", "secondary", "tertiary"):
+            continue
+        off = ROADS[k][1] / 2 - 1.2                       # at the kerb
+        t_next = rnd.uniform(5, float(opts["every"]))
+        for (x0, z0), (x1, z1) in zip(pts, pts[1:]):
+            seg = math.hypot(x1 - x0, z1 - z0)
+            if seg < 1e-6:
+                continue
+            ux, uz = (x1 - x0) / seg, (z1 - z0) / seg
+            t = t_next
+            while t < seg:
+                x, z = x0 + ux * t, z0 + uz * t
+                c, r = int(round((x - ox) / SPACING)), int(round((z - oz) / SPACING))
+                if 0 <= c < side and 0 <= r < side and urban[r * side + c] >= 128 and place.contains_map(x, z):
+                    s = rnd.choice((-1, 1))
+                    yaw = (-math.degrees(math.atan2(uz, ux)) + (90 if s > 0 else -90) + 180) % 360 - 180
+                    put(x - uz * off * s, z + ux * off * s, yaw)
+                t += float(opts["every"]) * rnd.uniform(0.5, 1.5)
+            t_next = t - seg
+    limit = int(opts["max"])
+    if len(out) > limit:
+        keep = out[:int(opts["at_start"]) if start else 0]
+        rest = out[len(keep):]
+        rnd.shuffle(rest)
+        out = keep + rest[:limit - len(keep)]
+    for k, o in enumerate(out):
+        o["name"] = f"parked_{k + 1:04d}"
+    log(f"parked: {len(out)} cars")
+    return out
+
+
 HARBOUR_WAYS = {"breakwater": "breakwater", "groyne": "breakwater", "pier": "pier", "quay": "pier", "jetty": "pier"}
 HARBOUR = {
     "boats": 40,             # most boats moored along the piers and breakwaters
@@ -2704,7 +2767,10 @@ def build(plan, mod, log=print):
     counts = {}
     base = float(plan.get("base", 20.0))
     kit, plant_kit, geometry = load_kit(plan, mod, log)
-    plants, camps, harbour = [], [], []
+    plants, camps, harbour, parked = [], [], [], []
+    start = None
+    if mp.exists():
+        start = (json.loads(mp.read_text(encoding="utf-8")).get("start") or {}).get("position")
     for place in plan["places"]:
         inside = place.contains_map
         mine = {k: bytearray(side * side) for k in paint}
@@ -2767,6 +2833,8 @@ def build(plan, mod, log=print):
             if plan.get("harbour"):
                 harbour += place_harbour(plan, place, ground, base + float(plan.get("water_level", -0.3)), cache,
                                          plant_kit, log, sea=sea, paint=mine, side=side, ox=ox, oz=oz)
+            if plan.get("parked"):
+                parked += place_parked(plan, place, ground, place_roads, mine["urban"], side, ox, oz, start, log)
             placed_camps = place_camps(plan, place, landcover, ground, hm, base, place_roads, laid, side, ox, oz,
                                        plant_kit, log)
             level_pads(plan, placed_camps, ground, log)
@@ -2926,11 +2994,14 @@ def build(plan, mod, log=print):
         bpath.unlink()
     (edir / f"{name}_gis.json").write_text(json.dumps(layer, indent=1) + "\n", encoding="utf-8")
     # plants and camps: layers of their own (encounters/<map>_plants.json, _camps.json)
-    for what, objs in (("plants", plants), ("camps", camps), ("harbour", harbour)):
+    for what, objs in (("plants", plants), ("camps", camps), ("harbour", harbour), ("parked", parked)):
         ppath = edir / f"{name}_{what}.json"
         if objs:
             use_geometry(objs, geometry)
+            # models a copy draws besides its GeometryFile and ruin (a car's wheels) load with the layer
+            wheels = sorted({o["set"]["geometrynamewheel"] for o in objs if o.get("set", {}).get("geometrynamewheel")})
             ppath.write_text(json.dumps({"map": name.upper(), "load": "map", "unnamed": True,
+                                         **({"loads": {"model": wheels}} if wheels else {}),
                                          "copy_loads": not all(o.get("set", {}).get("GeometryFile") for o in objs),
                                          "objects": [{k: v for k, v in o.items() if not k.startswith("_")} for o in objs]},
                                         indent=1) + "\n", encoding="utf-8")
@@ -2948,7 +3019,7 @@ def build(plan, mod, log=print):
     (mod / "gis").mkdir(exist_ok=True)
     (mod / "gis" / f"{name}.preview.png").write_bytes(preview(plan, hm, sea, paint, road_docs, items, objects))
     log(f"preview: gis/{name}.preview.png")
-    return {"objects": len(objects), "plants": len(plants), "camps": len(camps), "harbour": len(harbour), "roads": len(road_docs), "footprints": len(items), "ways": counts,
+    return {"objects": len(objects), "plants": len(plants), "camps": len(camps), "harbour": len(harbour), "parked": len(parked), "roads": len(road_docs), "footprints": len(items), "ways": counts,
             "sea": bool(zones)}
 
 
