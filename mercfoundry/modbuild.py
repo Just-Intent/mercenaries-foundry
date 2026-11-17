@@ -1766,7 +1766,16 @@ def _apply_terrain(data, folder, result):
                         json.loads(job["lighting"].read_text(encoding="utf-8")), _sun_angle(data, folder, name))
                 except ValueError as err:
                     raise ValueError(f"terrain/{job['lighting'].name}: {err}") from err
-                colr, note = terrain_light.bake({**chunks, **replace}, settings)
+                tint_rgb = None
+                if settings.get("tint_map"):
+                    tp = folder / "terrain" / settings["tint_map"]
+                    if not tp.exists():
+                        raise ValueError(f"terrain/{job['lighting'].name}: its tint_map terrain/{tp.name} is missing")
+                    try:
+                        tint_rgb = terrain_light.load_tint_map(tp, terrain.parse_info(chunks[b"INFO"])["size"])
+                    except ValueError as err:
+                        raise ValueError(f"terrain/{job['lighting'].name}: {err}") from err
+                colr, note = terrain_light.bake({**chunks, **replace}, settings, tint_rgb)
                 replace[b"COLR"] = colr
                 notes.append(note)
             if a:

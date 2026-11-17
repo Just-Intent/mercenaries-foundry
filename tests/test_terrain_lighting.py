@@ -60,6 +60,53 @@ class SunAngleTests(unittest.TestCase):
             terrain_light.lighting_settings({}, None)
 
 
+class TintMapTests(unittest.TestCase):
+    """lighting.json "tint_map": a PNG whose colour tints the lit ground (128 neutral)."""
+
+    def test_tint_multiplies_and_strength_eases(self):
+        import os
+        from mercfoundry import png
+        units = [[0] * SIZE for _ in range(SIZE)]                       # flat: every vertex lit the same
+        flat = terrain_layers.encode_colr([[terrain_layers.rgb_colr(160, 200, 224)] * 81] * 16)
+        chunks = terrain.tern_chunks(tern_record(units, flat))
+        with tempfile.TemporaryDirectory() as d:
+            d = Path(d)
+            old = os.environ.get("MERCFOUNDRY_CACHE")
+            os.environ["MERCFOUNDRY_CACHE"] = str(d / "cache")
+            try:
+                # left half (x < 16) warm (255, 128, 0), right half neutral
+                px = bytes(v for z in range(SIZE) for x in range(SIZE) for v in ((255, 128, 0, 255) if x < 16 else (128, 128, 128, 255)))
+                (d / "t.png").write_bytes(png.encode(SIZE, SIZE, px))
+                tint = terrain_light.load_tint_map(d / "t.png", SIZE)
+                base = {"bearing": 180, "height": 60, "ambient": [60, 60, 60], "diffuse": [60, 60, 60]}
+                plain, _ = terrain_light.bake(chunks, terrain_light.lighting_settings(base))
+                full, note = terrain_light.bake(chunks, terrain_light.lighting_settings({**base, "tint_map": "t.png"}), tint)
+                half, _ = terrain_light.bake(chunks, terrain_light.lighting_settings(
+                    {**base, "tint_map": "t.png", "tint_strength": 0.5}), tint)
+                with self.assertRaises(ValueError):                    # named but not loaded
+                    terrain_light.bake(chunks, terrain_light.lighting_settings({**base, "tint_map": "t.png"}))
+                with self.assertRaises(ValueError):                    # wrong size
+                    (d / "small.png").write_bytes(png.encode(4, 4, bytes(64)))
+                    terrain_light.load_tint_map(d / "small.png", SIZE)
+            finally:
+                if old is None:
+                    del os.environ["MERCFOUNDRY_CACHE"]
+                else:
+                    os.environ["MERCFOUNDRY_CACHE"] = old
+        self.assertIn("tinted by t.png", note)
+        rgb = lambda body, x: terrain_layers.colr_rgb(terrain_layers.decode_colr(body, 16)[1][2 * 9 + (x - 8)])
+        p, f, h = rgb(plain, 10), rgb(full, 10), rgb(half, 10)          # patch 1 is x 8-16: x = 10 is warm
+        self.assertAlmostEqual(f[0], min(248, p[0] * 255 / 128), delta=8)
+        self.assertAlmostEqual(f[1], p[1], delta=8)
+        self.assertEqual(f[2], 0)
+        self.assertAlmostEqual(h[2], p[2] / 2, delta=8)
+        self.assertEqual(rgb(full, 16), rgb(plain, 16))                 # x = 16: neutral
+        for bad in ({"tint_map": "../x.png"}, {"tint_map": "x.jpg"}, {"tint_map": "x.png", "tint_strength": 2}):
+            with self.assertRaises(ValueError):
+                terrain_light.lighting_settings({**base, **bad})
+        self.assertNotIn("tint_strength", terrain_light.lighting_settings(base))
+
+
 class BakeTests(unittest.TestCase):
     def test_bake_lights_slopes_facing_the_sun(self):
         units = hills()
@@ -115,6 +162,19 @@ class BakeTests(unittest.TestCase):
             finally:
                 del os.environ["MERCFOUNDRY_CACHE"]
             self.assertTrue(any("terrain isle" in c and "SunAngle 140 180" in c for c in result.changes), result.changes)
+            # a tint map beside it, named in the lighting file
+            from mercfoundry import png
+            (mod / "terrain" / "isle.tint.png").write_bytes(png.encode(SIZE, SIZE, bytes([200, 128, 90, 255]) * (SIZE * SIZE)))
+            (mod / "terrain" / "isle.lighting.json").write_text(json.dumps({"tint_map": "isle.tint.png"}), encoding="utf-8")
+            os.environ["MERCFOUNDRY_CACHE"] = str(d / "cache")
+            try:
+                result = modbuild.build(mod, data, d / "out2")
+                self.assertTrue(any("tinted by isle.tint.png" in c for c in result.changes), result.changes)
+                (mod / "terrain" / "isle.lighting.json").write_text(json.dumps({"tint_map": "gone.png"}), encoding="utf-8")
+                with self.assertRaises(ValueError):
+                    modbuild.build(mod, data, d / "out3")
+            finally:
+                del os.environ["MERCFOUNDRY_CACHE"]
             # the mod's own sky/<map>.json SunAngle wins over the config's
             (mod / "sky").mkdir()
             (mod / "sky" / "isle.json").write_text(json.dumps({"base": {"SunAngle": "150 270"}}), encoding="utf-8")

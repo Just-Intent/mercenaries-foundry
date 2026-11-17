@@ -13,6 +13,7 @@ tint survives, and vertices whose shading didn't change keep their exact bytes.
 """
 
 import math
+import re
 import struct
 
 from . import terrain_layers as tl
@@ -358,10 +359,13 @@ def lighting_settings(doc, sun_text=None):
     """terrain/<map>.lighting.json, checked and filled in: {"bearing",
     "height" (the sun; default the map's SunAngle), "ambient", "diffuse"
     ([r, g, b]), "shadow" (0-1: how much of the sun shadowed ground loses),
-    "tint" (keep painted tint where the map's colours show it)}."""
+    "tint" (keep painted tint where the map's colours show it), "tint_map" (a
+    PNG in the mod's terrain/ folder, one pixel per height sample laid out like
+    <map>.heights.png, whose colour tints the lit ground: 128 is neutral) and
+    "tint_strength" (0-1, default 1: how far the map's tint goes from neutral)}."""
     if not isinstance(doc, dict):
         raise ValueError("lighting: an object of settings")
-    unknown = set(doc) - {"bearing", "height", "ambient", "diffuse", "shadow", "tint"}
+    unknown = set(doc) - {"bearing", "height", "ambient", "diffuse", "shadow", "tint", "tint_map", "tint_strength"}
     if unknown:
         raise ValueError(f"lighting: unknown settings {', '.join(sorted(unknown))}")
     if ("bearing" in doc) != ("height" in doc):
@@ -377,7 +381,14 @@ def lighting_settings(doc, sun_text=None):
     shadow = float(doc.get("shadow", DEFAULT_SHADOW))
     if not 0 <= shadow <= 1:
         raise ValueError("lighting: shadow is 0 (none) to 1 (only ambient light in shadow)")
-    return {"bearing": bearing % 360.0, "height": height,
+    tint_map = doc.get("tint_map")
+    if tint_map is not None and not (isinstance(tint_map, str) and re.fullmatch(r"[A-Za-z0-9_.\-]+\.png", tint_map)):
+        raise ValueError(f"lighting: tint_map names a PNG in the mod's terrain/ folder (e.g. gaza.tint.png), not {tint_map!r}")
+    strength = float(doc.get("tint_strength", 1.0))
+    if not 0 <= strength <= 1:
+        raise ValueError("lighting: tint_strength is 0 (none) to 1 (the map's full tint)")
+    extra = {"tint_map": tint_map, "tint_strength": strength} if tint_map else {}
+    return {**extra, "bearing": bearing % 360.0, "height": height,
             "ambient": _rgb3(doc.get("ambient", DEFAULT_AMBIENT), "lighting: ambient"),
             "diffuse": _rgb3(doc.get("diffuse", DEFAULT_DIFFUSE), "lighting: diffuse"),
             "shadow": shadow, "tint": bool(doc.get("tint", True))}
@@ -400,14 +411,32 @@ def _shades(H, size, spacing, sun, shadow):
     return out
 
 
-def bake(chunks, settings):
+def load_tint_map(path, size):
+    """A tint map's colours, RGB bytes per height sample (row z, column x, as
+    <map>.heights.png), from any PNG png.decode reads."""
+    from . import png
+    w, h, rgba = png.decode(path.read_bytes())
+    if (w, h) != (size, size):
+        raise ValueError(f"{path.name} is {w} x {h} pixels; the map's ground has {size} x {size} height samples")
+    out = bytearray(size * size * 3)
+    out[0::3], out[1::3], out[2::3] = rgba[0::4], rgba[1::4], rgba[2::4]
+    return bytes(out)
+
+
+def bake(chunks, settings, tint_rgb=None):
     """The whole COLR lit from a chosen sun (settings from lighting_settings).
     Returns (COLR body, note).  Painted tint is kept where the map's colours
-    follow a sun of their own (fit): each vertex keeps old / old shade."""
+    follow a sun of their own (fit): each vertex keeps old / old shade.
+    tint_rgb (load_tint_map, for settings' "tint_map") multiplies each lit
+    vertex by tint / 128 per channel, eased toward neutral by tint_strength."""
     from . import terrain
     import hashlib
     import json
+    if settings.get("tint_map") and tint_rgb is None:
+        raise ValueError(f"lighting: tint_map {settings['tint_map']} wasn't loaded")
     h = hashlib.sha256(BAKE_VERSION + json.dumps(settings, sort_keys=True).encode())
+    if tint_rgb is not None:
+        h.update(b"tint" + hashlib.sha256(tint_rgb).digest())
     for tag in (b"INFO", b"HEXP", b"HGT8", b"COLR"):
         h.update(tag + len(chunks[tag]).to_bytes(4, "little") + chunks[tag])
     path = cache_dir() / "terrain-bake" / (h.hexdigest() + ".bin")
@@ -416,6 +445,10 @@ def bake(chunks, settings):
     sun = sun_vector(settings["bearing"], settings["height"])
     note = (f"lit from a sun {settings['height']:.0f} degrees up at bearing {settings['bearing']:.0f}"
             f" (SunAngle {sun_angle(settings['bearing'], settings['height'])})")
+    if tint_rgb is not None:
+        note += f"; tinted by {settings.get('tint_map', 'a tint map')}"
+        if settings.get("tint_strength", 1.0) != 1.0:
+            note += f" at {settings['tint_strength']:g}"
     try:
         body = path.read_bytes()
         return body, note
@@ -435,6 +468,7 @@ def bake(chunks, settings):
             tint = (old, old_shades, light)
             note += "; painted tint kept"
     amb, dif = settings["ambient"], settings["diffuse"]
+    k = settings.get("tint_strength", 1.0) / 128.0
     out = []
     for pi in range(side * side):
         pz, px = divmod(pi, side)
@@ -445,6 +479,10 @@ def bake(chunks, settings):
                 x = (px * tl.PATCH + i) % size
                 lam = shades[z][x]
                 rgb = [amb[c] + dif[c] * lam for c in range(3)]
+                if tint_rgb is not None:
+                    t = (z * size + x) * 3
+                    for c in range(3):
+                        rgb[c] *= 1.0 + (tint_rgb[t + c] - 128) * k
                 if tint:
                     old, old_shades, light = tint
                     for c in range(3):
