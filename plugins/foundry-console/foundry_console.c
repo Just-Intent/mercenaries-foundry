@@ -39,6 +39,7 @@
 #include <stdio.h>
 #include <string.h>
 #include <math.h>
+#include <ctype.h>
 #include "mercenaries_plugin.h"
 #include "mercfoundry_functions.h"
 #include <winhttp.h>
@@ -891,6 +892,94 @@ static void hud_text(char *out, size_t size)
 
 static void hud_draw(const char *text);
 
+/* Slash commands typed in the panel (instead of Lua): what the window's
+ * Spawn and Nearby tabs do, for when the window can't show (fullscreen).
+ * They run here, on the game thread, through the window's own do_spawn and
+ * do_edit; their status goes to the panel's output. */
+static int contains(const char *hay, const char *needle);
+static uint32_t hud_pick;           /* the object /pick chose (a handle) */
+static char hud_pick_label[64];
+
+static void hud_status(void)
+{
+    EnterCriticalSection(&lock);
+    char line[256];
+    snprintf(line, sizeof(line), "%s", status_text);
+    LeaveCriticalSection(&lock);
+    append_output("%s", line);
+}
+
+static void hud_command(const char *line)
+{
+    char cmd[16] = {0}, arg[96] = {0};
+    sscanf_s(line, "%15s %95[^\n]", cmd, (unsigned)sizeof(cmd), arg, (unsigned)sizeof(arg));
+    for (char *p = cmd; *p; p++) *p = (char)tolower((unsigned char)*p);
+    append_output("/%s", line);
+    if (!strcmp(cmd, "spawn")) {
+        if (!arg[0]) { append_output("/spawn <template, or part of its name>"); return; }
+        int exact = -1, first = -1, count = 0;
+        char list[200] = {0};
+        for (unsigned i = 0; i < template_count; i++) {
+            if (!_stricmp(templates[i].name, arg)) { exact = (int)i; break; }
+            if (contains(templates[i].name, arg)) {
+                if (first < 0) first = (int)i;
+                if (count < 5) {
+                    size_t n = strlen(list);
+                    snprintf(list + n, sizeof(list) - n, "%s%s", n ? ", " : "", templates[i].name);
+                }
+                count++;
+            }
+        }
+        int pick = exact >= 0 ? exact : count == 1 ? first : -1;
+        if (pick < 0) {
+            if (count)
+                append_output("%d templates match: %s%s (type more of the name)", count, list, count > 5 ? ", ..." : "");
+            else
+                append_output("no template matches %s", arg);
+            return;
+        }
+        do_spawn(pick);
+        hud_status();
+    } else if (!strcmp(cmd, "near")) {
+        scan_nearby();
+        EnterCriticalSection(&lock);
+        unsigned n = nearby_count < 8 ? nearby_count : 8;
+        Nearby list[8];
+        memcpy(list, nearby, n * sizeof(Nearby));
+        LeaveCriticalSection(&lock);
+        if (!n) append_output("nothing within %.0f m", (double)NEARBY_RADIUS);
+        for (unsigned i = 0; i < n; i++)
+            append_output("%u  %s%s%s  %.0f m", i + 1, list[i].name[0] ? list[i].name : "[",
+                          list[i].name[0] ? "" : list[i].model, list[i].name[0] ? "" : "]", (double)list[i].distance);
+    } else if (!strcmp(cmd, "pick")) {
+        unsigned k = (unsigned)atoi(arg);
+        EnterCriticalSection(&lock);
+        int ok = k >= 1 && k <= nearby_count;
+        if (ok) {
+            hud_pick = nearby[k - 1].handle;
+            snprintf(hud_pick_label, sizeof(hud_pick_label), "%s", nearby[k - 1].name[0] ? nearby[k - 1].name
+                                                                                            : nearby[k - 1].model);
+        }
+        LeaveCriticalSection(&lock);
+        if (ok) append_output("picked %s: /up /down /left /right /here /remove", hud_pick_label);
+        else append_output("/pick <number from /near>");
+    } else if (!strcmp(cmd, "up") || !strcmp(cmd, "down") || !strcmp(cmd, "left") || !strcmp(cmd, "right") ||
+               !strcmp(cmd, "here") || !strcmp(cmd, "remove")) {
+        if (!hud_pick) { append_output("/near, then /pick <number> first"); return; }
+        int kind = !strcmp(cmd, "up") ? EDIT_UP : !strcmp(cmd, "down") ? EDIT_DOWN : !strcmp(cmd, "left") ? EDIT_LEFT
+                 : !strcmp(cmd, "right") ? EDIT_RIGHT : !strcmp(cmd, "here") ? EDIT_HERE : EDIT_REMOVE;
+        do_edit(kind, hud_pick);
+        hud_status();
+        if (kind == EDIT_REMOVE) hud_pick = 0;
+    } else if (!strcmp(cmd, "money")) {
+        float amount = arg[0] ? (float)atof(arg) : 10000.0f;
+        do_money(amount);
+        hud_status();
+    } else {
+        append_output("/spawn <template>  /near  /pick <n>  /up /down /left /right /here /remove  /money [n]");
+    }
+}
+
 /* Keys typed since the last update: edit the line, run it, or stop typing.
  * Returns 1 if anything changed. */
 static int hud_typing_keys(void)
@@ -909,7 +998,8 @@ static int hud_typing_keys(void)
         } else if (k == (MERC_KEY_FLAG | VK_RETURN)) {
             if (len) {
                 memcpy(last_typed, typed, sizeof(typed));
-                run_lua(0, typed);
+                if (typed[0] == '/') hud_command(typed + 1);
+                else run_lua(0, typed);
                 typed[0] = 0;
             }
         } else if (k == (MERC_KEY_FLAG | VK_BACK)) {
@@ -946,7 +1036,7 @@ static void hud_draw(const char *text)
     }
     memset(hud_pixels, 0, HUD_W * HUD_MAX_H * 4);
     int y = 6;
-    const char *title = typing ? "Foundry Console  (Enter runs, Esc stops typing)"
+    const char *title = typing ? "Foundry Console  (Lua or /help; Enter runs, Esc stops)"
                                : "Foundry Console  (` types Lua, F8 hides, F7 window)";
     TextOutA(hud_dc, 8, y, title, (int)strlen(title));
     y += HUD_LINE + 4;
