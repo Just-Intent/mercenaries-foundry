@@ -2175,8 +2175,9 @@ class Scene:
     # ------------------------------------------------------------ models
     def model_glb(self, name):
         own = self.mod / "models" / f"{name}.glb"
-        if own.is_file() and (self.mod / "models" / f"{name}.new.json").is_file():
-            return own.read_bytes()          # the mod's new model, as it'll be imported
+        spec = self.mod / "models" / f"{name}.new.json"
+        if own.is_file() and spec.is_file():
+            return self._new_model_glb(own.read_bytes(), spec)    # the mod's new model, as it'll be imported
         if name not in self._models:
             mr, sr = model.find(self.archives, name)
             m = model.decode(mr, sr)
@@ -2195,6 +2196,31 @@ class Scene:
                         pngs[r.key] = (png.encode(w, h, px, 4), any(px[i] < 255 for i in range(3, len(px), 4)))
             self._models[name] = gltf.export(m, lod, False, pngs, lambda k: f"{k:08X}")
         return self._models[name]
+
+    def _new_model_glb(self, glb, spec):
+        """A new model's file for the 3D view, its materials see-through as the
+        build makes them: a material's alphaMode decides (MASK or BLEND cut
+        out), and one without takes the base model's piece of the same texture,
+        else its first piece (model_import's template)."""
+        try:
+            doc, binary = gltf.read(glb)
+        except (ValueError, KeyError, struct.error):
+            return glb
+        mats = doc.get("materials") or []
+        if all("alphaMode" in m for m in mats):
+            return glb
+        try:
+            base = model.decode(*model.find(self.archives, json.loads(spec.read_text(encoding="utf-8")).get("base") or ""))
+        except (KeyError, ValueError, OSError):
+            return glb
+        for m in mats:
+            if "alphaMode" in m:
+                continue
+            t = next((p for p in base.pieces if p.texture == name_hash(m.get("name") or "")), None) or                 (base.pieces[0] if base.pieces else None)
+            if t is not None and gltf.cutout_flag(t):
+                m["alphaMode"], m["alphaCutoff"] = "MASK", 0.5
+        from ..model_changes import _glb
+        return _glb(doc, binary)
 
     # ------------------------------------------------------------ edits
     def rules_path(self):

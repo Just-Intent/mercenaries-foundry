@@ -92,6 +92,49 @@ class GltfModelImportTests(unittest.TestCase):
             for x, y in zip(a, b):
                 self.assertAlmostEqual(x, y, places=3)
 
+    def test_new_pieces_cut_out_by_alpha_mode(self):
+        # each new piece on its own material: MASK and BLEND cut out, OPAQUE not, none as the template
+        base = self.doc["meshes"][self.doc["nodes"][node(self.doc, "p000_bone_a")]["mesh"]]
+        root = node(self.doc, "root")
+        for name, mode in (("frond", "MASK"), ("glass", "BLEND"), ("wall", "OPAQUE"), ("plain", None)):
+            mat = {"name": f"{name}_mat"}
+            if mode:
+                mat["alphaMode"] = mode
+            self.doc["materials"].append(mat)
+            prim = dict(base["primitives"][0], material=len(self.doc["materials"]) - 1)
+            self.doc["meshes"].append({"primitives": [prim]})
+            self.doc["nodes"].append({"name": name, "mesh": len(self.doc["meshes"]) - 1})
+            self.doc["nodes"][root].setdefault("children", []).append(len(self.doc["nodes"]) - 1)
+        nm, ns, rep = self.run_import()
+        self.assertEqual(rep.added, ["frond", "glass", "wall", "plain"])
+        pieces = model.decode(nm, ns).pieces[-4:]
+        template = gltf.cutout_flag(self.model.pieces[0])
+        self.assertEqual([gltf.cutout_flag(p) for p in pieces], [True, True, False, template])
+
+    def test_alpha_mode_word(self):
+        from mercfoundry.model_import import _cutout
+        self.assertEqual(_cutout([0, 0, 0, 0, 0, 0x100, 0], "MASK")[5], 0x110)
+        self.assertEqual(_cutout([0, 0, 0, 0, 0, 0x110, 0], "OPAQUE")[5], 0x100)
+        self.assertEqual(_cutout([0, 0, 0, 0, 0, 0x110, 0], None)[5], 0x110)
+
+    def test_editor_shows_new_models_cut_out_as_built(self):
+        from types import SimpleNamespace
+        from mercfoundry.editor import scene
+        from tests.test_model import segm
+        leaf = segm(QUAD, [0, 1, 2, 3], "bone_a", texture="leaf").replace(
+            struct.pack("<2I", 0, 0x100), struct.pack("<2I", 0, 0x110))
+        build_dsk(self.dir / "streamed.dsk", [
+            (name_hash("leafy"), model.MODEL, model_record("leafy", JOINTS)),
+            (name_hash("leafy"), model.SEGMENTS, segments_record([leaf, segm(QUAD, [0, 1, 2, 3], "bone_a", texture="bark")]))])
+        spec = self.dir / "palm.new.json"
+        spec.write_text(json.dumps({"base": "leafy"}))
+        self.doc["materials"] = [{"name": "bark"}, {"name": "frond"}, {"name": "wall", "alphaMode": "OPAQUE"}]
+        write_glb(self.path, self.doc, bytes(self.bin))
+        fake = SimpleNamespace(archives=[dsk.Archive(self.dir / "streamed.dsk")])
+        out, _ = gltf.read(scene.Scene._new_model_glb(fake, self.path.read_bytes(), spec))
+        # bark: the base's bark piece (opaque); frond: a new texture, so the base's first piece (cut out)
+        self.assertEqual([m.get("alphaMode") for m in out["materials"]], [None, "MASK", "OPAQUE"])
+
     def test_reweighted_skin(self):
         prim = self.doc["meshes"][self.doc["nodes"][node(self.doc, "p001_root")]["mesh"]]["primitives"][0]
         acc = self.doc["accessors"][prim["attributes"]["JOINTS_0"]]

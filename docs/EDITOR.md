@@ -594,6 +594,14 @@ toolkit bundle run it the same way: `foundry\python\python.exe foundry\mercfound
   keeps it, and any other becomes a new texture, `<model>_<material>`, from
   its PNG image (scaled to power-of-two sides, at most 1024) or, with none, a
   swatch of its base colour. JPEG images can't be read: export them as PNG.
+  See-through parts (leaves, fronds, fences) follow each material's
+  **alphaMode**: `MASK` or `BLEND` makes its pieces cut out where the image's
+  alpha is under half (the game alpha-tests them: MTRL word 5, bit 0x10, an
+  image with alpha becomes a DXT3 texture), and `OPAQUE` makes them solid.
+  A material with no alphaMode takes the base model's setting for that
+  texture, or else its first piece's, so set it on every material when the
+  base mixes the two (a tree's leaves and trunk). The 3D view shows them as
+  the build makes them. This holds for edited models' new pieces too.
 - **Editor layers load with their map.** Layer files the editor makes (squads,
   paths, zones, placed objects) get `"load": "map"`. The build then loads them
   whenever free roam starts on their map, so they appear in the game with no

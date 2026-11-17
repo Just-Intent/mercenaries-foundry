@@ -22,6 +22,19 @@ from .hashing import name_hash
 MAX_INDEX = 0xFFFF
 
 
+CUTOUT = 0x10      # MTRL word 5: the game alpha-tests the piece's texture (gltf.cutout_flag)
+
+
+def _cutout(words, alpha):
+    """A piece's MTRL words with the cut-out bit as its glTF material's
+    alphaMode says (MASK or BLEND on, OPAQUE off; none given: as they are)."""
+    mode = str(alpha or "").upper()
+    if mode and len(words) > 5:
+        words = list(words)
+        words[5] = words[5] | CUTOUT if mode in ("MASK", "BLEND") else words[5] & ~CUTOUT
+    return words
+
+
 @dataclass
 class ObjPiece:
     name: str
@@ -33,6 +46,7 @@ class ObjPiece:
     triangles: list = field(default_factory=list)
     bones: list = None     # per-vertex skin palette index (None entries: unknown)
     joint: int = None      # joint name hash for a new piece (else taken from its name)
+    alpha: str = None      # glTF alphaMode: MASK or BLEND makes it see-through (cut out), OPAQUE not
 
 
 def parse_obj(text: str) -> list:
@@ -356,7 +370,7 @@ def import_pieces(model_record: bytes, segments_record: bytes, objs: list,
         p = model.pieces[i]
         seg = dict(ucfb.iter_chunks(seg_items[segm_positions[i]][1]))
         stride_word = struct.unpack_from("<I", seg[b"INFO"], 8)[0]
-        plans.append((i, o, p.joint, p.texture, p.lod_mask, stride_word, list(p.material)))
+        plans.append((i, o, p.joint, p.texture, p.lod_mask, stride_word, _cutout(list(p.material), o.alpha)))
     skinned_pieces = [k for k, p in enumerate(model.pieces) if p.bones is not None]
     for o in new_objs:
         m = re.match(r"(?:new_)?(.+?)(?:\.\d+)?$", o.name)
@@ -373,7 +387,7 @@ def import_pieces(model_record: bytes, segments_record: bytes, objs: list,
             words = list(t.material)
             if len(words) > 3:
                 words[3] = texture
-            plans.append((None, o, t.joint, texture, all_lods or 1, stride_word, words))
+            plans.append((None, o, t.joint, texture, all_lods or 1, stride_word, _cutout(words, o.alpha)))
             continue
         if o.bones is not None and any(b is not None for b in o.bones):
             report.warnings.append(f"{o.name}: skin weights ignored (this model has no skinned pieces)")
@@ -384,7 +398,7 @@ def import_pieces(model_record: bytes, segments_record: bytes, objs: list,
             words[2] = joint
         if len(words) > 3:
             words[3] = texture
-        plans.append((None, o, joint, texture, all_lods or 1, 20, words))
+        plans.append((None, o, joint, texture, all_lods or 1, 20, _cutout(words, o.alpha)))
 
     # --- quantization box must hold every local position
     new_locals = {}
