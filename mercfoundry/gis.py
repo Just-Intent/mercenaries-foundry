@@ -2236,13 +2236,15 @@ PARKED = {
     "every": 35.0,           # m between parked cars along a main road through town (each side, give or take)
     "max": 150,
     "at_start": 2,           # cars parked beside where the player arrives (a map's "start")
+    "level": 0.25,           # m: most rise across a parking spot (wheel to wheel)
 }
 
 
 def place_parked(plan, place, ground, roads, urban, side, ox, oz, start=None, log=print):
     """Parked cars: the plan's "parked" {"vehicles": [{"template": a game
     vehicle template, "model", "wheel", "ruin": the models it draws,
-    "weight": how often, 1 if not given}], ...}
+    "weight": how often, 1 if not given, "lift": how high its origin sits
+    over the ground}], ...}
     beside main roads through built-up land, along the kerb, and a few by
     the player's start. Each copy is given its models (so its layer loads
     them; the template's own layer, a whole list of vehicles, isn't
@@ -2256,16 +2258,28 @@ def place_parked(plan, place, ground, roads, urban, side, ox, oz, start=None, lo
 
     weights = [float(v.get("weight", 1)) for v in vehicles]
 
-    def put(x, z, yaw):
+    def flat(x, z, yaw):
+        """Level enough to park on: a vehicle on a slope rolls away."""
+        a = math.radians(yaw)
+        hs = [ground.at(x + dx * math.cos(a) - dz * math.sin(a), z + dx * math.sin(a) + dz * math.cos(a))
+              for dx, dz in ((-1.2, -2.5), (1.2, -2.5), (-1.2, 2.5), (1.2, 2.5))]
+        return max(hs) - min(hs) <= float(opts["level"])
+
+    def put(x, z, yaw, check=True):
+        if check and not flat(x, z, yaw):
+            return
         v = rnd.choices(vehicles, weights)[0]
-        out.append({"from": v["template"], "position": [round(x, 2), round(ground.at(x, z) + 0.3, 2), round(z, 2)],
+        # at its wheels' height: a vehicle's origin sits "lift" metres over the
+        # ground (placed lower it starts sunk in, wakes and rolls)
+        y = ground.at(x, z) + float(v.get("lift", 1.0)) + 0.05
+        out.append({"from": v["template"], "position": [round(x, 2), round(y, 2), round(z, 2)],
                     "yaw": round(yaw, 1), "set": {"GeometryFile": v["model"], "geometryNameRuined": v["ruin"],
                                                    "geometrynameruined": v["ruin"], "geometrynamewheel": v["wheel"]},
                     "_kind": "parked"})
     if start:
         sx, _, sz = start
         for k in range(int(opts["at_start"])):
-            put(sx + 6 + k * 3.2, sz + 6, 0.0)
+            put(sx + 6 + k * 3.2, sz + 6, 0.0, check=False)
     for k, pts in roads:
         if k not in ("trunk", "primary", "secondary", "tertiary"):
             continue
