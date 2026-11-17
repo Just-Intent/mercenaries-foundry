@@ -145,3 +145,8 @@ code.copyable { display: block; white-space: pre-wrap; word-break: break-all; fo
 .an-words { grid-column: 2 / 4; color: #8d98a3; font-size: 11px; }
 .an-buttons { grid-column: 4; display: flex; gap: 2px; }
 .an-variants { color: #b9c2cc; font-size: 11px; }
+
+/* Sun and ground lighting (Sky panel) */
+.sun-row { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; margin: 4px 0; font-size: 12px; }
+.sun-row input[type=number] { width: 70px; }
+#sun-when summary { cursor: pointer; font-size: 12px; color: #b9c2cc; margin: 4px 0; }

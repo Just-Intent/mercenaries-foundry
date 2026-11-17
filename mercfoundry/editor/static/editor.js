@@ -1653,7 +1653,19 @@ const missions = createMissions({
   },
 });
 // Sky and weather: the map's base sky and atmosphere presets (sky/<map>.json).
-const sky = createSky({$, status, setDirty: (v) => setDirty(v), remember: (...a) => remember(...a)});
+const sky = createSky({$, status, setDirty: (v) => setDirty(v), remember: (...a) => remember(...a),
+  scene, target: () => controls.target,
+  // the ground's light from bytes like /api/look/<map>.light (a preview); false if there's no ground
+  groundLight: (buf) => {
+    const attr = terrainMesh && terrainMesh.geometry.getAttribute('light');
+    const bytes = new Uint8Array(buf);
+    if (!attr || attr.array.length !== bytes.length) return false;
+    for (let i = 0; i < bytes.length; i++) attr.array[i] = bytes[i] / 255;
+    attr.needsUpdate = true;
+    return true;
+  },
+  reloadGround: () => terrainMesh && applyGround(terrainMesh, state.map, scene.fog, {...state.terrain.meta, heights: state.terrain.heights})
+    .catch((err) => console.warn('ground textures:', err))});
 // Animations: a character's animation table (animtables/<table>.changes.json), with a 3D preview.
 const animations = createAnimations({$, status, setDirty: (v) => setDirty(v), remember: (...a) => remember(...a)});
 const factions = createFactions({$, status, setDirty: (v) => setDirty(v), remember: (...a) => remember(...a)});

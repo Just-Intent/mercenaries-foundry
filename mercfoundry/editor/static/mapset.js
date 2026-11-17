@@ -80,6 +80,11 @@ export function createMapSettings(ctx) {
       <div class="buttons"><button id="mapset-here" title="The ground at the middle of the view">Arrive at the middle of the view</button>
         <button id="mapset-clear">Clear</button></div>
       <label class="field">Message on arrival <input id="mapset-msg" value="${esc(d.message)}" placeholder="(none)"></label>
+      <label class="field" title="Weather seems to carry over a map switch: this switches to a preset of your choosing on arrival (Mission_EnableAtmosphere)">Weather on arrival
+        <select id="mapset-weather"><option value="">(none: whatever was on before)</option>${
+          [...new Set([...(d.presets || []), ...(d.weather ? [d.weather] : [])])].map((n) => `<option value="${esc(n)}"${
+            n === d.weather ? ' selected' : ''}>${esc(n)}</option>`).join('')}</select></label>
+      <p class="hint">Presets from ${esc(d.name)}'s config and SW's, and the ones this mod adds in Sky.</p>
       <h3>Layers that load with it</h3>
       ${layers}
       <h3>Pilot back</h3>
@@ -136,7 +141,7 @@ export function createMapSettings(ctx) {
       try {
         st.data = {...await post('/api/maps/save', {map: st.map, doc: {
           start: nums.length ? {position: nums, heading: Number($('mapset-heading').value) || 0} : null,
-          message: $('mapset-msg').value, layers,
+          message: $('mapset-msg').value, weather: $('mapset-weather').value, layers,
           return: backNums.length ? {position: backNums, heading: Number($('mapset-back-heading').value) || 0,
                                      to: $('mapset-back-to').value} : null}}), game_maps: st.data.game_maps};
         draw();

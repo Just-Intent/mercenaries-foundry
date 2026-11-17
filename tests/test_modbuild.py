@@ -151,6 +151,17 @@ class ModBuildTests(unittest.TestCase):
         self.assertEqual(luacheck.check(source), [])
         self.assertFalse(any("isle_camp" in w for w in result.warnings))
         self.assertTrue(any("loads with the new map island" in c for c in result.changes))
+        # maps/<name>/boundaries.json: zones in the map's own lineregion record
+        # (blank has none here: one is made)
+        from mercfoundry import aidata
+        sea = {"points": [[0, 19, 0], [100, 19, 0], [100, 19, 100], [0, 19, 100]],
+               "properties": {"type": "water", "height": "19"}}
+        (self.project / "maps" / "island").mkdir()
+        self.write("maps/island/boundaries.json", json.dumps({"boundaries": {"island_sea": sea}}))
+        result = modbuild.build(self.project, self.data, self.out)
+        doc = aidata.to_json(self.records("assets.dsk")[(name_hash("island"), name_hash("lineregion"))], "lineregion")
+        names = [n for t, n, _ in aidata.items(doc) if t == "lrg_"]
+        self.assertEqual(names, ["island_sea"])
         self.write("maps/blank.json", json.dumps({"from": "blank"}))
         with self.assertRaisesRegex(ValueError, "already a map"):
             modbuild.build(self.project, self.data, self.out)
@@ -442,3 +453,14 @@ class RotationRuleTests(unittest.TestCase):
         self.assertEqual(inst["rotation"][1], [0.0, 0.98, -0.2])
         with self.assertRaises(ValueError):
             modbuild._apply_rule(inst, {"rotation": [[1, 0], [0, 1]]})
+
+
+class MapScriptTests(unittest.TestCase):
+    def test_weather_on_arrival(self):
+        # a new map can force one of the weather presets as the player arrives
+        # (the one on in the map they came from otherwise stays)
+        text = modbuild.map_script("gaza", {"weather": "gaza", "start": {"position": [1, 2, 3]}}, [])
+        self.assertIn("Mission_EnableAtmosphere('gaza', true)", text)
+        from mercfoundry import luacheck
+        self.assertEqual(luacheck.check(text), [])
+        self.assertNotIn("Mission_EnableAtmosphere", modbuild.map_script("gaza", {}, []))

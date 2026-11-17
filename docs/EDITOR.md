@@ -200,7 +200,10 @@ toolkit bundle run it the same way: `foundry\python\python.exe foundry\mercfound
   appears in the Map list like the game's maps, with the copied map's ground
   to reshape and paint (Terrain), its sky (Sky), and objects, squads and
   zones to add. On a new map, the Map panel sets where the player arrives
-  (the middle of the view, and a heading), a message on arrival, and which
+  (the middle of the view, and a heading), a message on arrival, the
+  **weather on arrival** (a preset from its config, SW's or the mod's new
+  ones, switched on with `Mission_EnableAtmosphere`: weather seems to carry
+  over a map switch; `"weather"` in `maps/<name>.json`), and which
   of the mod's layers on it load with it (objects placed in the editor go in
   one that does). The build writes its master script (run as it loads)
   from these; with none of them set, it's a copy of the source map's
@@ -257,6 +260,32 @@ toolkit bundle run it the same way: `foundry\python\python.exe foundry\mercfound
   zone** is a zone of type Weather (New zone), named after its preset.
   Missions switch weather at a moment on the Events tab (**Weather**). Save
   writes `sky/<map>.json`.
+  **Sun** sets where the sun is: its compass bearing (0 north, 90 east, 180
+  south, 270 west; north is up on the minimap) and height above the horizon,
+  written as the config's `SunAngle` (`90 + height`, `bearing - 90`; see
+  [formats/dsk.md](formats/dsk.md)). It lights objects and characters. While
+  the panel is open the 3D view shows the sun as a yellow disc, with a line
+  to it from the view's centre. **From a place and time** sets it from a
+  latitude, longitude, date, local time and UTC offset (filled in for Gaza:
+  31.5 N, 34.45 E).
+  **Ground lighting** bakes the ground's shading from that sun: **Light the
+  ground from the sun** writes `terrain/<map>.lighting.json` with its
+  **Ambient** colour (everywhere, in shadow too), **Sun** colour (on ground
+  facing the sun), **Shadow** (how much of the sun hills' shadows take away,
+  0-1), **Keep painted tint**, and a **Tint map** (a PNG in the mod's
+  `terrain/` folder, one pixel per height sample, 128 grey neutral) with its
+  **Tint strength**. **Preview** lights the ground in the 3D
+  view as the build will (a few seconds on a big map); Save keeps it, and the
+  ground is then reloaded as the build lit it (about 20 seconds). The ground
+  follows the panel's sun, so moving the sun and saving relights it.
+  **Seasons** shows on a map whose config has season skies (`[Winter]`,
+  `[Fall]`, `[Summer]`: blank's, and so every new map's; SW and NW have
+  none). A season's sky texture, colours and glow are drawn instead of the
+  base sky's, so a new map's sky is set here. Pick a season and edit its
+  settings like a preset's; **Use for every season** gives the others this
+  season's changes, and **Revert** puts a season back. Saved per season as
+  `sky/<map>.json` `"seasons"`; a hand-written `"all"` shows in every
+  season and is saved per season once edited.
 - **Animations**: a character's animation table, which clip plays for each
   handle the game asks for (`lb_upright_run_forward`, `ub_reload`,
   `fb_die`...), per set (default, rifle, smg, driver, ...; the game looks in
@@ -272,6 +301,13 @@ toolkit bundle run it the same way: `foundry\python\python.exe foundry\mercfound
   differ; none left removes it), or the whole table when the mod already
   replaces it (`animtables/<table>.json`). It changes every character with
   that table.
+  **Update rates by distance** (folded under the entries) shows `xbox.ini`'s
+  four tables of how often a playing clip is updated by the character's
+  distance (Low, Medium, High, Lender; a line each: max distance, every N
+  frames, interpolation; -1 is out of view). Edit the lines and **Save
+  rates** (`config/xbox.ini.json`; tables left as the game's aren't
+  written), **Put back the game's**, or **Fix the Medium typo** (retail's
+  15 m Medium line is written as Low). They apply to every character.
 - **Missions**: make a contract on the map. Pick a mission, or **New
   mission...** with a faction (it takes that faction's next free number on the
   map). The panel is in tabs (the one last open opens again, and each counts
@@ -301,13 +337,6 @@ toolkit bundle run it the same way: `foundry\python\python.exe foundry\mercfound
     objects; killing one fails it; tick **Extract them** to need them flown
     out by the extraction chopper), **Hold zone** (stay in a zone for a
     number of seconds; leaving starts the clock again), **Use object** (walk
-  **Update rates by distance** (folded under the entries) shows `xbox.ini`'s
-  four tables of how often a playing clip is updated by the character's
-  distance (Low, Medium, High, Lender; a line each: max distance, every N
-  frames, interpolation; -1 is out of view). Edit the lines and **Save
-  rates** (`config/xbox.ini.json`; tables left as the game's aren't
-  written), **Put back the game's**, or **Fix the Medium typo** (retail's
-  15 m Medium line is written as Low). They apply to every character.
     up to objects and use them, with your own prompt; failed if one is
     destroyed) and **Verify target** (kill and photograph the body, or
     capture alive, as the Deck of 52; a marker of your choice, a card suit or

@@ -16,7 +16,11 @@ A preset comes on inside a lineregion boundary named after it with property
 type=atmosphere (weather zones), or when a script forces it
 (Mission_EnableAtmosphere(name, true), as the prison and the C-17 do). The
 config file's top block holds the base sky (SunAngle, FogRGBA, SkyTexture,
-Rain, ...).
+Rain, ...) and how water looks (the Wtr* keys).
+
+blank's config (and so every new map's) has season sections, [Winter],
+[Fall] and [Summer], each with its own sky colours and SkyTexture: "seasons"
+sets their keys ("all" for every one).
 
 A mod changes them with sky/<map>.json:
 
@@ -35,6 +39,16 @@ from . import terrain_surfaces
 KEY = re.compile(r"[A-Za-z][A-Za-z0-9_]*$")
 NAME = re.compile(r"[A-Za-z0-9_\-]+$")
 
+# How water looks on the map, also in the config's top block (every retail
+# level config has them; the same values on SW, NW and blank): the surface's
+# specular colour and strength, its colour at the shore and over deep water,
+# the alpha range (min, max: shallow water is clearer), and the scrolling
+# ripple and specular-speckle layers.
+WATER_KEYS = ("WtrMainSpecRGBA", "WtrMainBorderAmbRGB", "WtrMainDeepMinAmbRGB", "WtrMainDeepMaxAmbRGB",
+              "WtrMainAmbMinMaxA", "WtrMainAAnimSpeed", "WtrMainScrollSpeeds", "WtrMainCoordShift",
+              "WtrSpeclesSpecRGBA", "WtrSpeclesAmbRGBA", "WtrSpeclesScrollSpeed", "WtrLightAzimAndElevParts",
+              "WtrSpeclesBlendSpeed", "WtrSpeclesCoordShift")
+
 # The keys a preset has (the editor's fields, in the files' own order), and
 # the base sky keys in the config file's top block.
 PRESET_KEYS = ("Fadetime", "SunlightRGB", "AmbientRGB", "HorizonRGB", "SkyRGB", "ZenithRGB", "SunRGB", "SunSize",
@@ -42,8 +56,8 @@ PRESET_KEYS = ("Fadetime", "SunlightRGB", "AmbientRGB", "HorizonRGB", "SkyRGB", 
                "AshParticlesPerSecond", "FogRGBA", "SkyTexture", "SkyRotationsPerMinute", "GlowRadius", "GlowDarken",
                "GlowAdd", "ProcessRGBA", "TerrCloudsTexture", "TerrCloudsScale", "TerrCloudsSpeed", "TerrCloudsRGBA",
                "FlatSkyRGB", "NormMapSpecRGB", "NormMapBackSpecRGB")
-BASE_KEYS = ("SunAngle", "NormalSkyRGB", "NormalSunRGB", "NormalSunSize", "DarkSkyRGB", "DarkSunRGB", "DarkSunSize",
-             "FogRGBA", "SkyTexture", "Rain", "FogFunction", "Atmospherefade")
+BASE_KEYS = ("SunAngle", "SunRGB", "AmbientRGB", "NormalSkyRGB", "NormalSunRGB", "NormalSunSize", "DarkSkyRGB",
+             "DarkSunRGB", "DarkSunSize", "FogRGBA", "SkyTexture", "Rain", "FogFunction", "Atmospherefade") + WATER_KEYS
 
 
 def level_files(levels_ini, map_name, exists):
@@ -228,6 +242,51 @@ def presets_of(texts):
     return out
 
 
+SEASONS = ("Winter", "Fall", "Summer")
+
+
+def seasons(text):
+    """The config's season sections ([Winter], [Fall], [Summer]: blank's and so
+    every new map's, each with its own sky colours and SkyTexture), as
+    {name: {key: value}}."""
+    out, cur = {}, None
+    for line in _lines(text):
+        s_ = line.strip()
+        if s_.startswith("["):
+            name = s_.strip("[]").strip()
+            cur = next((n for n in SEASONS if n.lower() == name.lower()), None)
+            if cur:
+                out[cur] = {}
+            continue
+        parts = s_.split(None, 1)
+        if cur and len(parts) == 2:
+            out[cur].setdefault(parts[0], parts[1].strip())
+    return out
+
+
+def apply_seasons(text, changes, where="seasons"):
+    """The config text with season sections' keys set ({"Summer": {key: value}};
+    "all" sets every season the config has)."""
+    nl = "\r\n" if "\r\n" in text else "\n"
+    have = seasons(text)
+    todo = {}
+    for name, keys in changes.items():
+        if not isinstance(keys, dict):
+            raise ValueError(f"{where}: {name!r} is an object of settings")
+        names = list(have) if name.lower() == "all" else [n for n in have if n.lower() == name.lower()]
+        if not names:
+            raise ValueError(f"{where}: the map's config has no [{name}] section (it has {', '.join(have) or 'none'})")
+        for n in names:
+            todo.setdefault(n, {}).update(keys)
+    lines = _lines(text)
+    for name, keys in todo.items():
+        start = next(i for i, l in enumerate(lines) if l.strip().strip("[]").strip().lower() == name.lower()
+                     and l.strip().startswith("["))
+        end = next((i for i in range(start + 1, len(lines)) if lines[i].strip().startswith("[")), len(lines))
+        lines = _set_keys(lines, start + 1, end, keys, f"{where} {name}")
+    return nl.join(lines) + nl
+
+
 def apply(texts, doc, where="sky"):
     """{file: text} with a sky/<map>.json applied: the base keys go in the
     first file (the config), preset changes where each preset is, and new
@@ -239,6 +298,9 @@ def apply(texts, doc, where="sky"):
     if doc.get("base"):
         texts[files[0]] = apply_base(texts[files[0]], doc["base"])
         changes.append(f"base sky: {', '.join(doc['base'])}")
+    if doc.get("seasons"):
+        texts[files[0]] = apply_seasons(texts[files[0]], doc["seasons"], f"{where}: seasons")
+        changes.append("seasons: " + ", ".join(f"{n} ({', '.join(k)})" for n, k in doc["seasons"].items()))
     known = presets_of(texts)
     home = files[-1]                                  # the Xbox file, where retail keeps its presets
     for name, keys in (doc.get("presets") or {}).items():

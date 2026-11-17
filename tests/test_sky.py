@@ -34,6 +34,28 @@ class SkyTests(unittest.TestCase):
             with self.assertRaises(ValueError):
                 sky.apply(texts, bad)
 
+    def test_water_and_light_in_the_base(self):
+        # how water looks, the sun and the ambient light are top-block keys too
+        out, changes = sky.apply({"SW/SW.ini": CONFIG}, {"base": {
+            "WtrMainAmbMinMaxA": "96 220", "WtrMainDeepMinAmbRGB": "20 46 60", "SunRGB": "190 180 160"}})
+        b = sky.base(out["SW/SW.ini"])
+        self.assertEqual((b["WtrMainAmbMinMaxA"], b["WtrMainDeepMinAmbRGB"], b["SunRGB"]),
+                         ("96 220", "20 46 60", "190 180 160"))
+        self.assertIn("SunRGB\t\t190 180 160\r\n\r\n[SoundAmbience]", out["SW/SW.ini"])
+
+    def test_seasons(self):
+        # blank's config (every new map's) has [Winter], [Fall] and [Summer] skies
+        text = CONFIG + "\r\n[Summer]\r\nSkyTexture\t\tskytexture_peru2\r\nSunRGB\t\t96 64 48\r\n\r\n[Winter]\r\nSkyTexture\t\tx\r\n"
+        self.assertEqual(sky.seasons(text)["Summer"]["SkyTexture"], "skytexture_peru2")
+        out, changes = sky.apply({"SW/SW.ini": text}, {"seasons": {"all": {"SkyTexture": "skySummer"},
+                                                                  "Summer": {"SunRGB": "200 190 170"}}})
+        got = sky.seasons(out["SW/SW.ini"])
+        self.assertEqual((got["Summer"]["SkyTexture"], got["Winter"]["SkyTexture"], got["Summer"]["SunRGB"]),
+                         ("skySummer", "skySummer", "200 190 170"))
+        self.assertIn("[SoundAmbience]\r\nX 1\r\n", out["SW/SW.ini"])              # other sections left alone
+        with self.assertRaises(ValueError):
+            sky.apply({"SW/SW.ini": text}, {"seasons": {"Spring": {"SkyTexture": "x"}}})
+
     def test_level_files(self):
         levels = "[LV_SW]\r\nName\t\tSW\r\nConfigFile\t\t\\SW\\SW.ini\r\n"
         have = {"SW/SW_XBOX.ini"}

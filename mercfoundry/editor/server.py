@@ -25,7 +25,8 @@ POST /api/live/send            {"commands": [...]} for the game (see live.py)
 GET  /api/encounters/<map>     encounters: the game's (read only) and the mod's
 GET  /api/sky/<map>            its base sky and atmosphere presets, and the mod's changes (sky/<map>.json)
 POST /api/models/new           {"name", "base", "glb" (base64)}: a new object's model (models/<name>.glb + .new.json)
-POST /api/sky/save             {"map", "doc"}: writes sky/<map>.json
+POST /api/sky/save             {"map", "doc", "lighting"?}: writes sky/<map>.json (and terrain/<map>.lighting.json; null removes it)
+POST /api/lighting/preview     {"map", "lighting", "base"?}: the ground lit from that sun, as /api/look/<map>.light
 GET  /api/animtables          animation tables, with the models of the characters using each
 GET  /api/animtable/<name>    the game's table, the mod's version, its models, the flag meanings
 GET  /api/clips               every clip name
@@ -337,9 +338,13 @@ def make_handler(scene: Scene, mod_name: str, live: Live = None):
                 if path == "/api/maps/save":
                     with objects_lock:
                         return self.send(200, scene.save_map_settings(doc["map"], doc.get("doc") or {}))
+                if path == "/api/lighting/preview":
+                    with terrain_lock:
+                        light, note = scene.lighting_preview(doc["map"], doc.get("lighting"), doc.get("base"))
+                    return self.send(200, light, "application/octet-stream")
                 if path == "/api/sky/save":
                     with objects_lock:
-                        return self.send(200, scene.save_sky(doc["map"], doc.get("doc") or {}))
+                        return self.send(200, scene.save_sky(doc["map"], doc.get("doc") or {}, doc.get("lighting", "keep")))
                 if path == "/api/animupdate/save":
                     with objects_lock:
                         return self.send(200, anims.save_update_rates(scene, doc.get("tables") or {}))

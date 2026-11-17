@@ -1452,6 +1452,11 @@ def map_script(name, doc, layers, pilots=(), contacts=False):
         lines.append(f"Actor_SetYaw('player0', {float(start.get('heading', 0)):.1f})")
     if doc.get("message"):
         lines.append(f"Ui_PrintHudMessage({_lua_str(str(doc['message']))})")
+    if doc.get("weather"):
+        # a weather preset forced on arrival, as retail missions do: the one
+        # last on (from the map the player came from) otherwise stays, over
+        # this map's own sky
+        lines.append(f"Mission_EnableAtmosphere({_lua_str(str(doc['weather']))}, true)")
     prefix = f"foundry_{name.lower()}_Travel"
     if pilots:
         lines.append(f"{prefix}Arm()")
@@ -1473,7 +1478,8 @@ def _apply_maps(data, folder, result):
     paths and load list (the list loading the new name's own), a level in
     levels.ini and a copy of its level config. Reshape and paint it with
     terrain/<name>.* like any map; enter it from Foundry Console with
-    Utility_ResetToBaseLayerOnly('<name>')."""
+    Utility_ResetToBaseLayerOnly('<name>'). maps/<name>/boundaries.json adds
+    zones to its own lineregion record (the game makes water only there)."""
     from . import missions, sky
     mdir = folder / "maps"
     for f in sorted(mdir.glob("*.json")) if mdir.is_dir() else []:
@@ -1493,8 +1499,22 @@ def _apply_maps(data, folder, result):
         # own list has next to none of it. null: only the source's.
         like = mdoc.get("loads_like", "sw")
         made = []
+        # maps/<name>/boundaries.json {"boundaries": {name: {points, properties}}}:
+        # zones in the map's own lineregion record. The game makes water only
+        # from a map's own record (every retail water zone is in one), not
+        # from a layer's.
+        bf = mdir / name / "boundaries.json"
+        own_bounds = json.loads(bf.read_text(encoding="utf-8")).get("boundaries", {}) if bf.exists() else {}
         for kind in MAP_KINDS:
             hit = [(a, r) for a, r in data.records(name_hash(kind)) if r.key == name_hash(src)]
+            if not hit and kind == "lineregion" and own_bounds:
+                from . import aidata, encounters
+                bdoc = {"format": aidata.FORMAT, "kind": "lineregion", "tree": [{"tag": "ucfb", "children": [
+                    encounters._boundary_node(n, s_) for n, s_ in own_bounds.items()]}]}
+                ta, _ = next((a, r) for a, r in data.records(name_hash("Terrain")) if r.key == name_hash(src))
+                data.new(ta, key, name_hash(kind), aidata.from_json(bdoc))
+                made.append(f"lineregion ({len(own_bounds)} zones of its own)")
+                continue
             if not hit:
                 if kind in ("Terrain", "world", "list"):
                     raise ValueError(f"{where}: \"from\" names no game map ({src!r} has no {kind} record)")
@@ -1521,6 +1541,13 @@ def _apply_maps(data, folder, result):
                 body = text.encode("latin-1")
             else:
                 body = _renamed_record(body, name)
+            if kind == "lineregion" and own_bounds:
+                from . import aidata, encounters, modpack
+                doc = aidata.to_json(body, "lineregion")
+                doc = modpack.apply_layout_changes(doc, {"changed": [
+                    encounters._boundary_node(n, s_) for n, s_ in own_bounds.items()]})
+                body = aidata.from_json(doc)
+                made.append(f"{len(own_bounds)} zones of its own")
             if kind == "Terrain" and mdoc.get("size"):
                 # a size of its own: flat ground that size (the copy's layers kept)
                 from . import terrain as _terrain
@@ -1563,7 +1590,7 @@ def _apply_maps(data, folder, result):
                         text = missions.add_to_list(text, "script", s_)
                 data.replace_added(key, name_hash("list"), text.encode("latin-1"))
         if not any(r.key == key for _, r in data.records(SCRIPT)) and data.find_added(key, SCRIPT) is None:
-            if mdoc.get("start") or mdoc.get("message") or layers or pilots or contacts:
+            if mdoc.get("start") or mdoc.get("message") or mdoc.get("weather") or layers or pilots or contacts:
                 source = map_script(name, mdoc, layers, pilots, contacts)
                 made.append("script (" + ", ".join(
                     (["where you arrive"] if (mdoc.get("start") or {}).get("position") else [])

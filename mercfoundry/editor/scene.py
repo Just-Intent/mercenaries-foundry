@@ -309,7 +309,30 @@ class Scene:
         return {"new": True, "name": name.lower(), "from": doc.get("from") or "blank",
                 "start": doc.get("start") or {}, "message": doc.get("message") or "",
                 "layers": layers, "own_script": (self.mod / "scripts" / f"{name.lower()}.lua").exists(),
-                "return": doc.get("return"), "travel": doc.get("travel") or []}
+                "return": doc.get("return"), "travel": doc.get("travel") or [],
+                "weather": doc.get("weather") or "", "presets": self._arrival_presets(name)}
+
+    def _arrival_presets(self, name):
+        """Weather presets a new map can switch to on arrival: its own config's
+        and SW's (presets seem to carry over a map switch), with the new ones
+        this mod's sky/<map>.json and sky/sw.json add."""
+        from .. import sky as sk
+        out = []
+        for m in (name.lower(), "sw"):
+            try:
+                texts = sk.level_texts(self.data, m) or sk.level_texts(self.data, m, self._modded_terrain().files)
+            except (AttributeError, ValueError, KeyError, OSError):      # no game data to read (tests)
+                texts = {}
+            out += [v["name"] for v in sk.presets_of(texts).values()] if texts else []
+            sp = self.mod / "sky" / f"{m}.json"
+            if sp.exists():
+                out += list((json.loads(sp.read_text(encoding="utf-8")).get("presets") or {}))
+        seen, names = set(), []
+        for n in out:
+            if n.lower() not in seen:
+                seen.add(n.lower())
+                names.append(n)
+        return names
 
     def map_marks(self, map_name):
         """What the mod's maps/*.json put on this map, to see and move like
@@ -436,6 +459,14 @@ class Scene:
             out["message"] = msg
         else:
             out.pop("message", None)
+        if "weather" in doc:         # the preset its master script switches to on arrival
+            weather = str(doc.get("weather") or "").strip()
+            if weather and not re.fullmatch(r"[A-Za-z0-9_\-]+", weather):
+                raise ValueError("a weather preset's name is letters, digits, _ and -")
+            if weather:
+                out["weather"] = weather
+            else:
+                out.pop("weather", None)
         if "return" in doc:          # the pilot on this map that takes the player back
             back = doc.get("return") or {}
             if back.get("position"):
@@ -1118,14 +1149,91 @@ class Scene:
                 for t in sk.level_texts(self.data, m).values():
                     seen |= {v for k, v in sk.base(t).items() if k.lower() == "skytexture"}
             self._sky_textures = sorted(seen, key=str.lower)
+        # The config's season sections ([Winter], [Fall], [Summer]: blank's and so
+        # every new map's), each as its lines in order (ProcessRGBA repeats).
+        seasons, cur = [], None
+        for line in sk._lines(texts[files[0]]):
+            s_ = line.strip()
+            if s_.startswith("["):
+                name = s_.strip("[]").strip()
+                cur = next((n for n in sk.SEASONS if n.lower() == name.lower()), None)
+                if cur:
+                    seasons.append({"name": cur, "keys": []})
+                continue
+            parts = s_.split(None, 1)
+            if cur and len(parts) == 2:
+                seasons[-1]["keys"].append([parts[0], parts[1].strip()])
+        from .. import terrain_light
+        lp = self.mod / "terrain" / f"{map_name.lower()}.lighting.json"
+        tdir = self.mod / "terrain"
+        # PNGs a tint map could be: the mod's terrain images that aren't heights or paint layers
+        tint_maps = sorted(f.name for f in tdir.glob("*.png") if not f.name.lower().endswith(".heights.png")
+                           and ".layer" not in f.name.lower()) if tdir.is_dir() else []
+        lighting = {"doc": json.loads(lp.read_text(encoding="utf-8")) if lp.exists() else None,
+                    "file": f"terrain/{lp.name}", "tint_maps": tint_maps,
+                    "defaults": {"ambient": list(terrain_light.DEFAULT_AMBIENT),
+                                 "diffuse": list(terrain_light.DEFAULT_DIFFUSE), "shadow": terrain_light.DEFAULT_SHADOW}}
         return {"level": True, "files": [f[len("DATAxbox/"):] for f in files], "base": sk.base(texts[files[0]]),
+                "seasons": seasons, "lighting": lighting,
                 "presets": presets, "mod": mod, "textures": self._sky_textures,
                 "preset_keys": list(sk.PRESET_KEYS), "base_keys": list(sk.BASE_KEYS)}
 
-    def save_sky(self, map_name, doc):
-        """Write sky/<map>.json (checked by applying it to the game's files);
-        an empty one is removed."""
+    def _sun_angle(self, map_name, base=None):
+        """The map's SunAngle: base (the Sky panel's edits) or the level config's."""
         from .. import sky as sk
+        for k, v in (base or {}).items():
+            if k.lower() == "sunangle" and str(v).strip():
+                return str(v)
+        texts = sk.level_texts(self.data, map_name) or sk.level_texts(self.data, map_name, self._modded_terrain().files)
+        for k, v in (sk.base(next(iter(texts.values()))) if texts else {}).items():
+            if k.lower() == "sunangle":
+                return v
+        return None
+
+    def lighting_preview(self, map_name, lighting, base=None):
+        """The ground lit from a chosen sun (terrain/<map>.lighting.json's
+        settings, with the Sky panel's SunAngle), as terrain_look's light bytes:
+        what the build will bake."""
+        from .. import terrain_layers as tl, terrain_light
+        settings = terrain_light.lighting_settings(lighting or {}, self._sun_angle(map_name, base))
+        data = self._modded_terrain()
+        rec = _terrain_rec(data, map_name)
+        if rec is None:
+            raise KeyError(map_name)
+        chunks = terrain.tern_chunks(_terrain_bytes(data, rec))
+        tint_rgb = None
+        if settings.get("tint_map"):
+            tp = self.mod / "terrain" / settings["tint_map"]
+            if not tp.exists():
+                raise ValueError(f"the tint map terrain/{tp.name} is missing")
+            tint_rgb = terrain_light.load_tint_map(tp, terrain.parse_info(chunks[b"INFO"])["size"])
+        body, note = terrain_light.bake(chunks, settings, tint_rgb)
+        size = terrain.parse_info(chunks[b"INFO"])["size"]
+        side = size // tl.PATCH
+        rgb = terrain_light.vertex_rgb(tl.decode_colr(body, side * side), size)
+        return b"".join(bytes(c) for row in rgb for c in row), note
+
+    def save_lighting(self, map_name, lighting, base=None):
+        """terrain/<map>.lighting.json (None removes it), checked with the map's SunAngle."""
+        from .. import terrain_light
+        p = self.mod / "terrain" / f"{map_name.lower()}.lighting.json"
+        if lighting is None:
+            if p.exists():
+                p.unlink()
+            return None
+        terrain_light.lighting_settings(lighting, self._sun_angle(map_name, base))      # raises if the build would refuse it
+        p.parent.mkdir(parents=True, exist_ok=True)
+        p.write_text(json.dumps(lighting, indent=1) + "\n", encoding="utf-8")
+        return f"terrain/{p.name}"
+
+    def save_sky(self, map_name, doc, lighting="keep"):
+        """Write sky/<map>.json (checked by applying it to the game's files);
+        an empty one is removed. lighting: terrain/<map>.lighting.json's
+        settings, None to remove it, or "keep"."""
+        from .. import sky as sk
+        if isinstance(lighting, dict):          # checked before anything is written
+            from .. import terrain_light
+            terrain_light.lighting_settings(lighting, self._sun_angle(map_name, doc.get("base")))
         texts = sk.level_texts(self.data, map_name) or sk.level_texts(self.data, map_name, self._modded_terrain().files)
         if not texts:
             raise ValueError(f"{map_name} isn't a level with sky settings")
@@ -1137,6 +1245,11 @@ class Scene:
         presets = {n: keys for n, keys in presets.items() if keys}
         if presets:
             clean["presets"] = presets
+        seasons = {n: {k: v for k, v in keys.items() if (v if isinstance(v, list) else str(v).strip())}
+                   for n, keys in (doc.get("seasons") or {}).items()}
+        seasons = {n: keys for n, keys in seasons.items() if keys}
+        if seasons:
+            clean["seasons"] = seasons
         clean = {k: v for k, v in clean.items() if v}
         sk.apply(texts, clean, f"sky/{map_name.lower()}.json")        # raises on anything the build would refuse
         p = self.mod / "sky" / f"{map_name.lower()}.json"
@@ -1145,7 +1258,12 @@ class Scene:
             p.write_text(json.dumps(clean, indent=1) + "\n", encoding="utf-8")
         elif p.exists():
             p.unlink()
-        return {"file": f"sky/{p.name}", "empty": not clean}
+        out = {"file": f"sky/{p.name}", "empty": not clean}
+        if lighting != "keep":
+            out["lighting"] = self.save_lighting(map_name, lighting, clean.get("base"))
+        if lighting != "keep" or (self.mod / "terrain" / f"{map_name.lower()}.lighting.json").exists():
+            self._forget_terrain(map_name.lower())          # the ground is lit from this sun: bake it again
+        return out
 
     def factions(self):
         """The mod's factions.json and the game's names for the four employers."""
