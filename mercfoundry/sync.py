@@ -160,10 +160,23 @@ def retail_data(game: Path) -> Path:
     raise FileNotFoundError(f"no retail game data under {game / 'game_files'} (pass --data)")
 
 
+def _toolkit_stamp() -> str:
+    """The toolkit's own code (the .pyz it runs from, or its source files), so
+    a new toolkit rebuilds mods even when they and the version are unchanged."""
+    here = Path(__file__).resolve()
+    for parent in here.parents:
+        if parent.is_file():                 # running from mercfoundry.pyz
+            st = parent.stat()
+            return f"pyz:{st.st_size}:{st.st_mtime_ns}"
+    files = sorted(here.parent.rglob("*.py"))
+    return "src:" + ":".join(f"{f.stat().st_size}:{f.stat().st_mtime_ns}" for f in files)
+
+
 def _fingerprint(sources, data_dir: Path) -> str:
     h = hashlib.sha256()
     from . import __version__
     h.update(__version__.encode())
+    h.update(_toolkit_stamp().encode())
     for name in ("assets.dsk", "english.dsk", "locked.dsk", "streamed.dsk"):
         p = data_dir / name
         if p.exists():
