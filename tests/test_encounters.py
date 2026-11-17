@@ -31,6 +31,15 @@ class EncounterTests(unittest.TestCase):
         models = encounters.parse_list(recs[encounters.LIST].decode("latin-1"))["model"]
         self.assertEqual(models, ["foundry_crate", "foundry_crate_ruin"])
 
+    def test_shared_models_load_once(self):
+        # thousands of copies sharing a few models list each model once
+        objs = [{"from": "RoadblockRunner", "name": f"C{k}", "position": [k, 0, 0],
+                 "set": {"GeometryFile": f"crate_{k % 3}", "geometryNameRuined": f"crate_{k % 3}_ruin"}}
+                for k in range(30)]
+        recs = self.build({"map": "swn", "objects": objs})
+        models = encounters.parse_list(recs[encounters.LIST].decode("latin-1"))["model"]
+        self.assertEqual(sorted(models), ["crate_0", "crate_0_ruin", "crate_1", "crate_1_ruin", "crate_2", "crate_2_ruin"])
+
     def test_unnamed_layer(self):
         # "unnamed": plain objects go in without names (squad members keep theirs)
         rec = self.build(dict(DOC, unnamed=True))[encounters.WORLD]

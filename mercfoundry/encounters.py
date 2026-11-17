@@ -424,8 +424,14 @@ def build(layer, doc, find_source, source_loads=None):
     if given:
         extra.append(("model", given))
     for kind, names_ in extra:
+        # once each: thousands of objects sharing a few models must not
+        # write thousands of loads (a list that long crashes the game)
         have = sections.setdefault(kind, [])
-        have += [n for n in names_ if n.lower() not in {h.lower() for h in have}]
+        seen = {h.lower() for h in have}
+        for n in names_:
+            if n.lower() not in seen:
+                seen.add(n.lower())
+                have.append(n)
     text = "".join(f"\n[{kind}]\n\n" + "".join(f"load {n}\n" for n in sections[kind]) for kind in sorted(sections))
     out[LIST] = text.encode("latin-1")
     return out
