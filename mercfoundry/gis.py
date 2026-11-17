@@ -2241,7 +2241,8 @@ PARKED = {
 
 def place_parked(plan, place, ground, roads, urban, side, ox, oz, start=None, log=print):
     """Parked cars: the plan's "parked" {"vehicles": [{"template": a game
-    vehicle template, "model", "wheel", "ruin": the models it draws}], ...}
+    vehicle template, "model", "wheel", "ruin": the models it draws,
+    "weight": how often, 1 if not given}], ...}
     beside main roads through built-up land, along the kerb, and a few by
     the player's start. Each copy is given its models (so its layer loads
     them; the template's own layer, a whole list of vehicles, isn't
@@ -2253,8 +2254,10 @@ def place_parked(plan, place, ground, roads, urban, side, ox, oz, start=None, lo
     rnd = random.Random(int(plan.get("seed", 1)) + 17)
     out = []
 
+    weights = [float(v.get("weight", 1)) for v in vehicles]
+
     def put(x, z, yaw):
-        v = rnd.choice(vehicles)
+        v = rnd.choices(vehicles, weights)[0]
         out.append({"from": v["template"], "position": [round(x, 2), round(ground.at(x, z) + 0.3, 2), round(z, 2)],
                     "yaw": round(yaw, 1), "set": {"GeometryFile": v["model"], "geometryNameRuined": v["ruin"],
                                                    "geometrynameruined": v["ruin"], "geometrynamewheel": v["wheel"]},
