@@ -2138,7 +2138,8 @@ def apply_timeline(plan, strip, objects, kit, extras, rnd, log=print):
 def place_landmarks(plan, strip, ground, extras, log=print):
     """The plan's marks with a "model" (a kit model, usually of kind
     "landmark"): that model at the mark, turned by its "yaw" (degrees, from
-    the strip's run), on the lowest ground under it. Give the mark a "plaza"
+    the strip's run), on the lowest ground under it (the highest for a
+    model with a "skirt": a base reaching down). Give the mark a "plaza"
     as big as the model so no building stands in it."""
     dims = {name: (x, z) for k, v in extras.items() if isinstance(v, list) for name, x, z, h in v}
     rot = math.degrees(strip.rot)
@@ -2156,7 +2157,9 @@ def place_landmarks(plan, strip, ground, extras, log=print):
         corners = [strip.unframe(fx + u * w / 2 * c - v * d / 2 * s_, fz + u * w / 2 * s_ + v * d / 2 * c)
                    for u, v in ((-1, -1), (1, -1), (1, 1), (-1, 1))]
         x, z = strip.unframe(fx, fz)
-        h = min([ground.at(x, z)] + [ground.at(px, pz) for px, pz in corners])
+        hs = [ground.at(x, z)] + [ground.at(px, pz) for px, pz in corners]
+        # a model whose base reaches down (kit "skirt") stands on the highest ground
+        h = max(hs) if model in (extras.get("skirted") or ()) else min(hs)
         a = math.radians(ang + rot)
         out.append({"from": f"model:{model}", "name": f"landmark_{len(out) + 1:02d}",
                     "position": [round(x, 2), round(h, 2), round(z, 2)], "yaw": round((-math.degrees(a) + 180) % 360 - 180, 1),
