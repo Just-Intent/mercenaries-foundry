@@ -2216,7 +2216,8 @@ class Scene:
         for m in mats:
             if "alphaMode" in m:
                 continue
-            t = next((p for p in base.pieces if p.texture == name_hash(m.get("name") or "")), None) or                 (base.pieces[0] if base.pieces else None)
+            same = [p for p in base.pieces if p.texture == name_hash(m.get("name") or "")]
+            t = same[0] if same else (base.pieces[0] if base.pieces else None)
             if t is not None and gltf.cutout_flag(t):
                 m["alphaMode"], m["alphaCutoff"] = "MASK", 0.5
         from ..model_changes import _glb
