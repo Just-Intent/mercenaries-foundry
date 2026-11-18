@@ -182,6 +182,25 @@ python -m mercfoundry hangsnap
 
 With the game frozen ("Not Responding"), prints every thread's stack and the guest's recent functions, named from the port's linker map and the function map. See [docs/DIAGNOSTICS.md](docs/DIAGNOSTICS.md), which also covers keeping the port's `[CRASH]` reports.
 
+### Playtesting on another PC
+
+```bash
+python packaging/playtest.py
+```
+
+Writes `dist/playtest/Mercenaries-Foundry-Playtest-<version>-<time>.zip`. The zip holds the port's launcher and game exe, the bundled Python and toolkit, and the mods turned on in the launcher. It has no game data. On the other PC:
+
+1. Unzip it.
+2. Run `Mercenaries Recompiled.exe` and pick the ISO the first time.
+3. Choose Launch Modded. The first launch builds the Foundry mods from that PC's data, which takes about four minutes for Gaza.
+
+To send results back:
+
+- `Collect-Logs.cmd` gathers every log, including those inside `mod-cache/*/runtime/`, into `Logs for Claude/logs-<time>.zip`. It runs `python -m mercfoundry logs <game>`.
+- `Freeze-Snapshot.cmd`, run while the game is frozen, saves a `hangsnap` report and then collects the logs.
+
+Unzipping a newer package over an older one keeps the game data, saves and logs.
+
 ## Tests
 
 ```bash

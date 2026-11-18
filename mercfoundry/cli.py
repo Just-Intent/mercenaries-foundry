@@ -807,6 +807,15 @@ def cmd_hangsnap(args):
             print("\n" + "\n".join(heap))
 
 
+def cmd_logs(args):
+    from . import logs
+    path = logs.collect(args.game, args.out)
+    print(f"logs collected in {path}")
+    if args.open:
+        import os
+        os.startfile(path.parent)
+
+
 def cmd_hash(args):
     for s in args.names:
         print(f"{name_hash(s):08X}  {s}")
@@ -1013,6 +1022,10 @@ def main(argv=None):
     s.add_argument("--save", metavar="FILE", help="also save hangsnap.exe's raw output")
     s.add_argument("--load", metavar="FILE", help="read a saved raw snapshot instead of running (needs --port-map)")
     s.add_argument("--tool", help="hangsnap.exe to run (default: tools/hangsnap/out/hangsnap.exe, built on first use)")
+    s = add("logs", cmd_logs, "gather a game folder's logs into one zip to send for diagnosis")
+    s.add_argument("game", help="the game folder (with Mercenaries Recompiled.exe)")
+    s.add_argument("--out", help='folder for the zip (default: <game>/Logs for Claude)')
+    s.add_argument("--open", action="store_true", help="open the folder afterwards")
     s = add("hash", cmd_hash, "hash names the way the game does"); s.add_argument("names", nargs="+")
 
     args = p.parse_args(argv)
