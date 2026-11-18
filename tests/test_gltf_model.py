@@ -176,6 +176,15 @@ class GltfModelImportTests(unittest.TestCase):
         # bark: the base's bark piece (opaque); frond: a new texture, so the base's first piece (cut out)
         self.assertEqual([m.get("alphaMode") for m in out["materials"]], [None, "MASK", "OPAQUE"])
 
+    def test_added_skinned_piece_gets_no_box(self):
+        from mercfoundry import model_import as mi
+        pos, tri = [(0, 0, 0), (0.2, 0, 0), (0, 0.2, 0)], [(0, 1, 2)]
+        got = []
+        for bones in (None, [0, 1, 1]):                   # rigid, then skinned (bends with the body)
+            o = mi.ObjPiece("new_patch", "skin", pos, [(0, 0)] * 3, [None] * 3, [None] * 3, tri, bones)
+            got.append(mi.import_pieces(self.mr, self.sr, [o])[2].collision_boxes)
+        self.assertEqual(got, [1, 0])
+
     def test_reweighted_skin(self):
         prim = self.doc["meshes"][self.doc["nodes"][node(self.doc, "p001_root")]["mesh"]]["primitives"][0]
         acc = self.doc["accessors"][prim["attributes"]["JOINTS_0"]]

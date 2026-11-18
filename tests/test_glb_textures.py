@@ -29,6 +29,7 @@ class GlbTextureTests(unittest.TestCase):
             {"name": "Paint.001", "pbrMetallicRoughness": {"baseColorFactor": [0, 0, 1, 1]}},
             {"name": "5AF2BF58"},                                               # the game's (an export's)
             {"name": "00000000"},                                               # an export's untextured piece
+            {"name": "ECE9C997"},                                               # an exported key the game lacks
             {"name": "summer_env_bark", "pbrMetallicRoughness": {"baseColorTexture": {"index": 0}}},  # the game's by name
             {"name": "Photo", "pbrMetallicRoughness": {"baseColorTexture": {"index": 1}}}], [img, jpeg])
         with tempfile.TemporaryDirectory() as d:
@@ -47,6 +48,7 @@ class GlbTextureTests(unittest.TestCase):
         self.assertEqual(lookup("Paint.001"), name_hash("thing_paint_001"))
         self.assertEqual(lookup("5AF2BF58"), 0x5AF2BF58)                       # kept: the game's
         self.assertEqual(lookup("00000000"), 0)                                # still no texture
+        self.assertEqual(lookup("ECE9C997"), 0xECE9C997)                       # kept as the key it was
         self.assertEqual(lookup("summer_env_bark.002"), name_hash("summer_env_bark"))
 
     def test_resize(self):

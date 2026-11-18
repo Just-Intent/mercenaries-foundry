@@ -90,8 +90,8 @@ def textures(path, model_name, game_has):
         stem = re.sub(r"\.\d{3}$", "", name)
         if name and (game_has(name_hash(stem)) or (re.fullmatch(r"[0-9A-Fa-f]{8}", stem) and game_has(int(stem, 16)))):
             continue                                       # the game's own texture (an exported model's)
-        if stem == "00000000":
-            continue                                       # an exported untextured piece (texture hash 0)
+        if re.fullmatch(r"[0-9A-Fa-f]{8}", stem):
+            continue                                       # an exported texture key the game lacks (or 0): kept as it is
         if not name:
             warnings.append(f"material {i} has no name: its pieces take the base model's first texture")
             continue

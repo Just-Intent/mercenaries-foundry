@@ -636,6 +636,8 @@ def import_pieces(model_record: bytes, segments_record: bytes, objs: list,
                 continue
             if "nocoll" in plan[1].name.lower():
                 continue  # decoration: no collision wanted
+            if plan[5] & 0x10000:
+                continue  # skinned (a character's): it bends with the body, a box wouldn't
             pts = new_locals[k]
             lo3 = [min(q[a] for q in pts) for a in range(3)]
             hi3 = [max(q[a] for q in pts) for a in range(3)]
