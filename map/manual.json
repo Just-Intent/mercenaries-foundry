@@ -845,7 +845,7 @@
    "address": "0x000763D0",
    "name": "AiOperateCommand_Init",
    "signature": "AiCommand * __thiscall AiOperateCommand_Init(AiCommand *this, Actor *vehicle, int seat)",
-   "notes": "Type 8 (vtable 0x2E5550). Seat: driver 1, gunner 2, passenger 4, nodriver -2, -1 when none is given; -3 and -5 for two names not in the game's scripts.",
+   "notes": "Type 8 (vtable 0x2E5550). Seat: driver 1, gunner 2, passenger 4, nodriver -2, nogunner -3, nopassenger -5 (those two are in no retail script; matched by hash), -1 when none is given.",
    "evidence": "retail code: Lua_ArgAiCommand (0x11F920): Operate; stores type 8"
   },
   {
