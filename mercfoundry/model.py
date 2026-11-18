@@ -406,6 +406,28 @@ def without_collision(segments_record: bytes) -> bytes:
     return ucfb.wrap(b"CSEG", struct.pack("<II", len(new_tree), len(packed)) + packed, cseg_pad)
 
 
+def set_lod_masks(segments_record: bytes, mask: int) -> bytes:
+    """The segments record with every piece drawn at these levels of detail
+    (its segm INFO's fourth word)."""
+    cseg, cseg_pad = ucfb.unwrap(segments_record, b"CSEG", with_pad=True)
+    size, _ = struct.unpack_from("<II", cseg)
+    tree = script.decompress(cseg[8:], size)
+    roots, tree_pad = ucfb.split(tree)
+    items, pad_last = ucfb.split(roots[0][1])
+    out = []
+    for t, b in items:
+        if t == b"segm":
+            parts, segm_pad = ucfb.split(b)
+            parts = [(pt, pb[:12] + struct.pack("<I", mask) + pb[16:] if pt == b"INFO" else pb) for pt, pb in parts]
+            b = ucfb.pack_children(parts, segm_pad)
+        out.append((t, b))
+    new_tree = ucfb.pack_children([(b"ucfb", ucfb.pack_children(out, pad_last))], tree_pad)
+    if new_tree == tree:
+        return segments_record
+    packed = script.compress(new_tree)
+    return ucfb.wrap(b"CSEG", struct.pack("<II", len(new_tree), len(packed)) + packed, cseg_pad)
+
+
 def drop_pieces(model_record: bytes, segments_record: bytes, positions) -> tuple:
     """(model, segments) without the pieces at these positions (their segm
     chunks, in order), the model's piece count following."""

@@ -69,6 +69,21 @@ class GltfModelImportTests(unittest.TestCase):
         self.assertEqual((nm, ns, rep.changed), (self.mr, self.sr, False))
         self.assertEqual(rep.unchanged, 2)
 
+    def test_unedited_pieces_are_kept(self):
+        nm, ns, rep = self.run_import()
+        self.assertEqual(rep.kept, [0, 1])
+
+    def test_renamed_material_retextures_its_piece(self):
+        # a material renamed to another texture's name switches the piece to it
+        # (the texture word of its material too), geometry as it was
+        mesh = self.doc["nodes"][node(self.doc, "p001_root")]["mesh"]       # the skinned piece
+        mat = self.doc["meshes"][mesh]["primitives"][0]["material"]
+        self.doc["materials"][mat]["name"] = "other_skin"
+        nm, ns, rep = self.run_import()
+        self.assertEqual(len(rep.retextured), 1)
+        piece = model.decode(nm, ns).pieces[rep.retextured[0]]
+        self.assertEqual((piece.texture, piece.material[3]), (name_hash("other_skin"), name_hash("other_skin")))
+
     def test_moved_piece(self):
         n = self.doc["nodes"][node(self.doc, "p000_bone_a")]
         n["translation"] = [0.0, 0.25, 0.0]

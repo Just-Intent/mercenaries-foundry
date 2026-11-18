@@ -2402,9 +2402,16 @@ def _new_models(data, folder, result):
         # or damage states the import left alone) go too; originals stay
         # first, in order, the file's new pieces after them
         kept = [i for i in range(len(empty.pieces)) if i not in set(report.removed)]
-        leftover = [j for j, i in enumerate(kept) if i not in set(report.edited)]
+        in_file = set(report.edited) | set(report.kept)      # a piece the file has as exported stays too
+        leftover = [j for j, i in enumerate(kept) if i not in in_file]
         if leftover:
             nm, ns = model.drop_pieces(nm, ns, leftover)
+            # the base's other levels of detail went: what's left draws at all
+            # of them (as the file's new pieces do), not only near ones
+            all_lods = 0
+            for p in empty.pieces:
+                all_lods |= p.lod_mask
+            ns = model.set_lod_masks(ns, all_lods)
         if vehicle and report.collision_boxes and len(model.decode(nm, ns).collision) == 1:
             # a vehicle's boxes as its two bodies: one shape alone becomes the
             # driving body and bullets pass through (collision.VEHICLE_BODY)
@@ -2413,7 +2420,10 @@ def _new_models(data, folder, result):
         data.new("streamed.dsk", key, model.SEGMENTS, ns)
         made.add(name.lower())
         result.changes.append(f"model {name}: new, from {f.name} on {base}'s skeleton: {len(report.added)} pieces, "
-                              f"{report.collision_boxes} collision boxes ({len(empty.pieces) - len(report.edited)} of the base's pieces left out)")
+                              f"{report.collision_boxes} collision boxes"
+                              + (f", {len(report.edited) + len(report.kept)} of the base's pieces kept from the file"
+                                 if report.edited or report.kept else "")
+                              + f" ({len(empty.pieces) - len(in_file)} of the base's pieces left out)")
         result.warnings += [f"model {name}: {w}" for w in report.warnings]
     return made
 
@@ -2457,7 +2467,9 @@ def _apply_models(data, folder, result):
                 nm, ns, report = model_import.import_obj(mr, sr, text, lod, damaged)
             data.set(a, recs[model.MODEL], nm)
             data.set(a, recs[model.SEGMENTS], ns)
-        result.changes.append(f"model {name}: {len(report.edited)} pieces edited, {len(report.added)} added, "
+        result.changes.append(f"model {name}: {len(report.edited)} pieces edited"
+                              + (f" ({len(report.retextured)} to another texture)" if report.retextured else "")
+                              + f", {len(report.added)} added, "
                               f"{len(report.removed)} removed, {report.collision_boxes} collision boxes added"
                               + (f", {report.collision_boxes_moved} moved with edited pieces" if report.collision_boxes_moved else "")
                               + f" (in {', '.join(found)})")

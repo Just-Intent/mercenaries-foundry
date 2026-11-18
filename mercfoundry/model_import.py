@@ -263,6 +263,8 @@ class Report:
     added: list = field(default_factory=list)
     removed: list = field(default_factory=list)
     unchanged: int = 0
+    kept: list = field(default_factory=list)      # pieces in the file as they were (indices)
+    retextured: list = field(default_factory=list)  # edited pieces whose material names another texture
     box_grew: bool = False
     collision_boxes: int = 0
     collision_boxes_moved: int = 0
@@ -354,17 +356,32 @@ def import_pieces(model_record: bytes, segments_record: bytes, objs: list,
                 report.warnings.append(f"{o.name}: piece {i} isn't in this level of detail; added as new")
             new_objs.append(o)
 
-    edits = {}
+    def new_texture(i):
+        """The texture a piece's material names, if not the one it draws (a
+        material renamed to a new or other game texture); else None."""
+        name = re.sub(r"\.\d{3}$", "", by_index[i].material or "")
+        if not name or name == "00000000":
+            return None
+        h = material_hash(by_index[i].material)
+        return h if h != model.pieces[i].texture else None
+
+    edits, retexture = {}, {}
     for i in sorted(exported):
         if i not in by_index and not model.pieces[i].triangles:
             report.unchanged += 1  # empty pieces can't appear in an OBJ
         elif i not in by_index:
             report.removed.append(i)
-        elif unchanged(model.pieces[i], by_index[i]):
-            report.unchanged += 1
         else:
-            edits[i] = by_index[i]
-            report.edited.append(i)
+            t = new_texture(i)
+            if t is not None:
+                retexture[i] = t
+                report.retextured.append(i)
+            if t is None and unchanged(model.pieces[i], by_index[i]):
+                report.unchanged += 1
+                report.kept.append(i)
+            else:
+                edits[i] = by_index[i]
+                report.edited.append(i)
     report.added = [o.name for o in new_objs]
     if not report.changed:
         return model_record, segments_record, report
@@ -397,7 +414,10 @@ def import_pieces(model_record: bytes, segments_record: bytes, objs: list,
         p = model.pieces[i]
         seg = dict(ucfb.iter_chunks(seg_items[segm_positions[i]][1]))
         stride_word = struct.unpack_from("<I", seg[b"INFO"], 8)[0]
-        plans.append((i, o, p.joint, p.texture, p.lod_mask, stride_word, _finish(list(p.material), o.alpha, o.metal)))
+        texture, words = p.texture, list(p.material)
+        if i in retexture and len(words) > 3:
+            texture = words[3] = retexture[i]
+        plans.append((i, o, p.joint, texture, p.lod_mask, stride_word, _finish(words, o.alpha, o.metal)))
     skinned_pieces = [k for k, p in enumerate(model.pieces) if p.bones is not None]
     for o in new_objs:
         m = re.match(r"(?:new_)?(.+?)(?:\.\d+)?$", o.name)

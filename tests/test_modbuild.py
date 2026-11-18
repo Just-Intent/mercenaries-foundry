@@ -82,6 +82,25 @@ class ModBuildTests(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, msg):
                 modbuild.build(self.project, self.data, self.out)
 
+    def test_new_model_keeps_unedited_pieces(self):
+        # a file with the base's pieces as exported (p<n> names, untouched, as
+        # a reskinned character's): they stay, drawn at every level of detail
+        from mercfoundry import gltf
+        from tests.test_gltf_model import write_glb
+        m = model.decode(self.mr, self.sr)
+        doc, binary = gltf.read(gltf.export(m))
+        write_glb(self.project / "models" / "same.glb", doc, binary)
+        self.write("models/same.new.json", json.dumps({"base": "sample"}))
+        modbuild.build(self.project, self.data, self.out)
+        arc = dsk.Archive(self.out / "streamed.dsk")
+        recs = {r.kind: arc.read(r) for r in arc.records if r.key == name_hash("same")}
+        new = model.decode(recs[model.MODEL], recs[model.SEGMENTS])
+        self.assertEqual(len(new.pieces), len([n for n in doc["nodes"] if "mesh" in n]))
+        lods = 0
+        for p in m.pieces:
+            lods |= p.lod_mask
+        self.assertEqual({p.lod_mask for p in new.pieces}, {lods})
+
     def test_new_model_shares_a_mod_texture(self):
         # a new model whose material names a texture the mod adds (textures/)
         # loads it wherever the model loads, not only where its maker does
