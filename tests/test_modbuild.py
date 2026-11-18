@@ -235,6 +235,22 @@ class ModBuildTests(unittest.TestCase):
         self.assertEqual(luacheck.check(source), [])
         self.assertFalse(any("isle_camp" in w for w in result.warnings))
         self.assertTrue(any("loads with the new map island" in c for c in result.changes))
+        # "scripts": a mod script run after the master script's own set-up
+        self.write("scripts/isle_events.lua", "function isle_events_Start()\nend\n")
+        self.write("maps/island.json", json.dumps({"from": "blank", "message": "Welcome to the island",
+                                                  "scripts": ["isle_events"]}))
+        modbuild.build(self.project, self.data, self.out)
+        recs = self.records("assets.dsk")
+        source = script.decode(recs[(name_hash("island"), SCRIPT)]).source
+        self.assertIn("Ui_PrintHudMessage('Welcome to the island')\nUtility_LoadUtilityScript('isle_events')\n"
+                      "if isle_events_Start then isle_events_Start() end\nend\n", source)
+        self.assertEqual(luacheck.check(source), [])
+        self.assertIn(b"load isle_events", recs[(name_hash("island"), name_hash("list"))])
+        self.write("maps/island.json", json.dumps({"from": "blank", "scripts": ["isle_nothing"]}))
+        with self.assertRaisesRegex(ValueError, "no script isle_nothing"):
+            modbuild.build(self.project, self.data, self.out)
+        (self.project / "scripts" / "isle_events.lua").unlink()
+        self.write("maps/island.json", json.dumps({"from": "blank"}))
         # maps/<name>/boundaries.json: zones in the map's own lineregion record
         # (blank has none here: one is made)
         from mercfoundry import aidata

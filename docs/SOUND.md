@@ -71,6 +71,17 @@ Some limits:
 - New cues play one wave, with the settings of the bank's first simple cue
   (its volume, category and 3D settings). Cues that pick at random or play
   several waves can't be added yet.
+- Whether a new cue fades with distance comes from that cue. Each cue's sound
+  has one registry entry: `xsl_` plays the same everywhere (`positional 0`),
+  `xsh_` is 3D (`positional 1`): full volume out to `minimum_distance` metres,
+  then quieter by `rolloff_factor` x 6 dB each time the distance doubles. The
+  build says "3D: fades with distance" for the second. `Audio_PlaySound(cue,
+  actor)` plays a cue at the actor's position at that moment (it doesn't
+  follow it). Without an actor, a 3D cue plays at the listener and a flat
+  one plays flat. Banks whose first simple cue is 3D, with the longest reach:
+  `son` (General Song's voice: 70 m, rolloff 0.5), `b_crane`, `vh_lbird`,
+  `vh_heli2` (50 m, rolloff 1), and the faction voice banks `aso`, `cso`,
+  `mso`, `nks`, `ske`, `sks` (35 m, rolloff 0.8).
 
 ### How a new cue is added
 

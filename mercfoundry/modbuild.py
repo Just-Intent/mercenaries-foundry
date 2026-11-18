@@ -1782,10 +1782,13 @@ def _renamed_record(body, new):
     return ucfb.wrap(tag, ucfb.pack_children(items, pad_last), (outer_pad, inner_pad))
 
 
-def map_script(name, doc, layers, pilots=(), contacts=False):
+def map_script(name, doc, layers, pilots=(), contacts=False, extra=()):
     """A new map's master script (run as the map loads): blank's set-up, its
     layers, where the player arrives, a message, and its travel pilots
-    (missions.travel_lua) armed."""
+    (missions.travel_lua) armed. extra: scripts (maps json "scripts") loaded
+    into it last (Utility_LoadUtilityScript: their functions become the
+    master script's, so their timers' callbacks work), each started with its
+    <script>_Start() if it has one."""
     from .missions import _lua_str, travel_lua
     lines = [f"-- {name}: written by mercfoundry from maps/{name}.json (scripts/{name}.lua replaces it)",
              "function ScriptInit()",
@@ -1813,6 +1816,9 @@ def map_script(name, doc, layers, pilots=(), contacts=False):
         from .missions import map_mission_lua
         start, funcs = map_mission_lua(name.lower())
         lines += start
+    for e in extra:
+        lines.append(f"Utility_LoadUtilityScript({_lua_str(e)})")
+        lines.append(f"if {e}_Start then {e}_Start() end")
     text = "\n".join(lines + ["end", ""])
     if pilots:
         text += travel_lua(prefix, list(pilots), by_map=False)
@@ -1960,23 +1966,46 @@ def _apply_maps(data, folder, result):
                             data.find_added(name_hash(s_), SCRIPT) is not None:
                         text = missions.add_to_list(text, "script", s_)
                 data.replace_added(key, name_hash("list"), text.encode("latin-1"))
+        # maps json "scripts": the mod's (or game's) scripts its master script
+        # runs after its own set-up, in its load list
+        extra = [str(e) for e in mdoc.get("scripts") or []]
+        for e in extra:
+            if not re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", e):
+                raise ValueError(f"{where}: \"scripts\": {e!r} isn't a script name (letters, digits and _)")
+            if e.lower() == name.lower():
+                raise ValueError(f"{where}: \"scripts\": {e} is the map's own master script")
+            if not any(r.key == name_hash(e) for _, r in data.records(SCRIPT)) and \
+                    data.find_added(name_hash(e), SCRIPT) is None:
+                raise ValueError(f"{where}: \"scripts\": no script {e} (add scripts/{e}.lua)")
+        if extra:
+            lbody = data.find_added(key, name_hash("list"))
+            if lbody is not None:
+                text = lbody.decode("latin-1")
+                for e in extra:
+                    text = missions.add_to_list(text, "script", e)
+                data.replace_added(key, name_hash("list"), text.encode("latin-1"))
         if not any(r.key == key for _, r in data.records(SCRIPT)) and data.find_added(key, SCRIPT) is None:
-            if mdoc.get("start") or mdoc.get("message") or mdoc.get("weather") or layers or pilots or contacts:
-                source = map_script(name, mdoc, layers, pilots, contacts)
+            if mdoc.get("start") or mdoc.get("message") or mdoc.get("weather") or layers or pilots or contacts or extra:
+                source = map_script(name, mdoc, layers, pilots, contacts, extra)
                 made.append("script (" + ", ".join(
                     (["where you arrive"] if (mdoc.get("start") or {}).get("position") else [])
                     + ([f"loads {', '.join(layers)}"] if layers else [])
                     + (["a message"] if mdoc.get("message") else [])
                     + (["a pilot back"] if pilots else [])
-                    + ([f"missions {', '.join(played)}" if played else "contracts"] if contacts else [])) + ")")
+                    + ([f"missions {', '.join(played)}" if played else "contracts"] if contacts else [])
+                    + ([f"runs {', '.join(extra)}"] if extra else [])) + ")")
             else:
                 hit = [(a, r) for a, r in data.records(SCRIPT) if r.key == name_hash(src)]
                 source = script.decode(data.current(*hit[0])).source if hit else map_script(name, mdoc, [])
                 made.append(f"script (a copy of {src}'s)" if hit else "script")
             data.new("assets.dsk", key, SCRIPT, script.encode(script.new(name, source.replace("\r\n", "\n"))))
-        elif layers:
-            result.warnings.append(f"{where}: scripts/{name}.lua is its master script, so load "
-                                   f"{', '.join(layers)} from it (Utility_ReadLevelFile)")
+        else:
+            if layers:
+                result.warnings.append(f"{where}: scripts/{name}.lua is its master script, so load "
+                                       f"{', '.join(layers)} from it (Utility_ReadLevelFile)")
+            if extra:
+                result.warnings.append(f"{where}: scripts/{name}.lua is its master script, so run "
+                                       f"{', '.join(extra)} from it (Utility_LoadUtilityScript)")
         # its level: a levels.ini section (as the source's) and a copy of its config
         lpath = "DATAxbox/levels.ini"
         levels = data.files[lpath].decode("latin-1") if lpath in data.files else \

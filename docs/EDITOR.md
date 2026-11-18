@@ -212,7 +212,10 @@ toolkit bundle run it the same way: `foundry\python\python.exe foundry\mercfound
   one that does). The build writes its master script (run as it loads)
   from these; with none of them set, it's a copy of the source map's
   (blank's prints "Hello World!"). Write `scripts/<name>.lua` to make your
-  own instead. Its config names the script (`MainMasterScript <name>`): a level
+  own instead, or name scripts for it to run (`"scripts": ["<script>"]`:
+  loaded into it after its own set-up with `Utility_LoadUtilityScript`, so
+  their timers call back into it, and started with `<script>_Start()` if
+  they have one; don't give them a `ScriptInit`). Its config names the script (`MainMasterScript <name>`): a level
   runs only the script its config names, and blank's names none. Enter it with `Utility_ResetToBaseLayerOnly('<name>')` from
   Foundry Console.
   **Travel**: on SW or NW, the Map panel puts a travel pilot (retail's

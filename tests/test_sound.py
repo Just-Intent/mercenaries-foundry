@@ -83,8 +83,9 @@ def make_xsb(wave_banks, cues, sounds_):
     return bytes(head + cue_recs + b"".join(records) + banks + extra + name_blob)
 
 
-def registry_record(bank, cue, wave):
-    """An assets.dsk sound registry record with one simple cue, as the game lists them."""
+def registry_record(bank, cue, wave, tag=b"xsl_"):
+    """An assets.dsk sound registry record with one simple cue, as the game
+    lists them (tag xsh_: a 3D one)."""
     c = ucfb.pack_chunk
     full = f"{bank}.{cue}".encode()
     xcl = (c(b"INFO", b"name\0" + full + b"\0num_components\x001\0") + c(b"FLOT", b"positional\x000\0") +
@@ -95,7 +96,7 @@ def registry_record(bank, cue, wave):
     xsl = (c(b"INFO", b"name\0" + full + b"\0num_components\x001\0") + c(b"FLOT", b"positional\x000\0volume\x00-300\0") +
            c(b"STRG", b"bank\0" + bank.encode() + b"\0category\0voiceover\0") +
            c(b"TSET", c(b"INFO", b"name\0track_set\0num_elements\x001\0") + c(b"TRKS", c(b"REC_", c(b"PLAY", play)))))
-    return c(b"ucfb", c(b"xcl_", xcl) + c(b"xsl_", xsl))
+    return c(b"ucfb", c(b"xcl_", xcl) + c(tag, xsl))
 
 
 class AdpcmTest(unittest.TestCase):
@@ -272,6 +273,18 @@ class SoundModTest(unittest.TestCase):
         added = raw_rec[len(registry_record("fx", "one", "beep")):]
         self.assertNotIn(b"fx.one", added)
         self.assertIn(b"name\0fx.extra\0bank\0fx\0wave_entry_index\x002\0", added)
+
+    def test_new_cue_in_3d(self):
+        # a bank whose first simple cue is 3D (xsh_): the new cue is too
+        build(self.data / "assets.dsk", [(name_hash("sounds"), sounds.REGISTRY, registry_record("fx", "one", "beep", b"xsh_"))])
+        (self.mod / "sounds" / "fx" / "new").mkdir()
+        (self.mod / "sounds" / "fx" / "new" / "extra.wav").write_bytes(xwb.wav(tone(3000, 660), 1, 22050))
+        out = Path(self.tmp.name) / "out"
+        result = modbuild.build(self.mod, self.data, out)
+        self.assertTrue(any("3D: fades with distance" in c for c in result.changes))
+        arc = dsk.Archive(out / "assets.dsk")
+        root = ucfb.parse(arc.read(arc.records[0]))[0]
+        self.assertEqual([c.tag for c in root.children], [b"xcl_", b"xsh_", b"xcl_", b"xsh_"])
 
     def test_new_cue_that_exists(self):
         (self.mod / "sounds" / "fx" / "new").mkdir()

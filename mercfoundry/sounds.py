@@ -165,13 +165,16 @@ def _entry_name(body):
 
 
 def _template(lib, bank, kids):
-    """A simple cue of the bank with plain registry entries, to copy settings from."""
+    """(cue, registry tag): the bank's first simple cue with plain registry
+    entries, to copy settings from. Its sound entry is xsl_ for a sound that
+    plays the same everywhere (positional 0) or xsh_ for a 3D one (positional
+    1, with minimum_distance and rolloff_factor: it fades with distance)."""
     sb = lib.sound_bank(bank)
-    sounds = {_entry_name(b).lower() for t, b in kids if t == b"xsl_"}
+    sounds = {_entry_name(b).lower(): t for t, b in kids if t in (b"xsl_", b"xsh_")}
     for c in sb.cues:
-        if c.sound < len(sb.sounds) and sb.sounds[c.sound].kind == "simple" and \
-                f"{bank}.{c.name}".lower() in sounds and sb.sounds[c.sound].waves:
-            return c
+        tag = sounds.get(f"{bank}.{c.name}".lower())
+        if tag and c.sound < len(sb.sounds) and sb.sounds[c.sound].kind == "simple" and sb.sounds[c.sound].waves:
+            return c, tag
     raise ValueError(f"sound bank {bank} has no simple cue to base new cues on")
 
 
@@ -223,7 +226,7 @@ def finish(data, result):
     for bank, cues in sorted(data.sound_new.items()):
         sb = lib.sound_bank(bank)
         a, r, kids, pad = _registry(data, bank)
-        template = _template(lib, bank, kids)
+        template, tag = _template(lib, bank, kids)
         wbank, windex = sb.sounds[template.sound].waves[0]
         e = lib.wave_bank(wbank).entries[windex]
         new_cues, new_kids = [], []
@@ -238,7 +241,7 @@ def finish(data, result):
             new_cues.append((name, index, sb.wave_banks.index(wbank), template.sound))
             full = f"{bank}.{name}"
             new_kids.append(_copy_entry(kids, b"xcl_", f"{bank}.{template.name}", full))
-            new_kids.append(_copy_entry(kids, b"xsl_", f"{bank}.{template.name}", full, (wbank, index)))
+            new_kids.append(_copy_entry(kids, tag, f"{bank}.{template.name}", full, (wbank, index)))
             ch, rate, _ = xwb.read_wav(body)
             if (ch, rate) != (e.channels, e.rate):
                 result.warnings.append(f"{label}: converted from {ch} channel{'s' if ch != 1 else ''} at {rate} Hz "
@@ -248,7 +251,8 @@ def finish(data, result):
         body = ucfb.pack_chunk(b"ucfb", ucfb.pack_children(kids + new_kids, pad[1]), pad[0])
         data.set(a, r, body)
         result.changes.append(f"sound bank {bank}: {len(new_cues)} new cue{'s' if len(new_cues) != 1 else ''} "
-                              f"(settings from {template.name}), registered in {a}")
+                              f"(settings from {template.name}" + (", 3D: fades with distance" if tag == b"xsh_" else "")
+                              + f"), registered in {a}")
     by_bank = {}
     for (bank, index), (body, _, label) in data.sound_waves.items():
         by_bank.setdefault(bank.lower(), {})[index] = (body, label)
