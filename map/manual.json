@@ -910,6 +910,13 @@
    "signature": "Path * __thiscall PathManager_FindPath(PathManager *this, uint32 nameHash)",
    "notes": "Binary search of the paths, sorted by name hash (+0x1004); 0 when none.",
    "evidence": "retail code: RsPath.cpp; Patrol and PathMove pass it the path name's hash, on g_PathManager"
+  },
+  {
+   "address": "0x00160120",
+   "name": "Objective_TargetTypeFromName",
+   "signature": "int __cdecl Objective_TargetTypeFromName(const char *name)",
+   "notes": "TARGET_TYPE_OBJECTIVE_PRIMARY 0, _SECONDARY 1, _HQ_SK 5, _HQ_NK 6, _HQ_ALLIES 7, _HQ_MAFIA 8, _HQ_CHINA 9, _UNIT_SAMS 0xA; four more names no retail script uses (hashes 0x2B358195 = 2, 0x65C601D2 = 3, 0x58597A6B = 4, 0x1B3A74BB = 0xB); anything else 0xD (undefined).",
+   "evidence": "retail code: HashName of the target type string (argument 4 of Lua_Objective_SetTargetActor and Lua_Objective_SetTargetVector), compared with 12 constants, 8 of them the hashes of type names in the game's scripts"
   }
  ],
  "globals": [

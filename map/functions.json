@@ -5,14 +5,14 @@
  },
  "counts": {
   "functions_in_analysis": 13982,
-  "named": 681,
+  "named": 684,
   "with_file": 1500,
   "file_direct": 224,
   "lua_commands": 360,
-  "manual": 151,
+  "manual": 152,
   "globals": 30,
   "structures": 8,
-  "derived": 132
+  "derived": 134
  },
  "functions": [
   {
@@ -10963,6 +10963,17 @@
    "signature": "Objective * __cdecl Objective_FindOrCreate(uint32 id)"
   },
   {
+   "address": "0x00160120",
+   "names": [
+    "Objective_TargetTypeFromName"
+   ],
+   "evidence": [
+    "retail code: HashName of the target type string (argument 4 of Lua_Objective_SetTargetActor and Lua_Objective_SetTargetVector), compared with 12 constants, 8 of them the hashes of type names in the game's scripts"
+   ],
+   "notes": "TARGET_TYPE_OBJECTIVE_PRIMARY 0, _SECONDARY 1, _HQ_SK 5, _HQ_NK 6, _HQ_ALLIES 7, _HQ_MAFIA 8, _HQ_CHINA 9, _UNIT_SAMS 0xA; four more names no retail script uses (hashes 0x2B358195 = 2, 0x65C601D2 = 3, 0x58597A6B = 4, 0x1B3A74BB = 0xB); anything else 0xD (undefined).",
+   "signature": "int __cdecl Objective_TargetTypeFromName(const char *name)"
+  },
+  {
    "address": "0x00160280",
    "names": [
     "Objective_RemoveTarget"
@@ -10978,6 +10989,24 @@
    ],
    "evidence": [
     "inferred: the only engine call of script command Objective_Remove (binding 0x00114990), and called from at most three places"
+   ]
+  },
+  {
+   "address": "0x00160370",
+   "names": [
+    "Objective_SetTargetActor"
+   ],
+   "evidence": [
+    "inferred: the only engine call of script command Objective_SetTargetActor (binding 0x00114740), and called from at most three places"
+   ]
+  },
+  {
+   "address": "0x00160520",
+   "names": [
+    "Objective_SetTargetVector"
+   ],
+   "evidence": [
+    "inferred: the only engine call of script command Objective_SetTargetVector (binding 0x00114880), and called from at most three places"
    ]
   },
   {

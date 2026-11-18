@@ -116,7 +116,7 @@ local function f(x) x() end
         defined, called, callbacks = luacheck.names(lua)
         own = [n for n, _ in called + callbacks if n.startswith("foundry_")]
         self.assertEqual([n for n in own if n not in defined], [])
-        self.assertEqual(luacheck.ai_commands(lua), [])          # every order is a command the game has
+        self.assertEqual(luacheck.choices(lua), [])          # every order and word is one the game has
         self.assertEqual(luacheck.check(missions.contracts_script([])), [])
         self.assertEqual(luacheck.check(missions.layers_script([{"map": "sw", "layer": "layer_a"}])), [])
 
@@ -142,6 +142,31 @@ local function f(x) x() end
             + ", ".join(luacheck.AI_COMMANDS) + ")",
             "line 6: Operate's seat 'driverr' isn't one the game has (driver, gunner, passenger, nodriver, "
             "nogunner, nopassenger), so it's taken as no seat given"])
+
+    def test_choices(self):
+        # commands that take a word from a fixed set: compared by hash, so
+        # case doesn't matter; the four objective types no retail script
+        # names are taken by their hash; words in variables aren't checked
+        src = "\n".join([
+            "function f(kind)",
+            "  Objective_SetTargetActor('o', 'guy', '', 'target_type_hq_sk', 'blip', true, true, true)",
+            "  Objective_SetTargetVector('o', 't', '', 'TARGET_TYPE_PRIMARY', 1, 2, 3)",
+            "  Effect_Explosion(x, y, z, 'Large')",
+            "  Effect_Explosion(x, y, z, 'huge')",
+            "  Building_SpawnerSetAlertState('sp', 'normal')",
+            "  Building_SpawnerSetAlertState('sp', 'alert')",
+            "  t = Utility_GetActorsInRange('TYPE_VEHICLE_BOAT_GENERAL', x, y, z, 50)",
+            "  Event_OdfToVectorProximity('cb', 'b', 'veh', kind, x, y, z, 10)",
+            "  Ai_Command('guy', 'Atack', 'player0')",
+            "end"])
+        got = luacheck.choices(src)
+        self.assertEqual([g.split(",")[0] for g in got], [
+            "line 3: Objective_SetTargetVector takes 'TARGET_TYPE_PRIMARY'",
+            "line 5: Effect_Explosion takes 'huge'",
+            "line 7: Building_SpawnerSetAlertState takes 'alert'",
+            "line 8: Utility_GetActorsInRange takes 'TYPE_VEHICLE_BOAT_GENERAL'",
+            "line 10: Ai_Command gives the command 'Atack'"])
+        self.assertTrue(got[1].endswith("(small, medium, large), so there's no explosion"))
 
 
 if __name__ == "__main__":

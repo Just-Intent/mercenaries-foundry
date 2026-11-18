@@ -834,7 +834,7 @@ def check_mission(folder, asset_id, known=None):
             problems.append(str(e))
         else:
             # as the game's Lua will compile it (known: the game's own names, to check calls too)
-            lua = luacheck.check(body) or (luacheck.unknown(body, known) if known else []) + luacheck.ai_commands(body)
+            lua = luacheck.check(body) or (luacheck.unknown(body, known) if known else []) + luacheck.choices(body)
             problems += [f"the script it writes: {p}" for p in lua]
         zones, paths, _ = _mission_names(doc)
         known_zones = set().union(*[set(l.get("boundaries") or {}) for _, l in layers]) if layers else set()
@@ -1138,7 +1138,7 @@ def _check_lua(data, result):
     for name, source in scripts:
         problems = luacheck.check(source)
         if not problems:
-            problems = luacheck.unknown(source, known) + luacheck.ai_commands(source)
+            problems = luacheck.unknown(source, known) + luacheck.choices(source)
         result.warnings += [f"script {name}: {p}" for p in problems]
 
 

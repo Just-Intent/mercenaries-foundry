@@ -136,7 +136,7 @@ class _Parser:
         self.i = 0
         self.scopes = [set()]
         self.defined, self.called, self.callbacks = {}, [], []
-        self.commands = []      # AI command calls: (callee, [each argument's string, if it is one], line)
+        self.commands = []      # calls that take a word from a set (AI orders, CHOICES): (callee, [each argument's string, if it is one], line)
 
     # -- tokens
     def peek(self, k=0):
@@ -389,7 +389,7 @@ class _Parser:
             return
         self.expect("(")
         first = True
-        literals = [] if callee in AI_COMMAND_CALLS else None
+        literals = [] if callee in AI_COMMAND_CALLS or callee in CHOICES else None
         if not self.check(")"):
             while True:
                 t = self.peek()
@@ -474,6 +474,8 @@ def ai_commands(source):
     p.chunk()
     out = []
     for callee, args, line in p.commands:
+        if callee not in AI_COMMAND_CALLS:
+            continue
         at = AI_COMMAND_CALLS[callee]
         name = args[at] if at < len(args) else None
         if name is None:
@@ -487,3 +489,46 @@ def ai_commands(source):
             out.append(f"line {line}: Operate's seat {seat!r} isn't one the game has "
                        f"({', '.join(OPERATE_SEATS)}), so it's taken as no seat given")
     return out
+
+
+# Other commands that read one of a fixed set of words, compared by the word's
+# hash as the game does (the retail code: map/manual.json and FUNCTION_MAP.md).
+# Each: (argument index, words, extra hashes the game also takes but no retail
+# script names, what an unknown word does).
+CHOICES = {
+    "Objective_SetTargetActor": (3, ("TARGET_TYPE_OBJECTIVE_PRIMARY", "TARGET_TYPE_OBJECTIVE_SECONDARY",
+                                     "TARGET_TYPE_HQ_ALLIES", "TARGET_TYPE_HQ_CHINA", "TARGET_TYPE_HQ_SK",
+                                     "TARGET_TYPE_HQ_NK", "TARGET_TYPE_HQ_MAFIA", "TARGET_TYPE_UNIT_SAMS",
+                                     "TARGET_TYPE_UNDEFINED"),
+                                 (0x2B358195, 0x65C601D2, 0x58597A6B, 0x1B3A74BB),
+                                 "the target shows as undefined"),
+    "Effect_Explosion": (3, ("small", "medium", "large"), (), "there's no explosion"),
+    "Building_SpawnerSetAlertState": (1, ("danger", "caution", "normal"), (), "the spawner goes to its normal state"),
+    "Utility_GetActorsInRange": (0, ("TYPE_VEHICLE_HUMAN_GENERAL", "TYPE_VEHICLE_CAR_GENERAL",
+                                     "TYPE_VEHICLE_TANK_GENERAL", "TYPE_VEHICLE_HELICOPTER_GENERAL",
+                                     "TYPE_PROP_CAR"), (), "it finds nothing"),
+    "Event_OdfToActorProximity": (3, ("TYPE_VEHICLE_HUMAN_GENERAL", "TYPE_VEHICLE_CAR_GENERAL",
+                                      "TYPE_VEHICLE_TANK_GENERAL", "TYPE_VEHICLE_HELICOPTER_GENERAL",
+                                      "TYPE_ITEM_WEAPON"), (), "it watches for some other kind of object"),
+}
+CHOICES["Objective_SetTargetVector"] = CHOICES["Objective_SetTargetActor"]
+CHOICES["Event_OdfToVectorProximity"] = CHOICES["Event_OdfToActorProximity"]
+
+
+def choices(source):
+    """Words the game won't know where a command takes one of a fixed set:
+    AI orders (ai_commands) and the commands in CHOICES. Only words written
+    out as strings are checked."""
+    from .hashing import name_hash
+    p = _Parser(source)
+    p.chunk()
+    out = ai_commands(source)
+    for callee, args, line in p.commands:
+        if callee not in CHOICES:
+            continue
+        at, words, extra, effect = CHOICES[callee]
+        word = args[at] if at < len(args) else None
+        if word is not None and name_hash(word) not in {name_hash(w) for w in words} | set(extra):
+            out.append(f"line {line}: {callee} takes {word!r}, which the game doesn't know "
+                       f"({', '.join(words)}), so {effect}")
+    return sorted(out, key=lambda s: int(s.split()[1].rstrip(":")))
