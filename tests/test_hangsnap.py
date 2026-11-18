@@ -229,3 +229,25 @@ class SnapshotTest(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class HeapTest(unittest.TestCase):
+    def test_out_of_memory_readout(self):
+        # the Gaza freeze: 317 KB free in pieces, the largest 137,920 bytes,
+        # while the model streamer waits for 158,176 for a model's geometry
+        mem = {}
+
+        def put(addr, data):
+            for i, b in enumerate(data):
+                mem[addr + i] = b
+        sizes = [137_920, 100_000, 79_200]
+        put(hangsnap.MAIN_HEAP, struct.pack("<7I", 0x9C0000, 19_487_104, sum(sizes), 0, 0x406298, 7000, 3))
+        put(0x406298, b"".join(struct.pack("<II", 0x1000000 + i, s) for i, s in enumerate(sizes)))
+        put(0x300C3C, b".\Source\RedModel.cpp [1492]\0")
+        stack = [0x8BF9D4, 0x2C2C1, 0x269E0, 0x300C3C, 1, 0]
+        put(0x8BF650, struct.pack(f"<{len(stack)}I", *stack))
+        read = lambda va, n: bytes(mem.get(va + i, 0) for i in range(n))
+        lines = hangsnap.heap_lines(read, 0x8BF650)
+        self.assertIn("309 KB free in 3 pieces, the largest 134 KB (137920 bytes)", lines[0])
+        self.assertEqual(lines[1], "waiting to allocate 158176 bytes (154 KB) for RedModel.cpp [1492]"
+                                   " - bigger than any free piece")

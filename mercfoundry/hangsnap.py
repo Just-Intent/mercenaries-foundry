@@ -351,6 +351,74 @@ def report(snap, lmap, guest, recent=32):
 
 # --- finding and running things -------------------------------------------
 
+# --- the game's main heap, read live ---------------------------------------
+
+# The retail heap object (Heap_Allocate's): +00 base, +04 size, +08 bytes
+# free, +10 free-block array of (address, size), +18 free-block count.
+MAIN_HEAP = 0x00645984
+
+
+def heap_lines(read_guest, esp=None):
+    """Lines on the main heap's free space and, from the guest stack at esp,
+    the allocation it is waiting on (Heap_Allocate's size, source tag, flags:
+    a size next to a pointer to a ".\\Source\\..." string)."""
+    base, size, free, _0c, blocks, _max, count = struct.unpack("<7I", read_guest(MAIN_HEAP, 28))
+    if not 0 < count < 1_000_000:
+        return [f"main heap at 0x{MAIN_HEAP:08X}: unreadable (count {count})"]
+    sizes = struct.unpack(f"<{2 * count}I", read_guest(blocks, 8 * count))[1::2] if count else ()
+    lines = [f"main heap: {size / 1048576:.1f} MB at 0x{base:08X}; {free // 1024} KB free in {count} pieces, "
+             f"the largest {max(sizes, default=0) // 1024} KB ({max(sizes, default=0)} bytes)"]
+    if esp:
+        try:
+            words = struct.unpack("<1024I", read_guest(esp, 4096))
+        except OSError:
+            words = ()
+        tags = {}
+        for i in range(len(words) - 2):
+            n, tag, flags = words[i:i + 3]
+            if not (16 <= n < 0x2000000 and flags < 8 and 0x10000 <= tag < 0x800000):
+                continue
+            if tag not in tags:
+                try:
+                    tags[tag] = read_guest(tag, 64).split(b"\0")[0]
+                except OSError:
+                    tags[tag] = b""
+            if tags[tag].startswith(b".\\Source\\"):
+                lines.append(f"waiting to allocate {n} bytes ({n // 1024} KB) for {tags[tag].decode('latin-1')[9:]}"
+                             + (" - bigger than any free piece" if n > max(sizes, default=0) else ""))
+                break
+    return lines
+
+
+def read_heap(pid, image_base, lmap, esp=None):
+    """heap_lines() for a running game, read-only. [] if it can't be read."""
+    k32 = ctypes.WinDLL("kernel32", use_last_error=True)
+    k32.OpenProcess.restype = ctypes.c_void_p
+    k32.ReadProcessMemory.argtypes = [ctypes.c_void_p, ctypes.c_void_p, ctypes.c_void_p, ctypes.c_size_t,
+                                      ctypes.POINTER(ctypes.c_size_t)]
+    k32.CloseHandle.argtypes = [ctypes.c_void_p]
+    h = k32.OpenProcess(0x0410, False, pid)          # QUERY_INFORMATION | VM_READ
+    if not h:
+        return []
+
+    def read(addr, n):
+        buf = ctypes.create_string_buffer(n)
+        got = ctypes.c_size_t()
+        if not k32.ReadProcessMemory(h, ctypes.c_void_p(addr), buf, n, ctypes.byref(got)) or got.value != n:
+            raise OSError(ctypes.get_last_error())
+        return buf.raw
+
+    try:
+        off = struct.unpack("<q", read(image_base + lmap.rva(BLOCK_START), 8))[0]
+        if esp is None and "g_esp" in lmap.symbols:
+            esp = struct.unpack("<I", read(image_base + lmap.rva("g_esp"), 4))[0]
+        return heap_lines(lambda va, n: read(va + off, n), esp)
+    except (OSError, KeyError, struct.error):
+        return []
+    finally:
+        k32.CloseHandle(h)
+
+
 def find_game_pids():
     out = subprocess.run(["tasklist", "/FI", f"IMAGENAME eq {EXE_NAME}", "/FO", "CSV", "/NH"],
                          capture_output=True, text=True).stdout

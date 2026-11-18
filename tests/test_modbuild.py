@@ -732,6 +732,24 @@ class RotationRuleTests(unittest.TestCase):
             modbuild._apply_rule(inst, {"rotation": [[1, 0], [0, 1]]})
 
 
+class ModelSizeTests(unittest.TestCase):
+    def test_big_geometry_warns(self):
+        # a model's geometry unpacks into one heap block as it streams in; a
+        # 158 KB one froze Gaza on a heap whose largest gap was 138 KB
+        import struct
+        from mercfoundry import ucfb
+        seg = lambda n: ucfb.wrap(b"CSEG", struct.pack("<II", n, 4) + b"\0" * 4)
+        data = unittest.mock.Mock(replace={})
+        data.add = {"streamed.dsk": [(1, model.SEGMENTS, seg(158_176)), (2, model.SEGMENTS, seg(90_000)),
+                                     (3, model.MODEL, b"")]}
+        data.label = lambda key, kind: f"segments block_{key}"
+        result = modbuild.Result()
+        modbuild._check_model_sizes(data, result)
+        self.assertEqual(len(result.warnings), 1)
+        self.assertIn("block_1 154 KB", result.warnings[0])
+        self.assertNotIn("block_2", result.warnings[0])
+
+
 class MapScriptTests(unittest.TestCase):
     def test_weather_on_arrival(self):
         # a new map can force one of the weather presets as the player arrives

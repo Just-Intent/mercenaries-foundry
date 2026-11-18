@@ -799,7 +799,12 @@ def cmd_hangsnap(args):
     if not xbe or not xbe.exists():
         print("note: default.xbe not found (pass --xbe); library sections won't be shown", file=sys.stderr)
     guest = hangsnap.GuestNames.load(args.map, xbe, lmap)
-    print("\n".join(hangsnap.report(hangsnap.parse_snapshot(text), lmap, guest, recent=args.recent)))
+    snap = hangsnap.parse_snapshot(text)
+    print("\n".join(hangsnap.report(snap, lmap, guest, recent=args.recent)))
+    if not args.load and snap["base"] is not None:
+        heap = hangsnap.read_heap(pid, snap["base"], lmap)
+        if heap:
+            print("\n" + "\n".join(heap))
 
 
 def cmd_hash(args):

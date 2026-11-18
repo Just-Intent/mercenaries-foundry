@@ -36,6 +36,10 @@ Seen on the Gaza mod's map (2026-11-18): placed objects used 263 KB, and streami
 
 Seen again there the same day, after the mod repainted a lorry load at 1024x1024: the stack held a 702 KB request, the 699 KB texture rounded up to whole sectors, while the main heap had 1.07 MB free in 42 pieces, the largest 637 KB. Each streamed texture passes through the main heap in one piece, so one big texture needs one big free gap even when the total free is enough. `mod build` warns about a texture larger than retail's 512 KB textures (retail has one bigger one, 699 KB). To find the size, read the main heap (`0x645984`: free-block array at `+0x10`, count at `+0x18`, 8 bytes each, size in the second word) and look for sizes on the game thread's stack.
 
+`hangsnap` now does that for you while the game is still running: after the stacks it prints the main heap's free total, its piece count and the largest piece. It also prints the allocation the game is waiting on, with its size and the source line the game tags it with. Examples are `RedModel.cpp [1492]`, a model's geometry, and `[1496]`, the same geometry packed.
+
+Seen a third time there (2026-11-18): the streamer (`0x1F78D0` -> `0x1F63B0` reading a model -> `0x1F59B0` reading its `CSEG`) wanted 158,176 bytes for the model gaza_block_k's geometry. The heap had 317 KB free in 83 pieces, the largest 137,920 bytes. The game unpacks each model's geometry into one block as it streams in. Retail keeps buildings under about 138 KB; only vehicles and the C-17 go above. Gaza had 84 models over 128 KB, up to 304 KB. `mod build` now warns about any model whose geometry unpacks to more than 128 KB.
+
 ### Options
 
 - `--save FILE` keeps the raw snapshot; `--load FILE --port-map <mercenaries_recomp.map>` reads it again later (for example after `map/functions.json` gains names).

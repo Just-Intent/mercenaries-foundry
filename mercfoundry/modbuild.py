@@ -54,7 +54,7 @@ import struct
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from . import dsk, model, model_import, png, registry, script, texture, world
+from . import dsk, model, model_import, png, registry, script, texture, ucfb, world
 from .hashing import name_hash
 
 SCRIPT, WORLD, REGISTRY = name_hash("script"), name_hash("world"), name_hash("registry")
@@ -1452,6 +1452,43 @@ def _check_map_paths(data, result):
         if total > PATH_TABLE - 1 - MAP_PATH_ROOM:
             result.warnings.append(f"map {name}: {total} paths leave under {MAP_PATH_ROOM} for missions' layers "
                                    f"(the game hangs at {PATH_TABLE})")
+
+
+# A model's geometry (its segments record's CSEG) is unpacked into one block
+# of the game's main heap when it streams in. Retail keeps nearly all of it
+# under 138 KB (vehicles and the C-17 aside); Gaza's 158 KB block, on a heap
+# whose largest gap was 138 KB, froze the game waiting for memory forever.
+BIG_GEOMETRY = 131_072
+
+
+def _geometry_size(segments_record):
+    """Unpacked size of a segments record's geometry, or None."""
+    try:
+        cseg = ucfb.unwrap(segments_record, b"CSEG")
+    except (ValueError, KeyError, struct.error):
+        return None
+    return struct.unpack_from("<I", cseg)[0] if len(cseg) >= 4 else None
+
+
+def _check_model_sizes(data, result):
+    bodies = [(key, body) for recs in data.add.values() for key, kind, body in recs if kind == model.SEGMENTS]
+    for name, pending in data.replace.items():
+        by_ident = {r.ident: r for r in data.archive(name).records if r.kind == model.SEGMENTS}
+        bodies += [(by_ident[i].key, body) for i, body in pending.items() if i in by_ident]
+    big = []
+    for key, body in bodies:
+        size = _geometry_size(body)
+        if size is not None and size > BIG_GEOMETRY:
+            big.append((size, data.label(key, model.SEGMENTS).split(" ", 1)[-1]))
+    if not big:
+        return
+    big.sort(reverse=True)
+    listed = ", ".join(f"{n} {s // 1024} KB" for s, n in big[:12]) + (f" and {len(big) - 12} more" if len(big) > 12 else "")
+    result.warnings.append(
+        f"{len(big)} model(s) unpack to more than {BIG_GEOMETRY // 1024} KB of geometry: {listed}. The game "
+        "unpacks each model's geometry into one block of its main heap as it streams in; retail keeps buildings "
+        "under that, and on a busy map a bigger block may find no gap, freezing the game waiting for memory. "
+        "Split big models into several, or cut vertices")
 
 
 def _check_new_scripts(data, result):
@@ -3021,6 +3058,7 @@ def build(projects, data_dir, out_dir, name=None, description=None) -> Result:
     # after every step: a new map's step lists the scripts it runs
     _check_new_scripts(data, result)
     _check_map_paths(data, result)
+    _check_model_sizes(data, result)
     from . import sounds
     data.project = "Foundry"
     sounds.finish(data, result)
