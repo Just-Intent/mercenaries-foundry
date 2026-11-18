@@ -2246,8 +2246,9 @@ class Scene:
     def _new_model_glb(self, glb, spec):
         """A new model's file for the 3D view, its materials see-through as the
         build makes them: a material's alphaMode decides (MASK or BLEND cut
-        out), and one without takes the base model's piece of the same texture,
-        else its first piece (model_import's template)."""
+        out), and one without takes model_import's template: the base model's
+        piece of the same texture (the material most such pieces have), else
+        its first piece."""
         try:
             doc, binary = gltf.read(glb)
         except (ValueError, KeyError, struct.error):
@@ -2262,8 +2263,8 @@ class Scene:
         for m in mats:
             if "alphaMode" in m:
                 continue
-            same = [p for p in base.pieces if p.texture == name_hash(m.get("name") or "")]
-            t = same[0] if same else (base.pieces[0] if base.pieces else None)
+            from ..model_import import template_piece
+            t = template_piece(base.pieces, name_hash(m.get("name") or ""))
             if t is not None and gltf.cutout_flag(t):
                 m["alphaMode"], m["alphaCutoff"] = "MASK", 0.5
         from ..model_changes import _glb

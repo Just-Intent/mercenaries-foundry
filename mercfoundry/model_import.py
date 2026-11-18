@@ -35,6 +35,21 @@ def _cutout(words, alpha):
     return words
 
 
+def template_piece(pieces, texture):
+    """The piece a new piece of this texture copies its material from: of the
+    model's pieces drawing it, one with the material most of them have (a
+    car's glass is translucent on most of its panes, opaque on an odd one;
+    a first-found template could be that one), else the model's first piece."""
+    same = [p for p in pieces if p.texture == texture]
+    if not same:
+        return pieces[0] if pieces else None
+    counts = {}
+    for p in same:
+        counts[tuple(p.material)] = counts.get(tuple(p.material), 0) + 1
+    best = max(counts.values())
+    return next(p for p in same if counts[tuple(p.material)] == best)
+
+
 SHINE = 0x20       # MTRL word 6: word 4 names a second (reflection) texture over the piece's own
 
 
@@ -372,10 +387,7 @@ def import_pieces(model_record: bytes, segments_record: bytes, objs: list,
 
     # --- plan new pieces: (segm info + material) from a template
     def template_for(texture):
-        for p in model.pieces:
-            if p.texture == texture:
-                return p
-        return model.pieces[0] if model.pieces else None
+        return template_piece(model.pieces, texture)
 
     all_lods = 0
     for p in model.pieces:

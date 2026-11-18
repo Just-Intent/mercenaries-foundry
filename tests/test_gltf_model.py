@@ -128,6 +128,21 @@ class GltfModelImportTests(unittest.TestCase):
         self.assertEqual(_finish(shiny, None, 1.0), shiny)
         self.assertEqual(_finish(shiny, "MASK", 0)[5:], [0x110, 0x1])
 
+    def test_template_is_the_texture_s_usual_material(self):
+        # a base whose first glass piece is the odd opaque one (word 5 0x100)
+        # and the rest translucent (0x101): a new glass piece copies the
+        # translucent one; a texture the base doesn't draw: its first piece
+        from types import SimpleNamespace as P
+        from mercfoundry.model_import import template_piece
+        glass, body = name_hash("glass"), name_hash("body")
+        odd = P(texture=glass, material=(1, 2, 2, glass, 7, 0x100, 0x21))
+        usual = P(texture=glass, material=(1, 3, 3, glass, 7, 0x101, 0x21))
+        first = P(texture=body, material=(1, 4, 4, body, 0, 0x100, 0))
+        pieces = [first, odd, usual, P(texture=glass, material=usual.material)]
+        self.assertIs(template_piece(pieces, glass), usual)
+        self.assertIs(template_piece(pieces, name_hash("other")), first)
+        self.assertIsNone(template_piece([], glass))
+
     def test_editor_shows_new_models_cut_out_as_built(self):
         from types import SimpleNamespace
         from mercfoundry.editor import scene
