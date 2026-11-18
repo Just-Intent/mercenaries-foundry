@@ -185,6 +185,23 @@ class _Data:
                     return body
         return None
 
+    def built_model(self, name):
+        """(model record, segments record) of a model as this build has it so
+        far: added by a mod, else replaced, else the game's. KeyError if missing."""
+        key = name_hash(name)
+        found = {}
+        for kind in (model.MODEL, model.SEGMENTS):
+            body = self.find_added(key, kind)
+            if body is None:
+                hit = next(((a, r) for a, r in self.records(kind) if r.key == key), None)
+                if hit:
+                    body = self.peek(*hit)
+            if body is not None:
+                found[kind] = body
+        if len(found) < 2:
+            raise KeyError(f"model not found: {name}")
+        return found[model.MODEL], found[model.SEGMENTS]
+
     def added(self):
         """(key, kind, archive name) of every record added so far."""
         return [(k, kind, a) for a, recs in self.add.items() for k, kind, _ in recs]
@@ -406,7 +423,9 @@ def _trim_like_loads(data, more, own_layers):
     (its model or a property: ruin, wheels...) but no object outside those
     layers does now (after the mod's rules, so a vehicle a mod gives another
     model drops its old one), and textures that only those models draw (with
-    each one's _nm). Models no object names (ones the code loads by name)
+    each one's _nm), and textures only the shipped look of a model on the
+    list drew (a mod replaced the model with one drawing others: its old
+    textures and _nm). Models no object names (ones the code loads by name)
     and textures no model on the list draws (effects, interface, skies) stay.
     Returns (loads, "N models, M textures") or (loads, "") when nothing goes."""
     from . import find, model as model_mod
@@ -438,36 +457,46 @@ def _trim_like_loads(data, more, own_layers):
     if not mkey:
         return more, ""
     gone = [m for m in more[mkey] if m.lower() in ever and m.lower() not in now]
-    if not gone:
-        return more, ""
 
-    def draws(m):
+    def draws(found):
         out = set()
         try:
-            for p in model_mod.decode(*model_mod.find(archives, m)).pieces:
+            for p in model_mod.decode(*found()).pieces:
                 out.add(p.texture)
                 out.update(w for w in p.material if w)
         except (KeyError, ValueError, IndexError):
             return None
         return out
     gone_set = {m.lower() for m in gone}
-    kept_draw, gone_draw = set(), set()
+    # textures the list's models drew as shipped, and those the kept ones (as
+    # the mod built them: a replaced model may draw others) and the mod's own
+    # models draw now; a texture only the first drew is the old look's
+    shipped_draw, kept_draw = set(), set()
     for m in more[mkey]:
-        d = draws(m)
-        if d is None:
-            if m.lower() in gone_set:
-                gone_set.discard(m.lower())        # can't tell what it draws: keep it
+        shipped = draws(lambda: model_mod.find(archives, m))
+        built = draws(lambda: data.built_model(m))
+        if shipped is None or built is None:
+            gone_set.discard(m.lower())            # can't tell what it draws: keep it and what it may draw
+            kept_draw.update(shipped or ())
+            kept_draw.update(built or ())
             continue
-        (gone_draw if m.lower() in gone_set else kept_draw).update(d)
-    only_gone = gone_draw - kept_draw
+        shipped_draw.update(shipped)
+        if m.lower() not in gone_set:
+            kept_draw.update(built)
+    for k, kind, _ in data.added():
+        if kind == model.MODEL:
+            body, seg = data.find_added(k, kind), data.find_added(k, model.SEGMENTS)
+            if seg is not None:
+                kept_draw.update(draws(lambda: (body, seg)) or ())
+    only_old = shipped_draw - kept_draw
     out = dict(more)
     out[mkey] = [m for m in more[mkey] if m.lower() not in gone_set]
     n_tex = 0
     if tkey:
         def only_theirs(t):
             h = name_hash(t)
-            return h in only_gone or (t.lower().endswith("_nm") and name_hash(t[:-3]) in only_gone
-                                      and h not in kept_draw)
+            return h in only_old or (t.lower().endswith("_nm") and name_hash(t[:-3]) in only_old
+                                     and h not in kept_draw)
         out[tkey] = [t for t in more[tkey] if not only_theirs(t)]
         n_tex = len(more[tkey]) - len(out[tkey])
     n_mod = len(more[mkey]) - len(out[mkey])
