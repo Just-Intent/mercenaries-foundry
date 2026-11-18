@@ -471,6 +471,47 @@ static void inspect(void)
     LeaveCriticalSection(&lock);
 }
 
+/* The game's world border (World_CreateBorderWalls): four walls and a ceiling,
+ * Havok static boxes sized for retail's 512-cell, 8 m terrain (+-2,048 m).
+ * On a bigger map they stand inside it (a 1,024-cell map's player stopped at
+ * x 2,112). Make the same five boxes moved out by the extra half-width, so
+ * they keep retail's place relative to the terrain's edge; retail-sized maps
+ * keep the game's own. */
+static void MERC_PLUGIN_CALL border_before(void *ud, MercHookContext *c)
+{
+    (void)ud;
+    int32_t size = 0;
+    float spacing = 0;
+    uint32_t scratch = 0, bytes = 0;
+    host->read_guest(host->context, TERRAIN_SIZE, &size, 4);
+    host->read_guest(host->context, TERRAIN_SPACING, &spacing, 4);
+    float d = size * spacing / 2.0f - 2048.0f;
+    if (size <= 0 || spacing <= 0 || d <= 0.5f) return;
+    if (!host->guest_scratch(host->context, &scratch, &bytes) || bytes < 32) return;
+    const struct { float half[3], centre[3]; uint32_t store; } box[5] = {
+        {{2112 + d, 32, 2112 + d}, {0, 1056, 0}, MF_VAR_g_WorldBorderBodies},            /* ceiling */
+        {{32, 1088, 2112 + d}, {2080 + d, 0, 0}, MF_VAR_g_WorldBorderBodies + 4},         /* x + */
+        {{32, 1088, 2112 + d}, {-2080 - d, 0, 0}, MF_VAR_g_WorldBorderBodies + 8},        /* x - */
+        {{2112 + d, 1088, 32}, {0, 0, -2072 - d}, MF_VAR_g_WorldBorderBodies + 12},       /* z - */
+        {{2112 + d, 1088, 32}, {0, 0, 2088 + d}, MF_VAR_g_WorldBorderBodies + 16},        /* z + */
+    };
+    for (int i = 0; i < 5; i++) {
+        MercGuestCall call;
+        uint32_t args[2] = {scratch, scratch + 16};
+        host->write_guest(host->context, scratch, box[i].half, 12);
+        host->write_guest(host->context, scratch + 16, box[i].centre, 12);
+        uint32_t body = guest(MF_FN_Physics_AddStaticBox, 0, 2, args, &call) ? call.eax : 0;
+        host->write_guest(host->context, box[i].store, &body, 4);
+    }
+    c->skip = 1;
+    c->eax = 0;
+    c->pop_bytes = 0;
+    char msg[128];
+    snprintf(msg, sizeof(msg), "world border fitted to the %d-cell terrain (+-%.0f m, retail's +-2048)", size,
+             2048.0f + d);
+    host->log(host->context, msg);
+}
+
 static void MERC_PLUGIN_CALL spawn_after(void *ud, MercHookContext *c)
 {
     (void)ud;
@@ -2689,6 +2730,9 @@ MERC_PLUGIN_EXPORT int MERC_PLUGIN_CALL MercenariesPlugin_Init(
         h->log(h->context, "spawn hook unavailable (run port-hooks); recent spawns won't show");
     if (!h->hook_guest(h->context, MF_FN_LuaScript_RegisterCommands, NULL, script_loaded, NULL))
         h->log(h->context, "script hook unavailable (run port-hooks); the Lua console can't find scripts");
+    if (!h->hook_guest(h->context, MF_FN_World_CreateBorderWalls, border_before, NULL, NULL))
+        h->log(h->context, "world border hook unavailable (run port-hooks); maps bigger than 512 cells keep "
+                           "retail's walls at +-2048 m");
     if (!MERC_PLUGIN_HOST_HAS(h, add_lua_command) ||
         !h->add_lua_command(h->context, "Foundry_TrafficZone", cmd_traffic_zone, NULL) ||
         !h->add_lua_command(h->context, "Foundry_Range", cmd_range, NULL) ||

@@ -1085,6 +1085,19 @@
    "signature": "void __cdecl Level_Load(const char *level, const char *layer)",
    "notes": "Loads the level's layer, then template_weapons, template_humans, template_vehicles, template_ruin and template_misc (with 0x413FC9 set: Utility_ReadLevelFile loads at once), then 0x17F490. Live test (2026-11-18, the Gaza mod's new map): a template_vehicles template spawned there, a template_vehicles_ch3 one wasn't loaded.",
    "evidence": "retail code: the five strings 0x2F5608-0x2F564C pushed to 0x180B10 in turn"
+  },
+  {
+   "address": "0x00146DB0",
+   "name": "World_CreateBorderWalls",
+   "signature": "void __cdecl World_CreateBorderWalls(void)",
+   "evidence": "retail code: called once at level set-up by 0x147460 (after it reads g_TerrainSize and g_TerrainSpacing); makes five static boxes with Physics_AddStaticBox from constants sized for a 512-cell, 8 m terrain (+-2,048 m): walls centred at z 2,088 and z -2,072 (half 2,112 x 1,088 x 32), at x 2,080 and x -2,080 (half 32 x 1,088 x 2,112) and a ceiling at y 1,056 (half 2,112 x 32 x 2,112), stored at 0x37A3E8, 0x37A3E4, 0x37A3DC, 0x37A3E0 and 0x37A3D8; playtest (2026-11-18): on a 1,024-cell map the player and vehicles stopped at x 2,112.6, the x 2,080 wall's face, along the map's whole length",
+   "notes": "Fixed to retail's map size: on bigger terrain the walls stand inside the map. Foundry Console rebuilds them to the loaded terrain's extent."
+  },
+  {
+   "address": "0x00146490",
+   "name": "Physics_AddStaticBox",
+   "signature": "void * __cdecl Physics_AddStaticBox(const float *halfExtents, const float *centre)",
+   "evidence": "retail code: copies the centre into a transform, then 0x12F280(0, halfExtents, &transform, 0x100, 7, 5) and returns its result; World_CreateBorderWalls calls it with (half extents, centre) vectors and keeps the results"
   }
  ],
  "globals": [
@@ -1252,6 +1265,12 @@
    "address": "0x006459C0",
    "name": "g_OutOfMemoryHandlers",
    "evidence": "retail code: the this pointer of OutOfMemory_RunHandlers in Heap_AllocRetrying"
+  },
+  {
+   "address": "0x0037A3D8",
+   "name": "g_WorldBorderBodies",
+   "type": "void *[5]",
+   "evidence": "retail code: World_CreateBorderWalls stores Physics_AddStaticBox's five results here: [0] the ceiling, [1] the x +2,080 wall, [2] x -2,080, [3] z -2,072, [4] z +2,088"
   }
  ],
  "structures": [
