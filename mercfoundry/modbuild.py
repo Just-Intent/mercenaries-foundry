@@ -1751,6 +1751,84 @@ def _set_config_line(text, key, value):
     return pat.sub(lambda m: line, text, count=1) if pat.search(text) else line + nl + text
 
 
+# A level config's [SoundAmbience]: soundscapes (Thresholds <name> a b c and
+# up to six Ambience <name> TYPE_<weather/war> <bank.cue> lines) and the
+# Default one; zones of type ambience (sound = a name, width = fade m) pick
+# others. Retail SW, NW and CDDN define 21 each; blank none (silence).
+AMBIENCE_TYPES = ("TYPE_NORMAL", "TYPE_DIST_WAR", "TYPE_HVY_WAR", "TYPE_RAIN", "TYPE_RAIN_DIST_WAR",
+                  "TYPE_RAIN_HVY_WAR")
+
+
+def _ambience_span(text):
+    """(start, end) of a config's [SoundAmbience] section, without the
+    comment lines that introduce the next section; None if it has none."""
+    m = re.search(r"(?im)^\[SoundAmbience\][^\r\n]*\r?\n", text)
+    if not m:
+        return None
+    nxt = re.search(r"(?m)^\[", text[m.end():])
+    end = m.end() + nxt.start() if nxt else len(text)
+    body = text[m.start():end]
+    # trailing comments and blank lines belong to the next section
+    trail = re.search(r"(?:(?:^[ \t]*(?:;[^\r\n]*)?\r?\n))*\Z", body, re.M)
+    return m.start(), m.start() + (trail.start() if trail else len(body))
+
+
+def _map_ambience(data, name, mdoc, where, conf_text, made):
+    """The new map's config with "ambience" (a game map whose soundscapes it
+    copies), "ambience_add" ({name: {TYPE_...: cue, "thresholds": [a, b, c]}})
+    and "ambience_default" applied."""
+    from . import sky
+    src, add, default = mdoc.get("ambience"), mdoc.get("ambience_add") or {}, mdoc.get("ambience_default")
+    if not (src or add or default):
+        return conf_text
+    nl = "\r\n" if "\r\n" in conf_text else "\n"
+    span = _ambience_span(conf_text)
+    section = conf_text[span[0]:span[1]] if span else ""
+    if src:
+        texts = sky.level_texts(data.dir, str(src), data.files)
+        span_src = _ambience_span(next(iter(texts.values()))) if texts else None
+        if not span_src:
+            raise ValueError(f"{where}: \"ambience\": {src!r} is no map with soundscapes (SW, NW and CDDN have them)")
+        first = next(iter(texts.values()))
+        section = first[span_src[0]:span_src[1]].replace("\r\n", "\n").replace("\n", nl)
+        made.append(f"{src}'s soundscapes")
+    if not section:
+        section = f"[SoundAmbience]{nl}{nl}"
+    for scape, lines in add.items():
+        if not re.fullmatch(r"[A-Za-z0-9_]+", scape):
+            raise ValueError(f"{where}: \"ambience_add\": {scape!r} isn't a soundscape name (letters, digits and _)")
+        bad = [k for k in lines if k not in AMBIENCE_TYPES and k != "thresholds"]
+        if bad:
+            raise ValueError(f"{where}: \"ambience_add\": {scape}: {', '.join(bad)} isn't one of "
+                             f"{', '.join(AMBIENCE_TYPES)} or thresholds")
+        if "TYPE_NORMAL" not in lines:
+            raise ValueError(f"{where}: \"ambience_add\": {scape} needs a TYPE_NORMAL cue")
+        for k, cue in lines.items():
+            if k != "thresholds" and not re.fullmatch(r"[A-Za-z0-9_]+\.[A-Za-z0-9_]+", str(cue)):
+                raise ValueError(f"{where}: \"ambience_add\": {scape} {k}: {cue!r} isn't a bank.cue name")
+        section = re.sub(rf"(?im)^[ \t]*(Thresholds|Ambience)[ \t]+{re.escape(scape)}\b[^\r\n]*\r?\n", "", section)
+        th = lines.get("thresholds", [0.3, 0.3, 0.4])
+        block = f"Thresholds\t{scape} {' '.join(str(v) for v in th)}{nl}" + "".join(
+            f"Ambience\t{scape} {k}\t\t\t{lines[k]}{nl}" for k in AMBIENCE_TYPES if k in lines)
+        section = section.rstrip("\r\n") + nl + nl + block
+        made.append(f"soundscape {scape}")
+    names = {m.lower() for m in re.findall(r"(?im)^[ \t]*(?:Thresholds|Ambience)[ \t]+(\S+)", section)}
+    if default:
+        if str(default).lower() not in names:
+            raise ValueError(f"{where}: \"ambience_default\": no soundscape {default!r} "
+                             f"(it has {', '.join(sorted(names)) or 'none'})")
+        if re.search(r"(?im)^[ \t]*Default\b", section):
+            section = re.sub(r"(?im)^[ \t]*Default\b[^\r\n]*", f"Default\t\t{default}", section, count=1)
+        else:
+            head = re.match(r"(?i)\[SoundAmbience\][^\r\n]*\r?\n", section)
+            section = section[:head.end()] + f"{nl}Default\t\t{default}{nl}" + section[head.end():]
+        made.append(f"ambience {default}")
+    section = section.rstrip("\r\n") + nl + nl
+    if span:
+        return conf_text[:span[0]] + section + conf_text[span[1]:]
+    return conf_text.rstrip("\r\n") + nl + nl + section
+
+
 def _apply_textures(data, folder, result):
     from . import modpack
     radars = _radar_names(folder)       # new maps' radar images: the maps step cuts them
@@ -2221,6 +2299,7 @@ def _apply_maps(data, folder, result):
             radar = _map_radar(data, folder, name, mdoc, where, made)
             if radar:
                 conf_text = _set_config_line(conf_text, "RadarTexture", radar)
+            conf_text = _map_ambience(data, name, mdoc, where, conf_text, made)
             traffic =getattr(data, "new_map_traffic", {}).get(name.lower())
             if traffic:
                 from . import encounters as _enc

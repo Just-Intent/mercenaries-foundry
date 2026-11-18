@@ -232,6 +232,19 @@ toolkit bundle run it the same way: `foundry\python\python.exe foundry\mercfound
     `RadarTexture <radar>` into the map's config.
   - **A game radar:** `"radar": "rdrSW"` alone uses that radar's tiles.
   - **Changing a game radar:** `textures/rdrNW.png` also replaces its tiles.
+
+  **Soundscapes** (the background sound, from the config's `[SoundAmbience]`).
+  Blank has none, so a map copied from it is silent.
+  - `"ambience": "sw"` copies a game map's 21 soundscapes (SW, NW and CDDN have
+    them).
+  - `"ambience_default": "farm"` sets the one heard outside any ambience zone.
+  - `"ambience_add": {"market": {"TYPE_NORMAL": "ambient.city_s_dist_war",
+    "TYPE_HVY_WAR": "...", "thresholds": [0.3, 0.3, 0.4]}}` adds soundscapes of
+    its own from existing cues. TYPE_NORMAL is required; the others are
+    TYPE_DIST_WAR, TYPE_HVY_WAR, TYPE_RAIN, TYPE_RAIN_DIST_WAR and
+    TYPE_RAIN_HVY_WAR.
+  - Zones of type `ambience` (`sound` = a soundscape, `width` = fade metres,
+    e.g. in `maps/<name>/boundaries.json`) switch soundscapes where they lie.
   **Travel**: on SW or NW, the Map panel puts a travel pilot (retail's
   quadrant pilot) at the middle of the view that takes the player to one of
   the mod's new maps: use it, say yes, and the game saves and goes there, to

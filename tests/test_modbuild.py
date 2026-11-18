@@ -798,6 +798,39 @@ class ModelSizeTests(unittest.TestCase):
         self.assertNotIn("block_2", result.warnings[0])
 
 
+class AmbienceTests(unittest.TestCase):
+    def test_copy_add_and_default(self):
+        # maps json "ambience": a game map's soundscapes into the new map's
+        # config; "ambience_add" more; "ambience_default" the Default line
+        from types import SimpleNamespace
+        with tempfile.TemporaryDirectory() as tmp:
+            d = Path(tmp)
+            (d / "levels.ini").write_text("[LevelNamesList]\nLevelName\tLV_sw\n\n[LV_sw]\nName\t\t\tsw\n"
+                                          "Path\t\t\t\\SW\\\nConfigFile\t\t\\SW\\SW.ini\n", encoding="latin-1")
+            (d / "SW").mkdir()
+            (d / "SW" / "SW.ini").write_text(
+                "SkyTexture\tsky\n\n[SoundAmbience]\n\nDefault\t\tdeserted\n\nThresholds\tdeserted 0.3 0.3 0.4\n"
+                "Ambience\tdeserted TYPE_NORMAL\t\t\tambient.dsrtd_dist_war\n\nThresholds\tfarm 0.3 0.3 0.4\n"
+                "Ambience\tfarm TYPE_NORMAL\t\t\tambient.farm_dist_war\n\n;----\n; HELICOPTER TRAFFIC\n;----\n\n"
+                "[TrafficZone]\nname\t\t\th-a\n", encoding="latin-1")
+            data = SimpleNamespace(dir=d, files={})
+            made = []
+            out = modbuild._map_ambience(data, "isle", {
+                "ambience": "sw", "ambience_default": "farm",
+                "ambience_add": {"market": {"TYPE_NORMAL": "ambient.city_s_dist_war"}}},
+                "maps/isle.json", "MainMasterScript\tisle\n", made)
+            self.assertIn("[SoundAmbience]\n\nDefault\t\tfarm\n", out)
+            self.assertIn("Ambience\tfarm TYPE_NORMAL\t\t\tambient.farm_dist_war\n", out)
+            self.assertIn("Thresholds\tmarket 0.3 0.3 0.4\nAmbience\tmarket TYPE_NORMAL\t\t\tambient.city_s_dist_war\n", out)
+            self.assertNotIn("HELICOPTER", out)
+            self.assertNotIn("TrafficZone", out)
+            with self.assertRaisesRegex(ValueError, "no soundscape 'beach'"):
+                modbuild._map_ambience(data, "isle", {"ambience": "sw", "ambience_default": "beach"},
+                                       "maps/isle.json", "x\n", [])
+            with self.assertRaisesRegex(ValueError, "no map with soundscapes"):
+                modbuild._map_ambience(data, "isle", {"ambience": "nowhere"}, "maps/isle.json", "x\n", [])
+
+
 class MapScriptTests(unittest.TestCase):
     def test_weather_on_arrival(self):
         # a new map can force one of the weather presets as the player arrives
