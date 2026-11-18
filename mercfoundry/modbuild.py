@@ -2956,8 +2956,9 @@ def build(projects, data_dir, out_dir, name=None, description=None) -> Result:
                 _apply_hq_sequence(data, insertions, result)
             if getattr(data, "map_layers", None) or getattr(data, "travel_arrive", False):
                 _apply_map_layers(data, result)
-            _check_new_scripts(data, result)
             _check_lua(data, result)
+    # after every step: a new map's step lists the scripts it runs
+    _check_new_scripts(data, result)
     from . import sounds
     data.project = "Foundry"
     sounds.finish(data, result)

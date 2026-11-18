@@ -239,7 +239,8 @@ class ModBuildTests(unittest.TestCase):
         self.write("scripts/isle_events.lua", "function isle_events_Start()\nend\n")
         self.write("maps/island.json", json.dumps({"from": "blank", "message": "Welcome to the island",
                                                   "scripts": ["isle_events"]}))
-        modbuild.build(self.project, self.data, self.out)
+        result = modbuild.build(self.project, self.data, self.out)
+        self.assertFalse([w for w in result.warnings if "isle_events.lua is new" in w])
         recs = self.records("assets.dsk")
         source = script.decode(recs[(name_hash("island"), SCRIPT)]).source
         self.assertIn("Ui_PrintHudMessage('Welcome to the island')\nUtility_LoadUtilityScript('isle_events')\n"
