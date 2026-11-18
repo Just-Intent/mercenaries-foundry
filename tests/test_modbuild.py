@@ -111,6 +111,34 @@ class ModBuildTests(unittest.TestCase):
         self.assertIn("thing", lists[0].get("model", []))
         self.assertIn("shared_tex", lists[0].get("texture", []))
 
+    def test_new_model_loads_a_game_texture_it_names(self):
+        # a new model whose material names one of the game's own textures
+        # (a tank's track texture) loads it wherever the model loads, even on
+        # a map that never loaded the game model drawing it
+        from mercfoundry import encounters as enc, gltf
+        from tests.test_gltf_model import write_glb
+        m = model.decode(self.mr, self.sr)
+        doc, binary = gltf.read(gltf.export(m))
+        for n in doc["nodes"]:
+            if "mesh" in n:
+                n["name"] = "new_" + n["name"]
+        doc["materials"] = [{"name": "tex"}]
+        for mesh in doc["meshes"]:
+            for prim in mesh["primitives"]:
+                prim["material"] = 0
+        write_glb(self.project / "models" / "thing.glb", doc, binary)
+        self.write("models/thing.new.json", json.dumps({"base": "sample"}))
+        (self.project / "encounters").mkdir(exist_ok=True)
+        self.write("encounters/town.json", json.dumps({"map": "swn", "copy_loads": False, "objects": [
+            {"from": "jeep_template", "name": "b0", "position": [0, 0, 0], "set": {"GeometryFile": "thing"}}]}))
+        modbuild.build(self.project, self.data, self.out)
+        lists = [enc.parse_list(body.decode("latin-1")) for arc in ("streamed.dsk", "assets.dsk")
+                 for (key, kind), body in self.records(arc).items()
+                 if kind == name_hash("list") and key == name_hash("town")]
+        self.assertTrue(lists)
+        self.assertIn("thing", lists[0].get("model", []))
+        self.assertIn("tex", lists[0].get("texture", []))
+
     def test_factions(self):
         # factions.json renames a faction in the game's text (after the mod's own text)
         self.write("text/t.json", json.dumps({"interface.datapod.mafia": "RUSSIAN MAFIA ", "veh.jeep": "Mafia jeep"}))

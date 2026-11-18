@@ -1954,8 +1954,9 @@ def _glb_textures(data, name, f, result):
             else:
                 data.new("streamed.dsk", key, texture.TEXTURE, body)
     # textures this file's materials name that the mod added for another
-    # model (a damaged version sharing its building's texture): they load
-    # wherever this model does too, not only where that other model is
+    # model (a damaged version sharing its building's texture), or the game's
+    # own (a tank's track texture): they load wherever this model does too,
+    # not only where that other model is
     added = {k for k, kind, _ in data.added() if kind == texture.TEXTURE}
     shared = []
     try:
@@ -1963,7 +1964,7 @@ def _glb_textures(data, name, f, result):
         doc, _ = gltf_anim.load(f)
         for mat in doc.get("materials") or []:
             stem = re.sub(r"\.\d{3}$", "", mat.get("name", ""))
-            if stem and name_hash(stem) in added and stem.lower() not in {t.lower() for _, t, *_ in made}:
+            if stem and name_hash(stem) in (added | have) and stem.lower() not in {t.lower() for _, t, *_ in made}:
                 shared.append(stem)
     except (OSError, ValueError, KeyError):
         pass
