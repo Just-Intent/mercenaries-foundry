@@ -34,6 +34,17 @@ LIBRARIES = {"string", "math", "os", "io", "coroutine", "debug", "table"}
 KEYWORDS = {"and", "break", "do", "else", "elseif", "end", "false", "for", "function", "if", "in", "local",
             "nil", "not", "or", "repeat", "return", "then", "true", "until", "while"}
 
+# The AI commands the game reads (Lua_ArgAiCommand, 0x11F920), compared by
+# the name's hash (so any letter case works), and which argument of each call
+# is the command's name.
+AI_COMMANDS = ("Wait", "Follow", "Operate", "TakeOff", "Attack", "TacticalMove", "EverybodyOut", "Land",
+               "Patrol", "TakeCover", "MoveToActor", "Horn", "Exit", "PathMove")
+AI_COMMAND_CALLS = {"Ai_Command": 1, "Ai_CommandQueue": 1, "Ai_CommandDefault": 1,
+                    "Squad_Command": 2, "Squad_CommandQueue": 2, "Squad_CommandDefault": 2}
+# Operate's seat (the argument after the vehicle); any other name is no seat
+OPERATE_SEATS = ("driver", "gunner", "passenger", "nodriver", "nogunner", "nopassenger")
+PRIORITIES = ("loPri", "medPri", "hiPri")
+
 _TOKEN = re.compile(r"""
     (?P<ws>[ \t\r\f\v]+) | (?P<nl>\n)
   | (?P<lcomment>--\[\[) | (?P<comment>--[^\n]*)
@@ -125,6 +136,7 @@ class _Parser:
         self.i = 0
         self.scopes = [set()]
         self.defined, self.called, self.callbacks = {}, [], []
+        self.commands = []      # AI command calls: (callee, [each argument's string, if it is one], line)
 
     # -- tokens
     def peek(self, k=0):
@@ -377,9 +389,13 @@ class _Parser:
             return
         self.expect("(")
         first = True
+        literals = [] if callee in AI_COMMAND_CALLS else None
         if not self.check(")"):
             while True:
                 t = self.peek()
+                if literals is not None:
+                    alone = t[0] == "string" and self.peek(1)[1] in (",", ")")
+                    literals.append(t[1] if alone else None)
                 # Event_*('callback', ...): the game calls that global by name
                 if first and callee and callee.startswith("Event_") and t[0] == "string" \
                         and re.fullmatch(r"[A-Za-z_]\w*", t[1]) and self.peek(1)[1] in (",", ")"):
@@ -390,6 +406,8 @@ class _Parser:
                     break
                 self.next()
         self.expect(")")
+        if literals is not None:
+            self.commands.append((callee, literals, line))
 
 
 def check(source):
@@ -441,4 +459,31 @@ def unknown(source, known):
         if n not in set(defined) and n not in known and n not in seen:
             seen.add(n)
             out.append(f"line {line}: an event calls back {n}, which nothing defines")
+    return out
+
+
+def ai_commands(source):
+    """AI commands the game won't know. For a command name it doesn't have,
+    Ai_Command('guy', 'Atack', ...) and the Squad_ forms build an empty command
+    (the actor carries on as before); Operate takes an unknown seat as none
+    given. Only names written out as strings are checked."""
+    from .hashing import name_hash
+    commands = {name_hash(c): c for c in AI_COMMANDS}
+    seats = {name_hash(s) for s in OPERATE_SEATS + PRIORITIES}
+    p = _Parser(source)
+    p.chunk()
+    out = []
+    for callee, args, line in p.commands:
+        at = AI_COMMAND_CALLS[callee]
+        name = args[at] if at < len(args) else None
+        if name is None:
+            continue
+        known = commands.get(name_hash(name))
+        seat = args[at + 2] if at + 2 < len(args) else None
+        if not known:
+            out.append(f"line {line}: {callee} gives the command {name!r}, which the game doesn't have "
+                       f"(it has {', '.join(AI_COMMANDS)})")
+        elif known == "Operate" and seat is not None and name_hash(seat) not in seats:
+            out.append(f"line {line}: Operate's seat {seat!r} isn't one the game has "
+                       f"({', '.join(OPERATE_SEATS)}), so it's taken as no seat given")
     return out

@@ -116,8 +116,32 @@ local function f(x) x() end
         defined, called, callbacks = luacheck.names(lua)
         own = [n for n, _ in called + callbacks if n.startswith("foundry_")]
         self.assertEqual([n for n in own if n not in defined], [])
+        self.assertEqual(luacheck.ai_commands(lua), [])          # every order is a command the game has
         self.assertEqual(luacheck.check(missions.contracts_script([])), [])
         self.assertEqual(luacheck.check(missions.layers_script([{"map": "sw", "layer": "layer_a"}])), [])
+
+    def test_ai_commands(self):
+        # the game reads the command by its name's hash: any case works, an
+        # unknown name gives an empty command, and Operate an unknown seat none
+        src = "\n".join([
+            "function f(cmd)",
+            "  Ai_Command('guy', 'Atack', 'player0', 'hiPri')",
+            "  Ai_CommandQueue('guy', 'patrol', 'p1', '1.0', 'hiPri')",
+            "  Squad_Command('enc', 'Squad1', 'TacticalMove', 'A', 'hiPri')",
+            "  Squad_CommandDefault('enc', 'Squad1', 'Sleep')",
+            "  Ai_Command('guy', 'Operate', 'tank1', 'driverr')",
+            "  Ai_Command('guy', 'OPERATE', 'tank1', 'Gunner', 'hiPri')",
+            "  Ai_Command('guy', 'Operate', 'tank1', 'hiPri')",
+            "  Ai_Command('guy', cmd, 'x')",
+            "  Ai_Command('guy', 'Wa' .. 'it')",
+            "end"])
+        self.assertEqual(luacheck.ai_commands(src), [
+            "line 2: Ai_Command gives the command 'Atack', which the game doesn't have (it has "
+            + ", ".join(luacheck.AI_COMMANDS) + ")",
+            "line 5: Squad_CommandDefault gives the command 'Sleep', which the game doesn't have (it has "
+            + ", ".join(luacheck.AI_COMMANDS) + ")",
+            "line 6: Operate's seat 'driverr' isn't one the game has (driver, gunner, passenger, nodriver, "
+            "nogunner, nopassenger), so it's taken as no seat given"])
 
 
 if __name__ == "__main__":
