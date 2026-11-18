@@ -635,6 +635,22 @@ def _add_traffic(data, f, layer, doc, result):
     DATAxbox file, like terrain surfaces)."""
     from . import encounters, terrain_surfaces
     map_ = doc.get("map") or ""
+    if map_.lower() in getattr(data, "new_maps", ()):
+        # a mod's new map: its config is written later (the maps step), with these
+        data.new_map_traffic = getattr(data, "new_map_traffic", {})
+        zones = data.new_map_traffic.setdefault(map_.lower(), {})
+        for zone, spec in doc["traffic"].items():
+            if zone.lower() in (z.lower() for z in zones):
+                raise ValueError(f"encounters/{f.name}: traffic zone {zone} is declared twice")
+            encounters.add_traffic_zones("", {zone: spec})          # checks it as the config will
+            zones[zone] = spec
+        for zone in doc["traffic"]:
+            if not encounters.zone_paths(doc, zone):
+                result.warnings.append(f"encounters/{f.name}: traffic zone {zone} has no routes; name paths "
+                                       f"t_{zone}_01 (vehicles) or p_{zone}_01 (people)")
+        result.changes.append(f"layer {layer}: traffic zone{'s' if len(doc['traffic']) != 1 else ''} "
+                              f"{', '.join(doc['traffic'])} declared in the new map {map_.lower()}'s config")
+        return
     levels = data.dir / "levels.ini"
     config = terrain_surfaces.level_config(levels.read_text(encoding="latin-1"), map_) if levels.exists() else None
     if not config or not (data.dir / config).exists():
@@ -1983,7 +1999,13 @@ def _apply_maps(data, folder, result):
                 result.warnings.append(f"{where}: {src}'s config runs the script {master.group(1)}, not "
                                        f"{name}'s, so {', '.join(layers)} won't load with it; load them from "
                                        f"{master.group(1)} or copy blank")
-            data.files[new_conf] = with_master(texts[conf_path]).encode("latin-1")
+            conf_text = with_master(texts[conf_path])
+            traffic = getattr(data, "new_map_traffic", {}).get(name.lower())
+            if traffic:
+                from . import encounters as _enc
+                conf_text = _enc.add_traffic_zones(conf_text, traffic)
+                made.append(f"{len(traffic)} traffic zone{'s' if len(traffic) != 1 else ''}")
+            data.files[new_conf] = conf_text.encode("latin-1")
             for path, text in list(texts.items())[1:]:          # its Xbox config, if any
                 data.files[f"{conf_dir}/{name}_XBOX.ini"] = with_master(text).encode("latin-1")
             rel = "\\" + new_conf[len("DATAxbox/"):].replace("/", "\\")

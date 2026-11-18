@@ -51,7 +51,13 @@ map's level config ([TrafficZone] in e.g. SW\\SW.ini, which the game reads
 when the map loads). A zone's routes are the layer's paths named
 t_<zone>_<id> (vehicles) and p_<zone>_<id> (people), with a "width"
 property and linked end to end. Scripts fill it:
-Traffic_AddZoneSpawner('foundry-zone', 'template_...'), Traffic_SetZoneDensity.
+Traffic_AddZoneSpawner('foundry-zone', 'template_...'), Traffic_SetZoneDensity;
+or the zone names its own: "spawn": ["template_civ_civilian01", {"template":
+..., "weight": 2}] (SpawnObject lines, at most 15 with weights, as retail
+CDDN.ini's tenement-ped). On a mod's new map the zones go in its own config.
+Retail's town pedestrian zones (haeju-peds: Density 150, Urgency 10,
+CivDensity 20) have 25-56 paths of 4-9 points, 13-43 m apart, 3-5 km in all,
+"width" 3, linked end to end (JNCT).
 
 A path's "events": {"1": ["all_allies_fb_fidget01"]} plays animation clips
 when a character following it reaches that point (EVNT). "value" is the
@@ -216,6 +222,26 @@ def _path_node(name, spec):
 TRAFFIC_KEYS = {"density": "Density", "urgency": "Urgency", "civ_density": "CivDensity",
                 "civdensity": "CivDensity", "encounter": "Encounter", "squad": "Squad"}
 MAX_TRAFFIC_ZONES = 150         # the traffic manager's table (0x16A370 stops adding at 150)
+# A zone's own templates: SpawnObject lines (retail CDDN.ini's tenement-ped:
+# template_civ_civilian01-04), read by the zone reader (0x1692E9) into a table
+# of 15 (template, number, live count), so a zone needs no script to fill it.
+MAX_ZONE_SPAWNERS = 15
+
+
+def _spawn_lines(zone, spawn):
+    """SpawnObject lines for "spawn": ["template", {"template": ..., "weight": 3}]
+    (a weight repeats the line, as gameflow's spawner weights repeat
+    Traffic_AddZoneSpawner)."""
+    lines = []
+    for item in spawn if isinstance(spawn, list) else [spawn]:
+        t, w = (item, 1) if isinstance(item, str) else (item.get("template"), int(item.get("weight", 1)))
+        if not t or not str(t).lower().startswith("template_") or w < 1:
+            raise ValueError(f"traffic zone {zone}: \"spawn\" lists templates (template_..., weight 1 or more)")
+        lines += [f"SpawnObject\t\t{t}"] * w
+    if len(lines) > MAX_ZONE_SPAWNERS:
+        raise ValueError(f"traffic zone {zone}: {len(lines)} spawn entries (weights included); "
+                         f"a zone keeps {MAX_ZONE_SPAWNERS}")
+    return lines
 
 
 def traffic_zone_names(ini_text):
@@ -235,7 +261,7 @@ def traffic_zone_names(ini_text):
 def add_traffic_zones(ini_text, zones):
     """The level config with [TrafficZone] sections added for
     {"zone": {"density": 100, "urgency": 10, "civ_density": 20,
-    "encounter": ..., "squad": ...}}. The zone's routes are paths named
+    "encounter": ..., "squad": ..., "spawn": ["template_...", {"template": ..., "weight": 2}]}}. The zone's routes are paths named
     t_<zone>_<id> (vehicles) or p_<zone>_<id> (people)."""
     have = {n.lower() for n in traffic_zone_names(ini_text)}
     out = ini_text.rstrip("\r\n") + "\r\n"
@@ -247,6 +273,9 @@ def add_traffic_zones(ini_text, zones):
         have.add(name.lower())
         lines = [f"Name\t\t\t{name}"]
         for key, value in (spec or {}).items():
+            if key.lower() == "spawn":
+                lines += _spawn_lines(name, value)
+                continue
             k = TRAFFIC_KEYS.get(key.lower(), key)
             lines.append(f"{k}{chr(9) * (3 if len(k) < 8 else 2)}{value}")
         out += "\r\n[TrafficZone]\r\n" + "\r\n".join(lines) + "\r\n"

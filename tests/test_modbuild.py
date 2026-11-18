@@ -219,8 +219,14 @@ class ModBuildTests(unittest.TestCase):
         (self.project / "scripts" / "island.lua").unlink()
         self.write("maps/island.json", json.dumps({"from": "blank", "start": {"position": [10, 5, -20], "heading": 90},
                                                   "message": "Welcome to the island"}))
-        self.write("encounters/isle_camp.json", json.dumps({"map": "island", "load": "map", "objects": []}))
+        self.write("encounters/isle_camp.json", json.dumps({"map": "island", "load": "map", "objects": [],
+                                                            "traffic": {"isle-peds": {"density": 30, "spawn": ["template_civ_a"]}},
+                                                            "paths": {"p_isle-peds_01": {"points": [[0, 0, 0], [9, 0, 0]],
+                                                                                         "properties": {"width": 3}}}}))
         result = modbuild.build(self.project, self.data, self.out)
+        # its traffic zones go in its own config
+        self.assertIn("[TrafficZone]\r\nName\t\t\tisle-peds\r\nDensity\t\t\t30\r\nSpawnObject\t\ttemplate_civ_a\r\n",
+                      (self.out / "DATAxbox" / "TEST" / "island.ini").read_bytes().decode("latin-1"))
         source = script.decode(self.records("assets.dsk")[(name_hash("island"), SCRIPT)]).source
         self.assertIn("Utility_ReadLevelFile('isle_camp')\nActor_SetPosition('player0', 10.00, 5.00, -20.00)\n"
                       "Actor_SetYaw('player0', 90.0)\nUi_PrintHudMessage('Welcome to the island')\nend\n", source)

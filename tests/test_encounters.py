@@ -177,6 +177,14 @@ class EncounterTests(unittest.TestCase):
         many = "".join(f"[TrafficZone]\r\nName\t\t\tz{i}\r\n" for i in range(150))
         with self.assertRaises(ValueError):
             encounters.add_traffic_zones(many, {"one-more": {}})
+        # a zone's own templates (SpawnObject; a weight repeats the line), at most 15
+        out = encounters.add_traffic_zones("", {"town-peds": {"density": 30, "spawn": [
+            "template_civ_civilian01", {"template": "template_civ_civilian02", "weight": 2}]}})
+        self.assertIn("Name\t\t\ttown-peds\r\nDensity\t\t\t30\r\nSpawnObject\t\ttemplate_civ_civilian01\r\n"
+                      "SpawnObject\t\ttemplate_civ_civilian02\r\nSpawnObject\t\ttemplate_civ_civilian02\r\n", out)
+        for bad in (["civ"], [{"template": "template_a", "weight": 16}]):
+            with self.assertRaises(ValueError):
+                encounters.add_traffic_zones("", {"z": {"spawn": bad}})
         doc = {"paths": {"p_foundry-m10_01a": {}, "t_foundry-m10_02": {}, "p_foundry-m100_01": {}, "other": {}}}
         self.assertEqual(encounters.zone_paths(doc, "foundry-m10"), ["p_foundry-m10_01a", "t_foundry-m10_02"])
 
