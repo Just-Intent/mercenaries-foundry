@@ -917,6 +917,76 @@
    "signature": "int __cdecl Objective_TargetTypeFromName(const char *name)",
    "notes": "TARGET_TYPE_OBJECTIVE_PRIMARY 0, _SECONDARY 1, _HQ_SK 5, _HQ_NK 6, _HQ_ALLIES 7, _HQ_MAFIA 8, _HQ_CHINA 9, _UNIT_SAMS 0xA; four more names no retail script uses (hashes 0x2B358195 = 2, 0x65C601D2 = 3, 0x58597A6B = 4, 0x1B3A74BB = 0xB); anything else 0xD (undefined).",
    "evidence": "retail code: HashName of the target type string (argument 4 of Lua_Objective_SetTargetActor and Lua_Objective_SetTargetVector), compared with 12 constants, 8 of them the hashes of type names in the game's scripts"
+  },
+  {
+   "address": "0x00121BD0",
+   "name": "ScribbleMemory_GetString",
+   "signature": "const char * __thiscall ScribbleMemory_GetString(ScribbleMemory *this, uint32 nameHash)",
+   "notes": "The value's text, or 0 when the name has none.",
+   "evidence": "retail code: Lua_Utility_ReadStringFromScribbleMemory passes HashName of its argument on g_ScribbleMemory; HashTable_Find on the keys (+0x1008, 0x7FF slots), then the slot's u16 offset (+0x06) into the text (+0x3008)"
+  },
+  {
+   "address": "0x00121C20",
+   "name": "ScribbleMemory_SetString",
+   "signature": "bool __thiscall ScribbleMemory_SetString(ScribbleMemory *this, uint32 nameHash, const char *text)",
+   "notes": "Stores {u32 hash, text, NUL} at the end of the text; an old value is taken out first (the text after it moves down and the slots' offsets follow). Text 0 erases.",
+   "evidence": "retail code: Lua_Utility_WriteStringToScribbleMemory passes the text, Lua_Utility_EraseValueFromScribbleMemory passes 0"
+  },
+  {
+   "address": "0x00121DA0",
+   "name": "ScribbleMemory_SetNumber",
+   "signature": "void __thiscall ScribbleMemory_SetNumber(ScribbleMemory *this, uint32 nameHash, float value)",
+   "notes": "Numbers are kept as text: sprintf \"%f\", then ScribbleMemory_SetString.",
+   "evidence": "retail code: Lua_Utility_WriteNumberToScribbleMemory; the format string at 0x2DE28C"
+  },
+  {
+   "address": "0x00122000",
+   "name": "ScribbleMemory_GetNumber",
+   "signature": "bool __thiscall ScribbleMemory_GetNumber(ScribbleMemory *this, uint32 nameHash, float *value)",
+   "notes": "atof of the stored text; false when there's none.",
+   "evidence": "retail code: Lua_Utility_ReadNumberFromScribbleMemory pushes the number only when it returns true"
+  },
+  {
+   "address": "0x00112B50",
+   "name": "Lua_SetFieldString",
+   "signature": "void __cdecl Lua_SetFieldString(lua_State *L, int table, const char *key, const char *value)",
+   "notes": "table[key] = value, for the table at that stack index (-1: the top).",
+   "evidence": "retail code: lua_pushstring key and value, then lua_settable (a negative index counted past the two pushed); Lua_Utility_ReadMissionData and Lua_Boundary_GetProperties build their result tables with it"
+  },
+  {
+   "address": "0x00112B90",
+   "name": "Lua_SetFieldNumber",
+   "signature": "void __cdecl Lua_SetFieldNumber(lua_State *L, int table, const char *key, float value)",
+   "notes": "table[key] = value.",
+   "evidence": "retail code: lua_pushstring key, lua_pushnumber value, lua_settable"
+  },
+  {
+   "address": "0x00112BD0",
+   "name": "Lua_GetFieldString",
+   "signature": "const char * __cdecl Lua_GetFieldString(lua_State *L, int table, const char *key)",
+   "notes": "table[key] if it is a string, else 0.",
+   "evidence": "retail code: lua_pushstring key, lua_gettable, lua_isstring, Lua_ArgString; Lua_Utility_WriteMissionData reads its table with it"
+  },
+  {
+   "address": "0x00112C30",
+   "name": "Lua_GetFieldNumber",
+   "signature": "bool __cdecl Lua_GetFieldNumber(lua_State *L, int table, const char *key, float *value)",
+   "notes": "table[key] if it is a number.",
+   "evidence": "retail code: lua_pushstring key, lua_gettable, lua_isnumber, Lua_ArgNumber"
+  },
+  {
+   "address": "0x0015F5F0",
+   "name": "MissionData_SetText",
+   "signature": "void __thiscall MissionData_SetText(MissionData *this, char *field, const char *stringId, int size)",
+   "notes": "The text of a string id (e.g. a mission title's) from the game's strings into one of g_MissionData's fields.",
+   "evidence": "retail code: HashName of the id, then StringTable_GetAscii on the table Registry_Find gives for g_StringTables; only Lua_Utility_WriteMissionData calls it, for sMissionName, sMissionTitle and sClientName"
+  },
+  {
+   "address": "0x00121650",
+   "name": "Registry_Find",
+   "signature": "void * __cdecl Registry_Find(uint32 nameHash)",
+   "notes": "The registry's object by name hash (keys 0x371D90, count 0x371D84, objects 0x371D8C; 0x371D94's when none).",
+   "evidence": "retail code: RsRegistry.cpp; HashTable_Find; MissionData_SetText and Lua_Player_AdjustMoney get the string table from it with g_StringTables"
   }
  ],
  "globals": [
@@ -1069,6 +1139,16 @@
    "address": "0x00371DD8",
    "name": "g_PathManager",
    "evidence": "retail code: the this pointer of PathManager_FindPath when Lua_ArgAiCommand looks up Patrol's and PathMove's paths"
+  },
+  {
+   "address": "0x00414150",
+   "name": "g_ScribbleMemory",
+   "evidence": "retail code: the this pointer of every Lua_Utility_*ScribbleMemory binding's call (RsScribble.cpp); 263 references in the executable"
+  },
+  {
+   "address": "0x003C2700",
+   "name": "g_MissionData",
+   "evidence": "retail code: Lua_Utility_ReadMissionData returns its fields by name and Lua_Utility_WriteMissionData sets them (strings 0x2F0808-0x2F08B8)"
   }
  ],
  "structures": [
@@ -1258,6 +1338,94 @@
     {
      "offset": "0x4C",
      "name": "memberCount"
+    }
+   ]
+  },
+  {
+   "name": "ScribbleMemory",
+   "evidence": "retail code: ScribbleMemory_GetString, ScribbleMemory_SetString",
+   "fields": [
+    {
+     "offset": "0x06",
+     "name": "offsets",
+     "type": "uint16[]",
+     "notes": "per key slot: where its entry's text starts, from +0x3008; 0 = none"
+    },
+    {
+     "offset": "0x1008",
+     "name": "keys",
+     "notes": "name hashes for HashTable_Find, 0x7FF slots"
+    },
+    {
+     "offset": "0x3008",
+     "name": "text",
+     "notes": "the entries: {u32 name hash, text, NUL}, one after another"
+    },
+    {
+     "offset": "0x300C",
+     "name": "end",
+     "notes": "where the next entry goes"
+    },
+    {
+     "offset": "0x3014",
+     "name": "count"
+    }
+   ]
+  },
+  {
+   "name": "MissionData",
+   "evidence": "retail code: Lua_Utility_ReadMissionData, Lua_Utility_WriteMissionData (each field by its script name)",
+   "fields": [
+    {
+     "offset": "0x000",
+     "name": "sMissionName",
+     "type": "char[0x40]"
+    },
+    {
+     "offset": "0x040",
+     "name": "sMissionTitle",
+     "type": "char[0x100]"
+    },
+    {
+     "offset": "0x140",
+     "name": "sClientName",
+     "type": "char[0x40]"
+    },
+    {
+     "offset": "0x180",
+     "name": "PrimaryObjective",
+     "type": "char[4][0x100]",
+     "notes": "PrimaryObjective0..3"
+    },
+    {
+     "offset": "0x580",
+     "name": "PrimaryObjectiveBounty",
+     "type": "float[4]"
+    },
+    {
+     "offset": "0x590",
+     "name": "SecondaryObjective",
+     "type": "char[4][0x100]"
+    },
+    {
+     "offset": "0x990",
+     "name": "SecondaryObjectiveBounty",
+     "type": "float[4]"
+    },
+    {
+     "offset": "0x9A0",
+     "name": "fTimeLimitInMinutes",
+     "type": "float"
+    },
+    {
+     "offset": "0x9A4",
+     "name": "fContractFee",
+     "type": "float"
+    },
+    {
+     "offset": "0x9A8",
+     "name": "fBonusFee",
+     "type": "float"
     }
    ]
   }
