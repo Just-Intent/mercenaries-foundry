@@ -117,6 +117,17 @@ class GltfModelImportTests(unittest.TestCase):
         self.assertEqual(_cutout([0, 0, 0, 0, 0, 0x110, 0], "OPAQUE")[5], 0x100)
         self.assertEqual(_cutout([0, 0, 0, 0, 0, 0x110, 0], None)[5], 0x110)
 
+    def test_metallic_factor_zero_drops_reflection(self):
+        # a piece copied from a shiny template (a chrome hub's reflection
+        # texture in word 4, flag 0x20 in word 6): metallicFactor 0 makes it
+        # matte; none given, or above 0, leaves it shiny
+        from mercfoundry.model_import import _finish
+        shiny = [1, 2, 2, 3, 0x5973c764, 0x100, 0x21]
+        self.assertEqual(_finish(shiny, None, 0.0)[4:], [0, 0x100, 0x1])
+        self.assertEqual(_finish(shiny, None, None), shiny)
+        self.assertEqual(_finish(shiny, None, 1.0), shiny)
+        self.assertEqual(_finish(shiny, "MASK", 0)[5:], [0x110, 0x1])
+
     def test_editor_shows_new_models_cut_out_as_built(self):
         from types import SimpleNamespace
         from mercfoundry.editor import scene

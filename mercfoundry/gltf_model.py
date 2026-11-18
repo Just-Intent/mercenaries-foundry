@@ -177,12 +177,13 @@ def read(path, model):
             weights = _values(doc, buffers, attrs.get("WEIGHTS_0")) if skin is not None else None
             idx = _values(doc, buffers, prim.get("indices"))
             idx = [t[0] for t in idx] if idx else list(range(len(pos)))
-            mat, alpha = "", None
+            mat, alpha, metal = "", None, None
             if "material" in prim and doc.get("materials"):
-                mat = doc["materials"][prim["material"]].get("name", "")
-                alpha = doc["materials"][prim["material"]].get("alphaMode")
+                md = doc["materials"][prim["material"]]
+                mat, alpha = md.get("name", ""), md.get("alphaMode")
+                metal = md.get("pbrMetallicRoughness", {}).get("metallicFactor")
             piece = ObjPiece(name, mat)
-            piece.alpha = alpha
+            piece.alpha, piece.metal = alpha, metal
             piece.joint = owner_joint(i) if skin is None else None
             if skin is not None:
                 piece.bones = []
