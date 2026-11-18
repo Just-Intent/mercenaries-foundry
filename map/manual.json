@@ -1083,7 +1083,7 @@
    "address": "0x00184890",
    "name": "Level_Load",
    "signature": "void __cdecl Level_Load(const char *level, const char *layer)",
-   "notes": "Loads the level's layer, then template_weapons, template_humans, template_vehicles, template_ruin and template_misc (with 0x413FC9 set: Utility_ReadLevelFile loads at once), then 0x17F490. On the Gaza mod's new map (2026-11-18) none of template_vehicles' templates were loaded in game, so that path seems not to run for it, or to run before something clears the table; not traced further.",
+   "notes": "Loads the level's layer, then template_weapons, template_humans, template_vehicles, template_ruin and template_misc (with 0x413FC9 set: Utility_ReadLevelFile loads at once), then 0x17F490. Live test (2026-11-18, the Gaza mod's new map): a template_vehicles template spawned there, a template_vehicles_ch3 one wasn't loaded.",
    "evidence": "retail code: the five strings 0x2F5608-0x2F564C pushed to 0x180B10 in turn"
   }
  ],

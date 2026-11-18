@@ -314,6 +314,10 @@ def add_game_squads(doc, squads):
 
 
 LAYER_KINDS = ("world", "encounter", "path", "lineregion", "region")
+# Properties that name a model the object draws: its own, its ruin, its
+# wheels, a helicopter's break-up pieces (geometryNameRuinA/B, with their
+# nodeNameRuinA/B). A model one names must load wherever the object does.
+MODEL_PROPERTIES = ("geometryfile", "geometrynameruined", "geometrynamewheel", "geometrynameruina", "geometrynameruinb")
 
 
 def parse_list(text):
@@ -417,7 +421,7 @@ def build(layer, doc, find_source, source_loads=None):
     given = []
     for o in doc.get("objects") or []:
         for key, value in (o.get("set") or {}).items():
-            if key.lower() in ("geometryfile", "geometrynameruined") and value:
+            if key.lower() in MODEL_PROPERTIES and value:
                 given.append(str(value))
         if o.get("model"):
             given.append(str(o["model"]))

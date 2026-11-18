@@ -312,8 +312,9 @@ class ModBuildTests(unittest.TestCase):
         result = modbuild.build(self.project, self.data, self.out)
         recs = self.records("assets.dsk")
         objs = list(world.iter_objects(recs[(name_hash("island_templates"), WORLD)]))
-        # what it names comes too, but what the map's script loads already (ch2)
-        self.assertEqual([o["name"] for o in objs], ["template_tank", "template_wep_big", "template_allies_driver"])
+        # what it names comes too, but not what every map loads already
+        # (the level loader's template layers, and ch2 from the map's script)
+        self.assertEqual([o["name"] for o in objs], ["template_tank", "template_wep_big"])
         self.assertEqual(list(objs[0]["properties"][0]), ["GeometryFile", "sample"])
         loads = recs[(name_hash("island_templates"), name_hash("list"))].decode("latin-1")
         self.assertIn("[world]\n\nload island_templates\n", loads)
@@ -322,12 +323,34 @@ class ModBuildTests(unittest.TestCase):
         self.assertNotIn("other", loads)
         self.assertIn("Utility_ReadLevelFile('island_templates')",
                       script.decode(recs[(name_hash("island"), SCRIPT)]).source)
-        self.assertTrue(any("1 templates in island_templates (and 2 they name: template_wep_big, "
-                            "template_allies_driver)" in c
+        self.assertTrue(any("1 templates in island_templates (and 1 they name: template_wep_big)" in c
+                            for c in result.changes))
+        # one every map has isn't copied
+        self.write("maps/island.json", json.dumps({"from": "blank", "loads_like": None,
+                                                  "templates": ["template_allies_driver"]}))
+        result = modbuild.build(self.project, self.data, self.out)
+        self.assertNotIn((name_hash("island_templates"), WORLD), self.records("assets.dsk"))
+        self.assertTrue(any("1 templates load on every map already, not copied (template_allies_driver)" in c
                             for c in result.changes))
         self.write("maps/island.json", json.dumps({"from": "blank", "loads_like": None, "templates": ["template_nothing"]}))
         with self.assertRaisesRegex(ValueError, "no game template named 'template_nothing'"):
             modbuild.build(self.project, self.data, self.out)
+
+    def test_rule_wheels_and_break_up_pieces_load(self):
+        # a rule giving an object wheels or helicopter break-up pieces: its
+        # layer's list loads those models too (a Hilux's wheels were invisible)
+        build(self.data / "assets.dsk", [
+            (name_hash("mission"), SCRIPT, script.encode(script.new("mission", "x = 1\n"))),
+            (name_hash("base_layer"), WORLD, world_record()),
+            (name_hash("base_layer"), name_hash("list"), b"\n[world]\n\nload base_layer\n\n[model]\n\nload jeep_model\n"),
+        ])
+        (self.project / "objects").mkdir(exist_ok=True)
+        self.write("objects/hilux.json", json.dumps([{"template": "jeep_template", "set": {
+            "GeometryFile": "hilux", "geometrynamewheel": "hilux_wheel", "geometryNameRuinA": "global_invisible"}}]))
+        modbuild.build(self.project, self.data, self.out)
+        loads = self.records("assets.dsk")[(name_hash("base_layer"), name_hash("list"))].decode("latin-1")
+        for m in ("hilux", "hilux_wheel", "global_invisible"):
+            self.assertIn(f"load {m}\n", loads)
 
     def test_layer_name_limit(self):
         # more names than the game's named-object table can take are refused
