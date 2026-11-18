@@ -400,6 +400,80 @@ def _load_textures_with_map(data, map_name, textures):
                 data.set(a, r, new.encode("latin-1"))
 
 
+def _trim_like_loads(data, more, own_layers):
+    """What a new map copies from another map's list ("loads_like"), less
+    what only that map's own layers draw: models that a game object names
+    (its model or a property: ruin, wheels...) but no object outside those
+    layers does now (after the mod's rules, so a vehicle a mod gives another
+    model drops its old one), and textures that only those models draw (with
+    each one's _nm). Models no object names (ones the code loads by name)
+    and textures no model on the list draws (effects, interface, skies) stay.
+    Returns (loads, "N models, M textures") or (loads, "") when nothing goes."""
+    from . import find, model as model_mod
+    own = {name_hash(n) for n in own_layers}
+    archives = [data.archive(n) for n in ARCHIVES if (data.dir / n).exists()]
+
+    def names(obj):
+        yield str(obj.get("model") or "").lower()
+        for _, v in obj.get("properties") or []:
+            yield str(v).lower()
+    ever = {n for obj in find.objects(archives) for n in names(obj)}        # the game's objects, as shipped
+    # what can be on the new map, as built: the shared template layers'
+    # objects (spawned anywhere: by scripts, spawners, support, traffic) and
+    # the mods' own layers; the game's other layers (other maps', missions',
+    # with their own templates) bring their own lists
+    now = set()
+    for a, r in data.records(WORLD):
+        if r.key not in own:
+            for obj in world.iter_objects(data.current(a, r)):
+                if str(obj.get("layer") or "").lower().startswith("template"):
+                    now.update(names(obj))
+    for recs in data.add.values():
+        for key, kind, body in recs:
+            if kind == WORLD and key not in own:
+                for obj in world.iter_objects(body):
+                    now.update(names(obj))
+    mkey = next((k for k in more if k.lower() == "model"), None)
+    tkey = next((k for k in more if k.lower() == "texture"), None)
+    if not mkey:
+        return more, ""
+    gone = [m for m in more[mkey] if m.lower() in ever and m.lower() not in now]
+    if not gone:
+        return more, ""
+
+    def draws(m):
+        out = set()
+        try:
+            for p in model_mod.decode(*model_mod.find(archives, m)).pieces:
+                out.add(p.texture)
+                out.update(w for w in p.material if w)
+        except (KeyError, ValueError, IndexError):
+            return None
+        return out
+    gone_set = {m.lower() for m in gone}
+    kept_draw, gone_draw = set(), set()
+    for m in more[mkey]:
+        d = draws(m)
+        if d is None:
+            if m.lower() in gone_set:
+                gone_set.discard(m.lower())        # can't tell what it draws: keep it
+            continue
+        (gone_draw if m.lower() in gone_set else kept_draw).update(d)
+    only_gone = gone_draw - kept_draw
+    out = dict(more)
+    out[mkey] = [m for m in more[mkey] if m.lower() not in gone_set]
+    n_tex = 0
+    if tkey:
+        def only_theirs(t):
+            h = name_hash(t)
+            return h in only_gone or (t.lower().endswith("_nm") and name_hash(t[:-3]) in only_gone
+                                      and h not in kept_draw)
+        out[tkey] = [t for t in more[tkey] if not only_theirs(t)]
+        n_tex = len(more[tkey]) - len(out[tkey])
+    n_mod = len(more[mkey]) - len(out[mkey])
+    return out, f"{n_mod} models, {n_tex} textures" if n_mod or n_tex else ""
+
+
 def _object_loads(obj, full, archives):
     """What one object needs from a load list that loads much more (a map's):
     entries its model or properties name (its model, ruin model, animation
@@ -1540,13 +1614,20 @@ def _apply_maps(data, folder, result):
                     if not lhit:
                         raise ValueError(f"{where}: \"loads_like\" names no game map ({like!r} has no load list)")
                     skip = {k.lower() for k in encounters.LAYER_KINDS} | {"terrain"}
-                    more = {k: v for k, v in encounters.parse_list(data.current(*lhit[0]).decode("latin-1")).items()
-                            if k.lower() not in skip}
+                    like_list = encounters.parse_list(data.current(*lhit[0]).decode("latin-1"))
+                    more = {k: v for k, v in like_list.items() if k.lower() not in skip}
+                    own_layers = [n for k, v in like_list.items() if k.lower() == "world" for n in v]
+                    more, dropped = _trim_like_loads(data, more, own_layers)
+                    if dropped:
+                        made.append(f"not {like}'s scenery: {dropped}")
                     from .missions import add_to_list
                     for kind_, names_ in more.items():
                         for n_ in names_:
                             text = add_to_list(text, kind_, n_)
                     made.append(f"loads what {like} loads")
+                # its skies: only those its own config names (_trim_map_skies, after the sky step)
+                data.like_skies = getattr(data, "like_skies", set())
+                data.like_skies.add(name.lower())
                 body = text.encode("latin-1")
             else:
                 body = _renamed_record(body, name)
@@ -2228,6 +2309,52 @@ def _apply_sky(data, folder, result):
             result.changes.append(f"sky {f.stem}: " + "; ".join(changes))
 
 
+def _sky_textures(texts):
+    """The sky textures config files name (SkyTexture and FlatSkyTexture, in base skies and presets)."""
+    return {m.group(1).lower() for t in texts.values()
+            for m in re.finditer(r"(?im)^\s*(?:Flat)?SkyTexture\s+(\S+)", t)}
+
+
+def _all_level_skies(data):
+    """Every sky texture any level config names (the game's and this build's)."""
+    texts = {str(p): p.read_bytes().decode("latin-1") for p in data.dir.rglob("*.ini")}
+    texts.update({p: b.decode("latin-1") for p, b in data.files.items() if p.lower().endswith(".ini")})
+    return _sky_textures(texts)
+
+
+def _trim_map_skies(data, folder, result):
+    """A new map's list loads the skies its source's and "loads_like" map's
+    lists do (blank's: skytexture_peru2 and skytexture_nwwinter, other
+    levels' skies, 512 KB each); keep only the sky textures its own config
+    names, base sky and presets, as the sky steps left it."""
+    from . import encounters
+    from .missions import add_to_list
+    for name in sorted(getattr(data, "like_skies", set())):
+        key, LIST = name_hash(name), name_hash("list")
+        body = data.find_added(key, LIST)
+        if body is None:
+            continue
+        used = _sky_textures(_sky_texts(data, name))
+        copied = _all_level_skies(data)
+        text = body.decode("latin-1")
+        have = {t.lower() for k, v in encounters.parse_list(text).items() if k.lower() == "texture" for t in v}
+        drop = (copied - used) & have
+        lines = [l for l in text.split("\n")
+                 if not (l.strip().lower().startswith("load ") and l.strip()[5:].strip().lower() in drop)]
+        new = "\n".join(lines)
+        data.skies_dropped = getattr(data, "skies_dropped", {})
+        gone = data.skies_dropped.setdefault(name, set())
+        gone |= drop
+        for t in sorted(gone & used):            # dropped for an earlier mod; a later mod's sky uses it
+            new = add_to_list(new, "texture", t)
+            gone.discard(t)
+        if new != text:
+            data.replace_added(key, LIST, new.encode("latin-1"))
+            if drop:
+                result.changes.append(f"map {name}: doesn't load the skies {', '.join(sorted(drop))} "
+                                      f"(its own sky doesn't use them)")
+
+
 def _apply_configs(data, folder, result):
     """config/<file>.json: lines of the game's root config files (xbox.ini,
     rs.ini, vehicles.ini, msh2temp.ini; see configs.py), written whole as
@@ -2408,6 +2535,7 @@ def _swap_model(data, old, new):
 STEPS = (_apply_text, _apply_scripts, _apply_objects, _apply_encounters, _apply_missions,
          _apply_textures, _apply_models, _apply_collision_flags, _apply_layout, _apply_game_squads,
          _apply_animations, _apply_animtables, _apply_bone_moves, _apply_maps, _apply_terrain, _apply_sounds, _apply_sky,
+         _trim_map_skies,
          _apply_factions, _apply_configs)
 
 

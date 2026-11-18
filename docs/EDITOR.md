@@ -567,7 +567,11 @@ toolkit bundle run it the same way: `foundry\python\python.exe foundry\mercfound
     map's own layer (SW, NW), just its model, ruin model and textures.
   - On a new map, characters, vehicles and weapons work too: a new map loads
     what SW loads (its animations and models), apart from SW's own ground and
-    layers. `"loads_like": null` in `maps/<name>.json` turns that off.
+    layers. `"loads_like": null` in `maps/<name>.json` turns that off. It
+    leaves out SW's scenery: models only SW's own layer draws now (not a
+    template, not a mod's layer; so a vehicle a mod redraws drops its old
+    model), the textures only they draw, and sky textures the new map's own
+    config doesn't name.
   - A placed object shows its real model. It moves, turns, renames, copies and
     removes like a copy.
   - With the live link on, it spawns in the running game if the game has that

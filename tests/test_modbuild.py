@@ -224,6 +224,57 @@ class ModBuildTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "already a map"):
             modbuild.build(self.project, self.data, self.out)
 
+    def test_new_map_leaves_out_scenery_and_skies(self):
+        # "loads_like" sw copies sw's list but not what only sw's own layer
+        # draws (and only that), nor skies its own config doesn't name
+        from mercfoundry import ucfb
+
+        def layer(name, objs):
+            strings = sorted({name} | {s for o in objs for s in [o["model"], o["template"]] + sum(o["properties"], [])})
+            return world.from_json({"format": "mercfoundry-world-1", "name": name, "strings": strings, "chunks": [
+                {"tag": "NAME"}, {"tag": "TABL"}] + [dict(o, tag="inst") for o in objs]})
+        prop = {"model": "sample", "template": "", "properties": []}
+        tern = ucfb.wrap(b"tern", ucfb.pack_chunk(b"NAME", b"blank\0") + ucfb.pack_chunk(b"INFO", b"\0" * 8))
+        wrld = ucfb.wrap(b"wrld", ucfb.pack_chunk(b"NAME", b"blank\0") + ucfb.pack_chunk(b"TNAM", b"blank\0"))
+        recs = [
+            (name_hash("blank"), name_hash("Terrain"), tern), (name_hash("blank"), WORLD, wrld),
+            (name_hash("blank"), SCRIPT, script.encode(script.new("blank", "x = 1\n"))),
+            (name_hash("blank"), name_hash("list"), b"\n[world]\n\nload blank\n\n[texture]\n\nload skyother\nload sky\n"),
+            (name_hash("sw"), name_hash("list"), b"\n[world]\n\nload sw\n\n[model]\n\nload sample\nload coded\n\n"
+                                                 b"[texture]\n\nload tex\nload tex_nm\nload effect\n"),
+            (name_hash("sw"), WORLD, layer("sw", [prop])),
+        ]
+        build(self.data / "assets.dsk", recs)
+        (self.data / "levels.ini").write_text("[LevelNamesList]\n\nLevelName\tLV_blank\n\n[LV_blank]\nName\t\t\tblank\n"
+                                              "Path\t\t\t\\TEST\\\nConfigFile\t\t\\TEST\\blank.ini\n", encoding="latin-1")
+        (self.data / "TEST").mkdir()
+        (self.data / "TEST" / "blank.ini").write_text("SkyTexture\t\tsky\n", encoding="latin-1")
+        (self.data / "TEST" / "other.ini").write_text("SkyTexture\t\tskyother\n", encoding="latin-1")
+        (self.project / "maps").mkdir(exist_ok=True)
+        self.write("maps/island.json", json.dumps({"from": "blank"}))
+        result = modbuild.build(self.project, self.data, self.out)
+        loads = self.records("assets.dsk")[(name_hash("island"), name_hash("list"))].decode("latin-1")
+        # sample is only sw's scenery: it and the textures only it draws go; a
+        # model no object names (the code's) and a texture no model draws stay
+        self.assertNotIn("load sample", loads)
+        self.assertNotIn("load tex\n", loads)
+        self.assertNotIn("load tex_nm", loads)
+        self.assertIn("load coded", loads)
+        self.assertIn("load effect", loads)
+        # another level's sky goes; the one its config names stays
+        self.assertNotIn("skyother", loads)
+        self.assertIn("load sky\n", loads)
+        self.assertTrue(any("not sw's scenery: 1 models, 2 textures" in c for c in result.changes))
+        self.assertTrue(any("doesn't load the skies skyother" in c for c in result.changes))
+        # a template that draws it (spawnable anywhere) keeps it
+        recs.append((name_hash("template_vehicles"), WORLD,
+                     layer("template_vehicles", [dict(prop, template="template_thing")])))
+        build(self.data / "assets.dsk", recs)
+        modbuild.build(self.project, self.data, self.out)
+        loads = self.records("assets.dsk")[(name_hash("island"), name_hash("list"))].decode("latin-1")
+        self.assertIn("load sample", loads)
+        self.assertIn("load tex\n", loads)
+
     def test_layer_name_limit(self):
         # more names than the game's named-object table can take are refused
         # (a full table hangs it); "unnamed" scenery is fine
