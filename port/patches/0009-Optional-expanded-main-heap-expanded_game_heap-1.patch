@@ -1,0 +1,294 @@
+From 857944b367218e9f287206a6888b742a9a92e391 Mon Sep 17 00:00:00 2001
+From: Just-Intent <346791974+Just-Intent@users.noreply.github.com>
+Date: Wed, 18 Nov 2026 07:23:26 -0600
+Subject: [PATCH] Optional expanded main heap (expanded_game_heap=1)
+
+With extended_graphics_memory the retail texture pool leaves the lower
+64 MiB; give 16 MiB of that room to the game's main heap (0x1806A0) and
+16,384 block descriptors instead of 7,000. Large maps no longer hang in
+the retail allocator's retry loop when the heap runs out while streaming.
+Ignored without the graphics bank. Not yet tested in game.
+---
+ docs/MOD_EXTENSIONS.md                        | 15 ++++
+ ports/mercenaries/CMakeLists.txt              |  1 +
+ .../resources/modcompatibility.ini            |  2 +
+ ports/mercenaries/scripts/Patch-Generated.py  | 27 ++++++
+ ports/mercenaries/src/mod_compatibility.c     | 11 ++-
+ ports/mercenaries/src/mod_compatibility.h     |  2 +
+ ports/mercenaries/src/recomp_game_heap.c      | 89 +++++++++++++++++++
+ src/kernel/xbox_memory_layout.c               |  5 ++
+ src/kernel/xbox_memory_layout.h               |  4 +
+ 9 files changed, 154 insertions(+), 2 deletions(-)
+ create mode 100644 ports/mercenaries/src/recomp_game_heap.c
+
+diff --git a/docs/MOD_EXTENSIONS.md b/docs/MOD_EXTENSIONS.md
+index 1fb6203..3310757 100644
+--- a/docs/MOD_EXTENSIONS.md
++++ b/docs/MOD_EXTENSIONS.md
+@@ -25,6 +25,21 @@ Each switch defaults to `0` and can be enabled independently. Keep
+ The switches do not create assets, crates, weapons, or catalog entries;
+ those still come from the mod's data.
+ 
++## Main heap
++
++The game keeps most of its objects, streamed models and scripts in one fixed
++18.6 MiB heap created at startup (retail 0x1806A0). A large map can fill it
++while streaming; the retail allocator then waits forever for memory instead
++of failing, and rewrites `PoiDump.htm` while it waits.
++
++`expanded_game_heap=1` in `[Mods]` adds 16 MiB to that heap and raises its
++block descriptors from 7,000 to 16,384. It needs `extended_graphics_memory=1`:
++the graphics bank moves the retail 22.5 MiB texture pool out of the lower
++64 MiB, and the bigger heap uses part of the room that frees. Without the
++graphics bank the option is ignored and stderr says so. With it, stderr logs
++the heap size and the lower bank's free room at startup. The option is not
++yet tested in game.
++
+ ## Supplier factions and support prices
+ 
+ With `faction_support=1`, `[SupportFactions]` associates an item with its supplier.
+diff --git a/ports/mercenaries/CMakeLists.txt b/ports/mercenaries/CMakeLists.txt
+index c173398..b670c32 100644
+--- a/ports/mercenaries/CMakeLists.txt
++++ b/ports/mercenaries/CMakeLists.txt
+@@ -59,6 +59,7 @@ set(GAME_SOURCES
+     src/mod_saves.cpp
+     src/mod_extensions.c
+     src/recomp_world_properties.c
++    src/recomp_game_heap.c
+     src/shop_config.c
+     src/audio_bank_fixes.c
+     src/ps2_upgrades.c
+diff --git a/ports/mercenaries/resources/modcompatibility.ini b/ports/mercenaries/resources/modcompatibility.ini
+index db65feb..9526bac 100644
+--- a/ports/mercenaries/resources/modcompatibility.ini
++++ b/ports/mercenaries/resources/modcompatibility.ini
+@@ -2,6 +2,8 @@
+ [Mods]
+ extended_graphics_memory=0
+ expanded_world_properties=0
++; 16 MiB more main heap for large maps; needs extended_graphics_memory=1.
++expanded_game_heap=0
+ 
+ ; Optional gameplay extensions. See docs/MOD_EXTENSIONS.md.
+ faction_support=0
+diff --git a/ports/mercenaries/scripts/Patch-Generated.py b/ports/mercenaries/scripts/Patch-Generated.py
+index b9a7bd8..7bca751 100644
+--- a/ports/mercenaries/scripts/Patch-Generated.py
++++ b/ports/mercenaries/scripts/Patch-Generated.py
+@@ -14667,6 +14667,33 @@ PATCHES += (
+         "    PUSH32(esp, eax == 0x04000000u ? 0x03FF0000u : 0x1680000u);"),
+ )
+ 
++# The main heap's size, descriptor count and table come from
++# recomp_game_heap.c: retail unless expanded_game_heap=1 (src/recomp_game_heap.c).
++PATCHES += (
++    GeneratedPatch("Optional expanded main heap allocation",
++        "loc_001806B4: ;\n    PUSH32(esp, 0x129999A);\n"
++        "    PUSH32(esp, 0); sub_00238533(); /* call 0x00238533 */",
++        "loc_001806B4: ;\n"
++        "    { uint32_t recomp_game_heap_allocation(void);\n"
++        "      PUSH32(esp, recomp_game_heap_allocation()); }\n"
++        "    PUSH32(esp, 0); sub_00238533(); /* call 0x00238533 */"),
++    GeneratedPatch("Optional expanded main heap capacity",
++        "loc_001806BE: ;\n    PUSH32(esp, 0x1B58);\n"
++        "    PUSH32(esp, 0x406298);\n    PUSH32(esp, 0x129599A);\n"
++        "    PUSH32(esp, eax);",
++        "loc_001806BE: ;\n"
++        "    { void recomp_game_heap_check(uint32_t);\n"
++        "      uint32_t recomp_game_heap_blocks(void), recomp_game_heap_table(void),\n"
++        "               recomp_game_heap_size(void);\n"
++        "      uint32_t _heap_base = eax;\n"
++        "      recomp_game_heap_check(_heap_base);\n"
++        "      PUSH32(esp, recomp_game_heap_blocks());\n"
++        "      PUSH32(esp, recomp_game_heap_table());\n"
++        "      PUSH32(esp, recomp_game_heap_size());\n"
++        "      eax = _heap_base; }\n"
++        "    PUSH32(esp, eax);"),
++)
++
+ 
+ # Extend the permanent-property array only when the mod property option is enabled.
+ PATCHES += (
+diff --git a/ports/mercenaries/src/mod_compatibility.c b/ports/mercenaries/src/mod_compatibility.c
+index 89c8690..1161999 100644
+--- a/ports/mercenaries/src/mod_compatibility.c
++++ b/ports/mercenaries/src/mod_compatibility.c
+@@ -7,7 +7,7 @@
+ 
+ #include "mod_gameplay.h"
+ 
+-static int expanded_world_properties;
++static int expanded_world_properties, expanded_game_heap;
+ static int faction_support, impact_stun_ammo, extra_grenade_slot;
+ 
+ enum { MOD_MAPPING_LIMIT = 512, MOD_SECTION_SIZE = 65536 };
+@@ -93,7 +93,7 @@ void recomp_mod_compatibility_init(void)
+     char path[MAX_PATH];
+     int extended_graphics = 0;
+     DWORD length = GetModuleFileNameA(NULL, path, MAX_PATH);
+-    expanded_world_properties = 0;
++    expanded_world_properties = expanded_game_heap = 0;
+     faction_support = impact_stun_ammo = extra_grenade_slot = 0;
+     support_count = impact_count = 0;
+     if (length && length < MAX_PATH) {
+@@ -106,6 +106,8 @@ void recomp_mod_compatibility_init(void)
+                     "Mods", "extended_graphics_memory", 0, path) == 1;
+                 expanded_world_properties = GetPrivateProfileIntA(
+                     "Mods", "expanded_world_properties", 0, path) == 1;
++                expanded_game_heap = GetPrivateProfileIntA(
++                    "Mods", "expanded_game_heap", 0, path) == 1;
+                 faction_support = GetPrivateProfileIntA("Mods", "faction_support", 0, path) == 1;
+                 impact_stun_ammo = GetPrivateProfileIntA("Mods", "impact_stun_ammo", 0, path) == 1;
+                 extra_grenade_slot = GetPrivateProfileIntA("Mods", "extra_grenade_slot", 0, path) == 1;
+@@ -126,3 +128,8 @@ int recomp_mod_expanded_world_properties(void)
+ {
+     return expanded_world_properties;
+ }
++
++int recomp_mod_expanded_game_heap(void)
++{
++    return expanded_game_heap;
++}
+diff --git a/ports/mercenaries/src/mod_compatibility.h b/ports/mercenaries/src/mod_compatibility.h
+index c88d1a4..fb1b886 100644
+--- a/ports/mercenaries/src/mod_compatibility.h
++++ b/ports/mercenaries/src/mod_compatibility.h
+@@ -6,6 +6,8 @@
+ /* Read once before memory initialization; settings take effect on restart. */
+ void recomp_mod_compatibility_init(void);
+ int recomp_mod_expanded_world_properties(void);
++/* A 16 MiB larger main heap; needs extended_graphics_memory. */
++int recomp_mod_expanded_game_heap(void);
+ 
+ /* Unmapped identifiers retain retail behavior. */
+ int recomp_mod_support_faction(uint32_t key);
+diff --git a/ports/mercenaries/src/recomp_game_heap.c b/ports/mercenaries/src/recomp_game_heap.c
+new file mode 100644
+index 0000000..e844080
+--- /dev/null
++++ b/ports/mercenaries/src/recomp_game_heap.c
+@@ -0,0 +1,89 @@
++/* The game's main heap (retail 0x1806A0) is one fixed 18.6 MiB block with
++ * 7,000 block descriptors at 0x406298. Large mods fill it while streaming;
++ * the retail allocator then retries forever (0x1F70F0) instead of failing.
++ *
++ * With the extended graphics bank the retail 22.5 MiB graphics pool no longer
++ * comes from the lower 64 MiB, so expanded_game_heap=1 gives 16 MiB of that
++ * room to the main heap and moves its descriptors to a larger table. Without
++ * the graphics bank the option is ignored: retail sizes leave no room.
++ */
++#include "kernel/xbox_memory_layout.h"
++#include "mod_compatibility.h"
++#include <stdint.h>
++#include <stdio.h>
++#include <stdlib.h>
++
++#define RETAIL_HEAP_ALLOCATION 0x0129999Au
++#define RETAIL_HEAP_SIZE 0x0129599Au
++#define RETAIL_HEAP_TABLE 0x00406298u
++#define RETAIL_HEAP_BLOCKS 0x1B58u
++#define EXPANDED_HEAP_EXTRA (16u * 1024u * 1024u)
++#define EXPANDED_HEAP_BLOCKS 16384u
++
++static int expanded_heap(void)
++{
++    static int decided, expanded;
++    if (!decided) {
++        decided = 1;
++        if (recomp_mod_expanded_game_heap()) {
++            if (xbox_GetExtendedGraphicsPool())
++                expanded = 1;
++            else
++                fprintf(stderr, "[GAME-HEAP] expanded_game_heap needs "
++                                "extended_graphics_memory=1; using the retail size\n");
++        }
++    }
++    return expanded;
++}
++
++uint32_t recomp_game_heap_allocation(void)
++{
++    uint32_t size = RETAIL_HEAP_ALLOCATION;
++    if (expanded_heap()) {
++        size += EXPANDED_HEAP_EXTRA;
++        fprintf(stderr, "[GAME-HEAP] main heap %u bytes (retail %u), "
++                        "%u bytes free in the lower bank before it\n",
++                size, RETAIL_HEAP_ALLOCATION, xbox_HeapFrontierBytes());
++        fflush(stderr);
++    }
++    return size;
++}
++
++uint32_t recomp_game_heap_size(void)
++{
++    return RETAIL_HEAP_SIZE + (expanded_heap() ? EXPANDED_HEAP_EXTRA : 0u);
++}
++
++uint32_t recomp_game_heap_blocks(void)
++{
++    return expanded_heap() ? EXPANDED_HEAP_BLOCKS : RETAIL_HEAP_BLOCKS;
++}
++
++uint32_t recomp_game_heap_table(void)
++{
++    static uint32_t table;
++    if (!expanded_heap())
++        return RETAIL_HEAP_TABLE;
++    if (!table) {
++        table = xbox_HeapAlloc(EXPANDED_HEAP_BLOCKS * 8u, 64u);
++        if (!table) {
++            fprintf(stderr, "[GAME-HEAP] cannot allocate %u block descriptors\n",
++                    EXPANDED_HEAP_BLOCKS);
++            fflush(stderr);
++            exit(86);
++        }
++    }
++    return table;
++}
++
++/* Called with the main heap's allocation; zero means the lower bank was full. */
++void recomp_game_heap_check(uint32_t base)
++{
++    if (base)
++        return;
++    fprintf(stderr, "[GAME-HEAP] cannot allocate the %u-byte main heap%s\n",
++            RETAIL_HEAP_ALLOCATION + (expanded_heap() ? EXPANDED_HEAP_EXTRA : 0u),
++            expanded_heap() ? "; set expanded_game_heap=0" : "");
++    fflush(stderr);
++    exit(86);
++}
+diff --git a/src/kernel/xbox_memory_layout.c b/src/kernel/xbox_memory_layout.c
+index b8130af..4b74a8b 100644
+--- a/src/kernel/xbox_memory_layout.c
++++ b/src/kernel/xbox_memory_layout.c
+@@ -1223,6 +1223,11 @@ static uint32_t xbox_HeapAllocClass(
+     return result;
+ }
+ 
++uint32_t xbox_HeapFrontierBytes(void)
++{
++    return g_heap_page_next > g_heap_next ? g_heap_page_next - g_heap_next : 0u;
++}
++
+ uint32_t xbox_HeapAlloc(uint32_t size, uint32_t alignment)
+ {
+     return xbox_HeapAllocClass(
+diff --git a/src/kernel/xbox_memory_layout.h b/src/kernel/xbox_memory_layout.h
+index 11e6d2e..ee820c0 100644
+--- a/src/kernel/xbox_memory_layout.h
++++ b/src/kernel/xbox_memory_layout.h
+@@ -165,6 +165,10 @@ ptrdiff_t xbox_GetMemoryOffset(void);
+  */
+ uint32_t xbox_HeapAlloc(uint32_t size, uint32_t alignment);
+ 
++/** Bytes not yet handed out between the heap's two frontiers (released
++ * ranges available for reuse are not counted). */
++uint32_t xbox_HeapFrontierBytes(void);
++
+ /** Allocate complete 4 KiB guest pages while retaining the caller's required
+  * base alignment. Xbox physical/contiguous allocations own every page they
+  * touch; sharing an unused tail with pool memory corrupts both allocators. */
+-- 
+2.55.0.windows.5
+

@@ -688,6 +688,30 @@ class SyncTests(unittest.TestCase):
             self.assertFalse(sync._separate_saves(game))
             self.assertTrue((game / "mod-loader.ini").read_bytes().startswith(b"\xff\xfe"))
 
+    def test_sync_turns_on_the_bigger_heap(self):
+        # the built mod brings the port's memory options, the bigger main heap
+        # among them (the launcher then writes none of its own)
+        from mercfoundry import sync
+        with tempfile.TemporaryDirectory() as tmp:
+            game = Path(tmp)
+            modbuild.new_project(game / "mods" / "A Mod", "A Mod")
+            sync.write_loader(game, [sync.Mod("A Mod", True)])
+            data = game / "game_files" / "DATAxbox"
+            data.mkdir(parents=True)
+
+            def fake_build(sources, data_dir, out, **kw):
+                out.mkdir(parents=True, exist_ok=True)
+                (out / "foundry-mod.json").write_text(json.dumps({"archives": [], "files": []}), encoding="utf-8")
+            with unittest.mock.patch.object(modbuild, "build", fake_build), \
+                    unittest.mock.patch("mercfoundry.funcprofile.write_handoff", lambda g: "ok"):
+                sync.sync(game, data, enable=True)
+            out = game / "mods" / sync.OUTPUT
+            self.assertIn("expanded_game_heap=1", (out / "modcompatibility.ini").read_text(encoding="utf-8"))
+            self.assertIn("extended_graphics_memory=1", (out / "modcompatibility.ini").read_text(encoding="utf-8"))
+            self.assertIn("modcompatibility.ini", json.loads((out / "foundry-mod.json").read_text())["files"])
+            self.assertTrue(sync._remove_output(out))
+            self.assertFalse(out.exists())
+
 
 class PackTests(unittest.TestCase):
     def setUp(self):

@@ -20,6 +20,13 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 OUTPUT = "Foundry Mods"
+COMPAT = "modcompatibility.ini"
+COMPAT_TEXT = ("; Written by mercfoundry mod sync for the built Foundry mods.\n"
+               "[Mods]\n"
+               "extended_graphics_memory=1\n"
+               "expanded_world_properties=1\n"
+               "; 16 MiB more main heap: big maps stream without running out of memory\n"
+               "expanded_game_heap=1\n")
 SOURCE_DIRS = ("text", "scripts", "objects", "encounters", "missions", "textures", "models", "layout",
                "animations", "animtables", "terrain", "sounds")
 
@@ -246,6 +253,12 @@ def sync(game, data_dir=None, force=False, enable=False) -> SyncResult:
     result.build = modbuild.build(sources, data_dir, out, name=OUTPUT,
                                   description="Built on this PC from: " + ", ".join(result.sources))
     doc = json.loads(meta.read_text(encoding="utf-8"))
+    # The port's memory options for big mods. The launcher writes the first two
+    # itself for any mod with archives, but only when no mod brings its own
+    # modcompatibility.ini; this one adds the bigger main heap (16 MiB more,
+    # port build 0.172+; older ports ignore the line).
+    (out / COMPAT).write_text(COMPAT_TEXT, encoding="utf-8")
+    doc["files"] = sorted(set(doc.get("files", [])) | {COMPAT})
     doc.update({"synced": True, "fingerprint": fp})
     meta.write_text(json.dumps(doc, indent=1) + "\n", encoding="utf-8")
     result.built = True
