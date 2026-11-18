@@ -1071,6 +1071,20 @@
    "signature": "void __cdecl ActorMemory_WriteReport(const char *path)",
    "notes": "An HTML page, \"Actor Memory Usage\": each kind of placed object (Humans, Cars, ... Bounty) with each template's total, model and per-instance size and count, then totals by group.",
    "evidence": "retail code: the section strings 0x2F4634-0x2F48BC; live test (2026-11-18, hangsnap of a frozen game on the Gaza mod's map): the file it wrote"
+  },
+  {
+   "address": "0x001EEBC0",
+   "name": "WorldLayer_LoadObjects",
+   "signature": "void __stdcall WorldLayer_LoadObjects(Stream *layer)",
+   "notes": "Reads a world layer's NAME, TABL and inst chunks. Every named inst goes to g_TemplateTable (TemplateTable_Add); an inst whose name starts with \"template_\" stops there (a template: spawnable by name, not placed), others are created in the world.",
+   "evidence": "retail code: TemplateTable_Add for each named inst, then the name compared with the string \"template_\" (0x2DC380, strncmp 0x2379A0) and the object's creation skipped when it matches"
+  },
+  {
+   "address": "0x00184890",
+   "name": "Level_Load",
+   "signature": "void __cdecl Level_Load(const char *level, const char *layer)",
+   "notes": "Loads the level's layer, then template_weapons, template_humans, template_vehicles, template_ruin and template_misc (with 0x413FC9 set: Utility_ReadLevelFile loads at once), then 0x17F490. On the Gaza mod's new map (2026-11-18) none of template_vehicles' templates were loaded in game, so that path seems not to run for it, or to run before something clears the table; not traced further.",
+   "evidence": "retail code: the five strings 0x2F5608-0x2F564C pushed to 0x180B10 in turn"
   }
  ],
  "globals": [

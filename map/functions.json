@@ -5,11 +5,11 @@
  },
  "counts": {
   "functions_in_analysis": 13982,
-  "named": 706,
+  "named": 708,
   "with_file": 1500,
   "file_direct": 224,
   "lua_commands": 360,
-  "manual": 174,
+  "manual": 176,
   "globals": 33,
   "structures": 10,
   "derived": 134
@@ -12557,8 +12557,16 @@
   },
   {
    "address": "0x00184890",
+   "names": [
+    "Level_Load"
+   ],
+   "evidence": [
+    "retail code: the five strings 0x2F5608-0x2F564C pushed to 0x180B10 in turn"
+   ],
    "file": "RsMainStateGame.cpp",
-   "file_evidence": "between"
+   "file_evidence": "between",
+   "notes": "Loads the level's layer, then template_weapons, template_humans, template_vehicles, template_ruin and template_misc (with 0x413FC9 set: Utility_ReadLevelFile loads at once), then 0x17F490. On the Gaza mod's new map (2026-11-18) none of template_vehicles' templates were loaded in game, so that path seems not to run for it, or to run before something clears the table; not traced further.",
+   "signature": "void __cdecl Level_Load(const char *level, const char *layer)"
   },
   {
    "address": "0x00184F00",
@@ -14454,6 +14462,17 @@
    "lines": [
     3691
    ]
+  },
+  {
+   "address": "0x001EEBC0",
+   "names": [
+    "WorldLayer_LoadObjects"
+   ],
+   "evidence": [
+    "retail code: TemplateTable_Add for each named inst, then the name compared with the string \"template_\" (0x2DC380, strncmp 0x2379A0) and the object's creation skipped when it matches"
+   ],
+   "notes": "Reads a world layer's NAME, TABL and inst chunks. Every named inst goes to g_TemplateTable (TemplateTable_Add); an inst whose name starts with \"template_\" stops there (a template: spawnable by name, not placed), others are created in the world.",
+   "signature": "void __stdcall WorldLayer_LoadObjects(Stream *layer)"
   },
   {
    "address": "0x001EF020",

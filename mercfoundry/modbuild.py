@@ -474,18 +474,104 @@ def _trim_like_loads(data, more, own_layers):
     return out, f"{n_mod} models, {n_tex} textures" if n_mod or n_tex else ""
 
 
+# The template layer a new map's own script loads (map_script). The level
+# loader (0x184890) also reads template_weapons, _humans, _vehicles, _ruin and
+# _misc for every level, but tried in game (2026-11-18) the Gaza map's
+# Foundry Console found none of template_vehicles' templates loaded, so a
+# new map's copies bring the templates they name from those too.
+NEW_MAP_TEMPLATE_LAYERS = ("template_vehicles_ch2",)
+
+
+def _map_templates(data, name, wanted, where):
+    """maps/<name>.json "templates": copies of game templates, under their own
+    names, in a layer of their own that loads with the map (<name>_templates),
+    for templates a new map doesn't have (tried on the Gaza map: no template of
+    template_vehicles or the chapter layers was loaded). The world layer loader
+    makes a template of any loaded object named template_* (it registers its
+    properties and doesn't place it), so the copies spawn like the game's.
+    They are copied as the build has them (with a mod's rules applied), with
+    only their own loads (models, ruins, wheels, the textures those draw), and
+    with the weapon, ammunition and crew templates they name (but those of
+    template_vehicles_ch2, which the map's script loads). Returns (layer,
+    template names, records) or None."""
+    from . import encounters
+    archives = [data.archive(n) for n in ARCHIVES if (data.dir / n).exists()]
+    by_name, _ = _world_index(data, archives)
+    always = {n.lower() for n in NEW_MAP_TEMPLATE_LAYERS}
+    layer_docs, lists = {}, {}
+
+    def source(t):
+        """(layer, its inst) of template t as built: a shared template layer's first, else any layer's."""
+        hits = [h for h in by_name.get(t.lower(), []) if t.lower().startswith("template_")]
+        if not hits:
+            raise ValueError(f"{where}: \"templates\": no game template named {t!r}")
+        hits.sort(key=lambda h: not h["layer"].lower().startswith("template"))
+        lay = hits[0]["layer"]
+        if lay not in layer_docs:
+            a, r = next((a, r) for a, r in data.records(WORLD) if r.key == name_hash(lay))
+            layer_docs[lay] = world.to_json(data.current(a, r))
+        inst = next(c for c in layer_docs[lay]["chunks"]
+                    if c.get("tag") == "inst" and c.get("template", "").lower() == t.lower())
+        return lay, inst
+
+    def in_always(t):
+        return any(h["layer"].lower() in always for h in by_name.get(t.lower(), []))
+
+    todo = [str(t) for t in wanted]
+    done, insts, loads = set(), [], {}
+    while todo:
+        t = todo.pop(0)
+        if t.lower() in done:
+            continue
+        done.add(t.lower())
+        lay, inst = source(t)
+        insts.append(copy.deepcopy(inst))
+        if lay not in lists:
+            hit = [(a, r) for a, r in data.records(name_hash("list")) if r.key == name_hash(lay)]
+            body = data.current(*hit[0]) if hit else data.find_added(name_hash(lay), name_hash("list"))
+            lists[lay] = encounters.parse_list(body.decode("latin-1")) if body else {}
+        for kind, names_ in _object_loads({"model": inst.get("model"), "properties": inst.get("properties")},
+                                          lists[lay], archives).items():
+            have = loads.setdefault(kind, [])
+            have += [n for n in names_ if n.lower() not in {h.lower() for h in have}]
+        # the templates it names (its weapons, its crew), unless every map has them
+        for _, v in inst.get("properties") or []:
+            v = str(v)
+            if v.lower().startswith("template_") and v.lower() not in done and by_name.get(v.lower()) \
+                    and not in_always(v):
+                todo.append(v)
+    if not insts:
+        return None
+    layer = f"{name}_templates"
+    wdoc = {"format": world.FORMAT, "name": layer, "strings": [], "chunks": [
+        {"tag": "NAME"}, {"tag": "TNAM", "hex": (name.upper().encode("ascii") + b"\0").hex()},
+        {"tag": "INFO", "rest": "0000000000000000"}, {"tag": "TABL"}] + insts}
+    sections = {"world": [layer]}
+    for kind, names_ in loads.items():
+        if kind.lower() not in encounters.LAYER_KINDS:
+            sections.setdefault(kind, []).extend(names_)
+    text = "".join(f"\n[{k}]\n\n" + "".join(f"load {n}\n" for n in sections[k]) for k in sorted(sections))
+    return layer, [t["template"] for t in insts], {WORLD: world.from_json(wdoc), name_hash("list"): text.encode("latin-1")}
+
+
 def _object_loads(obj, full, archives):
     """What one object needs from a load list that loads much more (a map's):
     entries its model or properties name (its model, ruin model, animation
     table...), and the textures those models draw (by the texture hashes in
     their materials, with each one's _nm normal map)."""
     from . import model as model_mod
-    wanted = {str(obj.get("model") or "").lower()} | {str(v).lower() for _, v in obj.get("properties") or []}
+    # an animationTable value names an animation table only: vehicles' are
+    # named after their game model (a redrawn Abrams keeps "allies_veh_m1a2")
+    props = obj.get("properties") or []
+    anim = {str(v).lower() for k, v in props if str(k).lower() == "animationtable"}
+    wanted = {str(obj.get("model") or "").lower()} | {str(v).lower() for k, v in props
+                                                      if str(k).lower() != "animationtable"}
     out = {}
     for kind, names in full.items():
         if kind.lower() in ("texture", "terrain"):
             continue
-        keep = [n for n in names if n.lower() in wanted]
+        want = wanted | anim if kind.lower() == "animtable" else wanted
+        keep = [n for n in names if n.lower() in want]
         if keep:
             out[kind] = keep
     hashes = set()
@@ -1662,8 +1748,21 @@ def _apply_maps(data, folder, result):
         # scripts step) wins; otherwise a copy of the source map's.
         # The map's file can say where the player arrives and what shows; its
         # layers ("load": "map") load with it.
+        if mdoc.get("templates"):
+            got = _map_templates(data, name, mdoc["templates"], where)
+            if got:
+                tlayer, tnames, trecs = got
+                if any(r.key == name_hash(tlayer) for _, r in data.records(WORLD)):
+                    raise ValueError(f"{where}: the game already has a layer named {tlayer!r}")
+                for kind_, body_ in trecs.items():
+                    data.new("assets.dsk", name_hash(tlayer), kind_, body_)
+                data.new_map_layers = getattr(data, "new_map_layers", {})
+                data.new_map_layers.setdefault(name.lower(), []).insert(0, tlayer)
+                extra_ = len(tnames) - len(mdoc["templates"])
+                made.append(f"{len(mdoc['templates'])} templates in {tlayer}"
+                            + (f" (and {extra_} they name: {', '.join(tnames[len(mdoc['templates']):])})" if extra_ else ""))
         layers = getattr(data, "new_map_layers", {}).get(name.lower(), [])
-        pilots = getattr(data, "new_map_pilots", {}).get(name.lower(), [])
+        pilots =getattr(data, "new_map_pilots", {}).get(name.lower(), [])
         played = getattr(data, "map_missions", {}).get(name.lower(), [])
         contacts = name.lower() in getattr(data, "contract_maps", set()) or bool(played)
         if contacts:

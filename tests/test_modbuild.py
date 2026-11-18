@@ -275,6 +275,60 @@ class ModBuildTests(unittest.TestCase):
         self.assertIn("load sample", loads)
         self.assertIn("load tex\n", loads)
 
+    def test_new_map_templates(self):
+        # "templates": copies of templates a new map doesn't load, with the
+        # templates they name unless every map has them, and only their loads
+        from mercfoundry import ucfb
+
+        def layer(name, objs):
+            return world.from_json({"format": "mercfoundry-world-1", "name": name, "strings": [], "chunks": [
+                {"tag": "NAME"}, {"tag": "TABL"}] + [dict(o, tag="inst") for o in objs]})
+        tank = {"model": "sample", "template": "template_tank",
+                "properties": [["GeometryFile", "sample"], ["weapon_A", "template_wep_big"],
+                               ["RiderOccupant_A", "template_allies_driver"], ["weapon_B", "template_wep_small"]]}
+        tern = ucfb.wrap(b"tern", ucfb.pack_chunk(b"NAME", b"blank\0") + ucfb.pack_chunk(b"INFO", b"\0" * 8))
+        wrld = ucfb.wrap(b"wrld", ucfb.pack_chunk(b"NAME", b"blank\0") + ucfb.pack_chunk(b"TNAM", b"blank\0"))
+        build(self.data / "assets.dsk", [
+            (name_hash("blank"), name_hash("Terrain"), tern), (name_hash("blank"), WORLD, wrld),
+            (name_hash("blank"), SCRIPT, script.encode(script.new("blank", "x = 1\n"))),
+            (name_hash("blank"), name_hash("list"), b"\n[world]\n\nload blank\n"),
+            (name_hash("template_vehicles_ch3"), WORLD, layer("template_vehicles_ch3", [tank])),
+            (name_hash("template_vehicles_ch3"), name_hash("list"),
+             b"\n[world]\n\nload template_vehicles_ch3\n\n[model]\n\nload sample\nload other\n\n"
+             b"[texture]\n\nload tex\nload other_tex\n"),
+            (name_hash("template_special"), WORLD, layer("template_special", [
+                {"model": "", "template": "template_wep_big", "properties": [["ammo", "big"]]}])),
+            (name_hash("template_humans"), WORLD, layer("template_humans", [
+                {"model": "", "template": "template_allies_driver", "properties": []}])),
+            (name_hash("template_vehicles_ch2"), WORLD, layer("template_vehicles_ch2", [
+                {"model": "", "template": "template_wep_small", "properties": []}])),
+        ])
+        (self.data / "levels.ini").write_text("[LevelNamesList]\n\nLevelName\tLV_blank\n\n[LV_blank]\nName\t\t\tblank\n"
+                                              "Path\t\t\t\\TEST\\\nConfigFile\t\t\\TEST\\blank.ini\n", encoding="latin-1")
+        (self.data / "TEST").mkdir()
+        (self.data / "TEST" / "blank.ini").write_text("SkyTexture\t\tsky\n", encoding="latin-1")
+        (self.project / "maps").mkdir(exist_ok=True)
+        self.write("maps/island.json", json.dumps({"from": "blank", "loads_like": None, "templates": ["template_tank"]}))
+        result = modbuild.build(self.project, self.data, self.out)
+        recs = self.records("assets.dsk")
+        objs = list(world.iter_objects(recs[(name_hash("island_templates"), WORLD)]))
+        # what it names comes too, but what the map's script loads already (ch2)
+        self.assertEqual([o["name"] for o in objs], ["template_tank", "template_wep_big", "template_allies_driver"])
+        self.assertEqual(list(objs[0]["properties"][0]), ["GeometryFile", "sample"])
+        loads = recs[(name_hash("island_templates"), name_hash("list"))].decode("latin-1")
+        self.assertIn("[world]\n\nload island_templates\n", loads)
+        self.assertIn("load sample\n", loads)
+        self.assertIn("load tex\n", loads)
+        self.assertNotIn("other", loads)
+        self.assertIn("Utility_ReadLevelFile('island_templates')",
+                      script.decode(recs[(name_hash("island"), SCRIPT)]).source)
+        self.assertTrue(any("1 templates in island_templates (and 2 they name: template_wep_big, "
+                            "template_allies_driver)" in c
+                            for c in result.changes))
+        self.write("maps/island.json", json.dumps({"from": "blank", "loads_like": None, "templates": ["template_nothing"]}))
+        with self.assertRaisesRegex(ValueError, "no game template named 'template_nothing'"):
+            modbuild.build(self.project, self.data, self.out)
+
     def test_layer_name_limit(self):
         # more names than the game's named-object table can take are refused
         # (a full table hangs it); "unnamed" scenery is fine
