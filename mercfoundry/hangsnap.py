@@ -265,11 +265,39 @@ def group_threads(threads):
     return out
 
 
+# Waits the game can sit in for good, by a guest function on the stack (the
+# retail code, map/manual.json), and what each means.
+KNOWN_WAITS = [
+    (0x001F70F0, "out of memory: the game is retrying an allocation that failed (Heap_AllocRetrying), "
+                 "running its out-of-memory handlers between tries; it won't get further until memory frees up"),
+    (0x00222190, "the allocation is for streaming: the stream queue (StreamQueue_Issue) is reading in data "
+                 "for the world around the player (models, textures, terrain), and there isn't room for it"),
+    (0x0017F6B0, "one of the handlers is writing the actor memory report, z:\\PoiDump.htm (in the port: "
+                 "mod-cache/<hash>/storage/Cache/PoiDump.htm), again on every try; its totals are the placed "
+                 "objects' memory, not the streamed data's"),
+]
+
+
+def diagnose(snap, lmap):
+    """What the stacks look like, for the waits in KNOWN_WAITS."""
+    seen = set()
+    for _ids, _desc, frames in snap["threads"]:
+        for module, offset in frames:
+            hit = lmap.function_at(offset) if module == "exe" else None
+            ga = guest_address(hit[0]) if hit else None
+            if ga is not None:
+                seen.add(ga)
+    return [text for addr, text in KNOWN_WAITS if addr in seen]
+
+
 def report(snap, lmap, guest, recent=32):
     """Readable lines for a parsed snapshot."""
     lines = []
     if snap["base"] is not None:
         lines.append(f"image base 0x{snap['base']:X}, size 0x{snap['size']:X}")
+    found = diagnose(snap, lmap)
+    if found:
+        lines += ["", "what it looks like:"] + [f"  - {t}" for t in found]
     g = snap["globals"]
     trace_lines = []
     if g:

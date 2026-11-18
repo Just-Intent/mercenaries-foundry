@@ -25,6 +25,15 @@ Start with the thread that runs the recompiled game: it is the one with `sub_XXX
 - Take two or three snapshots a few seconds apart. A stack that never changes is stuck in place; one that moves is a loop.
 - Note the game functions above the library frames (what was being drawn or loaded), then narrow it down by switching mods or mod files off and on until the hang comes and goes.
 
+### Out of memory
+
+When the game runs out of memory it doesn't crash: it retries the allocation for good (`Heap_AllocRetrying`, `0x1F70F0`), running its out-of-memory handlers between tries, and Windows soon marks it "Not Responding". `hangsnap` says so at the top of its report ("what it looks like"). Two signs of it:
+
+- The game thread's stack changes between snapshots but always passes through `sub_001F70F0`; with `sub_00222190` (`StreamQueue_Issue`) under it, the memory was for streaming in the world around the player: models, textures and terrain.
+- One handler writes an "Actor Memory Usage" report to the Xbox's `z:\PoiDump.htm` on every try: in the port, `mod-cache/<hash>/storage/Cache/PoiDump.htm`, rewritten every few seconds. Its totals cover the placed objects only (each template's size and count), so small totals there point at the streamed data.
+
+Seen on the Gaza mod's map (2026-11-18): placed objects used 263 KB, and streaming couldn't get a buffer. A mod hits this by loading more models or textures in one area than the game has room for; make them smaller or load fewer at a time.
+
 ### Options
 
 - `--save FILE` keeps the raw snapshot; `--load FILE --port-map <mercenaries_recomp.map>` reads it again later (for example after `map/functions.json` gains names).

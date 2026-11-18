@@ -206,6 +206,25 @@ class SnapshotTest(unittest.TestCase):
         # the main thread (running the port's code) comes before the workers
         self.assertLess(out.index("thread 1:"), out.index("threads with this stack"))
         self.assertNotIn("tracing is off", out)
+        self.assertNotIn("what it looks like", out)          # no known wait on these stacks
+
+    def test_out_of_memory_wait(self):
+        # the frozen Gaza game (2026-11-18): the stream queue's allocation
+        # retrying, with the memory report written on each try
+        class Map:
+            names = {0x100: "sub_0017F6B0", 0x200: "sub_001F70F0", 0x300: "sub_00222190", 0x400: "WinMain"}
+
+            def function_at(self, offset):
+                return (self.names[offset], 0x10) if offset in self.names else None
+
+        snap = {"threads": [(1, "", [("ntdll.dll", 0x5), ("exe", 0x100), ("exe", 0x200), ("exe", 0x300), ("exe", 0x400)]),
+                            (2, "", [("exe", 0x400)])]}
+        found = hangsnap.diagnose(snap, Map())
+        self.assertEqual(len(found), 3)
+        self.assertTrue(found[0].startswith("out of memory"))
+        self.assertIn("streaming", found[1])
+        self.assertIn("PoiDump.htm", found[2])
+        self.assertEqual(hangsnap.diagnose({"threads": [(2, "", [("exe", 0x400)])]}, Map()), [])
 
 
 if __name__ == "__main__":
