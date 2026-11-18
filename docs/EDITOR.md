@@ -198,7 +198,9 @@ toolkit bundle run it the same way: `foundry\python\python.exe foundry\mercfound
   of a game map (blank: flat and nearly empty), and switches to it. **Ground**
   picks its size: as the copy's, or flat ground 256, 512 or 1024 cells a side
   (2, 4 or 8 km at 8 m; `"size"`), with the copy's texture layers and no
-  roads. 1024 is untried in game. It
+  roads. Every retail map is 512 or smaller; on Gaza's 1024 map players met
+  walls inside the map in the north and south (not yet explained). The build
+  puts invisible walls along a new map's edge (`"edge": "open"` for none). It
   appears in the Map list like the game's maps, with the copied map's ground
   to reshape and paint (Terrain), its sky (Sky), and objects, squads and
   zones to add. On a new map, the Map panel sets where the player arrives

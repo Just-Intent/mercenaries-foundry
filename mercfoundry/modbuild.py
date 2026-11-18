@@ -50,6 +50,7 @@ import copy
 import json
 import math
 import re
+import struct
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -818,6 +819,109 @@ def _apply_encounters(data, folder, result):
         else:
             data.new_map_layers = getattr(data, "new_map_layers", {})
             data.new_map_layers.setdefault(map_, []).append(layer)
+    # Walls round a new map's edge (maps/<name>.json "edge": "wall", the
+    # default): a layer of its own that loads with the map.
+    for layer, map_, doc in _edge_walls(data, folder, result):
+        if name_hash(layer) in existing:
+            raise ValueError(f"the game already has a layer named {layer!r} (for the map's edge)")
+        current_map[0] = map_
+        records = encounters.build(layer, doc, find_source, source_loads)
+        for kind, body in records.items():
+            data.new("assets.dsk", name_hash(layer), kind, body)
+        data.new_map_layers = getattr(data, "new_map_layers", {})
+        data.new_map_layers.setdefault(map_, []).append(layer)
+        result.changes.append(f"layer {layer}: {len(doc['objects'])} invisible walls round the map's edge")
+
+
+# A new map's edge: retail maps (all 512 cells or fewer) end in sea and
+# mountains; a new one ends at its terrain's edge, which the player could walk
+# or drive off. Invisible walls stand along it: copies of an indestructible
+# rock (EDGE_ROCK) drawn as EDGE_MODEL, a collision box and no visible
+# triangles, every EDGE_STEP m (a static's collision comes with its model,
+# which streams in by distance, so many short walls rather than four long).
+EDGE_MODEL = "foundry_edge_wall"
+EDGE_ROCK = "summer_env_rock02"
+EDGE_STEP = 128.0
+EDGE_HALF = (EDGE_STEP / 2 + 2.0, 400.0, 2.0)     # along, up, across (m)
+EDGE_CENTRE_Y = 150.0                             # -250 m to 550 m
+
+
+def _edge_wall_model(data):
+    """Add EDGE_MODEL once: retail's global_invisible (one small cube) with
+    its triangles collapsed to a point and one box shape (flags 7: solid,
+    hit by bullets, blocks sight) EDGE_HALF in size."""
+    from . import collision
+    key = name_hash(EDGE_MODEL)
+    if data.find_added(key, model.MODEL) is not None:
+        return
+    mr, sr = data.built_model("global_invisible")
+    mr = model.renamed(mr, EDGE_MODEL)
+    m = model.decode(mr, sr)
+    text, _ = model.to_obj(m, 0)
+    text = re.sub(r"(?m)^v .*$", "v 0 0 0", text)
+    mr, sr, _ = model_import.import_obj(mr, sr, text, collision=False)
+    joint = name_hash(m.joints[0].name)
+    sr = collision.add_segments_box_block(sr, 7, joint, [((0.0, EDGE_CENTRE_Y, 0.0), EDGE_HALF)])
+    data.new("streamed.dsk", key, model.MODEL, mr)
+    data.new("streamed.dsk", key, model.SEGMENTS, sr)
+
+
+def edge_wall_positions(size, spacing=8.0):
+    """[(x, z, yaw)] for walls along a size-cell map's edge, each just
+    outside it (its inner face on the edge). The terrain spans x from
+    -size*spacing/2 to size*spacing/2 - spacing and z from -(size*spacing/2 -
+    spacing) to size*spacing/2 (the game's own offsets, terrain.py)."""
+    half = size * spacing / 2
+    x0, x1, z0, z1 = -half, half - spacing, -(half - spacing), half
+    t = EDGE_HALF[2]
+    out = []
+    n = max(1, math.ceil((x1 - x0) / EDGE_STEP))
+    for i in range(n):
+        x = x0 + (i + 0.5) * (x1 - x0) / n
+        out += [(x, z0 - t, 0.0), (x, z1 + t, 0.0)]
+    n = max(1, math.ceil((z1 - z0) / EDGE_STEP))
+    for i in range(n):
+        z = z0 + (i + 0.5) * (z1 - z0) / n
+        out += [(x0 - t, z, 90.0), (x1 + t, z, 90.0)]
+    return out
+
+
+def _edge_walls(data, folder, result):
+    """(layer, map, layer doc) for each of this mod's new maps with walls round its edge."""
+    out = []
+    mdir = folder / "maps"
+    for mf in sorted(mdir.glob("*.json")) if mdir.is_dir() else []:
+        mdoc = json.loads(mf.read_text(encoding="utf-8"))
+        edge = mdoc.get("edge", "wall")
+        if edge in (False, "none", "open"):
+            continue
+        if edge not in (True, "wall"):
+            raise ValueError(f"maps/{mf.name}: \"edge\" is \"wall\" (the default) or \"open\", not {edge!r}")
+        name = mf.stem.lower()
+        size = int(mdoc.get("size") or _source_terrain_size(data, mdoc.get("from") or "blank"))
+        try:
+            _edge_wall_model(data)
+        except KeyError:
+            result.warnings.append(f"maps/{mf.name}: no walls at the map's edge (the game data has no "
+                                   f"global_invisible model to make them from)")
+            continue
+        if not any(r.key == name_hash(EDGE_ROCK) for _, r in data.records(model.MODEL)):
+            result.warnings.append(f"maps/{mf.name}: no walls at the map's edge (the game data has no {EDGE_ROCK})")
+            continue
+        objects = [{"from": f"model:{EDGE_ROCK}", "name": f"{name}_edge{i}", "position": [round(x, 2), 0.0, round(z, 2)],
+                    "yaw": yaw, "set": {"GeometryFile": EDGE_MODEL}}
+                   for i, (x, z, yaw) in enumerate(edge_wall_positions(size))]
+        out.append((f"{name}_edge", name, {"map": name.upper(), "load": "map", "unnamed": True, "objects": objects}))
+    return out
+
+
+def _source_terrain_size(data, source):
+    from . import terrain as _terrain
+    hit = next(((a, r) for a, r in data.records(name_hash("Terrain")) if r.key == name_hash(source)), None)
+    try:
+        return _terrain.parse_info(_terrain.tern_chunks(data.peek(*hit))[b"INFO"])["size"]
+    except (TypeError, KeyError, ValueError, struct.error):
+        return 512
 
 
 TRAVEL_PILOT = "template_allies_teleport_pilot"      # retail's quadrant pilot

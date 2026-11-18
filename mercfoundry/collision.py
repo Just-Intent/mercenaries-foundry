@@ -282,6 +282,24 @@ def split_vehicle_boxes(cshp_body: bytes) -> bytes:
     return ucfb.pack_children(items, pad_last)
 
 
+def add_segments_box_block(segments_record: bytes, flags: int, joint: int, boxes) -> bytes:
+    """A segments record with a box shape added: to its collision, or as its
+    collision if it has none. boxes: [(centre, half)] in the joint's space."""
+    from . import script
+    cseg, cseg_pad = ucfb.unwrap(segments_record, b"CSEG", with_pad=True)
+    size, _ = struct.unpack_from("<II", cseg)
+    tree = script.decompress(cseg[8:], size)
+    roots, tree_pad = ucfb.split(tree)
+    items, pad_last = ucfb.split(roots[0][1])
+    if any(t == b"cshp" for t, _ in items):
+        items = [(t, add_box_shape(b, flags, joint, boxes) if t == b"cshp" else b) for t, b in items]
+    else:
+        items.append((b"cshp", new_block(flags, joint, boxes)))
+    new_tree = ucfb.pack_children([(b"ucfb", ucfb.pack_children(items, pad_last))], tree_pad)
+    packed = script.compress(new_tree)
+    return ucfb.wrap(b"CSEG", struct.pack("<II", len(new_tree), len(packed)) + packed, cseg_pad)
+
+
 def split_segments_vehicle_boxes(segments_record: bytes) -> bytes:
     """A segments record with split_vehicle_boxes applied to its collision."""
     return _edit_segments(segments_record, split_vehicle_boxes)

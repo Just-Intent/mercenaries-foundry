@@ -430,6 +430,22 @@ class ModBuildTests(unittest.TestCase):
         self.assertEqual(len(big), 1, result.warnings)
         self.assertIn("textures/big_tex.png", big[0])
 
+    def test_edge_wall_positions(self):
+        # a 1024-cell map spans x -4096..4088, z -4088..4096: walls just outside, every 128 m or less
+        walls = modbuild.edge_wall_positions(1024)
+        self.assertEqual(len(walls), 4 * 64)
+        t = modbuild.EDGE_HALF[2]
+        north = sorted(x for x, z, yaw in walls if z == 4096 + t)
+        east = sorted(z for x, z, yaw in walls if x == 4088 + t)
+        self.assertEqual(len(north), 64)
+        self.assertEqual(len(east), 64)
+        self.assertTrue(all(yaw == 90.0 for x, z, yaw in walls if x == 4088 + t))
+        self.assertLessEqual(max(b - a for a, b in zip(north, north[1:])), modbuild.EDGE_STEP)
+        # each wall reaches its neighbour: no gap between them
+        self.assertGreaterEqual(2 * modbuild.EDGE_HALF[0], max(b - a for a, b in zip(north, north[1:])))
+        self.assertLess(north[0] - modbuild.EDGE_HALF[0], -4096)
+        self.assertGreater(north[-1] + modbuild.EDGE_HALF[0], 4088)
+
     def test_everything(self):
         self.write("text/t.json", json.dumps({"veh.jeep": "Buggy", "veh.boat": "Boat"}))
         self.write("scripts/mission.lua", "x = 2\r\n")
