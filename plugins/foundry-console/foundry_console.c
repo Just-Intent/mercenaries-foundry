@@ -1112,10 +1112,44 @@ static void hud_draw(const char *text)
 static void live_update(double dt);
 static void live_report_loaded(void);
 
+/* The game's main heap (Heap_Allocate's, 0x645984: +00 base, +04 size, +08
+ * bytes free, +10 free-block array of (address, size), +18 their count). A
+ * streamed model or texture needs one free piece its size; when none is big
+ * enough the game retries for ever (out of memory). Logged to plugins.log
+ * every 5 s in play, and at once when the largest piece shrinks by 64 KB or
+ * falls under 256 KB, so a freeze leaves the heap's last state in the logs. */
+#define MAIN_HEAP 0x00645984u
+static void heap_watch(double dt)
+{
+    static double since = 0, since_log = 1e9;
+    static uint32_t last_largest = 0;
+    since += dt;
+    since_log += dt;
+    if (since < 1.0) return;
+    since = 0;
+    uint32_t h[7] = {0};
+    if (!host->read_guest(host->context, MAIN_HEAP, h, sizeof(h))) return;
+    uint32_t count = h[6], largest = 0;
+    if (!count || count > 20000) return;
+    static uint32_t blocks[2 * 20000];
+    if (!host->read_guest(host->context, h[4], blocks, count * 8)) return;
+    for (uint32_t i = 0; i < count; i++)
+        if (blocks[2 * i + 1] > largest) largest = blocks[2 * i + 1];
+    int shrank = last_largest && largest + 65536 <= last_largest;
+    if (since_log < 5.0 && !shrank && !(largest < 262144 && largest != last_largest)) return;
+    char msg[160];
+    snprintf(msg, sizeof(msg), "heap: %u KB free of %u KB in %u pieces, largest %u KB (%u bytes)%s",
+             h[2] / 1024, h[1] / 1024, count, largest / 1024, largest, largest < 262144 ? " LOW" : "");
+    host->log(host->context, msg);
+    last_largest = largest;
+    since_log = 0;
+}
+
 static int MERC_PLUGIN_CALL on_update(void *ud, const MercPluginUpdate *u)
 {
     (void)ud;
     InterlockedExchange(&sample_playing, host->in_gameplay(host->context) != 0);
+    if (sample_playing) heap_watch(u->wall_delta_seconds);
     live_update(u->wall_delta_seconds);
     /* F7 toggles the window while this game (or the console) has focus. */
     DWORD pid = 0;
