@@ -1394,6 +1394,66 @@ def _apply_map_layers(data, result):
                           "; ".join(f"{m.upper()}: {', '.join(ls)}" for m, ls in sorted(by_map.items())))
 
 
+# Every path a level loads (its own path record and each layer's) goes in one
+# table of 2048 slots (made at 0x205427; filled by the path class's register
+# method 0x124850 -> 0x2054C0). Adding a name probes for a free slot with no
+# limit (0x1F2A60), so the 2048th path hangs the load for ever: Gaza did, at
+# 2,771 paths (2026-11-18). Retail's biggest path record has 150. It's a
+# table of its own: named objects aren't in it. MAP_PATH_ROOM is kept free
+# for paths mission layers load later.
+PATH_TABLE = 2048
+MAP_PATH_ROOM = 200
+PATH = name_hash("path")
+
+
+def _count_paths(data, layer):
+    key = name_hash(layer)
+    body = data.find_added(key, PATH)
+    if body is None:
+        hit = [(a, r) for a, r in data.records(PATH) if r.key == key]
+        body = data.current(*hit[0]) if hit else None
+    if not body:
+        return 0
+    from . import aidata
+    try:
+        return sum(1 for t, _, _ in aidata.items(aidata.to_json(body, "path")) if t == "path")
+    except Exception:
+        return 0
+
+
+def map_path_count(data, name):
+    """{layer: paths} for what a new map loads at once: its own records, the
+    layers its list and master script load, and the shared template layers."""
+    from . import encounters
+    layers = [name]
+    body = data.find_added(name_hash(name), name_hash("list"))
+    if body is not None:
+        layers += encounters.parse_list(body.decode("latin-1")).get("world", [])
+    layers += getattr(data, "new_map_layers", {}).get(name.lower(), [])
+    layers += list(NEW_MAP_TEMPLATE_LAYERS)
+    counts = {}
+    for l in layers:
+        if l.lower() not in {k.lower() for k in counts}:
+            counts[l] = _count_paths(data, l)
+    return {l: n for l, n in counts.items() if n}
+
+
+def _check_map_paths(data, result):
+    for name in getattr(data, "new_map_names", []):
+        counts = map_path_count(data, name)
+        total = sum(counts.values())
+        parts = ", ".join(f"{l} {n}" for l, n in sorted(counts.items(), key=lambda kv: -kv[1]))
+        if total >= PATH_TABLE:
+            raise ValueError(f"map {name}: it loads {total} paths ({parts}); the game holds {PATH_TABLE - 1} at "
+                             f"most and hangs loading the map past that: use fewer (a traffic zone needs a few "
+                             f"dozen; retail's busiest town has 56)")
+        if total:
+            result.changes.append(f"map {name}: loads {total} paths of the game's {PATH_TABLE - 1} ({parts})")
+        if total > PATH_TABLE - 1 - MAP_PATH_ROOM:
+            result.warnings.append(f"map {name}: {total} paths leave under {MAP_PATH_ROOM} for missions' layers "
+                                   f"(the game hangs at {PATH_TABLE})")
+
+
 def _check_new_scripts(data, result):
     """The game only runs scripts that a load list names under [script]."""
     from . import encounters
@@ -1847,6 +1907,7 @@ def _apply_maps(data, folder, result):
                 data.find_added(key, name_hash("Terrain")) is not None:
             raise ValueError(f"{where}: there's already a map named {name!r}")
         mdoc = json.loads(f.read_text(encoding="utf-8"))
+        data.new_map_names = getattr(data, "new_map_names", []) + [name]
         src = str(mdoc.get("from") or "blank")
         # What else it loads: everything a free-roam map's list loads but that
         # map's own terrain and layers (characters' animations, vehicles,
@@ -2959,6 +3020,7 @@ def build(projects, data_dir, out_dir, name=None, description=None) -> Result:
             _check_lua(data, result)
     # after every step: a new map's step lists the scripts it runs
     _check_new_scripts(data, result)
+    _check_map_paths(data, result)
     from . import sounds
     data.project = "Foundry"
     sounds.finish(data, result)

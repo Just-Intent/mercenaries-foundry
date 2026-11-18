@@ -235,6 +235,11 @@ class ModBuildTests(unittest.TestCase):
         self.assertEqual(luacheck.check(source), [])
         self.assertFalse(any("isle_camp" in w for w in result.warnings))
         self.assertTrue(any("loads with the new map island" in c for c in result.changes))
+        # its paths at load are counted: the game's path table hangs when full
+        self.assertIn("map island: loads 1 paths of the game's 2047 (isle_camp 1)", result.changes)
+        with unittest.mock.patch.object(modbuild, "PATH_TABLE", 1):
+            with self.assertRaisesRegex(ValueError, "it loads 1 paths"):
+                modbuild.build(self.project, self.data, self.out)
         # "scripts": a mod script run after the master script's own set-up
         self.write("scripts/isle_events.lua", "function isle_events_Start()\nend\n")
         self.write("maps/island.json", json.dumps({"from": "blank", "message": "Welcome to the island",
