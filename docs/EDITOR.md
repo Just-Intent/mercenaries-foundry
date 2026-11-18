@@ -218,6 +218,20 @@ toolkit bundle run it the same way: `foundry\python\python.exe foundry\mercfound
   they have one; don't give them a `ScriptInit`). Its config names the script (`MainMasterScript <name>`): a level
   runs only the script its config names, and blank's names none. Enter it with `Utility_ResetToBaseLayerOnly('<name>')` from
   Foundry Console.
+  **Radar** (the PDA map and the minimap): put the map's picture in
+  `textures/rdr<name>.png` (or `maps/<name>.radar.png`, or name it with
+  `"radar": "<texture>"`).
+  - **Image:** square, 512 pixels a side. Bigger powers of two are halved
+    down to 512.
+  - **Area:** it covers the whole terrain, whatever its size: on a
+    1,024-cell map with 8 m cells, the 8,192 m square centred on 0.
+  - **Orientation:** like the heightmap PNG. Columns run along world x from
+    -x on the left, rows along z from -z at the top.
+  - **Build:** cuts it into the 16 x 16 tiles the game draws
+    (`<radar>_x<i>y<j>`, 32 x 32 each, as retail's) and writes
+    `RadarTexture <radar>` into the map's config.
+  - **A game radar:** `"radar": "rdrSW"` alone uses that radar's tiles.
+  - **Changing a game radar:** `textures/rdrNW.png` also replaces its tiles.
   **Travel**: on SW or NW, the Map panel puts a travel pilot (retail's
   quadrant pilot) at the middle of the view that takes the player to one of
   the mod's new maps: use it, say yes, and the game saves and goes there, to

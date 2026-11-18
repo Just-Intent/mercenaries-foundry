@@ -257,6 +257,30 @@ class ModBuildTests(unittest.TestCase):
             modbuild.build(self.project, self.data, self.out)
         (self.project / "scripts" / "isle_events.lua").unlink()
         self.write("maps/island.json", json.dumps({"from": "blank"}))
+        # its radar (PDA map and minimap): textures/rdr<map>.png cut into the
+        # 16 x 16 tiles the game draws, named in its config
+        img = bytearray(512 * 512 * 4)
+        for y in range(512):
+            for x in range(512):
+                img[(y * 512 + x) * 4:(y * 512 + x) * 4 + 4] = bytes((x // 2, y // 2, 0, 255))
+        (self.project / "textures").mkdir(exist_ok=True)
+        (self.project / "textures" / "rdrisland.png").write_bytes(png.encode(512, 512, bytes(img)))
+        result = modbuild.build(self.project, self.data, self.out)
+        self.assertTrue(any("radar rdrisland from textures/rdrisland.png (256 tiles)" in c for c in result.changes))
+        self.assertFalse(any(c.startswith("texture rdrisland") for c in result.changes))
+        conf = (self.out / "DATAxbox" / "TEST" / "island.ini").read_text(encoding="latin-1")
+        self.assertTrue(conf.startswith("RadarTexture\trdrisland\n"))
+        tiles = self.records("streamed.dsk")
+        self.assertNotIn((name_hash("rdrisland"), texture.TEXTURE), tiles)
+        t = texture.decode(tiles[(name_hash("rdrisland_x15y2"), texture.TEXTURE)])
+        self.assertEqual((t.width, t.height, t.mips, t.format), (32, 32, 1, texture.DXT1))
+        r, g, b, _ = t.rgba()[2][:4]          # its top-left pixel: column 15 x 32, row 2 x 32
+        self.assertEqual((abs(r - 240) < 8, abs(g - 32) < 8), (True, True))
+        self.write("maps/island.json", json.dumps({"from": "blank", "radar": "rdrnowhere"}))
+        (self.project / "textures" / "rdrisland.png").unlink()
+        with self.assertRaisesRegex(ValueError, "the game has no radar rdrnowhere"):
+            modbuild.build(self.project, self.data, self.out)
+        self.write("maps/island.json", json.dumps({"from": "blank"}))
         # maps/<name>/boundaries.json: zones in the map's own lineregion record
         # (blank has none here: one is made)
         from mercfoundry import aidata

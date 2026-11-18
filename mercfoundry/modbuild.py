@@ -1671,11 +1671,94 @@ def _apply_objects(data, folder, result, skip=()):
         result.changes.append(f"objects {what}: {n} instances {verb}")
 
 
+# The PDA map and the minimap draw a map's radar (its config's RadarTexture,
+# "radar" when it names none) as 16 x 16 tiles, <radar>_X<i>Y<j> (0x2E7E94,
+# loaded at level start by 0x181ED0): X along world x, Y along world z, each
+# 1/16 of the terrain's own extent (size x spacing, centred on 0: 0xF89C0).
+# Retail's are 32 x 32 DXT1 crops of a 512 x 512 image (rdrnw et al., which
+# nothing draws whole). The image lies like the heightmap PNG: column = x,
+# row = z.
+RADAR_GRID = 16
+RADAR_SIZE = 512
+
+
+def _radar_tiles(rname, w, rgba):
+    """(tile name, record) for each tile of a square radar image."""
+    t = w // RADAR_GRID
+    for x in range(RADAR_GRID):
+        for y in range(RADAR_GRID):
+            tile = b"".join(rgba[((y * t + j) * w + x * t) * 4:((y * t + j) * w + x * t + t) * 4] for j in range(t))
+            tname = f"{rname}_x{x}y{y}"
+            info = struct.pack("<6H3I", t, t, 1, 1, 1, 1, texture.DXT1, 0, 0)
+            blank = texture.Texture(tname, t, t, 1, texture.DXT1, info, b"", 1, ())
+            yield tname, texture.encode(texture.replace_image(blank, t, t, tile))
+
+
+def _radar_image(path, where):
+    w, h, rgba = png.decode(path.read_bytes())
+    if w != h or w < 256 or w & (w - 1):
+        raise ValueError(f"{where}: a radar image is square, 256, 512, 1024... pixels a side (this is {w}x{h})")
+    while w > RADAR_SIZE:
+        w, h, rgba = texture.downsample(rgba, w, h)
+    return w, rgba
+
+
+def _radar_names(folder):
+    """Radar names of the mod's new maps (maps/<name>.json "radar", else rdr<name>)."""
+    names = set()
+    for f in sorted((folder / "maps").glob("*.json")) if (folder / "maps").is_dir() else []:
+        try:
+            given = json.loads(f.read_text(encoding="utf-8")).get("radar")
+        except (ValueError, AttributeError):
+            given = None
+        names.add(str(given or f"rdr{f.stem}").lower())
+    return names
+
+
+def _map_radar(data, folder, name, mdoc, where, made):
+    """The new map's radar: its image cut into tiles (maps/<name>.radar.png,
+    else textures/<radar>.png), or a game radar it names. None for neither."""
+    given = mdoc.get("radar")
+    if given is not None and not re.fullmatch(r"[A-Za-z0-9_]+", str(given)):
+        raise ValueError(f"{where}: \"radar\" is a texture name (letters, digits and _)")
+    rname = str(given or f"rdr{name}")
+    img = next((p for p in (folder / "maps" / f"{name}.radar.png", folder / "textures" / f"{rname}.png")
+                if p.is_file()), None)
+    game_has = any(r.key == name_hash(f"{rname}_x0y0") for _, r in data.records(texture.TEXTURE))
+    if img is None:
+        if given is None:
+            return None
+        if game_has:
+            made.append(f"the game's radar {rname}")
+            return rname
+        raise ValueError(f"{where}: \"radar\": no maps/{name}.radar.png or textures/{rname}.png, "
+                         f"and the game has no radar {rname}")
+    if game_has:
+        raise ValueError(f"{where}: the game already has a radar {rname}; name the map's own with \"radar\"")
+    rel = img.relative_to(folder).as_posix()
+    w, rgba = _radar_image(img, rel)
+    for tname, body in _radar_tiles(rname, w, rgba):
+        data.new("streamed.dsk", name_hash(tname), texture.TEXTURE, body)
+    made.append(f"radar {rname} from {rel} ({RADAR_GRID * RADAR_GRID} tiles)")
+    return rname
+
+
+def _set_config_line(text, key, value):
+    """A level config with `key value` (replaced, or added at the top)."""
+    nl = "\r\n" if "\r\n" in text else "\n"
+    line = f"{key}\t{value}"
+    pat = re.compile(rf"(?im)^[ \t]*{re.escape(key)}\b[^\r\n]*")
+    return pat.sub(lambda m: line, text, count=1) if pat.search(text) else line + nl + text
+
+
 def _apply_textures(data, folder, result):
     from . import modpack
+    radars = _radar_names(folder)       # new maps' radar images: the maps step cuts them
     for f in sorted((folder / "textures").glob("*.png")):
         low = f.name.lower()
         if low.endswith(".mask.png"):
+            continue
+        if f.stem.lower() in radars:
             continue
         if low.endswith(".changes.png"):
             # Changed pixels only (mod pack): laid over the game's texture.
@@ -1707,6 +1790,14 @@ def _apply_textures(data, folder, result):
                 built = texture.encode(texture.replace_image(tex, w, h, rgba))
                 data.set(a, r, built)
             result.changes.append(f"texture {name}: replaced ({w}x{h})")
+            # a game radar (rdrnw...): the maps draw its tiles, not it
+            tiles = {r.key: (a, r) for a, r in data.records(texture.TEXTURE)}
+            if name_hash(f"{name}_x0y0") in tiles:
+                rw, rrgba = _radar_image(f, f"textures/{f.name}")
+                for tname, body in _radar_tiles(name, rw, rrgba):
+                    if name_hash(tname) in tiles:
+                        data.set(*tiles[name_hash(tname)], body)
+                result.changes.append(f"texture {name}: its {RADAR_GRID * RADAR_GRID} radar tiles too")
         else:
             built = texture.encode(texture.new(name, w, h, rgba))
             data.new("streamed.dsk", key, texture.TEXTURE, built)
@@ -2127,7 +2218,10 @@ def _apply_maps(data, folder, result):
                                        f"{name}'s, so {', '.join(layers)} won't load with it; load them from "
                                        f"{master.group(1)} or copy blank")
             conf_text = with_master(texts[conf_path])
-            traffic = getattr(data, "new_map_traffic", {}).get(name.lower())
+            radar = _map_radar(data, folder, name, mdoc, where, made)
+            if radar:
+                conf_text = _set_config_line(conf_text, "RadarTexture", radar)
+            traffic =getattr(data, "new_map_traffic", {}).get(name.lower())
             if traffic:
                 from . import encounters as _enc
                 conf_text = _enc.add_traffic_zones(conf_text, traffic)
