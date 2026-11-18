@@ -15,6 +15,7 @@ call: the game's own functions), so a misspelt function or callback shows up
 before a game run.
 """
 
+import difflib
 import re
 
 LUA_GLOBALS = {
@@ -509,9 +510,18 @@ CHOICES = {
                                      "TYPE_PROP_CAR"), (), "it finds nothing"),
     "Event_OdfToActorProximity": (3, ("TYPE_VEHICLE_HUMAN_GENERAL", "TYPE_VEHICLE_CAR_GENERAL",
                                       "TYPE_VEHICLE_TANK_GENERAL", "TYPE_VEHICLE_HELICOPTER_GENERAL",
-                                      "TYPE_ITEM_WEAPON"), (), "it watches for some other kind of object"),
+                                      "TYPE_ITEM_WEAPON"), (), "it watches for TYPE_UNDEFINED objects"),
 }
-CHOICES["Objective_SetTargetVector"] = CHOICES["Objective_SetTargetActor"]
+# What Actor_GetType returns: every object kind's name (ObjectKind_Name,
+# 0x11640), from the objectType property (WorldObject_GetKind, 0x117B0)
+OBJECT_KINDS = tuple("TYPE_" + k for k in (
+    "BUILDING", "BUILDING_ALARM", "BUILDING_ENTRANCE", "BUILDING_PRISON", "BUILDING_SPAWNER", "BUILDING_CHOPSHOP",
+    "BUILDING_HUMANTURRETS", "BUILDING_MONUMENT", "BUILDING_GATE", "BUILDING_SILO", "BUILDING_CRANE", "ITEM_WEAPON",
+    "ITEM_BOUNTY", "ITEM_CACHE", "ITEM_PROP", "LIGHT", "LOCATION", "PICKUP", "PROP", "PROP_CRATE", "LISTENING_POST",
+    "PROP_CAR", "STATIC", "TREE", "VEHICLE_AIRPLANE_GENERAL", "VEHICLE_CAR_GENERAL", "VEHICLE_EMPLACED",
+    "VEHICLE_HELICOPTER_GENERAL", "VEHICLE_HUMAN_GENERAL", "VEHICLE_HUMAN_PLAYER", "VEHICLE_TANK_GENERAL", "WATER",
+    "UNDEFINED"))
+CHOICES["Objective_SetTargetVector"] =CHOICES["Objective_SetTargetActor"]
 CHOICES["Event_OdfToVectorProximity"] = CHOICES["Event_OdfToActorProximity"]
 
 
@@ -531,4 +541,12 @@ def choices(source):
         if word is not None and name_hash(word) not in {name_hash(w) for w in words} | set(extra):
             out.append(f"line {line}: {callee} takes {word!r}, which the game doesn't know "
                        f"({', '.join(words)}), so {effect}")
+    # x == 'TYPE_...': Actor_GetType gives one of OBJECT_KINDS, exactly as written
+    t = p.t
+    for i, (kind, value, line) in enumerate(t):
+        if kind == "string" and value.startswith("TYPE_") and not value.startswith("TYPE_BOUNDARY_") \
+                and value not in OBJECT_KINDS and (t[i - 1][1] in ("==", "~=") or t[i + 1][1] in ("==", "~=")):
+            near = difflib.get_close_matches(value, OBJECT_KINDS, 1, 0.86)
+            out.append(f"line {line}: compares with {value!r}, a type Actor_GetType never gives, so it's never "
+                       f"equal" + (f" (the nearest it gives: {near[0]})" if near else ""))
     return sorted(out, key=lambda s: int(s.split()[1].rstrip(":")))

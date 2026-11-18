@@ -168,6 +168,21 @@ local function f(x) x() end
             "line 10: Ai_Command gives the command 'Atack'"])
         self.assertTrue(got[1].endswith("(small, medium, large), so there's no explosion"))
 
+    def test_object_kind_comparisons(self):
+        # Actor_GetType gives the 33 kind names exactly; retail itself tests
+        # for TYPE_VEHICLE_HUMAN_CIVILIAN, which never comes back
+        src = "\n".join([
+            "local t = Actor_GetType(a)",
+            "if t == 'TYPE_VEHICLE_TANKS_GENERAL' then x = 1 end",
+            "if 'TYPE_VEHICLE_HUMAN_CIVILIAN' ~= t then x = 2 end",
+            "if t == 'TYPE_VEHICLE_HUMAN_GENERAL' or b.sType == 'TYPE_BOUNDARY_FACTION' then x = 3 end",
+            "s = 'TYPE_NOT_COMPARED'"])
+        self.assertEqual(luacheck.choices(src), [
+            "line 2: compares with 'TYPE_VEHICLE_TANKS_GENERAL', a type Actor_GetType never gives, so it's never "
+            "equal (the nearest it gives: TYPE_VEHICLE_TANK_GENERAL)",
+            "line 3: compares with 'TYPE_VEHICLE_HUMAN_CIVILIAN', a type Actor_GetType never gives, so it's never equal"])
+        self.assertEqual(len(luacheck.OBJECT_KINDS), 33)
+
 
 if __name__ == "__main__":
     unittest.main()

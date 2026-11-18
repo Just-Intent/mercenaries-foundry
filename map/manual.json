@@ -987,6 +987,34 @@
    "signature": "void * __cdecl Registry_Find(uint32 nameHash)",
    "notes": "The registry's object by name hash (keys 0x371D90, count 0x371D84, objects 0x371D8C; 0x371D94's when none).",
    "evidence": "retail code: RsRegistry.cpp; HashTable_Find; MissionData_SetText and Lua_Player_AdjustMoney get the string table from it with g_StringTables"
+  },
+  {
+   "address": "0x000117B0",
+   "name": "WorldObject_GetKind",
+   "signature": "int __cdecl WorldObject_GetKind(WorldObject *object)",
+   "notes": "The object's kind (see ObjectKind_Name) from its objectType property: building 0, alarm 1, spawner 4, chopshop 5, gate 8, crane 0xA, ItemWeapon 0xB, ItemBounty 0xC, ItemCache 0xD, itemProp 0xE, location 0x10, prop and pickup 0x12, crate 0x13, carprop 0x15, static 0x16, tree 0x17, airplane 0x18, jeep, truck and trucklarge 0x19, emplacedgun 0x1A, helicopter 0x1B, human 0x1C, PLAYER 0x1D, tank 0x1E, water 0x1F; 16 more hashes no template uses; anything else (AmmoProjectile, propruin, constrained, ...) 0x20.",
+   "evidence": "retail code: the object's vtable +0x10 with 0xB1D4007A = HashName(\"objectType\"), then a comparison tree on the value's hash; the values matched are the objectType values of the game's templates"
+  },
+  {
+   "address": "0x00011640",
+   "name": "ObjectKind_Name",
+   "signature": "const char * __cdecl ObjectKind_Name(int kind)",
+   "notes": "TYPE_BUILDING 0, _BUILDING_ALARM 1, _BUILDING_ENTRANCE 2, _BUILDING_PRISON 3, _BUILDING_SPAWNER 4, _BUILDING_CHOPSHOP 5, _BUILDING_HUMANTURRETS 6, _BUILDING_MONUMENT 7, _BUILDING_GATE 8, _BUILDING_SILO 9, _BUILDING_CRANE 0xA, _ITEM_WEAPON 0xB, _ITEM_BOUNTY 0xC, _ITEM_CACHE 0xD, _ITEM_PROP 0xE, _LIGHT 0xF, _LOCATION 0x10, _PICKUP 0x11, _PROP 0x12, _PROP_CRATE 0x13, _LISTENING_POST 0x14, _PROP_CAR 0x15, _STATIC 0x16, _TREE 0x17, _VEHICLE_AIRPLANE_GENERAL 0x18, _VEHICLE_CAR_GENERAL 0x19, _VEHICLE_EMPLACED 0x1A, _VEHICLE_HELICOPTER_GENERAL 0x1B, _VEHICLE_HUMAN_GENERAL 0x1C, _VEHICLE_HUMAN_PLAYER 0x1D, _VEHICLE_TANK_GENERAL 0x1E, _WATER 0x1F, _UNDEFINED 0x20; 0 for anything above 0x20.",
+   "evidence": "retail code: a 33-entry jump table (0x11720) returning string addresses 0x2DC0A0-0x2DC330; Lua_Actor_GetType returns ObjectKind_Name(WorldObject_GetKind(actor))"
+  },
+  {
+   "address": "0x00011540",
+   "name": "ObjectKind_IsHuman",
+   "signature": "bool __cdecl ObjectKind_IsHuman(int kind)",
+   "notes": "TYPE_VEHICLE_HUMAN_GENERAL (0x1C) or TYPE_VEHICLE_HUMAN_PLAYER (0x1D).",
+   "evidence": "retail code: compares with 0x1D and 0x1C"
+  },
+  {
+   "address": "0x000115D0",
+   "name": "Actor_IsHuman",
+   "signature": "bool __thiscall Actor_IsHuman(Actor *this)",
+   "notes": "ObjectKind_IsHuman of the kind the actor's vtable +0x28 gives.",
+   "evidence": "retail code: 56 callers, among them Lua_Actor_PlayHumanAnimation, Lua_Actor_LookAtActor and the other human-only actor commands"
   }
  ],
  "globals": [
