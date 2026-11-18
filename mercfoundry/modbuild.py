@@ -1458,11 +1458,30 @@ def _apply_textures(data, folder, result):
         if hit:
             for a, r in hit:
                 tex = texture.decode(data.archive(a).read(r))
-                data.set(a, r, texture.encode(texture.replace_image(tex, w, h, rgba)))
+                built = texture.encode(texture.replace_image(tex, w, h, rgba))
+                data.set(a, r, built)
             result.changes.append(f"texture {name}: replaced ({w}x{h})")
         else:
-            data.new("streamed.dsk", key, texture.TEXTURE, texture.encode(texture.new(name, w, h, rgba)))
+            built = texture.encode(texture.new(name, w, h, rgba))
+            data.new("streamed.dsk", key, texture.TEXTURE, built)
             result.changes.append(f"texture {name}: added ({w}x{h})")
+        _warn_big_texture(result, f"textures/{f.name}", len(built))
+
+
+# Retail's streamed textures are at most 524,372 bytes but one (699,124).
+BIG_TEXTURE = 524_372
+
+
+def _warn_big_texture(result, where, size):
+    """The game streams each texture through its main heap in one piece: on a
+    full heap a gap that big may not be free, and the game then waits for memory
+    forever (seen on Gaza with a 1024x1024 texture)."""
+    if size > BIG_TEXTURE:
+        result.warnings.append(
+            f"{where}: {size // 1024} KB built, more than any retail texture but one "
+            f"({BIG_TEXTURE // 1024} KB); the game loads each texture through its main heap "
+            "in one piece, and on a busy map that can freeze it waiting for memory. "
+            "Halve its size if you can")
 
 
 def _apply_animations(data, folder, result):
@@ -2147,6 +2166,7 @@ def _glb_textures(data, name, f, result):
                     data.set(a, r, body)
             else:
                 data.new("streamed.dsk", key, texture.TEXTURE, body)
+        _warn_big_texture(result, f"model {name}: texture {tex_name}", len(body))
     # textures this file's materials name that the mod added for another
     # model (a damaged version sharing its building's texture), or the game's
     # own (a tank's track texture): they load wherever this model does too,

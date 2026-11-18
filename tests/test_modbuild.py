@@ -414,6 +414,15 @@ class ModBuildTests(unittest.TestCase):
         self.assertEqual(result.written, [])
         self.assertTrue((self.out / "foundry-mod.json").exists())
 
+    def test_big_texture_warns(self):
+        # 1024x1024 opaque builds as DXT1 with mips, about 699 KB: over retail's 512 KB
+        self.write("textures/big_tex.png", png.encode(1024, 1024, red(1024, 1024), 4))
+        self.write("textures/small_tex.png", png.encode(256, 256, red(256, 256), 4))
+        result = modbuild.build(self.project, self.data, self.out)
+        big = [w for w in result.warnings if "main heap" in w]
+        self.assertEqual(len(big), 1, result.warnings)
+        self.assertIn("textures/big_tex.png", big[0])
+
     def test_everything(self):
         self.write("text/t.json", json.dumps({"veh.jeep": "Buggy", "veh.boat": "Boat"}))
         self.write("scripts/mission.lua", "x = 2\r\n")
