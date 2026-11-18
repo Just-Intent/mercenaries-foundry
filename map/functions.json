@@ -5,14 +5,14 @@
  },
  "counts": {
   "functions_in_analysis": 13982,
-  "named": 658,
+  "named": 681,
   "with_file": 1500,
   "file_direct": 224,
   "lua_commands": 360,
-  "manual": 132,
-  "globals": 29,
-  "structures": 5,
-  "derived": 128
+  "manual": 151,
+  "globals": 30,
+  "structures": 8,
+  "derived": 132
  },
  "functions": [
   {
@@ -95,6 +95,50 @@
    "evidence": [
     "inferred: the only engine call of script command Building_SpawnerReset (binding 0x0011B070), and called from at most three places"
    ]
+  },
+  {
+   "address": "0x0002DFD0",
+   "names": [
+    "AiMoveCommand_InitToPosition"
+   ],
+   "evidence": [
+    "retail code: Lua_ArgAiCommand (0x11F920): TakeOff; stores type 4 and the position's three floats at +0x08"
+   ],
+   "notes": "Type 4 (vtable 0x2DE9A0): the position at +0x08. TakeOff uses it.",
+   "signature": "AiCommand * __thiscall AiMoveCommand_InitToPosition(AiCommand *this, const float *position, ...)"
+  },
+  {
+   "address": "0x0002E090",
+   "names": [
+    "AiMoveCommand_InitAlongPath"
+   ],
+   "evidence": [
+    "retail code: Lua_ArgAiCommand (0x11F920): PathMove, with PathManager_FindPath's result; stores type 4 and the path at +0x18"
+   ],
+   "notes": "Type 4 (vtable 0x2DE9A0): the path at +0x18. PathMove uses it.",
+   "signature": "AiCommand * __thiscall AiMoveCommand_InitAlongPath(AiCommand *this, Path *path, float a, int flags)"
+  },
+  {
+   "address": "0x0002E130",
+   "names": [
+    "AiTacticalMoveCommand_Init"
+   ],
+   "evidence": [
+    "retail code: Lua_ArgAiCommand (0x11F920): TacticalMove; the first argument is tried with Encounter_FindByName and taken as a point-set name when it is not one; then up to four hashes; stores type 5"
+   ],
+   "notes": "Type 5 (vtable 0x2DE9CC): an optional encounter (by name) and up to four point-set names (HashName, e.g. \"A\").",
+   "signature": "AiCommand * __thiscall AiTacticalMoveCommand_Init(AiCommand *this, Encounter *encounter, uint32 pointSet0, uint32 pointSet1, uint32 pointSet2, uint32 pointSet3)"
+  },
+  {
+   "address": "0x0002E900",
+   "names": [
+    "Encounter_FindByName"
+   ],
+   "evidence": [
+    "retail code: Lua_SubmitSquadCommand does the same lookup inline for Squad_Command's encounter name"
+   ],
+   "notes": "HashTable_Find on the encounter names (0x371DC8, count 0x371DBC); the encounters are at 0x371DC4, and 0x371DCC is returned when none matches.",
+   "signature": "Encounter * __cdecl Encounter_FindByName(uint32 nameHash)"
   },
   {
    "address": "0x00031160",
@@ -485,6 +529,17 @@
    ]
   },
   {
+   "address": "0x000640C0",
+   "names": [
+    "AiCommand_Copy"
+   ],
+   "evidence": [
+    "retail code: rep movsd of 12 dwords unless this == from; how Lua_ArgAiCommand returns each command"
+   ],
+   "notes": "Copies 0x30 bytes.",
+   "signature": "AiCommand * __thiscall AiCommand_Copy(AiCommand *this, const AiCommand *from)"
+  },
+  {
    "address": "0x00065D10",
    "names": [
     "AiCommandQueue_SetDefault"
@@ -541,6 +596,17 @@
    ]
   },
   {
+   "address": "0x000763D0",
+   "names": [
+    "AiOperateCommand_Init"
+   ],
+   "evidence": [
+    "retail code: Lua_ArgAiCommand (0x11F920): Operate; stores type 8"
+   ],
+   "notes": "Type 8 (vtable 0x2E5550). Seat: driver 1, gunner 2, passenger 4, nodriver -2, -1 when none is given; -3 and -5 for two names not in the game's scripts.",
+   "signature": "AiCommand * __thiscall AiOperateCommand_Init(AiCommand *this, Actor *vehicle, int seat)"
+  },
+  {
    "address": "0x0007DD10",
    "names": [
     "Ai_Deliver"
@@ -548,6 +614,28 @@
    "evidence": [
     "inferred: the only engine call of script command Ai_Deliver (binding 0x0011E190), and called from at most three places"
    ]
+  },
+  {
+   "address": "0x0007E7C0",
+   "names": [
+    "AiMoveCommand_InitToActor"
+   ],
+   "evidence": [
+    "retail code: Lua_ArgAiCommand (0x11F920): MoveToActor; stores type 4 and the target's object handle (+0x08, then +0x28) at +0x14"
+   ],
+   "notes": "Type 4 (vtable 0x2DE9A0): the target's handle at +0x14. MoveToActor uses it.",
+   "signature": "AiCommand * __thiscall AiMoveCommand_InitToActor(AiCommand *this, Actor *target, float a, float b, bool flag)"
+  },
+  {
+   "address": "0x0007E850",
+   "names": [
+    "AiTakeCoverCommand_InitFromHeading"
+   ],
+   "evidence": [
+    "retail code: Lua_ArgAiCommand (0x11F920): TakeCover with a number, multiplied by 0.017453 (degrees to radians, 0x2DD3DC); stores type 9"
+   ],
+   "notes": "Type 9 (vtable 0x2E3FB4): cover from a direction; the script gives degrees.",
+   "signature": "AiCommand * __thiscall AiTakeCoverCommand_InitFromHeading(AiCommand *this, float radians)"
   },
   {
    "address": "0x0008C7E0",
@@ -4837,6 +4925,15 @@
    ]
   },
   {
+   "address": "0x0010EDF0",
+   "names": [
+    "Event_SquadStatus"
+   ],
+   "evidence": [
+    "inferred: the only engine call of script command Event_SquadStatus (binding 0x001208E0), and called from at most three places"
+   ]
+  },
+  {
    "address": "0x0010EE20",
    "names": [
     "Event_ActorInBoundary"
@@ -5429,6 +5526,61 @@
    "commands": [
     "Utility_StringRep"
    ]
+  },
+  {
+   "address": "0x00113690",
+   "names": [
+    "AiTakeCoverCommand_InitFromActor"
+   ],
+   "evidence": [
+    "retail code: Lua_ArgAiCommand (0x11F920): TakeCover with an actor; stores type 9"
+   ],
+   "notes": "Type 9 (vtable 0x2E3FB4): cover from an actor.",
+   "signature": "AiCommand * __thiscall AiTakeCoverCommand_InitFromActor(AiCommand *this, Actor *threat)"
+  },
+  {
+   "address": "0x001136D0",
+   "names": [
+    "AiFollowCommand_Init"
+   ],
+   "evidence": [
+    "retail code: Lua_ArgAiCommand (0x11F920): Follow with a number; stores type 0xC"
+   ],
+   "notes": "Type 0xC (vtable 0x2E6420, the class Attack also uses, as type 7). Follow without a distance is built in place with 3.",
+   "signature": "AiCommand * __thiscall AiFollowCommand_Init(AiCommand *this, Actor *leader, float distance)"
+  },
+  {
+   "address": "0x00113710",
+   "names": [
+    "AiLandCommand_InitOnActorAtHeight"
+   ],
+   "evidence": [
+    "retail code: Lua_ArgAiCommand (0x11F920): Land on an actor with the height option (the actor's vtable +0x4C and +0x34 give the spot); stores type 0xE"
+   ],
+   "notes": "Type 0xE (vtable 0x2F017C). Mode: 1 Touchdown, 2 Dustoff, 0 otherwise.",
+   "signature": "AiCommand * __thiscall AiLandCommand_InitOnActorAtHeight(AiCommand *this, int mode, const float *position)"
+  },
+  {
+   "address": "0x00113770",
+   "names": [
+    "AiLandCommand_InitAtActor"
+   ],
+   "evidence": [
+    "retail code: Lua_ArgAiCommand (0x11F920): Land on an actor (the actor's vtable +0x34 gives the spot); stores type 0xE"
+   ],
+   "notes": "Type 0xE (vtable 0x2F017C).",
+   "signature": "AiCommand * __thiscall AiLandCommand_InitAtActor(AiCommand *this, int mode, const float *position)"
+  },
+  {
+   "address": "0x001137C0",
+   "names": [
+    "AiLandCommand_Init"
+   ],
+   "evidence": [
+    "retail code: Lua_ArgAiCommand (0x11F920): Land without an actor (height 2 unless given); stores type 0xE"
+   ],
+   "notes": "Type 0xE (vtable 0x2F017C): land where it is.",
+   "signature": "AiCommand * __thiscall AiLandCommand_Init(AiCommand *this, float height, int mode)"
   },
   {
    "address": "0x00113B60",
@@ -7100,6 +7252,17 @@
    "commands": [
     "Ai_GetFaction"
    ]
+  },
+  {
+   "address": "0x00118030",
+   "names": [
+    "Lua_ArgAiPriority"
+   ],
+   "evidence": [
+    "retail code: walks back from lua_gettop while the arguments are strings, comparing HashName with 0x24DAB721 (\"loPri\"), 0x379EEAF6 (\"medPri\") and 0xC2ABE7D7 (\"hiPri\"); the floats at 0x2DC904, 0x2DBED0 and 0x2DC094"
+   ],
+   "notes": "Reads trailing loPri (0.25), medPri (3, also the default) and hiPri (10) from the end of the arguments; returns the last argument left for the command.",
+   "signature": "int __cdecl Lua_ArgAiPriority(lua_State *L, float *priority)"
   },
   {
    "address": "0x001180D0",
@@ -9385,6 +9548,28 @@
    "signature": "Boundary * __cdecl Lua_ArgBoundary(lua_State *L, int n)"
   },
   {
+   "address": "0x0011F920",
+   "names": [
+    "Lua_ArgAiCommand"
+   ],
+   "evidence": [
+    "retail code: reads the command name at arg (Lua_ArgString, HashName) and compares it with constants that are the hashes of command names in the game's own scripts (e.g. 0x4595B8FD = HashName(\"Attack\"), 0xBCC33D1B = \"Patrol\"); the rest are their options: Operate's seat (driver 1, gunner 2, passenger 4, nodriver -2), Land's Touchdown 1 and Dustoff 2, Wait's crouched, PathMove's loop"
+   ],
+   "notes": "Cases by HashName of the command name: Wait, Follow, Operate, TakeOff, Attack, TacticalMove, EverybodyOut, Land, Patrol, TakeCover, MoveToActor, Horn, Exit, PathMove. Each builds its command and copies it out (AiCommand_Copy); an unknown name or the wrong number of arguments gives an empty command.",
+   "signature": "AiCommand * __cdecl Lua_ArgAiCommand(AiCommand *out, lua_State *L, int arg, int last)"
+  },
+  {
+   "address": "0x00120210",
+   "names": [
+    "Lua_ArgPrioritizedAiCommand"
+   ],
+   "evidence": [
+    "retail code: called by Lua_SubmitAiCommand (arg 2) and Lua_SubmitSquadCommand (arg 3)"
+   ],
+   "notes": "Lua_ArgAiPriority, then Lua_ArgAiCommand up to the last argument left; the priority goes to +0x30.",
+   "signature": "AiCommand * __cdecl Lua_ArgPrioritizedAiCommand(AiCommand *out, lua_State *L, int arg)"
+  },
+  {
    "address": "0x001202A0",
    "names": [
     "Lua_SubmitAiCommand"
@@ -9393,6 +9578,17 @@
     "retail code: shared by Lua_Ai_Command (mode 0), Lua_Ai_CommandQueue (1) and Lua_Ai_CommandDefault (2): Lua_ArgAi(L, 1), a command built from argument 2 by 0x120210, then Ai_SubmitCommand"
    ],
    "signature": "int __cdecl Lua_SubmitAiCommand(lua_State *L, int mode)"
+  },
+  {
+   "address": "0x00120330",
+   "names": [
+    "Lua_SubmitSquadCommand"
+   ],
+   "evidence": [
+    "retail code: the only call of Lua_Squad_Command, Lua_Squad_CommandQueue and Lua_Squad_CommandDefault; Encounter_FindByName's lookup for arg 1, Encounter_FindSquad for arg 2, Lua_ArgPrioritizedAiCommand from arg 3, then Ai_SubmitCommand for each of the squad's members (+0x48, count +0x4C)"
+   ],
+   "notes": "Squad_Command (mode 0), Squad_CommandQueue (1), Squad_CommandDefault (2): finds the encounter, then the squad, then submits the command to every member's AI.",
+   "signature": "int __cdecl Lua_SubmitSquadCommand(lua_State *L, int mode)"
   },
   {
    "address": "0x00120430",
@@ -9768,6 +9964,35 @@
    ]
   },
   {
+   "address": "0x00122220",
+   "names": [
+    "Squad_AssignCombatNodes"
+   ],
+   "evidence": [
+    "inferred: the only engine call of script command Squad_AssignCombatNodes (binding 0x00120560), and called from at most three places"
+   ]
+  },
+  {
+   "address": "0x00122360",
+   "names": [
+    "Encounter_FindSquad"
+   ],
+   "evidence": [
+    "retail code: Lua_SubmitSquadCommand and the Lua_Squad_* bindings (Squad_GetAllActors, Squad_ReportStatus, ...) pass it the squad name's hash"
+   ],
+   "notes": "Linear search of the encounter's squads (count u16 at +0x0E, array at +0x14, 0x54 bytes each, name hash at +0x44).",
+   "signature": "Squad * __thiscall Encounter_FindSquad(Encounter *this, uint32 nameHash)"
+  },
+  {
+   "address": "0x001225F0",
+   "names": [
+    "Squad_ReportStatus"
+   ],
+   "evidence": [
+    "inferred: the only engine call of script command Squad_ReportStatus (binding 0x00120720), and called from at most three places"
+   ]
+  },
+  {
    "address": "0x00122650",
    "names": [
     "Encounter_ReportStatus"
@@ -9868,8 +10093,16 @@
   },
   {
    "address": "0x001246E0",
+   "names": [
+    "PathManager_FindPath"
+   ],
+   "evidence": [
+    "retail code: RsPath.cpp; Patrol and PathMove pass it the path name's hash, on g_PathManager"
+   ],
    "file": "RsPath.cpp",
-   "file_evidence": "between"
+   "file_evidence": "between",
+   "notes": "Binary search of the paths, sorted by name hash (+0x1004); 0 when none.",
+   "signature": "Path * __thiscall PathManager_FindPath(PathManager *this, uint32 nameHash)"
   },
   {
    "address": "0x00124710",
@@ -10892,6 +11125,12 @@
   },
   {
    "address": "0x00169990",
+   "names": [
+    "Utility_GetDistantSpawnPointOnPath"
+   ],
+   "evidence": [
+    "inferred: the only engine call of script command Utility_GetDistantSpawnPointOnPath (binding 0x0011B350), and called from at most three places"
+   ],
    "file": "RsTrafficManager.cpp",
    "file_evidence": "direct",
    "lines": [
@@ -15596,6 +15835,11 @@
    "address": "0x00320678",
    "name": "g_AnimUpdateRates",
    "evidence": "retail code: 4 classes (Low, Medium, High, Lender) x 0x3C bytes: five rows {float distance, u32 frames between updates, u8 flag} from xbox.ini's AnimUpdate* lines; read by AnimChannel_UpdateRate"
+  },
+  {
+   "address": "0x00371DD8",
+   "name": "g_PathManager",
+   "evidence": "retail code: the this pointer of PathManager_FindPath when Lua_ArgAiCommand looks up Patrol's and PathMove's paths"
   }
  ],
  "structures": [
@@ -15722,6 +15966,69 @@
      "name": "traceFlag",
      "type": "uint8",
      "notes": "LuaScript_BeginCommand acts when it is 1"
+    }
+   ]
+  },
+  {
+   "name": "AiCommand",
+   "evidence": "retail code: Lua_ArgAiCommand and the constructors it calls",
+   "fields": [
+    {
+     "offset": "0x00",
+     "name": "vtable",
+     "notes": "by class: 0x2E41E4 Wait, 0x2DE9A0 move, 0x2DE9CC TacticalMove, EverybodyOut, Horn and Exit, 0x2E6420 Attack and Follow, 0x2E5550 Operate, 0x2E3FB4 TakeCover, 0x2E3FE0 Patrol, 0x2F017C Land"
+    },
+    {
+     "offset": "0x04",
+     "name": "type",
+     "notes": "2 Wait, 4 move (TakeOff, MoveToActor, PathMove), 5 TacticalMove, 7 Attack, 8 Operate, 9 TakeCover, 0xB Patrol, 0xC Follow, 0xE Land, 0xF Horn, 0x10 Exit, 0x11 EverybodyOut"
+    },
+    {
+     "offset": "0x08",
+     "name": "target",
+     "notes": "the target's handle (Attack, Follow), the duration (Wait; FLT_MAX when none is given) or a position (move)"
+    },
+    {
+     "offset": "0x30",
+     "name": "priority",
+     "type": "float",
+     "notes": "Lua_ArgPrioritizedAiCommand: loPri 0.25, medPri 3, hiPri 10"
+    }
+   ]
+  },
+  {
+   "name": "Encounter",
+   "evidence": "retail code: Encounter_FindSquad",
+   "fields": [
+    {
+     "offset": "0x0E",
+     "name": "squadCount",
+     "type": "uint16"
+    },
+    {
+     "offset": "0x14",
+     "name": "squads",
+     "notes": "Squad[squadCount], 0x54 bytes each"
+    }
+   ]
+  },
+  {
+   "name": "Squad",
+   "evidence": "retail code: Encounter_FindSquad, Lua_SubmitSquadCommand",
+   "fields": [
+    {
+     "offset": "0x44",
+     "name": "name",
+     "notes": "HashName of the squad's name"
+    },
+    {
+     "offset": "0x48",
+     "name": "members",
+     "notes": "the members, each turned into an AI by 0x170730"
+    },
+    {
+     "offset": "0x4C",
+     "name": "memberCount"
     }
    ]
   }

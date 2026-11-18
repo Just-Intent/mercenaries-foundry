@@ -40,6 +40,7 @@ There is no RTTI or symbol table in the retail executable; every name is earned.
 | `World_ActorFromHandle` | `0x001EC220` | A script's actor handle to the actor, through `HashTable_Find` on the world's handle table. |
 | `Player_SetMoney` | `0x00057F50` | Money is a float at `Actor + 0xAC4`; clamped at 0, plays the cash sound when it rises. |
 | `Ai_SubmitCommand` | `0x001180D0` | Replace (0), append (1) or set the default (2) on an AI's command queue: `Ai_Command`, `Ai_CommandQueue`, `Ai_CommandDefault`. |
+| `Lua_ArgAiCommand` | `0x0011F920` | Every AI command a script gives (`Ai_Command`, `Squad_Command` and their Queue and Default forms) is read here by name: Wait, Follow, Operate, TakeOff, Attack, TacticalMove, EverybodyOut, Land, Patrol, TakeCover, MoveToActor, Horn, Exit, PathMove. Each has a constructor (`AiMoveCommand_InitToActor`, `AiOperateCommand_Init`, ...) that sets the command's type id; trailing loPri, medPri and hiPri give priority 0.25, 3 and 10. Squad commands look their encounter up as `Encounter_FindByName` does and their squad with `Encounter_FindSquad`; paths come from `PathManager_FindPath`. |
 | `WorldObject_Remove`, `Actor_EnableCollision` | `0x001EE0E0`, `0x0004EC40` | Removing objects; counted collision on/off. |
 | `HashTable_Find` | `0x001F2A20` | The engine's general lookup (linear probing on name hashes and handles). |
 | `lua_tostring`, `lua_tonumber`, `lua_pushnumber`, `lua_gettop`, `luaL_error`, ... | `0x001DBxxx`-`0x001DCxxx` | The embedded Lua 5.0 C API. |
@@ -57,6 +58,8 @@ There is no RTTI or symbol table in the retail executable; every name is earned.
 | `WorldObject` | vtable (+0x04 type bits, +0x0C property text by name hash: objects answer the same properties as world-layer `PROP` data, e.g. `hitpoints`), +0x24 actor, +0x28 handle, +0x30 flags (bit 0 active, bit 2 removed) |
 | `Actor` | +0x98 hit points, +0xB0 world transform, +0x6C1 collision-disable count, +0xAC4 money (player) |
 | `Ai` | +0x54 command queue |
+| `AiCommand` | +0x00 vtable (one per class), +0x04 type (2 Wait, 4 move, 5 TacticalMove, 7 Attack, 8 Operate, 9 TakeCover, 0xB Patrol, 0xC Follow, 0xE Land, 0xF Horn, 0x10 Exit, 0x11 EverybodyOut), +0x08 target, +0x30 priority |
+| `Encounter`, `Squad` | Encounter: +0x0E squad count, +0x14 squads (0x54 bytes each). Squad: +0x44 name hash, +0x48 members, +0x4C member count |
 | `Vehicle` | +0x8BC driver seat, +0x8C8 rider count |
 
 ## Finding candidates by playing (passive function mapper)
