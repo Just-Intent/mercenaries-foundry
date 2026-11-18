@@ -2243,8 +2243,8 @@ PARKED = {
 def place_parked(plan, place, ground, roads, urban, side, ox, oz, start=None, log=print):
     """Parked cars: the plan's "parked" {"vehicles": [{"template": a game
     vehicle template, "model", "wheel", "ruin": the models it draws,
-    "weight": how often, 1 if not given, "lift": how high its origin sits
-    over the ground}], ...}
+    "weight": how often, 1 if not given, "lift": metres over the ground
+    (none: the game's own parked vehicles stand at the ground's height)}], ...}
     beside main roads through built-up land, along the kerb, and a few by
     the player's start. Each copy is given its models (so its layer loads
     them; the template's own layer, a whole list of vehicles, isn't
@@ -2269,9 +2269,9 @@ def place_parked(plan, place, ground, roads, urban, side, ox, oz, start=None, lo
         if check and not flat(x, z, yaw):
             return
         v = rnd.choices(vehicles, weights)[0]
-        # at its wheels' height: a vehicle's origin sits "lift" metres over the
-        # ground (placed lower it starts sunk in, wakes and rolls)
-        y = ground.at(x, z) + float(v.get("lift", 1.0)) + 0.05
+        # on the ground, as the game parks its own (whatever the model's
+        # origin: the game sets a vehicle on its wheels); "lift" adds to it
+        y = ground.at(x, z) + float(v.get("lift", 0.0))
         out.append({"from": v["template"], "position": [round(x, 2), round(y, 2), round(z, 2)],
                     "yaw": round(yaw, 1), "set": {"GeometryFile": v["model"], "geometryNameRuined": v["ruin"],
                                                    "geometrynameruined": v["ruin"], "geometrynamewheel": v["wheel"]},
