@@ -2488,6 +2488,41 @@ def _trim_map_skies(data, folder, result):
                                       f"(its own sky doesn't use them)")
 
 
+# Gaza (2026-11-18), a dense new map: no freezes reported at 13.2 MB of listed
+# textures; froze waiting for memory at 18-19 MB and at 24 MB.
+MAP_TEXTURE_BUDGET = 14_000_000
+
+
+def _map_texture_total(data, folder, result):
+    """Report each new map's listed texture total, and warn past MAP_TEXTURE_BUDGET."""
+    from . import encounters
+    maps = sorted(f.stem.lower() for f in (folder / "maps").glob("*.json")) if (folder / "maps").is_dir() else []
+    LIST = name_hash("list")
+    sizes = None
+    for name in maps:
+        body = data.find_added(name_hash(name), LIST)
+        if body is None:
+            continue
+        if sizes is None:
+            sizes = {}
+            for a, r in data.records(texture.TEXTURE):
+                if r.key not in sizes:
+                    pending = data.replace.get(a, {}).get(r.ident)
+                    sizes[r.key] = len(pending) if pending is not None else r.size
+            for k, kind, _ in data.added():
+                if kind == texture.TEXTURE:
+                    sizes[k] = len(data.find_added(k, kind))
+        names = {t.lower() for k, v in encounters.parse_list(body.decode("latin-1")).items()
+                 if k.lower() == "texture" for t in v}
+        total = sum(sizes.get(name_hash(t), 0) for t in names)
+        result.changes.append(f"map {name}: its list loads {len(names)} textures, {total / 1e6:.1f} MB")
+        if total > MAP_TEXTURE_BUDGET:
+            result.warnings.append(
+                f"maps/{name}.json: its list loads {total / 1e6:.1f} MB of textures. The Gaza map froze "
+                f"waiting for memory at 18 MB and more and ran at 13 MB; keep a dense map under "
+                f"{MAP_TEXTURE_BUDGET / 1e6:.0f} MB (smaller skins on vehicles seen only from afar)")
+
+
 def _apply_configs(data, folder, result):
     """config/<file>.json: lines of the game's root config files (xbox.ini,
     rs.ini, vehicles.ini, msh2temp.ini; see configs.py), written whole as
@@ -2668,7 +2703,7 @@ def _swap_model(data, old, new):
 STEPS = (_apply_text, _apply_scripts, _apply_objects, _apply_encounters, _apply_missions,
          _apply_textures, _apply_models, _apply_collision_flags, _apply_layout, _apply_game_squads,
          _apply_animations, _apply_animtables, _apply_bone_moves, _apply_maps, _apply_terrain, _apply_sounds, _apply_sky,
-         _trim_map_skies,
+         _trim_map_skies, _map_texture_total,
          _apply_factions, _apply_configs)
 
 

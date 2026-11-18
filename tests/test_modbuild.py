@@ -1,6 +1,7 @@
 import json
 import tempfile
 import unittest
+import unittest.mock
 from pathlib import Path
 
 from mercfoundry import dsk, model, modbuild, png, registry, script, texture, world
@@ -265,6 +266,12 @@ class ModBuildTests(unittest.TestCase):
         self.assertNotIn("skyother", loads)
         self.assertIn("load sky\n", loads)
         self.assertTrue(any("not sw's scenery: 1 models, 2 textures" in c for c in result.changes))
+        total = [c for c in result.changes if "its list loads" in c]
+        self.assertEqual(len(total), 1, result.changes)
+        self.assertNotIn("MB of textures", " ".join(result.warnings))
+        with unittest.mock.patch.object(modbuild, "MAP_TEXTURE_BUDGET", -1):
+            result = modbuild.build(self.project, self.data, self.out)
+        self.assertTrue(any("MB of textures" in w for w in result.warnings), result.warnings)
         self.assertTrue(any("doesn't load the skies skyother" in c for c in result.changes))
         # a template that draws it (spawnable anywhere) keeps it
         recs.append((name_hash("template_vehicles"), WORLD,
