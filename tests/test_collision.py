@@ -62,6 +62,21 @@ class CollisionTests(unittest.TestCase):
         self.assertEqual(len(collision.parse(body)[0].boxes), 1)
 
 
+    def test_split_vehicle_boxes(self):
+        # one generated shape (7) on a vehicle becomes its body (9) and a hull
+        # copy (6) bullets hit, as retail vehicles have
+        body = collision.new_block(7, name_hash("root"), [((0, 1, 0), (1, 0.5, 2)), ((0, 2, 0), (0.5, 0.5, 1))])
+        self.assertFalse(collision.is_vehicle_collision(collision.parse(body)))
+        split = collision.split_vehicle_boxes(body)
+        shapes = collision.parse(split)
+        self.assertEqual([sh.material for sh in shapes], [9, 6])
+        self.assertEqual([[b.material for b in sh.boxes] for sh in shapes], [[9, 9], [6, 6]])
+        self.assertEqual([b.centre for b in shapes[0].boxes], [b.centre for b in shapes[1].boxes])
+        self.assertEqual(struct.unpack_from("<4H", list(ucfb.iter_chunks(split))[0][1]), (2, 2, 0, 4))
+        self.assertTrue(collision.is_vehicle_collision(shapes))
+        with self.assertRaises(ValueError):
+            collision.split_vehicle_boxes(split)
+
 class ImportCollisionTests(unittest.TestCase):
     def setUp(self):
         joints = [joint("root", (0, 0, 0, 1), (0, 0, 0), ""), joint("arm", (0, 0, 0, 1), (5, 0, 0), "root")]

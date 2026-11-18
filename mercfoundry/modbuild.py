@@ -2252,7 +2252,9 @@ def _new_models(data, folder, result):
     file's pieces go in (pieces named p<n>, as an exported model's are, take
     the base's piece n's place; the base's other pieces go), with collision
     boxes fitted to them.
-    Returns the names made (models/ then skips their files)."""
+    Returns the names made (models/ then skips their files). On a vehicle
+    base the boxes form a vehicle's two shapes (body and bullet hull)."""
+    from . import collision
     made = set()
     for spec in sorted((folder / "models").glob("*.new.json")) if (folder / "models").is_dir() else []:
         name = spec.name[:-len(".new.json")]
@@ -2280,7 +2282,9 @@ def _new_models(data, folder, result):
         f = files[0]
         a, recs = src
         mr = model.renamed(data.archive(a).read(recs[model.MODEL]), name)
-        sr = model.without_collision(data.archive(a).read(recs[model.SEGMENTS]))
+        base_sr = data.archive(a).read(recs[model.SEGMENTS])
+        vehicle = collision.is_vehicle_collision(model.decode(data.archive(a).read(recs[model.MODEL]), base_sr).collision)
+        sr = model.without_collision(base_sr)
         # none of the base's pieces stay: the file's pieces are all new
         empty = model.decode(mr, sr)
         if f.suffix.lower() == ".obj":
@@ -2297,6 +2301,10 @@ def _new_models(data, folder, result):
         leftover = [j for j, i in enumerate(kept) if i not in set(report.edited)]
         if leftover:
             nm, ns = model.drop_pieces(nm, ns, leftover)
+        if vehicle and report.collision_boxes and len(model.decode(nm, ns).collision) == 1:
+            # a vehicle's boxes as its two bodies: one shape alone becomes the
+            # driving body and bullets pass through (collision.VEHICLE_BODY)
+            ns = collision.split_segments_vehicle_boxes(ns)
         data.new("streamed.dsk", key, model.MODEL, nm)
         data.new("streamed.dsk", key, model.SEGMENTS, ns)
         made.add(name.lower())

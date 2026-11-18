@@ -239,6 +239,54 @@ def rewrite_box_shape(cshp_body: bytes, shape_index: int, drop=(), boxes=()) -> 
     raise ValueError(f"no shape {shape_index}")
 
 
+# Retail vehicles' two shapes: the body that collides with the world (bit 8,
+# with 1) and the hull bullets, sight and explosions hit (6). 0x1319F0 takes
+# the bit-8 shape as the main body, or else a bit-1 shape treated as 9 (losing
+# its bullet bit), and builds the second body only from a shape with 2, 4 or
+# 32 and neither 1 nor 8: a vehicle with a single shape of 7 isn't hit by bullets.
+VEHICLE_BODY, VEHICLE_HULL = 9, 6
+
+
+def is_vehicle_collision(shapes) -> bool:
+    """Shapes (parse()) split as a moving vehicle's: a bit-8 body and a hull."""
+    return (any(sh.material & 8 for sh in shapes)
+            and any(sh.material & (2 | 4 | 32) and not sh.material & 9 for sh in shapes))
+
+
+def split_vehicle_boxes(cshp_body: bytes) -> bytes:
+    """A collision block whose only shape is a box shape, as a vehicle's two:
+    that shape as the body (VEHICLE_BODY) and a copy of its boxes as the hull
+    (VEHICLE_HULL)."""
+    items, pad_last = ucfb.split(cshp_body)
+    shaps = [b for t, b in items if t == b"shap"]
+    if len(shaps) != 1 or items[0][0] != b"cinf":
+        raise ValueError("split_vehicle_boxes needs a block with one shape")
+    parts = dict(ucfb.iter_chunks(shaps[0]))
+    if b"CBOX" not in parts or b"CMSH" in parts:
+        raise ValueError("split_vehicle_boxes needs a box shape")
+    body = set_shape_flags(cshp_body, {0: VEHICLE_BODY})
+    items, pad_last = ucfb.split(body)
+    hull = set_shape_flags(body, {0: VEHICLE_HULL})
+    hull_shap = next(b for t, b in ucfb.split(hull)[0] if t == b"shap")
+    cinf = bytearray(items[0][1])
+    shapes, kind23 = struct.unpack_from("<2H", cinf, 0)
+    total, = struct.unpack_from("<H", cinf, 6)
+    kind = struct.unpack_from("<I", parts[b"sinf"], 8)[0] & 0xFFFF
+    nboxes = len(parts[b"CBOX"]) // BOX_SIZE
+    struct.pack_into("<H", cinf, 0, shapes + 1)
+    if kind in (2, 3):
+        struct.pack_into("<H", cinf, 2, kind23 + 1)
+    struct.pack_into("<H", cinf, 6, total + nboxes)
+    items[0] = (b"cinf", bytes(cinf))
+    items.append((b"shap", hull_shap))
+    return ucfb.pack_children(items, pad_last)
+
+
+def split_segments_vehicle_boxes(segments_record: bytes) -> bytes:
+    """A segments record with split_vehicle_boxes applied to its collision."""
+    return _edit_segments(segments_record, split_vehicle_boxes)
+
+
 def _edit_segments(segments_record: bytes, edit) -> bytes:
     """A segments record with its cshp body passed through edit."""
     from . import script

@@ -333,6 +333,8 @@ A split recurses into its left child, then continues with the right. Checks: a P
 
 How vehicles use the shapes: each has a material-6 triangle hull mesh plus a material-9 shape that is a convex hull (Humvee, cars, trucks) or boxes (tanks, helicopters). In-game, boxes added as triangles to the Humvee's hull mesh did not collide with the world; boxes in a box shape do. So on import a convex hull is replaced by a box shape of slices approximating it (for the Humvee: 10 boxes, 98.9% of its volume, at most 11.5 cm proud), and new boxes join it. Tested in-game (2026-11-08): a plate on the Humvee's front stopped it at walls, a `nocoll` plate on the back passed through, and the Humvee drove and crashed without sinking.
 
+A new model built on a vehicle (`models/<name>.new.json`) starts without collision; its fitted boxes become both shapes, the body (9) and a copy as the hull (6). With one shape of 7 the code took it as the driving body (treated as 9) and made no hull, so bullets passed through (Gaza's taxi, 2026-11-18).
+
 The `sinf` "material" word is not a surface material: it is the shape's collision flags. Every box in a shape repeats the value (28,294 of 28,294). The shape loader (`0x12EBA0`, called by `0x12F560`) keeps it as word 0 of a 12-byte shape entry (flags, joint, geometry). `0x12BB40` picks a shape by flags: an exact match first, else one sharing a wanted bit and none of an excluded mask, optionally on a given joint.
 
 | Bit | Meaning | Evidence |
