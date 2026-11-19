@@ -696,8 +696,8 @@ def _apply_encounters(data, folder, result):
                 "objects": [{"from": c.get("template") or f"template_{faction}_bouncer",
                              "name": _ms.contact_actor(mf.stem.lower()),
                              "position": [float(v) for v in c["position"]], "yaw": float(c.get("heading", 0))}]}))
-    if not files and not givers:
-        return
+    if not files and not givers and not any((folder / "maps").glob("*.json")):
+        return                  # (maps: their travel pilots and HQ guards are layers too)
     archives = [data.archive(n) for n in ARCHIVES if (data.dir / n).exists()]
     existing = {r.key for _, r in data.records(WORLD)}
     layers = {}
@@ -1006,6 +1006,17 @@ def _travel_pilots(data, folder, result):
             data.travel_arrive = True
             result.changes.append(f"travel pilot {actor}: on {name}, takes you back to {to.upper()}"
                                   + (" (beside the pilot there)" if brought.get(to) else ""))
+        # HQ interiors ("interiors"): each faction's guard, the way in, in a
+        # layer of its own that loads with the map, like the pilots.
+        inside = missions.interiors(f"maps/{f.name}", name, mdoc)
+        for fac, i in inside.items():
+            out.append((i["guard"], name, {"from": i["template"], "name": i["guard"], "position": i["gpos"],
+                                           "yaw": i["gheading"]}))
+            result.changes.append(f"HQ interior {fac} on {name}: guard {i['guard']} ({i['template']}), "
+                                  f"{len(i['leaders'])} leaders, out by {i['door']}")
+        if inside:
+            data.new_map_interiors = getattr(data, "new_map_interiors", {})
+            data.new_map_interiors[name] = inside
     return out
 
 
@@ -1304,7 +1315,8 @@ def _apply_missions(data, folder, result, files=None):
                 missions.section_value(ini, section, "ShortDescriptionDbKey"))
             contracts.append(contact)
             _set_strings(data, contact_strings)
-            extras += f"a contact at the {faction} HQ, "
+            extras += (f"offered inside the {faction} HQ on {contact['map']}, " if contact.get("interior")
+                       else f"a contact at the {faction} HQ, ")
         if insertion:
             insertion["title_key"] = missions.section_value(ini, section, "MissionTitleDbKey")
             insertion["description_key"] = missions.section_value(ini, section, "ShortDescriptionDbKey")
@@ -1325,6 +1337,7 @@ def _apply_contracts(data, contracts, result, insertions=()):
     bouncers offer in their contract sequence ("hq"; see _apply_hq_sequence)."""
     from . import missions
     data.contract_maps = {c["map"] for c in contracts} | {c["play"] for c in contracts if c.get("play")}
+    data.interior_contracts = [c for c in contracts if c.get("interior")]
     body = missions.contracts_script(contracts, insertions)
     key = name_hash(missions.CONTRACTS_SCRIPT)
     if any(r.key == key for _, r in data.records(SCRIPT)):
@@ -1364,6 +1377,27 @@ def _apply_hq_sequence(data, insertions, result):
         for c in insertions) + " (util_misc, bouncer, global and gameflow patched)")
 
 
+def _apply_welcome_mail(data, folder, pname, result):
+    """mod.json "welcome_mail" {sender, subject, body, map?}: a mail in
+    emails.ini, its strings, and foundry_layers posting it once per save
+    when free roam first starts on its map (missions.welcome_mail)."""
+    from . import missions
+    meta = Path(folder) / "mod.json"
+    if not meta.exists():
+        return
+    m = json.loads(meta.read_text(encoding="utf-8")).get("welcome_mail")
+    if not m:
+        return
+    mail = missions.welcome_mail(pname, m)
+    mpath = "DATAxbox/DATAPOD/emails.ini"
+    mails = data.files[mpath].decode("latin-1") if mpath in data.files else \
+        (data.dir / "DATAPOD" / "emails.ini").read_bytes().decode("latin-1")
+    data.files[mpath] = missions.add_mail(mails, *mail[:4]).encode("latin-1")
+    _set_strings(data, mail[4])
+    data.welcome = getattr(data, "welcome", []) + [mail]
+    result.changes.append(f"welcome mail {mail[0]}: posted once per save when free roam starts on {mail[5].upper()}")
+
+
 def _apply_map_layers(data, result):
     """Mod layers marked "load": "map": a generated foundry_layers script loads
     them when free roam starts on their map (hooked into global's
@@ -1375,7 +1409,8 @@ def _apply_map_layers(data, result):
     data.new("assets.dsk", key, SCRIPT, script.encode(script.new(missions.LAYERS_SCRIPT,
                                                                 missions.layers_script(getattr(data, "map_layers", []),
                                                                 getattr(data, "travel_pilots", []),
-                                                                getattr(data, "travel_arrive", False)))))
+                                                                getattr(data, "travel_arrive", False),
+                                                                getattr(data, "welcome", [])))))
     for map_ in missions.FREE_ROAM_MAPS:
         for a, r in data.records(name_hash("list")):
             if r.key == name_hash(map_):
@@ -2134,13 +2169,15 @@ def _renamed_record(body, new):
     return ucfb.wrap(tag, ucfb.pack_children(items, pad_last), (outer_pad, inner_pad))
 
 
-def map_script(name, doc, layers, pilots=(), contacts=False, extra=()):
+def map_script(name, doc, layers, pilots=(), contacts=False, extra=(), hqs=None, inside=None):
     """A new map's master script (run as the map loads): blank's set-up, its
     layers, where the player arrives, a message, and its travel pilots
     (missions.travel_lua) armed. extra: scripts (maps json "scripts") loaded
     into it last (Utility_LoadUtilityScript: their functions become the
     master script's, so their timers' callbacks work), each started with its
-    <script>_Start() if it has one."""
+    <script>_Start() if it has one. hqs: faction HQ flags ("hqs",
+    missions.hq_flags_lua); inside: HQ interiors ("interiors",
+    missions.interiors_lua); both set up when free roam starts there."""
     from .missions import _lua_str, travel_lua
     lines = [f"-- {name}: written by mercfoundry from maps/{name}.json (scripts/{name}.lua replaces it)",
              "function ScriptInit()",
@@ -2164,10 +2201,17 @@ def map_script(name, doc, layers, pilots=(), contacts=False, extra=()):
     prefix = f"foundry_{name.lower()}_Travel"
     if pilots:
         lines.append(f"{prefix}Arm()")
+    hq = []                       # free roam here: the HQ flags and interiors
+    if hqs:
+        hq.append(f"foundry_{name.lower()}_HqFlags()")
+    if inside:
+        hq.append(f"foundry_{name.lower()}_HqArm()")
     if contacts:                  # a mission played here, else free roam with its contacts
         from .missions import map_mission_lua
-        start, funcs = map_mission_lua(name.lower())
+        start, funcs = map_mission_lua(name.lower(), hq)
         lines += start
+    else:
+        lines += hq
     for e in extra:
         lines.append(f"Utility_LoadUtilityScript({_lua_str(e)})")
         lines.append(f"if {e}_Start then {e}_Start() end")
@@ -2176,6 +2220,15 @@ def map_script(name, doc, layers, pilots=(), contacts=False, extra=()):
         text += travel_lua(prefix, list(pilots), by_map=False)
     if contacts:
         text += funcs
+    if hqs:
+        from .missions import hq_flags_lua
+        text += hq_flags_lua(f"foundry_{name.lower()}_", hqs,
+                             skip=[f for f, i in (inside or {}).items() if i["marker"] == "hq"])
+    if inside:
+        from .missions import interiors_lua
+        if not contacts:
+            text += f"sFoundryOnMap = {_lua_str(name.lower())}\n"
+        text += interiors_lua(f"foundry_{name.lower()}_", inside)
     return text
 
 
@@ -2306,6 +2359,19 @@ def _apply_maps(data, folder, result):
         pilots = getattr(data, "new_map_pilots", {}).get(name.lower(), [])
         played = getattr(data, "map_missions", {}).get(name.lower(), [])
         contacts = name.lower() in getattr(data, "contract_maps", set()) or bool(played)
+        hqs = missions.hq_flags(where, mdoc["hqs"]) if mdoc.get("hqs") else None
+        inside = getattr(data, "new_map_interiors", {}).get(name.lower())
+        for c in getattr(data, "interior_contracts", []):
+            if c["map"] == name.lower() and c["interior"] not in (inside or {}):
+                raise ValueError(f"missions/{c['id']}.json: \"contact\" \"interior\": {c['interior']}, but "
+                                 f"{where} has no \"interiors\" {c['interior']}")
+        if (hqs or inside) and not contacts:
+            lkey = data.find_added(key, name_hash("list"))
+            if lkey is not None:
+                text = lkey.decode("latin-1")
+                for s_ in ("util_misc", "util_objectives"):
+                    text = missions.add_to_list(text, "script", s_)
+                data.replace_added(key, name_hash("list"), text.encode("latin-1"))
         if contacts:
             # the scripts its missions and contacts run (in case its list doesn't
             # load what SW's does)
@@ -2338,15 +2404,18 @@ def _apply_maps(data, folder, result):
                     text = missions.add_to_list(text, "script", e)
                 data.replace_added(key, name_hash("list"), text.encode("latin-1"))
         if not any(r.key == key for _, r in data.records(SCRIPT)) and data.find_added(key, SCRIPT) is None:
-            if mdoc.get("start") or mdoc.get("message") or mdoc.get("weather") or layers or pilots or contacts or extra:
-                source = map_script(name, mdoc, layers, pilots, contacts, extra)
+            if mdoc.get("start") or mdoc.get("message") or mdoc.get("weather") or layers or pilots or contacts or extra \
+                    or hqs or inside:
+                source = map_script(name, mdoc, layers, pilots, contacts, extra, hqs, inside)
                 made.append("script (" + ", ".join(
                     (["where you arrive"] if (mdoc.get("start") or {}).get("position") else [])
                     + ([f"loads {', '.join(layers)}"] if layers else [])
                     + (["a message"] if mdoc.get("message") else [])
                     + (["a pilot back"] if pilots else [])
                     + ([f"missions {', '.join(played)}" if played else "contracts"] if contacts else [])
-                    + ([f"runs {', '.join(extra)}"] if extra else [])) + ")")
+                    + ([f"runs {', '.join(extra)}"] if extra else [])
+                    + ([f"HQ flags for {', '.join(hqs)}"] if hqs else [])
+                    + ([f"HQ interiors for {', '.join(inside)}"] if inside else [])) + ")")
             else:
                 hit = [(a, r) for a, r in data.records(SCRIPT) if r.key == name_hash(src)]
                 source = script.decode(data.current(*hit[0])).source if hit else map_script(name, mdoc, [])
@@ -3414,7 +3483,10 @@ def build(projects, data_dir, out_dir, name=None, description=None) -> Result:
                 _apply_contracts(data, contracts, result, insertions)
             if insertions:
                 _apply_hq_sequence(data, insertions, result)
-            if getattr(data, "map_layers", None) or getattr(data, "travel_arrive", False):
+            for project, pname in zip(projects, mod_names):
+                _apply_welcome_mail(data, project, pname, result)
+            if getattr(data, "map_layers", None) or getattr(data, "travel_arrive", False) \
+                    or getattr(data, "welcome", None):
                 _apply_map_layers(data, result)
             _check_lua(data, result)
     # after every step: a new map's step lists the scripts it runs

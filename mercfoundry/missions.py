@@ -1672,14 +1672,347 @@ _HOOK_LAYERS = "Utility_LoadUtilityScript('foundry_layers') foundry_LoadMapLayer
 FREE_ROAM_MAPS = ("sw", "nw")         # SkipTo_Map's values; the opening map has no free roam
 
 
-def layers_script(layers, pilots=(), arrive=False):
+def welcome_mail(slug, m):
+    """(mail id, sender, subject key, body key, strings, map) of a mod's
+    welcome mail (mod.json "welcome_mail": {sender, subject, body, map?}),
+    posted once per save the first time free roam starts on its map (sw by
+    default). "sender" is a game sender (mail.senders.techgal, ...) or a
+    name of your own, which becomes a string. Its strings go in the
+    always-loaded missioninfo text, as done mails' do."""
+    if not isinstance(m, dict) or not m.get("subject") or not m.get("body"):
+        raise ValueError("mod.json: \"welcome_mail\" is {\"sender\", \"subject\", \"body\"}")
+    key = "Welcome" + re.sub(r"[^A-Za-z0-9]", "", slug)
+    base = f"MissionInfo.FoundryMail.{key}"
+    strings = {f"{base}.Subject": str(m["subject"]), f"{base}.Body": str(m["body"])}
+    sender = str(m.get("sender") or "mail.senders.techgal")
+    if not re.fullmatch(r"(?i)mail\.[A-Za-z0-9_.]+", sender):
+        strings[f"{base}.Sender"] = sender            # a name of the mod's own
+        sender = f"{base}.Sender"
+    where = str(m.get("map") or "sw").lower()
+    if where not in FREE_ROAM_MAPS:
+        raise ValueError(f"mod.json: \"welcome_mail\" \"map\" is {' or '.join(FREE_ROAM_MAPS)}, not {where!r}")
+    return (f"foundry_welcome_{re.sub(r'[^a-z0-9]', '', slug.lower())}", sender, f"{base}.Subject", f"{base}.Body",
+            strings, where)
+
+
+WELCOME_DELAY = 5.0     # after free roam starts: FirstTimeInSW posts its help mails first
+
+
+def welcome_lua(mails):
+    """Lua (in foundry_layers) posting each welcome mail once per save: a
+    scribble flag foundry_mail_<id> (saved with the game) marks it posted."""
+    out = ["tFoundryWelcome = {"]
+    out += ["{ id = %s, map = %s }," % (_lua(m[0]), _lua(m[5])) for m in mails]
+    out += ["}",
+            "function foundry_Welcome()",
+            "local map = Utility_ReadStringFromScribbleMemory('SkipTo_Map')",
+            "for i, m in tFoundryWelcome do",
+            "if m.map == map and not Utility_ReadNumberFromScribbleMemory('foundry_mail_' .. m.id) then",
+            f"Event_RelativeTimer('foundry_WelcomePost', 'b', {WELCOME_DELAY:g})",
+            "return",
+            "end",
+            "end",
+            "end",
+            "function foundry_WelcomePost()",
+            "local map = Utility_ReadStringFromScribbleMemory('SkipTo_Map')",
+            "for i, m in tFoundryWelcome do",
+            "if m.map == map and not Utility_ReadNumberFromScribbleMemory('foundry_mail_' .. m.id) then",
+            "Utility_WriteNumberToScribbleMemory('foundry_mail_' .. m.id, 1)",
+            "Mail_Post(m.id)",
+            "end",
+            "end",
+            "end"]
+    return "\n".join(out) + "\n"
+
+
+HQ_FACTIONS = ("allies", "china", "mafia", "sk")
+
+
+def hq_flags_lua(prefix, hqs, skip=()):
+    """Lua for a new map's faction HQ flags (maps/<name>.json "hqs":
+    {faction: [x, y, z]}): an objective at each point with the faction's HQ
+    target type and blip, as the HQ bouncers are marked on SW and NW (radar,
+    PDA map, no marker in the world). {prefix}HqFlags() sets them up. skip:
+    factions whose HQ guard (an interior's) carries the flag instead."""
+    out = [f"function {prefix}HqFlags()"]
+    for f in HQ_FACTIONS:
+        if f not in hqs or f in skip:
+            continue
+        x, y, z = (float(v) for v in hqs[f])
+        name = f"foundry_hq_{f}"
+        out += [f"Objective_SetShortDescription({_lua(name)}, Utility_GetStringById('standardMission.bouncer.{f}.shortDesc'))",
+                f"Objective_SetLongDescription({_lua(name)}, '')",
+                f"Objective_SetType({_lua(name)}, 'OBJECTIVE_TYPE_PRIMARY')",
+                f"Objective_SetTargetVector({_lua(name)}, {_lua(name)}, "
+                f"Utility_GetStringById('standardMission.bouncer.{f}.tgtCaption'), 'TARGET_TYPE_HQ_{f.upper()}', "
+                f"{x:.2f}, {y:.2f}, {z:.2f}, 'hq{f}', TRUE, TRUE, FALSE, 'hq{f}')"]
+    out.append("end")
+    return "\n".join(out) + "\n"
+
+
+def hq_flags(where, hqs):
+    """maps/<name>.json "hqs" checked: {faction: [x, y, z]}."""
+    if not isinstance(hqs, dict):
+        raise ValueError(f"{where}: \"hqs\" is {{\"allies\": [x, y, z], ...}}")
+    out = {}
+    for f, pos in hqs.items():
+        if f not in HQ_FACTIONS:
+            raise ValueError(f"{where}: \"hqs\": {f!r} isn't one of {', '.join(HQ_FACTIONS)}")
+        if not isinstance(pos, (list, tuple)) or len(pos) != 3:
+            raise ValueError(f"{where}: \"hqs\" {f}: the HQ is [x, y, z]")
+        out[f] = [float(v) for v in pos]
+    return out
+
+
+def _lines(where, lines):
+    """Subtitled lines [{speaker?, text, seconds?, sound?}] as Lua rows."""
+    rows = []
+    for k, l in enumerate(lines or [], 1):
+        if isinstance(l, str):
+            l = {"text": l}
+        if not isinstance(l, dict) or not l.get("text"):
+            raise ValueError(f"{where} line {k}: a line is {{\"speaker\", \"text\", \"seconds\"}}")
+        secs = float(l.get("seconds") or max(3.0, len(str(l["text"])) / 15.0))
+        text = (f"{l['speaker']}: " if l.get("speaker") else "") + str(l["text"])
+        sound = l.get("sound")
+        if sound and not re.fullmatch(r"[A-Za-z0-9_]+\.[A-Za-z0-9_]+", str(sound)):
+            raise ValueError(f"{where} line {k}: \"sound\" is <bank>.<cue>, like fio.S10START, not {sound!r}")
+        rows.append("{ text = %s, seconds = %g%s }" % (_lua_str(text), secs,
+                                                       f", sound = {_lua(sound)}" if sound else ""))
+    return "{ " + ", ".join(rows) + " }"
+
+
+def interior_guard(map_name, faction):
+    """The actor name of a new map's HQ guard (the interior's way in)."""
+    return f"foundry_hqguard_{map_name.lower()}_{faction}"
+
+
+def interiors(where, map_name, doc):
+    """maps/<name>.json "interiors" checked: {faction: {guard: {template?,
+    position, heading?, name?, prompt?, side?, marker?}, room: {position,
+    heading?}, leaders: [actor], exit: {object?, prompt?}, greeting: [line],
+    idle: [line]}}."""
+    raw = doc.get("interiors") or {}
+    if not isinstance(raw, dict):
+        raise ValueError(f"{where}: \"interiors\" is {{faction: {{guard, room, leaders, ...}}}}")
+    out = {}
+    for f, i in raw.items():
+        w = f"{where}: interiors {f}"
+        if f not in HQ_FACTIONS:
+            raise ValueError(f"{w}: a faction is one of {', '.join(HQ_FACTIONS)}")
+        g, room = i.get("guard") or {}, i.get("room") or {}
+        for part, d in (("guard", g), ("room", room)):
+            p = d.get("position")
+            if not isinstance(p, (list, tuple)) or len(p) != 3:
+                raise ValueError(f"{w}: \"{part}\" needs a \"position\" [x, y, z]")
+        leaders = [str(a) for a in i.get("leaders") or []]
+        exit_ = i.get("exit") or {}
+        if not isinstance(exit_, dict):
+            raise ValueError(f"{w}: \"exit\" is {{\"object\": <name>, \"prompt\": ...}}")
+        door = str(exit_.get("object") or (leaders[0] if leaders else ""))
+        if not door:
+            raise ValueError(f"{w}: give an \"exit\" {{\"object\": <name>}} or \"leaders\" (the first one shows the way out)")
+        marker = str(g.get("marker") or "hq")
+        if marker not in ("hq", "none"):
+            raise ValueError(f"{w}: the guard's \"marker\" is hq or none, not {marker!r}")
+        out[f] = {"guard": interior_guard(map_name, f),
+                  "template": str(g.get("template") or f"template_{f}_bouncer"),
+                  "gpos": [float(v) for v in g["position"]], "gheading": float(g.get("heading") or 0),
+                  "name": str(g.get("name") or f"{FACTION_NAMES[f]} HQ"),
+                  "prompt": str(g.get("prompt") or "Enter HQ"), "side": str(g.get("side") or "civ"),
+                  "marker": marker,
+                  "room": [float(v) for v in room["position"]], "rheading": float(room.get("heading") or 0),
+                  "leaders": leaders, "door": door, "door_prompt": str(exit_.get("prompt") or "Leave"),
+                  "talk_prompt": str(i.get("talk_prompt") or "Talk"),
+                  "greeting": _lines(f"{w} greeting", i.get("greeting")),
+                  "idle": _lines(f"{w} idle", i.get("idle") or [{"text": "Nothing for you right now. Come back later."}])}
+    return out
+
+
+def interiors_lua(prefix, inside):
+    """Lua for a new map's HQ interiors: using the HQ guard fades to black,
+    puts the player in the room (where they stood is kept), and plays the
+    greeting; then the faction's next contract here ("contact": {"interior":
+    faction}, from foundry_contracts' table) has its briefing and the
+    contract's yes/no box, or, with none, the idle lines. Using the leader
+    (when the way out is a door) talks again; using the way out fades and
+    puts the player back where they stood by the guard. {prefix}HqArm()
+    arms the guards (again each second, up to 15 s, while their layer
+    hasn't brought them)."""
+    P = prefix
+    rows = []
+    for f, i in inside.items():
+        rows.append(
+            "%s = { guard = %s, prompt = %s, name = %s, side = %s, marker = %s, rx = %.2f, ry = %.2f, rz = %.2f, "
+            "rh = %.1f, leaders = { %s }, door = %s, doorprompt = %s, talkprompt = %s,\n greeting = %s,\n idle = %s },"
+            % (f, _lua(i["guard"]), _lua_str(i["prompt"]), _lua_str(i["name"]), _lua(i["side"]),
+               "true" if i["marker"] == "hq" else "false", *i["room"], i["rheading"],
+               ", ".join(_lua(a) for a in i["leaders"]), _lua(i["door"]), _lua_str(i["door_prompt"]),
+               _lua_str(i["talk_prompt"]), i["greeting"], i["idle"]))
+    return f"""-- HQ interiors (Mercenaries Foundry: maps json "interiors")
+Utility_LoadUtilityScript('util_objectives')
+{P}Hq = {{
+{chr(10).join(rows)}
+}}
+if not {P}HqArmed then {P}HqArmed = {{}} end
+{P}HqWaits = 0
+function {P}HqRules(name)
+Ai_SetHostileRange(name, 0.0)
+Actor_SetVerifiable(name, FALSE)
+Actor_SetInvincible(name, true)
+end
+function {P}HqArm()
+local waiting = false
+for f, h in {P}Hq do
+if Utility_DoesActorExist(h.guard) then
+local iActor = Utility_GetActorAsInt(h.guard)
+if {P}HqArmed[h.guard] ~= iActor then
+{P}HqArmed[h.guard] = iActor
+Ai_SetFaction(h.guard, h.side)
+{P}HqRules(h.guard)
+Ai_CommandQueue(h.guard, 'Wait', 'hiPri')
+if h.marker then
+util_SetupSingleTargetActorObjective(h.guard, h.name, '', 'OBJECTIVE_TYPE_PRIMARY', h.guard, h.name, 'TARGET_TYPE_HQ_' .. string.upper(f), TRUE, TRUE, TRUE, 'hq' .. f)
+end
+{P}HqUse(h.guard, h.prompt, '{P}HqEnter_' .. f)
+end
+else
+waiting = true   -- its layer hasn't brought it yet
+end
+end
+if waiting and {P}HqWaits < 15 then
+{P}HqWaits = {P}HqWaits + 1
+Event_RelativeTimer('{P}HqArm', 'b', 1.0)
+else
+{P}HqWaits = 0
+end
+end
+function {P}HqUse(name, prompt, cb)
+if Utility_DoesActorExist(name) then
+Actor_EnableScriptedUse(name, TRUE, prompt)
+Event_ActorUsed(cb, 'b', name)
+end
+end
+-- The faction's next contract inside: in foundry_contracts' table, on this
+-- map, not done (or repeatable), unlocked and not lost.
+function {P}HqContract(f)
+if not tFoundryContracts then return nil end
+for i, c in tFoundryContracts do
+if c.interior == f and c.map == sFoundryOnMap and not (foundry_IsDone(c) and not c.repeatable)
+and foundry_Unlocked(c) and not Utility_ReadNumberFromScribbleMemory('foundry_lost_' .. c.id) then
+return c
+end
+end
+return nil
+end
+function {P}HqEnter(f)
+local h = {P}Hq[f]
+{P}HqIn = f
+{P}HqBack = {{ Actor_GetPosition('player0') }}
+Cinematic_FadeOut(0.5)
+Event_RelativeTimer('{P}HqInside', 'b', 0.6)
+end
+function {P}HqInside()
+local h = {P}Hq[{P}HqIn]
+Actor_SetPosition('player0', h.rx, h.ry, h.rz)
+Actor_SetYaw('player0', h.rh)
+for i, a in h.leaders do
+if Utility_DoesActorExist(a) then {P}HqRules(a) Ai_CommandQueue(a, 'Wait', 'hiPri') end
+end
+Event_RelativeTimer('{P}HqLit', 'b', 0.5)
+end
+function {P}HqLit()
+local h = {P}Hq[{P}HqIn]
+Cinematic_FadeIn(0.5)
+{P}HqUse(h.door, h.doorprompt, '{P}HqLeave')
+{P}HqSay(h.greeting, {P}HqOffer)
+end
+-- Using the leader (when the way out is something else): talk again.
+function {P}HqTalk()
+{P}HqOffer()
+end
+function {P}HqOffer()
+local f = {P}HqIn
+if not f then return end
+local h = {P}Hq[f]
+local c = {P}HqContract(f)
+if c then
+{P}HqOffered = c
+{P}HqSay(c.briefing or {{}}, {P}HqAsk)
+else
+{P}HqSay(h.idle, {P}HqTalkArm)
+end
+end
+function {P}HqAsk()
+local c = {P}HqOffered
+if not c or not {P}HqIn then return end
+Utility_QuestionBox(Utility_GetStringById(c.title), Utility_GetStringById(c.descr), true, '{P}HqYes', '{P}HqTalkArm')
+end
+function {P}HqYes()
+local c = {P}HqOffered
+{P}HqIn = nil
+{P}HqOffered = nil
+foundry_Start(c)
+end
+function {P}HqTalkArm()
+local h = {P}HqIn and {P}Hq[{P}HqIn]
+if h and h.leaders[1] and h.leaders[1] ~= h.door then {P}HqUse(h.leaders[1], h.talkprompt, '{P}HqTalk') end
+end
+function {P}HqLeave()
+if not {P}HqIn then return end
+Ui_MessageBoxClear()
+{P}HqLines = nil
+Cinematic_FadeOut(0.5)
+Event_RelativeTimer('{P}HqOutside', 'b', 0.6)
+end
+function {P}HqOutside()
+local f = {P}HqIn
+local h = {P}Hq[f]
+{P}HqIn = nil
+local b = {P}HqBack
+if b and b[1] then Actor_SetPosition('player0', b[1], b[2], b[3]) end
+for i, a in h.leaders do
+if Utility_DoesActorExist(a) then Actor_EnableScriptedUse(a, FALSE, '') end
+end
+if Utility_DoesActorExist(h.door) then Actor_EnableScriptedUse(h.door, FALSE, '') end
+Cinematic_FadeIn(0.5)
+{P}HqArmed[h.guard] = nil
+{P}HqArm()
+end
+-- Lines one after another (a message each, for its seconds; a sound cue too
+-- if it has one), then fDone.
+function {P}HqSay(lines, fDone)
+{P}HqLines = lines
+{P}HqLine = 0
+{P}HqDone = fDone
+{P}HqNext()
+end
+function {P}HqNext()
+if not {P}HqLines or not {P}HqIn then return end
+{P}HqLine = {P}HqLine + 1
+local l = {P}HqLines[{P}HqLine]
+Ui_MessageBoxClear()
+if not l then
+{P}HqLines = nil
+if {P}HqDone then {P}HqDone() end
+return
+end
+Ui_MessageBoxPrint(l.text)
+if l.sound then Audio_PlayVoiceover(l.sound) end
+Event_RelativeTimer('{P}HqNext', 'b', l.seconds)
+end
+""" + "".join(f"function {P}HqEnter_{f}() {P}HqEnter({_lua(f)}) end\n" for f in inside)
+
+
+def layers_script(layers, pilots=(), arrive=False, welcome=()):
     """Lua for foundry_layers: load each mod layer marked "load": "map" when
     free roam starts on its map. A layer is loaded again only if it's gone:
     when one of its named objects no longer exists (a mission reset the
     map), or, for layers without named objects, once per script state.
     pilots: travel pilots on the free-roam maps (travel_lua), armed after
     the layers load; and a player back from another map is put where its
-    pilot said (foundry_Arrive)."""
+    pilot said (foundry_Arrive). welcome: mods' welcome mails
+    (welcome_mail), posted once per save (foundry_Welcome)."""
     out = ["-- Generated by Mercenaries Foundry: mod layers that load with their map in free roam.",
            "tFoundryLayers = {"]
     for l in layers:
@@ -1703,12 +2036,16 @@ def layers_script(layers, pilots=(), arrive=False):
         out += ["foundry_Arrive()"]
     if pilots:
         out += ["foundry_TravelArm()"]
+    if welcome:
+        out += ["foundry_Welcome()"]
     out += ["end"]
     text = "\n".join(out) + "\n"
     if arrive or pilots:
         text += ARRIVE_LUA
     if pilots:
         text += travel_lua("foundry_Travel", list(pilots))
+    if welcome:
+        text += welcome_lua(list(welcome))
     return text
 
 
@@ -1779,13 +2116,14 @@ def travel_lua(prefix, pilots, by_map=True):
     return "\n".join(out) + "\n"
 
 
-def map_mission_lua(map_name):
+def map_mission_lua(map_name, free_roam=()):
     """Lua for a mod's new map's master script: free roam there with the mod's
     contracts (foundry_contracts: its placed givers), and a mission played
     there, started as global's InitializeMap and LoadMission start one
     (SkipTo_* from the contract; the arc map stays SkipTo_Map). When the
     mission's script closes (done, or failed and not retried), the game calls
-    back foundry_<map>_FreeRoam, as global's LoadNoMissionState. Returns
+    back foundry_<map>_FreeRoam, as global's LoadNoMissionState. free_roam:
+    more calls FreeRoam makes (the HQ flags and interiors). Returns
     (start lines for ScriptInit, functions)."""
     P = f"foundry_{map_name}_"
     start = [f"sFoundryOnMap = {_lua(map_name)}",
@@ -1822,7 +2160,7 @@ Utility_EraseValueFromScribbleMemory('foundry_play_map')
 Utility_LoadUtilityScript('foundry_contracts')
 foundry_ReturnFromContract()
 foundry_SetupContracts()
-end
+{"".join(l + chr(10) for l in free_roam)}end
 """
     return start, funcs
 
@@ -1956,7 +2294,15 @@ def contract(asset_id, doc, title_key, description_key):
     strings = {prompt_key: c.get("prompt", f"Discuss contract: {title}"),
                name_key: c.get("name", f"{FACTION_NAMES[faction]} contact"),
                desc_key: c.get("name", f"{FACTION_NAMES[faction]} contact")}
-    return {"id": asset_id, "map": (play_map(asset_id, doc) if c.get("position") else None) or map_,
+    interior = str(c.get("interior") or "").lower() or None
+    if interior:
+        if interior not in HQ_FACTIONS:
+            raise ValueError(f"\"contact\" \"interior\" is one of {', '.join(HQ_FACTIONS)}, not {interior!r}")
+        if not play_map(asset_id, doc):
+            raise ValueError("a contact in an HQ interior is on a mod's new map: give the mission a \"map\"")
+        if c.get("position"):
+            raise ValueError("\"contact\": an HQ interior's contract has no \"position\" (the HQ guard is its way in)")
+    return {"id": asset_id, "map": (play_map(asset_id, doc) if c.get("position") or interior else None) or map_,
             "faction": faction, "number": number,
             "repeatable": bool(doc.get("repeatable", False)),
             "template": c.get("template", f"template_{faction}_bouncer"),
@@ -1989,6 +2335,10 @@ def contract(asset_id, doc, title_key, description_key):
             # there (and a giver placed for it stands there); the mission stays in
             # its arc map's arc, so the game's mission code runs it as usual.
             "play": play_map(asset_id, doc),
+            # Offered inside a new map's HQ (maps json "interiors"), after its
+            # briefing lines, instead of by a giver of its own.
+            "interior": interior,
+            "briefing": _lines(f"missions/{asset_id}.json: contact briefing", c.get("briefing")) if interior else None,
             "title_key": title_key, "description_key": description_key}, strings
 
 
@@ -2025,7 +2375,10 @@ def contracts_script(contracts, insertions=()):
                            *c["position"], c["heading"], _lua(c["side"])) if c["position"] else "")
                        + (", requires = { %s }" % ", ".join(_lua(r) for r in c["requires"]) if c["requires"] else "")
                        + "".join(f", {k} = true" for k in ("stay", "invincible", "lose") if c.get(k))
-                       + (", play = %s, arc = %s" % (_lua(c["play"]), _lua(parse_id(c["id"])[0])) if c.get("play") else "")))
+                       + (", play = %s, arc = %s" % (_lua(c["play"]), _lua(parse_id(c["id"])[0])) if c.get("play") else "")
+                       + (", interior = %s, title = %s, descr = %s,\n  briefing = %s" % (
+                           _lua(c["interior"]), _lua(c["title_key"]), _lua(c["description_key"]), c["briefing"])
+                          if c.get("interior") else "")))
     out.append("}")
     out += [
         "Utility_LoadUtilityScript('util_objectives')",
@@ -2135,7 +2488,9 @@ def contracts_script(contracts, insertions=()):
         "local bWaiting = false",
         "for i, c in tFoundryContracts do",
         "local name = foundry_ContactName(c)",
-        "if c.map == map and ((foundry_IsDone(c) and not c.repeatable) or not foundry_Unlocked(c)",
+        "if c.interior then",
+        "-- offered inside its HQ (the map's interiors), not by a contact",
+        "elseif c.map == map and ((foundry_IsDone(c) and not c.repeatable) or not foundry_Unlocked(c)",
         "or Utility_ReadNumberFromScribbleMemory('foundry_lost_' .. c.id)) then",
         "if Utility_DoesActorExist(name) then Objective_Remove(name) Actor_Remove(name) end",
         "elseif c.map == map then",
@@ -2192,8 +2547,9 @@ def contracts_script(contracts, insertions=()):
             "if v then Utility_WriteNumberToScribbleMemory('foundry_kept_' .. key, v) end",
             "end",
             f"Utility_WriteStringToScribbleMemory('foundry_active_contract', {_lua(c['id'])})",
-            "Utility_WriteStringToScribbleMemory('foundry_active_faction', f)",
-            f"Objective_Remove(foundry_ContactName(tFoundryContracts[{contracts.index(c) + 1}]))"]
+            "Utility_WriteStringToScribbleMemory('foundry_active_faction', f)"]
+        if not c.get("interior"):
+            out.append(f"Objective_Remove(foundry_ContactName(tFoundryContracts[{contracts.index(c) + 1}]))")
         if c.get("play"):
             # As DebugSkipToMission, but the level is the new map, whose own
             # script starts the mission (map_mission_lua); the arc map stays
@@ -2209,6 +2565,9 @@ def contracts_script(contracts, insertions=()):
                 "end"]
         else:
             out += [f"DebugSkipToMission(f, {c['number']})", "end"]
+    # foundry_Start(c): start a contract from its row (an HQ interior's)
+    out.append("tFoundryStart = { " + ", ".join(f"[{_lua(c['id'])}] = foundry_Start_{c['id']}" for c in contracts) + " }")
+    out.append("function foundry_Start(c) tFoundryStart[c.id]() end")
     if insertions:
         from . import hqsequence
         out.append(hqsequence.lua_block(insertions).rstrip("\n"))

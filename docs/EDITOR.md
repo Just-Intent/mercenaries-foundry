@@ -258,6 +258,37 @@ toolkit bundle run it the same way: `foundry\python\python.exe foundry\mercfound
   contract saves and goes to the new map, whose own script starts it (as
   global does on SW). When it ends the player is in free roam on the new
   map, its givers offered again; a retry starts it there again.
+  **HQ flags** (`"hqs"` in `maps/<name>.json`, file only for now):
+  `{"allies": [x, y, z], "china": [...], "mafia": [...], "sk": [...]}` puts
+  each faction's HQ icon on the radar and PDA map there while you're in free
+  roam on that map, as the HQ bouncers do on SW (an objective at the point
+  with the faction's HQ target type and blip). SW's and NW's own HQs don't
+  move.
+  **HQ interiors** (`"interiors"` in `maps/<name>.json`, file only):
+  `{"allies": {"guard": {"position", "heading", "name", "template"?,
+  "prompt"? ("Enter HQ"), "side"? ("civ"), "marker"? ("hq" or "none")},
+  "room": {"position", "heading"}, "leaders": ["<actor>", ...],
+  "exit": {"object": "<name>", "prompt"? ("Leave")}, "talk_prompt"? ("Talk"),
+  "greeting": [line], "idle": [line]}}`. A line is `{"speaker", "text",
+  "seconds", "sound"? (<bank>.<cue>)}` or just text; seconds default to the
+  text's length. The guard (a layer the map loads; `template_<faction>_bouncer`
+  unless set) is marked as the bouncers are, with the faction's HQ flag (so
+  `"hqs"` skips that faction). Using it fades to black and puts the player
+  at the room's position; the greeting plays, then the faction's next
+  contract here: its briefing lines and its yes/no box (yes starts it as a
+  giver does). With no contract, the idle lines. The leaders (actors placed
+  in a map layer, by name) are made unhurtable and not hostile; the first
+  one offers Talk (the offer again) when the way out is something else.
+  Using the exit object (the first leader if none is given) fades and puts
+  the player back where they stood by the guard. A mission is offered there
+  with `"map": "<new map>"` and `"contact": {"interior": "<faction>",
+  "briefing": [line]}` (no position: the guard is its way in).
+  **Welcome mail** (`"welcome_mail"` in `mod.json`): `{"sender", "subject",
+  "body", "map"? ("sw" or "nw")}` posts a mail once per save, 5 seconds
+  after free roam first starts on that map (after the game's own first-day
+  mails), marked done by a scribble flag. `"sender"` is a game sender
+  (`mail.senders.techgal`, `mail.senders.mercsteam`, ...) or a name of your
+  own.
   Pilots and a new map's arrival point show in the view like objects (a
   pilot, or a marker figure for the arrival point): move and turn them as
   objects, and Save writes them back to their `maps/<name>.json`. Add and

@@ -886,3 +886,70 @@ class MapScriptTests(unittest.TestCase):
         from mercfoundry import luacheck
         self.assertEqual(luacheck.check(text), [])
         self.assertNotIn("Mission_EnableAtmosphere", modbuild.map_script("gaza", {}, []))
+
+    def _interiors(self):
+        from mercfoundry import missions
+        doc = {"interiors": {"allies": {
+            "guard": {"position": [10, 0, 20], "heading": 90, "name": "IDF HQ Guard"},
+            "room": {"position": [500, -50, 500], "heading": 180},
+            "exit": {"object": "idf_door"},
+            "leaders": ["idf_chief", "idf_second"],
+            "greeting": [{"speaker": "Chief", "text": "Sit down.", "seconds": 3}],
+            "idle": ["Nothing today."]}}}
+        return missions.interiors("maps/gaza.json", "gaza", doc)
+
+    def test_hq_flags_and_interiors_without_contracts(self):
+        from mercfoundry import luacheck, missions
+        inside = self._interiors()
+        self.assertEqual(inside["allies"]["guard"], "foundry_hqguard_gaza_allies")
+        hqs = missions.hq_flags("maps/gaza.json", {"allies": [1, 2, 3], "china": [4, 5, 6]})
+        text = modbuild.map_script("gaza", {}, [], hqs=hqs, inside=inside)
+        self.assertEqual(luacheck.check(text), [])
+        init = text[:text.index("\nend\n")]
+        self.assertIn("foundry_gaza_HqFlags()", init)
+        self.assertIn("foundry_gaza_HqArm()", init)
+        self.assertIn("sFoundryOnMap = 'gaza'", text)
+        # the guard carries the Allied flag, so only China's is a point of its own
+        self.assertNotIn("'foundry_hq_allies'", text)
+        self.assertIn("Objective_SetTargetVector('foundry_hq_china', 'foundry_hq_china', "
+                      "Utility_GetStringById('standardMission.bouncer.china.tgtCaption'), 'TARGET_TYPE_HQ_CHINA', "
+                      "4.00, 5.00, 6.00, 'hqchina', TRUE, TRUE, FALSE, 'hqchina')", text)
+        self.assertIn("text = 'Chief: Sit down.', seconds = 3", text)
+
+    def test_interior_contract_in_free_roam(self):
+        from mercfoundry import luacheck, missions
+        inside = self._interiors()
+        text = modbuild.map_script("gaza", {}, [], contacts=True, inside=inside)
+        free = text[text.index("function foundry_gaza_FreeRoam()"):]
+        self.assertIn("foundry_SetupContracts()\nfoundry_gaza_HqArm()\nend", free)
+        doc = {"title": "Tunnel job", "map": "gaza",
+               "contact": {"interior": "allies", "briefing": [{"speaker": "Chief", "text": "Find the tunnel."}]}}
+        c, _ = missions.contract("sw_allies12", doc, "t.key", "d.key")
+        self.assertEqual((c["map"], c["interior"]), ("gaza", "allies"))
+        lua = missions.contracts_script([c])
+        self.assertIn("interior = 'allies', title = 't.key', descr = 'd.key'", lua)
+        self.assertIn("tFoundryStart = { ['sw_allies12'] = foundry_Start_sw_allies12 }", lua)
+        start = lua[lua.index("function foundry_Start_sw_allies12()"):]
+        self.assertNotIn("Objective_Remove", start[:start.index("\nend")])     # no contact of its own
+        self.assertEqual(luacheck.check(lua + text), [])
+        with self.assertRaises(ValueError):
+            missions.contract("sw_allies12", {"contact": {"interior": "allies"}}, "t", "d")   # no "map"
+        with self.assertRaises(ValueError):
+            missions.interiors("maps/gaza.json", "gaza", {"interiors": {"allies": {"guard": {"position": [1, 2, 3]}}}})
+
+    def test_welcome_mail(self):
+        from mercfoundry import luacheck, missions
+        mail = missions.welcome_mail("Gaza Expansion", {"sender": "Broker", "subject": "Hi", "body": "Go."})
+        self.assertEqual(mail[0], "foundry_welcome_gazaexpansion")
+        self.assertEqual(mail[1], "MissionInfo.FoundryMail.WelcomeGazaExpansion.Sender")
+        self.assertEqual(mail[4][mail[1]], "Broker")
+        self.assertEqual(mail[5], "sw")
+        game = missions.welcome_mail("x", {"sender": "mail.senders.techgal", "subject": "a", "body": "b"})
+        self.assertEqual(game[1], "mail.senders.techgal")
+        self.assertNotIn(game[1], game[4])
+        lua = missions.layers_script([], welcome=[mail])
+        self.assertEqual(luacheck.check(lua), [])
+        self.assertIn("foundry_Welcome()", lua)
+        self.assertIn("Utility_WriteNumberToScribbleMemory('foundry_mail_' .. m.id, 1)\nMail_Post(m.id)", lua)
+        with self.assertRaises(ValueError):
+            missions.welcome_mail("x", {"subject": "a"})
