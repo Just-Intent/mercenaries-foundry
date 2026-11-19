@@ -208,6 +208,12 @@ class ModBuildTests(unittest.TestCase):
         # it runs its own script (blank's config names none, so blank's never ran)
         self.assertEqual((self.out / "DATAxbox" / "TEST" / "island.ini").read_text(encoding="latin-1"),
                          "MainMasterScript\tisland\n\nSkyTexture\t\tsky\n")
+        # blank has no Xbox config: its copy gets the terrain's near detail
+        # textures (else the game draws a default stipple near the player)
+        xbox = (self.out / "DATAxbox" / "TEST" / "island_XBOX.ini").read_text(encoding="latin-1")
+        self.assertIn("detailType 2 detail_rock01\n", xbox)
+        self.assertIn("layerDetail 0 2\n", xbox)
+        self.assertIn("layerDetail 16 1\n", xbox)
         # its master script (its load list loads one of its own name; a missing one hangs the game)
         self.assertEqual(script.decode(recs[(name_hash("island"), SCRIPT)]).source, "function ScriptInit()\nend\n")
         # a mod's own scripts/island.lua wins

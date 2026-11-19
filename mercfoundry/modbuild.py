@@ -1829,6 +1829,61 @@ def _map_ambience(data, name, mdoc, where, conf_text, made):
     return conf_text.rstrip("\r\n") + nl + nl + section
 
 
+# The terrain's near-camera detail textures, from the Xbox level config
+# (SW_XBOX.ini): detailType <n> <texture> (retail: 0 grass, 1 concrete, 2
+# rock, 3 snow) and layerDetail <slot> <n> for every ground layer (0-15) and
+# decal texture (16-31). Blank has no Xbox config, so a map copied from it
+# had none and drew a default stipple near the player on every layer.
+DETAIL_TYPES = ("grass", "concrete", "rock", "snow")
+DETAIL_TEXTURES = ("detail_grass01", "detail_concrete01", "detail_rock01", "detail_snow01")
+
+
+def _detail_for_texture(name):
+    """A ground layer's detail type from its texture's name, as retail pairs
+    them (SW: dirt, sand, stone and mountains rock; grass and farms grass;
+    concrete concrete)."""
+    n = name.lower()
+    if any(k in n for k in ("grass", "field", "farm", "meadow", "crop")):
+        return 0
+    if any(k in n for k in ("concrete", "asphalt", "road", "street", "tarmac", "pave")):
+        return 1
+    if "snow" in n or "ice" in n:
+        return 3
+    return 2
+
+
+def _map_detail(folder, name, mdoc, where, xbox_text, made):
+    """The new map's Xbox config with detailType and layerDetail lines: from
+    maps json "detail" ({slot: grass|concrete|rock|snow}), else, when the
+    source config has none, each ground layer's from its texture name
+    (terrain/<name>.layerNN.<texture>.png) and concrete for decals."""
+    given = mdoc.get("detail")
+    if not given and re.search(r"(?im)^\s*layerDetail\b", xbox_text or ""):
+        return xbox_text
+    layers = {}
+    for p in (folder / "terrain").glob(f"{name}.layer*.png") if (folder / "terrain").is_dir() else []:
+        m = re.fullmatch(rf"(?i){re.escape(name)}\.layer(\d+)\.(.+)\.png", p.name)
+        if m:
+            layers[int(m.group(1))] = m.group(2)
+    slots = {s: (_detail_for_texture(layers[s]) if s in layers else 2) for s in range(16)}
+    slots.update({s: 1 for s in range(16, 32)})
+    for k, v in (given or {}).items():
+        try:
+            s = int(k)
+        except ValueError:
+            raise ValueError(f"{where}: \"detail\": {k!r} isn't a texture slot (0-31)") from None
+        if not 0 <= s < 32 or str(v).lower() not in DETAIL_TYPES:
+            raise ValueError(f"{where}: \"detail\": slot {k}: {v!r} isn't one of {', '.join(DETAIL_TYPES)}")
+        slots[s] = DETAIL_TYPES.index(str(v).lower())
+    text = xbox_text or ""
+    text = re.sub(r"(?im)^\s*(detailType|layerDetail)\b[^\r\n]*\r?\n?", "", text)
+    nl = "\r\n" if "\r\n" in text else "\n"
+    block = "".join(f"detailType {i} {t}{nl}" for i, t in enumerate(DETAIL_TEXTURES)) + nl + \
+        "".join(f"layerDetail {s} {slots[s]}{nl}" for s in range(32))
+    made.append("terrain detail (" + ", ".join(f"{s} {DETAIL_TYPES[slots[s]]}" for s in sorted(layers) or [0]) + ")")
+    return block + nl + text
+
+
 def _apply_textures(data, folder, result):
     from . import modpack
     radars = _radar_names(folder)       # new maps' radar images: the maps step cuts them
@@ -2306,8 +2361,10 @@ def _apply_maps(data, folder, result):
                 conf_text = _enc.add_traffic_zones(conf_text, traffic)
                 made.append(f"{len(traffic)} traffic zone{'s' if len(traffic) != 1 else ''}")
             data.files[new_conf] = conf_text.encode("latin-1")
-            for path, text in list(texts.items())[1:]:          # its Xbox config, if any
-                data.files[f"{conf_dir}/{name}_XBOX.ini"] = with_master(text).encode("latin-1")
+            xbox = next(iter(list(texts.values())[1:]), None)   # its Xbox config, if any
+            xbox = _map_detail(folder, name, mdoc, where, with_master(xbox) if xbox else None, made)
+            if xbox:
+                data.files[f"{conf_dir}/{name}_XBOX.ini"] = xbox.encode("latin-1")
             rel = "\\" + new_conf[len("DATAxbox/"):].replace("/", "\\")
             nl = "\r\n" if "\r\n" in levels else "\n"
             if not re.search(rf"(?im)^\[LV_{re.escape(name)}\]", levels):
