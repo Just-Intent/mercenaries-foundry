@@ -1732,8 +1732,13 @@ def hq_flags_lua(prefix, hqs, skip=()):
     """Lua for a new map's faction HQ flags (maps/<name>.json "hqs":
     {faction: [x, y, z]}): an objective at each point with the faction's HQ
     target type and blip, as the HQ bouncers are marked on SW and NW (radar,
-    PDA map, no marker in the world). {prefix}HqFlags() sets them up. skip:
-    factions whose HQ guard (an interior's) carries the flag instead."""
+    PDA map, no marker in the world). {prefix}HqFlags() sets them up, and
+    again 2 s later, in case anything starting the map clears them. skip:
+    factions left out.
+    The call is Objective_SetTargetVector(name, target, text, type, blip,
+    x, y, z, gps, pda, world), as its Lua wrapper (0x114880) reads it and
+    sw_sk2 calls it; util_objectives' region helper passes x, y, z before
+    the blip, which no retail script calls."""
     out = [f"function {prefix}HqFlags()"]
     for f in HQ_FACTIONS:
         if f not in hqs or f in skip:
@@ -1745,8 +1750,17 @@ def hq_flags_lua(prefix, hqs, skip=()):
                 f"Objective_SetType({_lua(name)}, 'OBJECTIVE_TYPE_PRIMARY')",
                 f"Objective_SetTargetVector({_lua(name)}, {_lua(name)}, "
                 f"Utility_GetStringById('standardMission.bouncer.{f}.tgtCaption'), 'TARGET_TYPE_HQ_{f.upper()}', "
-                f"{x:.2f}, {y:.2f}, {z:.2f}, 'hq{f}', TRUE, TRUE, FALSE, 'hq{f}')"]
-    out.append("end")
+                f"'hq{f}', {x:.2f}, {y:.2f}, {z:.2f}, TRUE, TRUE, FALSE)"]
+    out += [f"if not {prefix}HqFlagsAgain then",
+            f"{prefix}HqFlagsAgain = true",
+            f"Event_RelativeTimer('{prefix}HqFlagsLater', 'b', 2.0)",
+            "end",
+            "end",
+            f"function {prefix}HqFlagsLater()",
+            f"{prefix}HqFlagsAgain = true   -- once: no further timer",
+            f"{prefix}HqFlags()",
+            f"{prefix}HqFlagsAgain = nil",
+            "end"]
     return "\n".join(out) + "\n"
 
 

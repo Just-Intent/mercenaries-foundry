@@ -950,6 +950,70 @@ static void hud_status(void)
     append_output("%s", line);
 }
 
+/* The game's objectives (retail Objective_FindOrCreate, 0x15FEC0, and its
+ * pool scan 0x15FE60): 16 objectives of 0x1760 bytes from 0x3C31B8, in use
+ * when the byte at +0x154 is set, named by the hash at +0x158; the count at
+ * 0x3C30B0. A full pool makes Objective_* calls do nothing. Each has 32
+ * targets of 0xB0 bytes from +0x160 (Objective_SetTargetVector, 0x160520):
+ * the target's type at +4, its GPS / PDA / world bits at +8, its position
+ * at +0x94 and its name hash at +0xA0. */
+#define OBJECTIVE_POOL 0x003C31B8u
+#define OBJECTIVE_SIZE 0x1760u
+#define OBJECTIVE_SLOTS 16u
+#define OBJECTIVE_COUNT 0x003C30B0u
+#define OBJECTIVE_TARGETS 0x160u
+#define TARGET_SIZE 0xB0u
+
+static const char *objective_name(uint32_t hash, char *buf, size_t n)
+{
+    static const char *mine[] = {"foundry_hq_allies", "foundry_hq_china", "foundry_hq_mafia", "foundry_hq_sk",
+                                 "foundry_hq_nk"};
+    const char *text = name_for_hash(hash);
+    if (text) return text;
+    for (unsigned i = 0; i < sizeof(mine) / sizeof(mine[0]); i++)
+        if (hash_name(mine[i]) == hash) return mine[i];
+    snprintf(buf, n, "#%08X", hash);
+    return buf;
+}
+
+static const char *target_type_name(uint32_t t)
+{
+    static const char *types[] = {"primary", "secondary", "?2", "?3", "?4", "hq_sk", "hq_nk", "hq_allies",
+                                  "hq_mafia", "hq_china", "sams", "?11", "?12", "undefined"};
+    return t < sizeof(types) / sizeof(types[0]) ? types[t] : "?";
+}
+
+static void hud_objectives(void)
+{
+    uint32_t count = 0;
+    host->read_guest(host->context, OBJECTIVE_COUNT, &count, sizeof(count));
+    append_output("%u objectives (the game holds %u)", count, OBJECTIVE_SLOTS);
+    for (unsigned i = 0; i < OBJECTIVE_SLOTS; i++) {
+        uint32_t base = OBJECTIVE_POOL + i * OBJECTIVE_SIZE;
+        unsigned char head[8];
+        if (!host->read_guest(host->context, base + 0x154, head, sizeof(head)) || !head[0]) continue;
+        uint32_t hash;
+        memcpy(&hash, head + 4, 4);
+        char nb[16], tb[16];
+        const char *name = objective_name(hash, nb, sizeof(nb));
+        unsigned shown = 0;
+        for (unsigned t = 0; t < 32; t++) {
+            unsigned char tg[TARGET_SIZE];
+            if (!host->read_guest(host->context, base + OBJECTIVE_TARGETS + t * TARGET_SIZE, tg, sizeof(tg))) break;
+            uint32_t thash, type;
+            float pos[3];
+            memcpy(&thash, tg + 0xA0, 4);
+            if (!thash) continue;
+            memcpy(&type, tg + 4, 4);
+            memcpy(pos, tg + 0x94, 12);
+            append_output("%s: %s %s, bits %u, at %.0f %.0f %.0f", name, objective_name(thash, tb, sizeof(tb)),
+                          target_type_name(type), (unsigned)(tg[8] & 7), (double)pos[0], (double)pos[1], (double)pos[2]);
+            shown++;
+        }
+        if (!shown) append_output("%s: no targets", name);
+    }
+}
+
 static void hud_command(const char *line)
 {
     char cmd[16] = {0}, arg[96] = {0};
@@ -1016,8 +1080,10 @@ static void hud_command(const char *line)
         float amount = arg[0] ? (float)atof(arg) : 10000.0f;
         do_money(amount);
         hud_status();
+    } else if (!strcmp(cmd, "objectives")) {
+        hud_objectives();
     } else {
-        append_output("/spawn <template>  /near  /pick <n>  /up /down /left /right /here /remove  /money [n]");
+        append_output("/spawn <template>  /near  /pick <n>  /up /down /left /right /here /remove  /money [n]  /objectives");
     }
 }
 

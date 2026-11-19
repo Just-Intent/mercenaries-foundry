@@ -921,7 +921,8 @@ class MapScriptTests(unittest.TestCase):
         self.assertIn("marker = 'hq'", solo)
         self.assertIn("Objective_SetTargetVector('foundry_hq_china', 'foundry_hq_china', "
                       "Utility_GetStringById('standardMission.bouncer.china.tgtCaption'), 'TARGET_TYPE_HQ_CHINA', "
-                      "4.00, 5.00, 6.00, 'hqchina', TRUE, TRUE, FALSE, 'hqchina')", text)
+                      "'hqchina', 4.00, 5.00, 6.00, TRUE, TRUE, FALSE)", text)    # blip, then x, y, z (sw_sk2's order)
+        self.assertIn("Event_RelativeTimer('foundry_gaza_HqFlagsLater', 'b', 2.0)", text)     # once more, later
         self.assertIn("text = 'Chief: Sit down.', seconds = 3", text)
 
     def test_interior_contract_in_free_roam(self):

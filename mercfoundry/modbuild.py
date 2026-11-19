@@ -1338,6 +1338,7 @@ def _apply_contracts(data, contracts, result, insertions=()):
     from . import missions
     data.contract_maps = {c["map"] for c in contracts} | {c["play"] for c in contracts if c.get("play")}
     data.interior_contracts = [c for c in contracts if c.get("interior")]
+    data.all_contracts = list(contracts)
     body = missions.contracts_script(contracts, insertions)
     key = name_hash(missions.CONTRACTS_SCRIPT)
     if any(r.key == key for _, r in data.records(SCRIPT)):
@@ -2169,6 +2170,9 @@ def _renamed_record(body, new):
     return ucfb.wrap(tag, ucfb.pack_children(items, pad_last), (outer_pad, inner_pad))
 
 
+OBJECTIVE_SLOTS = 16      # objectives the game holds at once (0x3C31B8, 0x1760 bytes each)
+
+
 def map_script(name, doc, layers, pilots=(), contacts=False, extra=(), hqs=None, inside=None):
     """A new map's master script (run as the map loads): blank's set-up, its
     layers, where the player arrives, a message, and its travel pilots
@@ -2364,6 +2368,18 @@ def _apply_maps(data, folder, result):
             if c["map"] == name.lower() and c["interior"] not in (inside or {}):
                 raise ValueError(f"missions/{c['id']}.json: \"contact\" \"interior\": {c['interior']}, but "
                                  f"{where} has no \"interiors\" {c['interior']}")
+        # The game holds 16 objectives at once (Objective_FindOrCreate's pool;
+        # a full pool makes Objective_* calls do nothing): free roam here
+        # marks each placed giver, each HQ flag and each marked guard.
+        givers = [c for c in getattr(data, "all_contracts", []) if c["map"] == name.lower() and c.get("position")
+                  and c.get("target_type")]
+        guards = [f for f, i in (inside or {}).items() if i["marker"] == "hq"]
+        marks = len(givers) + len(hqs or {}) + len(guards)
+        if marks > OBJECTIVE_SLOTS:
+            result.warnings.append(
+                f"{where}: free roam here marks {marks} things ({len(givers)} mission givers, {len(hqs or {})} HQ "
+                f"flags, {len(guards)} HQ guards), but the game holds {OBJECTIVE_SLOTS} objectives at once: the "
+                f"rest get no marker (give some givers \"marker\": \"none\", or offer them inside an HQ)")
         if (hqs or inside) and not contacts:
             lkey = data.find_added(key, name_hash("list"))
             if lkey is not None:
