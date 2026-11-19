@@ -11,7 +11,10 @@ then Launch Modded. Foundry source mods are built from that PC's own game data
 before the first modded launch (a few minutes for a big mod).
 
 No game data, saves or disc images go in the zip. Unzipping a newer package
-over an older one keeps the imported game data, saves and logs.
+over an older one keeps the imported game data, saves and logs. Each mod in
+it lists its files (.foundry-package.json): files an older package left that
+the mod no longer has are moved to foundry-trash by the launcher's sync,
+before the mod is built.
 
 Two scripts in the package, for sending results back:
 - Collect-Logs.cmd   gathers every log into "Logs for Claude\\logs-<time>.zip"
@@ -137,10 +140,16 @@ def _ignored(src: Path):
 
 def _add_tree(z, src: Path, arc: str):
     ignored = _ignored(src)
+    written = []
     for p in sorted(src.rglob("*")):
         rel = p.relative_to(src).as_posix()
         if p.is_file() and not p.name.endswith(SKIP_SUFFIXES) and ".bak-" not in p.name and not ignored(rel):
             z.write(p, f"{arc}/{rel}")
+            written.append(rel)
+    return written
+
+
+PACKAGE_LIST = ".foundry-package.json"      # mercfoundry.sync.PACKAGE_LIST
 
 
 def main():
@@ -197,7 +206,13 @@ def main():
         for m in ("functions.json", "manual.json"):
             z.write(ROOT / "map" / m, f"{top}/foundry/map/{m}")
         for m in mods:
-            _add_tree(z, release / "mods" / m, f"{top}/mods/{m}")
+            # the mod's files, listed: unzipped over an older package, the
+            # launcher's sync moves the files a mod no longer has (deleted
+            # since) to foundry-trash before building it
+            files = _add_tree(z, release / "mods" / m, f"{top}/mods/{m}")
+            import json
+            z.writestr(f"{top}/mods/{m}/{PACKAGE_LIST}",
+                       json.dumps({"package": name, "files": files}, indent=0) + "\n")
         z.writestr(f"{top}/mod-loader.ini", loader_ini(loader))
         z.writestr(f"{top}/Freeze-Snapshot.cmd", FREEZE.replace("\n", "\r\n"))
         z.writestr(f"{top}/Collect-Logs.cmd", COLLECT.replace("\n", "\r\n"))

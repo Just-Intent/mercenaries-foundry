@@ -100,6 +100,8 @@ static volatile LONG sample_playing;      /* in_gameplay, for the function sampl
 static int sampler_status(char *out, size_t size);
 static void sampler_init(void);
 static void sampler_shutdown(void);
+static void maptex_poll(double dt);
+static void maptext_poll(double dt);
 static int MERC_PLUGIN_CALL cmd_sample(void *ud, uint32_t L);
 static int MERC_PLUGIN_CALL cmd_label(void *ud, uint32_t L);
 static CRITICAL_SECTION lock;
@@ -1217,6 +1219,8 @@ static int MERC_PLUGIN_CALL on_update(void *ud, const MercPluginUpdate *u)
     InterlockedExchange(&sample_playing, host->in_gameplay(host->context) != 0);
     if (sample_playing) heap_watch(u->wall_delta_seconds);
     live_update(u->wall_delta_seconds);
+    maptex_poll(u->wall_delta_seconds);
+    maptext_poll(u->wall_delta_seconds);
     /* F7 toggles the window while this game (or the console) has focus. */
     DWORD pid = 0;
     GetWindowThreadProcessId(GetForegroundWindow(), &pid);
@@ -2824,9 +2828,11 @@ static void sampler_shutdown(void)
  * texts: text/*.json and factions.json with "map"); the next level load
  * puts them back. */
 #define MAPTEXT_MAX 4096
-typedef struct { uint32_t table, slot, original, replaced; } MapTextSwap;
+typedef struct { uint32_t key, original, replaced; } MapTextSwap;   /* by key: the table may be rebuilt */
 static MapTextSwap maptext[MAPTEXT_MAX];
 static unsigned maptext_count;
+static unsigned maptext_missing;       /* asked for, but a key wasn't in the table */
+static char maptext_missed[96];        /* the first such key, for the log */
 
 static uint32_t string_table(void)
 {
@@ -2855,21 +2861,28 @@ static int string_slot(uint32_t table, uint32_t key, uint32_t *values)
 static void maptext_restore(void)
 {
     unsigned put = 0;
-    for (unsigned i = maptext_count; i-- > 0;) {
+    /* the table as it is now (strings merged in since can grow and re-hash
+     * it: each key is looked up again) */
+    uint32_t table = maptext_count ? string_table() : 0;
+    for (unsigned i = maptext_count; table && i-- > 0;) {
         MapTextSwap *s = &maptext[i];
         uint32_t values = 0, now = 0;
-        if (host->read_guest(host->context, s->table + 0xC, &values, 4) &&
-            host->read_guest(host->context, values + 4 * s->slot, &now, 4) && now == s->replaced) {
-            host->write_guest(host->context, values + 4 * s->slot, &s->original, 4);
+        int slot = string_slot(table, s->key, &values);
+        if (slot >= 0 && host->read_guest(host->context, values + 4 * (uint32_t)slot, &now, 4) &&
+            now == s->replaced) {
+            host->write_guest(host->context, values + 4 * (uint32_t)slot, &s->original, 4);
             put++;
         }
     }
-    if (maptext_count) {
-        char line[96];
-        snprintf(line, sizeof(line), "map text: %u of %u strings put back", put, maptext_count);
+    if (maptext_count || maptext_missing) {
+        char line[256];
+        snprintf(line, sizeof(line), "map text: %u of %u strings put back (the rest no longer held the map's "
+                 "text); %u asked for weren't in the string table (first: %s)", put, maptext_count,
+                 maptext_missing, maptext_missing ? maptext_missed : "none");
         host->log(host->context, line);
     }
     maptext_count = 0;
+    maptext_missing = 0;
 }
 
 /* ---- HUD art of a map's own (Foundry_MapTexture) ----
@@ -2904,16 +2917,32 @@ static void mapsprite_restore(void)
     mapsprite_count = 0;
 }
 
-/* Foundry_MapTexture(texture, other): every HUD sprite drawn from texture is
- * drawn from other until the next level loads (other must be loaded: in the
- * map's load list). Returns how many sprites, or nil. */
-static int MERC_PLUGIN_CALL cmd_map_texture(void *ud, uint32_t L)
+/* The game keeps its own HUD textures resident: level set-up (0x180DE2)
+ * adds each one's hash to a keep list with 0x205D80(hash, 0) (lists per
+ * category at MEM32(0x7934C0)). A texture only in a map's load list isn't,
+ * and Texture_Find (0xC2740, __thiscall, this unused, ret 4) gives 0 for a
+ * texture that isn't loaded, so its sprites draw untextured. So the other
+ * texture is kept resident too, and the sprites switch once it's loaded. */
+#define TEXTURE_KEEP 0x205D80u
+#define TEXTURE_FIND 0xC2740u
+#define MAPTEX_PENDING_MAX 32
+typedef struct { uint32_t from, to; double waited; } MapTexPending;
+static MapTexPending maptex_pending[MAPTEX_PENDING_MAX];
+static unsigned maptex_pending_count;
+static double maptex_poll_timer;
+
+static int texture_loaded(uint32_t hash)
 {
-    char from[96], to[96];
-    (void)ud;
-    if (!lua_arg_text(L, 1, from, sizeof(from)) || !lua_arg_text(L, 2, to, sizeof(to))) return 0;
-    uint32_t want = hash_name(from), other = hash_name(to), map = 0, size = 0, values = 0, keys = 0;
-    if (!want || !other || !host->read_guest(host->context, SPRITE_MAP_PTR, &map, 4) || !map) return 0;
+    MercGuestCall c;
+    uint32_t self = 0, args[1] = {hash};
+    host->read_guest(host->context, 0x7934C0u, &self, 4);
+    return guest(TEXTURE_FIND, self, 1, args, &c) && c.eax != 0;
+}
+
+static unsigned maptex_swap(uint32_t want, uint32_t other)
+{
+    uint32_t map = 0, size = 0, values = 0, keys = 0;
+    if (!host->read_guest(host->context, SPRITE_MAP_PTR, &map, 4) || !map) return 0;
     map += 0x10;
     if (!host->read_guest(host->context, map, &size, 4) || !size || size > 0x100000 ||
         !host->read_guest(host->context, map + 8, &values, 4) ||
@@ -2929,12 +2958,80 @@ static int MERC_PLUGIN_CALL cmd_map_texture(void *ud, uint32_t L)
         host->write_guest(host->context, sprite + 4, &other, 4);
         n++;
     }
+    return n;
+}
+
+/* each half second: swap the sprites of textures now loaded (gives up after 30 s) */
+static void maptex_poll(double dt)
+{
+    if (!maptex_pending_count) return;
+    maptex_poll_timer += dt;
+    if (maptex_poll_timer < 0.5) return;
+    double step = maptex_poll_timer;
+    maptex_poll_timer = 0;
+    for (unsigned i = 0; i < maptex_pending_count;) {
+        MapTexPending *p = &maptex_pending[i];
+        char line[128];
+        if (texture_loaded(p->to)) {
+            unsigned n = maptex_swap(p->from, p->to);
+            snprintf(line, sizeof(line), "map HUD art: %08X drawn as %08X on %u sprites (loaded after %.1f s)",
+                     p->from, p->to, n, p->waited);
+        } else if ((p->waited += step) > 30.0) {
+            snprintf(line, sizeof(line), "map HUD art: %08X never loaded; its sprites keep the game's %08X",
+                     p->to, p->from);
+        } else {
+            i++;
+            continue;
+        }
+        host->log(host->context, line);
+        *p = maptex_pending[--maptex_pending_count];
+    }
+}
+
+/* Foundry_MapTexture(texture, other): every HUD sprite drawn from texture is
+ * drawn from other until the next level loads, once other is loaded (it's
+ * kept resident as the game's own HUD textures are). Returns true, or nil. */
+static int MERC_PLUGIN_CALL cmd_map_texture(void *ud, uint32_t L)
+{
+    char from[96], to[96];
+    (void)ud;
+    if (!lua_arg_text(L, 1, from, sizeof(from)) || !lua_arg_text(L, 2, to, sizeof(to))) return 0;
+    uint32_t want = hash_name(from), other = hash_name(to);
+    if (!want || !other || maptex_pending_count == MAPTEX_PENDING_MAX) return 0;
     MercGuestCall c;
-    uint32_t push[3] = {L, 0, 0};
-    double d = (double)n;
-    memcpy(&push[1], &d, 8);
-    guest(MF_FN_lua_pushnumber, 0, 3, push, &c);
+    uint32_t keep[2] = {other, 0};
+    guest(TEXTURE_KEEP, 0, 2, keep, &c);
+    maptex_pending[maptex_pending_count++] = (MapTexPending){want, other, 0.0};
+    maptex_poll_timer = 0.5;                       /* look right away */
+    maptex_poll(0.0);
+    uint32_t args[2] = {L, 1};
+    lua_call(MF_FN_Lua_PushBool, 2, args);
     return 1;
+}
+
+/* every 2 s while a map's texts are on: a key back on the game's text (its
+ * strings rebuilt, as a mission's merge in) gets the map's again */
+static double maptext_timer;
+static void maptext_poll(double dt)
+{
+    if (!maptext_count || (maptext_timer += dt) < 2.0) return;
+    maptext_timer = 0;
+    uint32_t table = string_table();
+    unsigned again = 0;
+    for (unsigned i = 0; table && i < maptext_count; i++) {
+        uint32_t values = 0, now = 0;
+        int slot = string_slot(table, maptext[i].key, &values);
+        if (slot >= 0 && host->read_guest(host->context, values + 4 * (uint32_t)slot, &now, 4) &&
+            now == maptext[i].original) {
+            host->write_guest(host->context, values + 4 * (uint32_t)slot, &maptext[i].replaced, 4);
+            again++;
+        }
+    }
+    if (again) {
+        char line[96];
+        snprintf(line, sizeof(line), "map text: %u strings were the game's again; the map's put back", again);
+        host->log(host->context, line);
+    }
 }
 
 static void MERC_PLUGIN_CALL level_load_before(void *ud, MercHookContext *c)
@@ -2942,6 +3039,7 @@ static void MERC_PLUGIN_CALL level_load_before(void *ud, MercHookContext *c)
     (void)ud; (void)c;
     maptext_restore();
     mapsprite_restore();
+    maptex_pending_count = 0;
 }
 
 /* Foundry_MapText(key, other): key shows other's text until the next level
@@ -2955,16 +3053,19 @@ static int MERC_PLUGIN_CALL cmd_map_text(void *ud, uint32_t L)
     if (!table) return 0;
     int to = string_slot(table, hash_name(key), &values);
     int from = string_slot(table, hash_name(other), &values);
-    if (to < 0 || from < 0 ||
-        !host->read_guest(host->context, values + 4 * (uint32_t)from, &text, 4) ||
+    if (to < 0 || from < 0) {
+        if (!maptext_missing++) snprintf(maptext_missed, sizeof(maptext_missed), "%s", to < 0 ? key : other);
+        return 0;
+    }
+    if (!host->read_guest(host->context, values + 4 * (uint32_t)from, &text, 4) ||
         !host->read_guest(host->context, values + 4 * (uint32_t)to, &original, 4)) return 0;
     if (original != text) {
         unsigned i;
         for (i = 0; i < maptext_count; i++)               /* asked again: keep the first original */
-            if (maptext[i].table == table && maptext[i].slot == (uint32_t)to) break;
+            if (maptext[i].key == hash_name(key)) break;
         if (i == maptext_count) {
             if (maptext_count == MAPTEXT_MAX) return 0;
-            maptext[maptext_count++] = (MapTextSwap){table, (uint32_t)to, original, text};
+            maptext[maptext_count++] = (MapTextSwap){hash_name(key), original, text};
         } else {
             maptext[i].replaced = text;
         }

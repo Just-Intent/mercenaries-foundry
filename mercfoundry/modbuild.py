@@ -314,7 +314,7 @@ def _write_map_text(data, result):
                f"if not Foundry_MapTexture then return 0 end\n"
                f"local n = 0\n"
                f"for i = 1, table.getn(tFoundryMapHud), 2 do\n"
-               f"n = n + (Foundry_MapTexture(tFoundryMapHud[i], tFoundryMapHud[i + 1]) or 0)\n"
+               f"if Foundry_MapTexture(tFoundryMapHud[i], tFoundryMapHud[i + 1]) then n = n + 1 end\n"
                f"end\n"
                f"return n\n"
                f"end\n")

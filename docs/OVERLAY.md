@@ -41,8 +41,11 @@ Script commands it adds, for the Lua box or any script:
   texture's hash, then UVs over the texture's size) in a hash map at
   `MEM32(0x842E20) + 0x10` (+0 size, +8 sprite pointers, +0xC keys); each
   frame the HUD looks a sprite up and turns its +4 hash into a texture with
-  Texture_Find (0xC2740), which draws nothing unless that texture is loaded.
-  Used by a new map's `"hud_textures"`. Compiled; not yet run in game.
+  Texture_Find (0xC2740), which draws nothing unless that texture is loaded,
+  so the command first keeps the other texture resident as the game keeps its
+  own HUD textures (0x205D80(hash, 0)) and switches the sprites once it's
+  loaded (logged). Used by a new map's `"hud_textures"`. Compiled; not yet
+  run in game.
 - `Foundry_Range()` runs the [test range](ENCOUNTERS.md#test-range)'s
   `range.lua` in the calling script state. It looks for the file in
   `mods\Foundry Test Range` first, then in the launcher's runtime copy, where

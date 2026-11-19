@@ -218,6 +218,42 @@ def _remove_output(out: Path) -> bool:
     return True
 
 
+PACKAGE_LIST = ".foundry-package.json"
+
+
+def prune_packaged(game, folder, result=None):
+    """A mod unzipped from a playtest package lists its files (PACKAGE_LIST);
+    files it has beyond those were left by an older package (the mod deleted
+    them since) and are moved to the game's foundry-trash folder, so the
+    build doesn't use them. A mod without the list (made or edited on this
+    PC) is left alone. Returns the paths moved (relative)."""
+    import datetime
+    import shutil
+    folder, game = Path(folder), Path(game)
+    listing = folder / PACKAGE_LIST
+    if not listing.is_file():
+        return []
+    try:
+        keep = {str(f).replace("\\", "/") for f in json.loads(listing.read_text(encoding="utf-8")).get("files", [])}
+    except (ValueError, AttributeError):
+        return []
+    stale = [p for p in folder.rglob("*") if p.is_file() and p != listing
+             and p.relative_to(folder).as_posix() not in keep and ".git" not in p.relative_to(folder).parts]
+    if not stale:
+        return []
+    trash = game / "foundry-trash" / f"{folder.name} (older package) {datetime.datetime.now():%Y%m%d-%H%M%S}"
+    moved = []
+    for p in stale:
+        rel = p.relative_to(folder)
+        (trash / rel).parent.mkdir(parents=True, exist_ok=True)
+        shutil.move(str(p), str(trash / rel))
+        moved.append(rel.as_posix())
+    if result is not None:
+        result.notes.append(f"{folder.name}: moved {len(moved)} files an older package left (not in this one) "
+                            f"to {trash}")
+    return moved
+
+
 def sync(game, data_dir=None, force=False, enable=False) -> SyncResult:
     from . import modbuild
     game = Path(game)
@@ -236,6 +272,8 @@ def sync(game, data_dir=None, force=False, enable=False) -> SyncResult:
     sources = [mods_dir / m.folder for m in loader
                if m.enabled and m.folder != OUTPUT and is_source(mods_dir / m.folder)]
     result.sources = [s.name for s in sources]
+    for s in sources:
+        prune_packaged(game, s, result)
     out = mods_dir / OUTPUT
     if not sources:
         result.removed = _remove_output(out)
