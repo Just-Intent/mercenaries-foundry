@@ -431,6 +431,89 @@ class ModBuildTests(unittest.TestCase):
         self.write("maps/island.json", json.dumps({"from": "blank", "loads_like": None, "templates": ["template_nothing"]}))
         with self.assertRaisesRegex(ValueError, "no game template named 'template_nothing'"):
             modbuild.build(self.project, self.data, self.out)
+        # a copy under a name of its own, even of one every map has, with its
+        # own properties; and a "map" rule changing the map's copies only
+        self.write("maps/island.json", json.dumps({"from": "blank", "loads_like": None, "templates": [
+            "template_tank",
+            {"template": "template_allies_driver", "as": "template_island_driver", "set": {"GeometryFile": "sample"}}]}))
+        (self.project / "objects").mkdir(exist_ok=True)
+        self.write("objects/island.json", json.dumps([
+            {"map": "island", "model": "sample", "set": {"armour": "7"}},
+            {"map": "island", "template": "template_wep_small", "set": {"ammo": "1"}}]))
+        result = modbuild.build(self.project, self.data, self.out)
+        recs = self.records("assets.dsk")
+        objs = {o["name"]: dict(o["properties"]) for o in
+                world.iter_objects(recs[(name_hash("island_templates"), WORLD)])}
+        self.assertEqual(set(objs), {"template_tank", "template_wep_big", "template_island_driver"})
+        self.assertEqual(objs["template_island_driver"]["GeometryFile"], "sample")
+        self.assertEqual(objs["template_tank"]["armour"], "7")          # the rule, on the copy
+        self.assertEqual(objs["template_island_driver"]["armour"], "7")
+        # the game's templates stay as they were
+        for lay in ("template_vehicles_ch3", "template_humans"):
+            for o in world.iter_objects(recs[(name_hash(lay), WORLD)]):
+                self.assertNotIn("armour", dict(o["properties"]))
+        # template_wep_small loads on every map: not copied, so the rule warns
+        self.assertTrue(any("objects/island.json: \"map\": island: no template island copies matches "
+                            "'template_wep_small'" in w for w in result.warnings))
+        for bad, msg in (({"template": "template_tank", "set": {"a": 1}}, "\"set\" needs \"as\""),
+                         ({"template": "template_tank", "as": "tank2"}, "isn't a template name"),
+                         ({"template": "template_tank", "as": "template_wep_big"}, "already has an object")):
+            self.write("maps/island.json", json.dumps({"from": "blank", "loads_like": None, "templates": [bad]}))
+            with self.assertRaisesRegex(ValueError, msg):
+                modbuild.build(self.project, self.data, self.out)
+        self.write("maps/island.json", json.dumps({"from": "blank", "loads_like": None}))
+        self.write("objects/island.json", json.dumps([{"map": "island", "model": "sample", "move": [0, 1, 0]}]))
+        with self.assertRaisesRegex(ValueError, "can't move, copy or remove"):
+            modbuild.build(self.project, self.data, self.out)
+
+    def test_map_rule_on_a_game_map(self):
+        # "map": <a game map>: only the layers its load list loads
+        build(self.data / "assets.dsk", [
+            (name_hash("mission"), SCRIPT, script.encode(script.new("mission", "x = 1\n"))),
+            (name_hash("base_layer"), WORLD, world_record()),
+            (name_hash("other_layer"), WORLD, world_record()),
+            (name_hash("sw"), name_hash("list"), b"\n[world]\n\nload base_layer\n"),
+        ])
+        name = next(world.iter_objects(world_record()))["name"]
+        (self.project / "objects").mkdir(exist_ok=True)
+        self.write("objects/r.json", json.dumps([{"map": "sw", "name": name, "set": {"mark": "1"}}]))
+        modbuild.build(self.project, self.data, self.out)
+        recs = self.records("assets.dsk")
+        self.assertEqual(dict(next(world.iter_objects(recs[(name_hash("base_layer"), WORLD)]))["properties"])["mark"], "1")
+        self.assertNotIn("mark", dict(next(world.iter_objects(recs[(name_hash("other_layer"), WORLD)]))["properties"]))
+        self.write("objects/r.json", json.dumps([{"map": "nowhere", "name": name, "set": {"mark": "1"}}]))
+        with self.assertRaisesRegex(ValueError, "neither a game map nor a mod's new map"):
+            modbuild.build(self.project, self.data, self.out)
+
+    def test_copied_model(self):
+        # "copy": the base as it is under a new name, drawing the mod's texture;
+        # wherever it's loaded, its textures are too
+        self.write("textures/tex2.png", png.encode(8, 8, red(8, 8)))
+        self.write("models/guy.new.json", json.dumps({"base": "sample", "copy": True, "textures": {"tex": "tex2"}}))
+        build(self.data / "assets.dsk", [
+            (name_hash("mission"), SCRIPT, script.encode(script.new("mission", "x = 1\n"))),
+            (name_hash("base_layer"), WORLD, world_record()),
+            (name_hash("sw"), name_hash("list"), b"\n[model]\n\nload sample\nload guy\n\n[texture]\n\nload tex\n"),
+        ])
+        result = modbuild.build(self.project, self.data, self.out)
+        self.assertIn("model guy: a copy of sample, drawing tex as tex2", result.changes)
+        arc = dsk.Archive(self.out / "streamed.dsk")
+        recs = {r.kind: arc.read(r) for r in arc.records if r.key == name_hash("guy")}
+        new = model.decode(recs[model.MODEL], recs[model.SEGMENTS])
+        base = model.decode(self.mr, self.sr)
+        self.assertEqual(new.name, "guy")
+        self.assertEqual(len(new.pieces), len(base.pieces))
+        self.assertEqual(new.joints, base.joints)
+        self.assertEqual(len(new.collision), len(base.collision))
+        self.assertEqual(model.texture_hashes(recs[model.SEGMENTS]), [name_hash("tex2")])
+        self.assertEqual(self.records("streamed.dsk")[(name_hash("sample"), model.SEGMENTS)], self.sr)  # base unchanged
+        loads = self.records("assets.dsk")[(name_hash("sw"), name_hash("list"))].decode("latin-1")
+        self.assertIn("load tex2", loads)
+        for spec, msg in (({"base": "sample", "copy": True, "textures": {"nope": "tex2"}}, "doesn't draw a texture named 'nope'"),
+                          ({"base": "sample", "copy": True, "textures": {"tex": "missing"}}, "no texture named 'missing'")):
+            self.write("models/guy.new.json", json.dumps(spec))
+            with self.assertRaisesRegex(ValueError, msg):
+                modbuild.build(self.project, self.data, self.out)
 
     def test_rule_wheels_and_break_up_pieces_load(self):
         # a rule giving an object wheels or helicopter break-up pieces: its

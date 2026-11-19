@@ -715,6 +715,32 @@ toolkit bundle run it the same way: `foundry\python\python.exe foundry\mercfound
 Tested in game (2026-11-10): an allied Humvee and an allied soldier placed in
 the editor on the south map appeared there in free roam.
 
+## A new map's own look (the game's maps left as they are)
+
+A mod that adds a map can give it characters and vehicles of its own without
+changing the game's anywhere else (these are files, not editor tools yet):
+
+- **A copied model:** `models/<name>.new.json`
+  `{"base": "sk_hum_soldier", "copy": true, "textures": {"sk_hum_soldier_body": "isle_guard_body"}}`
+  is the base model as it is (pieces, skin, skeleton, collision) under a new
+  name, drawing other textures: each one the game has or the mod adds
+  (`textures/isle_guard_body.png`), and its `_nm` normal map too when both
+  exist. Wherever the copy is loaded, the textures it draws are loaded with it.
+  No `.glb` is needed (for new shapes, leave out `"copy"` and give one).
+- **A template under its own name:** a new map's `maps/<name>.json`
+  `"templates"` takes `{"template": "template_sk_soldier", "as": "template_isle_guard", "set": {"GeometryFile": "isle_guard"}}`
+  as well as plain names: a copy of a game template (even one every map
+  loads, such as template_vehicles_ch2's) under the new name, with those
+  properties, in the map's template layer. The map's squads, placed objects
+  and missions then use `template_isle_guard`; the game's soldier is unchanged.
+- **Rules for one map:** an objects rule with `"map"` changes only that map:
+  `"map": "<a mod's new map>"` changes (`"set"` only) the map's template
+  copies it matches by `"template"` or `"model"` (a template every map loads
+  isn't copied, so a rule for it warns: give it a copy with `"as"`);
+  `"map": "sw"` (a game map) only the layers that map's load list loads (not
+  the ones its scripts load by chapter). A rule without `"map"` changes every
+  layer in the game.
+
 ## Not yet
 
 - Undo for making a new map; the history covers objects, paths, zones, squads, missions,

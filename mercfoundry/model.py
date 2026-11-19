@@ -421,6 +421,57 @@ def without_collision(segments_record: bytes) -> bytes:
     return ucfb.wrap(b"CSEG", struct.pack("<II", len(new_tree), len(packed)) + packed, cseg_pad)
 
 
+def texture_hashes(segments_record: bytes) -> list:
+    """The texture hashes the pieces draw (each segm MTRL's word 3, and word 4
+    where a piece has a second texture), in order, without repeats."""
+    cseg = ucfb.unwrap(segments_record, b"CSEG")
+    size, _ = struct.unpack_from("<II", cseg)
+    tree = script.decompress(cseg[8:], size)
+    roots = list(ucfb.iter_chunks(tree))
+    out = []
+    for t, b in ucfb.iter_chunks(roots[0][1]):
+        if t != b"segm":
+            continue
+        for pt, pb in ucfb.iter_chunks(b):
+            if pt == b"MTRL":
+                words = struct.unpack(f"<{len(pb) // 4}I", pb)
+                for w in words[3:5]:
+                    if w and w not in out:
+                        out.append(w)
+    return out
+
+
+def retextured(segments_record: bytes, mapping: dict) -> bytes:
+    """The segments record with its pieces' textures swapped: each MTRL word 3
+    (the piece's texture) and word 4 (a second texture) found in mapping (old
+    hash -> new hash) takes the new one."""
+    cseg, cseg_pad = ucfb.unwrap(segments_record, b"CSEG", with_pad=True)
+    size, _ = struct.unpack_from("<II", cseg)
+    tree = script.decompress(cseg[8:], size)
+    roots, tree_pad = ucfb.split(tree)
+    items, pad_last = ucfb.split(roots[0][1])
+    out = []
+    for t, b in items:
+        if t == b"segm":
+            parts, segm_pad = ucfb.split(b)
+            new_parts = []
+            for pt, pb in parts:
+                if pt == b"MTRL":
+                    words = list(struct.unpack(f"<{len(pb) // 4}I", pb))
+                    for i in (3, 4):
+                        if i < len(words) and words[i] in mapping:
+                            words[i] = mapping[words[i]]
+                    pb = struct.pack(f"<{len(words)}I", *words) + pb[len(words) * 4:]
+                new_parts.append((pt, pb))
+            b = ucfb.pack_children(new_parts, segm_pad)
+        out.append((t, b))
+    new_tree = ucfb.pack_children([(b"ucfb", ucfb.pack_children(out, pad_last))], tree_pad)
+    if new_tree == tree:
+        return segments_record
+    packed = script.compress(new_tree)
+    return ucfb.wrap(b"CSEG", struct.pack("<II", len(new_tree), len(packed)) + packed, cseg_pad)
+
+
 def set_lod_masks(segments_record: bytes, mask: int) -> bytes:
     """The segments record with every piece drawn at these levels of detail
     (its segm INFO's fourth word)."""

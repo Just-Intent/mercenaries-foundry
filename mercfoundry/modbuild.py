@@ -330,6 +330,8 @@ def _rules(folder, skip=()):
                 raise ValueError(f"{f.name}: \"near\" must be [x, y, z]")
             if rule.get("remove") and any(k in rule for k in ("set", "move", "position", "turn", "copy")):
                 raise ValueError(f"{f.name}: a \"remove\" rule can't also change or copy the object")
+            if "map" in rule and not (isinstance(rule["map"], str) and rule["map"].strip()):
+                raise ValueError(f"{f.name}: \"map\" names a map (\"sw\", or a mod's new map)")
             if rule.get("copy") and not rule.get("as"):
                 raise ValueError(f"{f.name}: \"copy\" needs \"as\", the new object's name")
             for key in ("move", "position"):
@@ -512,7 +514,7 @@ LEVEL_TEMPLATE_LAYERS = ("template_weapons", "template_humans", "template_vehicl
 NEW_MAP_TEMPLATE_LAYERS = LEVEL_TEMPLATE_LAYERS + ("template_vehicles_ch2",)
 
 
-def _map_templates(data, name, wanted, where):
+def _map_templates(data, name, wanted, where, rules=()):
     """maps/<name>.json "templates": copies of game templates, under their own
     names, in a layer of their own that loads with the map (<name>_templates),
     for templates a new map doesn't have: those in the chapter layers
@@ -525,7 +527,17 @@ def _map_templates(data, name, wanted, where):
     with the weapon, ammunition and crew templates they name that aren't in
     those shared layers. A listed template that is in them isn't copied
     (it's reported). Returns (layer, template names, shared ones listed,
-    records); layer and records are None when there's nothing to copy."""
+    records, unused rules); layer and records are None when there's nothing
+    to copy.
+
+    An entry {"template": <game template>, "as": <new name>, "set": {...}}
+    is a copy under a name of its own (template_...), with those properties
+    (GeometryFile: the model it draws, a copied model of the mod's own), even
+    of a template every map has: this map's own version of it, for its
+    encounters and missions, leaving the game's alone.
+    rules: objects rules with "map": <this map> (file, rule), applied to the
+    copies they match (by "template" or "model"): changes on this map only;
+    the ones that matched no copy come back (for a warning)."""
     from . import encounters
     archives = [data.archive(n) for n in ARCHIVES if (data.dir / n).exists()]
     by_name, _ = _world_index(data, archives)
@@ -549,18 +561,56 @@ def _map_templates(data, name, wanted, where):
     def in_always(t):
         return any(h["layer"].lower() in always for h in by_name.get(t.lower(), []))
 
-    for t in wanted:
-        source(str(t))                     # each must be a game template
-    shared = [str(t) for t in wanted if in_always(str(t))]
-    todo = [str(t) for t in wanted if not in_always(str(t))]
+    specs = []
+    for w in wanted:
+        if isinstance(w, dict):
+            t, as_, set_ = str(w.get("template") or ""), w.get("as"), w.get("set") or {}
+            if not t:
+                raise ValueError(f"{where}: \"templates\": an entry {{...}} names its game \"template\"")
+            if as_ is not None:
+                as_ = str(as_)
+                if not re.fullmatch(r"template_[A-Za-z0-9_]+", as_):
+                    raise ValueError(f"{where}: \"templates\": \"as\": {as_!r} isn't a template name "
+                                     f"(template_ then letters, digits and _)")
+                if by_name.get(as_.lower()):
+                    raise ValueError(f"{where}: \"templates\": the game already has an object named {as_!r}")
+            elif set_:
+                raise ValueError(f"{where}: \"templates\": {t}: \"set\" needs \"as\", a name of its own "
+                                 f"(the game's {t} stays as it is)")
+            if not isinstance(set_, dict):
+                raise ValueError(f"{where}: \"templates\": {t}: \"set\" is {{property: value}}")
+            specs.append((t, as_, set_))
+        else:
+            specs.append((str(w), None, None))
+    for t, _, _ in specs:
+        source(t)                          # each must be a game template
+    news = [a.lower() for _, a, _ in specs if a]
+    if len(set(news)) != len(news):
+        raise ValueError(f"{where}: \"templates\": two copies with the same \"as\"")
+    shared = [t for t, a, _ in specs if not a and in_always(t)]
+    todo = [(t, a, st) for t, a, st in specs if a or not in_always(t)]
     done, insts, loads = set(), [], {}
+    used = [False] * len(rules)
     while todo:
-        t = todo.pop(0)
-        if t.lower() in done:
+        t, as_, set_ = todo.pop(0)
+        if (as_ or t).lower() in done:
             continue
-        done.add(t.lower())
+        done.add((as_ or t).lower())
         lay, inst = source(t)
-        insts.append(copy.deepcopy(inst))
+        inst = copy.deepcopy(inst)
+        if as_:
+            inst["template"] = as_
+        if set_:
+            _apply_rule(inst, {"set": set_})
+        for k, (fname, rule) in enumerate(rules):
+            want = (rule.get("template") or rule.get("name") or "").lower()
+            if want and want not in (t.lower(), (as_ or "").lower()):
+                continue
+            if rule.get("model") and str(inst.get("model") or "").lower() != rule["model"].lower():
+                continue
+            _apply_rule(inst, {"set": rule.get("set") or {}})
+            used[k] = True
+        insts.append(inst)
         if lay not in lists:
             hit = [(a, r) for a, r in data.records(name_hash("list")) if r.key == name_hash(lay)]
             body = data.current(*hit[0]) if hit else data.find_added(name_hash(lay), name_hash("list"))
@@ -580,9 +630,10 @@ def _map_templates(data, name, wanted, where):
             v = str(v)
             if v.lower().startswith("template_") and v.lower() not in done and by_name.get(v.lower()) \
                     and not in_always(v):
-                todo.append(v)
+                todo.append((v, None, None))
+    unused = [r for r, u in zip(rules, used) if not u]
     if not insts:
-        return None, [], shared, None
+        return None, [], shared, None, unused
     layer = f"{name}_templates"
     wdoc = {"format": world.FORMAT, "name": layer, "strings": [], "chunks": [
         {"tag": "NAME"}, {"tag": "TNAM", "hex": (name.upper().encode("ascii") + b"\0").hex()},
@@ -592,7 +643,8 @@ def _map_templates(data, name, wanted, where):
         if kind.lower() not in encounters.LAYER_KINDS:
             sections.setdefault(kind, []).extend(names_)
     text = "".join(f"\n[{k}]\n\n" + "".join(f"load {n}\n" for n in sections[k]) for k in sorted(sections))
-    return layer, [t["template"] for t in insts], shared,         {WORLD: world.from_json(wdoc), name_hash("list"): text.encode("latin-1")}
+    return layer, [t["template"] for t in insts], shared, \
+        {WORLD: world.from_json(wdoc), name_hash("list"): text.encode("latin-1")}, unused
 
 
 def _object_loads(obj, full, archives):
@@ -1663,9 +1715,21 @@ def _load_models(data, layer_key, names):
 
 def _apply_objects(data, folder, result, skip=()):
     from . import encounters
-    rules = list(_rules(folder, skip))
+    # "map": <a mod's new map> rules change that map's template copies (the
+    # maps step); "map": <a game map> ones only the layers its load list loads
+    new_maps = getattr(data, "new_maps", set())
+    rules = [(f, r) for f, r in _rules(folder, skip) if str(r.get("map") or "").lower() not in new_maps]
     if not rules:
         return
+    map_layers = {}
+    for _, rule in rules:
+        m = str(rule.get("map") or "").lower()
+        if m and m not in map_layers:
+            lists = [data.current(a, r) for a, r in data.records(name_hash("list")) if r.key == name_hash(m)]
+            if not lists:
+                raise ValueError(f"\"map\": {rule['map']!r} is neither a game map nor a mod's new map")
+            map_layers[m] = {name_hash(n) for body in lists
+                             for n in encounters.parse_list(body.decode("latin-1")).get("world", [])}
     result.warnings += _material_warnings(rules)
     hits = [0] * len(rules)
     # models rules give objects (a new object's, its ruin, wheels, break-up pieces): their layer loads them
@@ -1675,6 +1739,8 @@ def _apply_objects(data, folder, result, skip=()):
         doc = None
         for n, (fname, rule) in enumerate(rules):
             if rule.get("layer") and name_hash(rule["layer"]) != r.key:
+                continue
+            if rule.get("map") and r.key not in map_layers[str(rule["map"]).lower()]:
                 continue
             if doc is None:
                 doc = world.to_json(data.current(a, r))
@@ -2343,8 +2409,21 @@ def _apply_maps(data, folder, result):
         # scripts step) wins; otherwise a copy of the source map's.
         # The map's file can say where the player arrives and what shows; its
         # layers ("load": "map") load with it.
-        if mdoc.get("templates"):
-            tlayer, tnames, tshared, trecs = _map_templates(data, name, mdoc["templates"], where)
+        map_rules = [(fn, r) for fn, r in _rules(folder) if str(r.get("map") or "").lower() == name.lower()]
+        for fn, r in map_rules:
+            if any(k in r for k in ("move", "position", "turn", "copy", "remove")):
+                raise ValueError(f"objects/{fn}: a rule with \"map\": {name} changes properties (\"set\") of the "
+                                 f"map's template copies; it can't move, copy or remove")
+        if mdoc.get("templates") or map_rules:
+            tlayer, tnames, tshared, trecs, unused = _map_templates(data, name, mdoc.get("templates") or [], where,
+                                                                     map_rules)
+            for fn, r in unused:
+                what = r.get("template") or r.get("name") or r.get("model")
+                result.warnings.append(
+                    f"objects/{fn}: \"map\": {name}: no template {name} copies matches {what!r}, so the rule "
+                    f"changes nothing there. A template every map loads (template_vehicles_ch2...) isn't copied: "
+                    f"give {where} \"templates\" a copy under a name of its own ({{\"template\", \"as\", \"set\"}}) "
+                    f"and use that name on {name}")
             if tshared:
                 made.append(f"{len(tshared)} templates load on every map already, not copied "
                             f"({', '.join(tshared)})")
@@ -2355,7 +2434,7 @@ def _apply_maps(data, folder, result):
                     data.new("assets.dsk", name_hash(tlayer), kind_, body_)
                 data.new_map_layers = getattr(data, "new_map_layers", {})
                 data.new_map_layers.setdefault(name.lower(), []).insert(0, tlayer)
-                listed = len(mdoc["templates"]) - len(tshared)
+                listed = len(mdoc.get("templates") or []) - len(tshared)
                 made.append(f"{listed} templates in {tlayer}" + (
                     f" (and {len(tnames) - listed} they name: {', '.join(tnames[listed:])})" if len(tnames) > listed else ""))
         layers = getattr(data, "new_map_layers", {}).get(name.lower(), [])
@@ -2886,6 +2965,10 @@ def _new_models(data, folder, result):
                 break
         if not src:
             raise ValueError(f"{where}: \"base\" names no game model ({base!r})")
+        if spec_doc.get("copy"):
+            _copy_model(data, name, base, src, spec_doc, where, keep_shadow, result)
+            made.add(name.lower())
+            continue
         files = [f for f in (folder / "models").glob(f"{name}.*") if f.suffix.lower() in (".glb", ".gltf", ".obj")]
         if not files:
             raise ValueError(f"{where}: no models/{name}.glb (or .gltf, .obj) with its pieces")
@@ -2936,6 +3019,116 @@ def _new_models(data, folder, result):
                               + (", without the base's shadow" if dropped_shadow else ""))
         result.warnings += [f"model {name}: {w}" for w in report.warnings]
     return made
+
+
+def _texture_names(data):
+    """Texture hash -> name, from every load list's [texture] entries (the
+    game's and the mod's) and the textures the mod added."""
+    if getattr(data, "texture_names", None) is None:
+        from . import encounters
+        names = {}
+        LIST = name_hash("list")
+        bodies = [data.current(a, r) for a, r in data.records(LIST)]
+        bodies += [data.find_added(k, LIST) for k, kind, _ in data.added() if kind == LIST]
+        for body in bodies:
+            for t in encounters.parse_list(body.decode("latin-1")).get("texture", []):
+                names.setdefault(name_hash(t), t)
+        data.texture_names = names
+    return data.texture_names
+
+
+def _copy_model(data, name, base, src, spec_doc, where, keep_shadow, result):
+    """models/<name>.new.json {"base": <game model>, "copy": true, "textures":
+    {<base's texture>: <texture>}}: the base model as it is (pieces, skin,
+    skeleton, collision) under a new name, drawing other textures: a new
+    character or vehicle that looks its own without changing the base, for
+    templates of the mod's own to name (GeometryFile). Each texture named is
+    one the game has or the mod adds (textures/<name>.png). Wherever the copy
+    is loaded, its textures are too (_load_copied_model_textures)."""
+    a, recs = src
+    mr = model.renamed(data.archive(a).read(recs[model.MODEL]), name)
+    if not keep_shadow and model.has_shadow(mr):
+        mr = model.without_shadow(mr)
+    sr = data.archive(a).read(recs[model.SEGMENTS])
+    swaps = spec_doc.get("textures") or {}
+    if not isinstance(swaps, dict):
+        raise ValueError(f"{where}: \"textures\" is {{<base's texture>: <texture>}}")
+    drawn = model.texture_hashes(sr)
+    have = {r.key for _, r in data.records(texture.TEXTURE)} | \
+        {k for k, kind, _ in data.added() if kind == texture.TEXTURE}
+    names = _texture_names(data)
+    mapping = {}
+    for old, new in swaps.items():
+        old, new = str(old), str(new)
+        if name_hash(old) not in drawn:
+            raise ValueError(f"{where}: {base} doesn't draw a texture named {old!r} (it draws "
+                             f"{', '.join(names.get(h, f'{h:08x}') for h in drawn)})")
+        if name_hash(new) not in have:
+            raise ValueError(f"{where}: no texture named {new!r} (add textures/{new}.png)")
+        mapping[name_hash(old)] = name_hash(new)
+        # its normal map, when the game has one for the old texture and the mod one for the new
+        if name_hash(old + "_nm") in have and name_hash(new + "_nm") in have:
+            mapping[name_hash(old + "_nm")] = name_hash(new + "_nm")
+    sr = model.retextured(sr, mapping)
+    key = name_hash(name)
+    data.new("streamed.dsk", key, model.MODEL, mr)
+    data.new("streamed.dsk", key, model.SEGMENTS, sr)
+    textures_ = []
+    for h in model.texture_hashes(sr):
+        n = names.get(h) or next((str(v) for v in swaps.values() if name_hash(str(v)) == h), None)
+        if n is None:
+            result.warnings.append(f"{where}: the copy draws a texture ({h:08x}) no load list names, so it may "
+                                   f"not be loaded where the copy is")
+            continue
+        textures_.append(n)
+        nm = n + "_nm"
+        if name_hash(nm) in have:
+            textures_.append(nm)
+    data.copied_models = getattr(data, "copied_models", {})
+    data.copied_models[name.lower()] = textures_
+    result.changes.append(f"model {name}: a copy of {base}" + (
+        ", drawing " + ", ".join(f"{o} as {n}" for o, n in swaps.items()) if swaps else " (its own textures unchanged)"))
+
+
+def _load_copied_model_textures(data, result):
+    """After every step: each load list that loads a copied model (a mod's
+    layers, its new maps' lists and the game's) loads the textures it draws."""
+    copies = getattr(data, "copied_models", None)
+    if not copies:
+        return
+    from . import encounters
+    LIST = name_hash("list")
+
+    def with_textures(text):
+        sections = encounters.parse_list(text)
+        want = []
+        for m in sections.get("model", []):
+            for t in copies.get(m.lower(), []):
+                if t.lower() not in {x.lower() for x in want}:
+                    want.append(t)
+        have_t = {t.lower() for t in sections.get("texture", [])}
+        add = [t for t in want if t.lower() not in have_t]
+        if not add:
+            return None
+        nl = "\r\n" if "\r\n" in text else "\n"
+        if "texture" in sections:
+            i = text.lower().index("[texture]") + len("[texture]")
+            return text[:i] + nl + "".join(f"load {t}{nl}" for t in add) + text[i:]
+        return text.rstrip() + f"{nl}{nl}[texture]{nl}{nl}" + "".join(f"load {t}{nl}" for t in add)
+    n = 0
+    for key, kind, _ in list(data.added()):
+        if kind == LIST:
+            new = with_textures(data.find_added(key, LIST).decode("latin-1"))
+            if new is not None:
+                data.replace_added(key, LIST, new.encode("latin-1"))
+                n += 1
+    for a, r in data.records(LIST):
+        new = with_textures(data.current(a, r).decode("latin-1"))
+        if new is not None:
+            data.set(a, r, new.encode("latin-1"))
+            n += 1
+    if n:
+        result.changes.append(f"copied models: their textures load with them ({n} load lists)")
 
 
 def _apply_models(data, folder, result):
@@ -3506,6 +3699,7 @@ def build(projects, data_dir, out_dir, name=None, description=None) -> Result:
     # after every step: the Lua check (the maps step writes new maps' master
     # scripts after the missions step), and a new map's step lists the
     # scripts it runs
+    _load_copied_model_textures(data, result)
     _check_lua(data, result)
     _check_new_scripts(data, result)
     _check_map_paths(data, result)
