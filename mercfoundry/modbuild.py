@@ -2753,15 +2753,25 @@ def _new_models(data, folder, result):
 def _apply_models(data, folder, result):
     made = _new_models(data, folder, result)
     files = sorted(f for f in (folder / "models").glob("*") if f.suffix.lower() in (".obj", ".glb", ".gltf")
-                   and f.stem.lower() not in made)
+                   and re.sub(r"(?i)\.lod\d+$", "", f.stem).lower() not in made)
+    # models/<name>.lod<N>.glb: an edit of the model's level of detail N
+    # (exported with --lod N), beside models/<name>.glb for level 0; each
+    # builds on the ones before it
+    files.sort(key=lambda f: (re.sub(r"(?i)\.lod\d+$", "", f.stem).lower(),
+                              int((re.search(r"(?i)\.lod(\d+)$", f.stem) or [0, 0])[1])))
     for f in files:
         name = f.stem
         is_changes = name.lower().endswith(".changes")     # mod pack output
         if is_changes:
             name = name[:-len(".changes")]
+        level = re.search(r"(?i)\.lod(\d+)$", name)
+        if level:
+            name = name[:level.start()]
         is_gltf = f.suffix.lower() != ".obj"
         text = None if is_gltf else f.read_text(encoding="utf-8", errors="replace")
         lod, damaged = (None, None) if is_gltf else _obj_settings(text)
+        if level:
+            lod = int(level.group(1))
         key = name_hash(name)
         found = {}
         for a in ARCHIVES:
@@ -2775,8 +2785,9 @@ def _apply_models(data, folder, result):
         report = None
         hashes = None
         for a, recs in found.items():
-            mr = data.archive(a).read(recs[model.MODEL])
-            sr = data.archive(a).read(recs[model.SEGMENTS])
+            # as the build has it so far: another level's file may have edited it
+            mr = data.peek(a, recs[model.MODEL])
+            sr = data.peek(a, recs[model.SEGMENTS])
             if is_changes and is_gltf:
                 from . import model_changes
                 nm, ns, report = model_changes.import_changes(mr, sr, f)

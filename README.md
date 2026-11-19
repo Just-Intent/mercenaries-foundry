@@ -172,6 +172,8 @@ Each object in the export is one piece, named `p<index>_<joint>`; keep those nam
 
 glTF works the same way (`model-import allies_veh_humvee.glb ...`, or a `.glb` in a mod's `models/` folder), with more kept from Blender: each piece goes back where it sits in the file, a new object belongs to the bone it is parented to (no `new_<joint>` name needed), and skinned meshes keep each vertex's strongest bone, so reweighting works and new skinned pieces can be added. The export records its level of detail and damage state, so `--lod`/`--damaged` aren't needed. Bones themselves aren't imported; moving one gives a warning.
 
+A model's far levels of detail are separate pieces, so an edit of the near level (the default export) changes only how it looks close up. To match it at a distance, export each level with `--lod N` and put it in the mod as `models/<name>.lod<N>.glb` beside `models/<name>.glb`. Each file edits its own level, and later ones build on earlier ones.
+
 Format details: [docs/formats/dsk.md](docs/formats/dsk.md). Related Battlefront tools and docs: [docs/RESOURCES.md](docs/RESOURCES.md).
 
 ### When the game freezes
