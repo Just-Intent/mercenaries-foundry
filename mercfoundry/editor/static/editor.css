@@ -8,6 +8,12 @@ header .spacer { flex: 1; }
 .mod-row { border: 1px solid #3a3f46; border-radius: 4px; padding: 6px 8px; margin: 6px 0; }
 .mod-row.mod-current { border-color: #5a82b5; background: #2b3542; }
 .mod-row .buttons { margin-top: 4px; }
+#changes-open.has { border-color: #c9a227; color: #f0d37a; }
+.chg-row { display: flex; gap: 6px; align-items: baseline; font-size: 12px; margin: 2px 0; word-break: break-all; }
+.chg-row .chg-kind { color: #8fa1b3; flex: none; width: 52px; }
+.chg-row.chg-gen .chg-path { color: #e0a85a; }
+#changes textarea { width: 100%; min-height: 54px; box-sizing: border-box; }
+#changes pre { max-height: 220px; overflow: auto; font-size: 11px; background: #1b1e22; padding: 4px; white-space: pre-wrap; }
 #search { width: 260px; }
 input, select, button { font: inherit; color: inherit; background: #33383f; border: 1px solid #4a5059; border-radius: 4px; padding: 3px 6px; }
 button { cursor: pointer; }

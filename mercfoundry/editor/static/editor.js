@@ -21,6 +21,7 @@ import {createAnimations} from './animations.js';
 import {createFactions} from './factions.js';
 import {createMapSettings} from './mapset.js';
 import {createMods} from './mods.js';
+import {createChanges} from './changes.js';
 
 const $ = (id) => document.getElementById(id);
 const NEAR_RADIUS = 220;      // metres around the view centre that show real models
@@ -189,13 +190,22 @@ function standIn(rec) {
 // to"): the server refuses one meant for another mod, as when another editor
 // tab switched mods or the server was restarted on another one since.
 let pageMod = null;
+let onSaved = null, savedTimer = null;
 {
   const send = window.fetch.bind(window);
   window.fetch = (url, opts = {}) => {
-    if (pageMod && opts && opts.method === 'POST' && String(url).startsWith('/api/')) {
+    const post = opts && opts.method === 'POST' && String(url).startsWith('/api/');
+    if (pageMod && post) {
       opts = {...opts, headers: {...(opts.headers || {}), 'X-Foundry-Mod': encodeURIComponent(pageMod)}};
     }
-    return send(url, opts);
+    const got = send(url, opts);
+    // after a save (anything but the game link, git and builds): the Changes
+    // button's count again, a moment later
+    if (post && !/^\/api\/(live|git|build|lighting\/preview|factions\/preview)/.test(String(url))) {
+      got.then((r) => { if (r.ok && onSaved) { clearTimeout(savedTimer); savedTimer = setTimeout(onSaved, 400); } })
+        .catch(() => {});
+    }
+    return got;
   };
 }
 
@@ -1689,6 +1699,17 @@ createMods({
     await loadMap(want);
   },
 });
+// Changes: the mod's changed files, commit and push (its own git), and builds.
+const changes = createChanges({
+  $, status,
+  post: async (url, body) => {
+    const r = await fetch(url, {method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(body)});
+    const doc = await r.json();
+    if (!r.ok) throw new Error(doc.error || r.statusText);
+    return doc;
+  },
+});
+onSaved = () => changes.refresh();
 // New maps: make one, and a new map's arrival point, message and layers.
 const mapset = createMapSettings({
   $, status, remember: (...a) => remember(...a),

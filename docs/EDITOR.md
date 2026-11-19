@@ -31,6 +31,24 @@ toolkit bundle run it the same way: `foundry\python\python.exe foundry\mercfound
   back to restore it). The mod being edited can't be deleted. The view
   still shows what the other enabled mods add; saving only writes to the
   one named.
+- **Changes** (beside Saving to; its count updates after each save) lists
+  the mod's changed files when the mod is under git of its own: git run in
+  its folder finds a repository whose work tree is that folder (a `.git`
+  folder, or a `.git` file `gitdir: C:/somewhere/mod.git`; a repository
+  higher up, such as a checkout the mods folder sits in, doesn't count).
+  Tick the files, write a message and **Commit** (only the ticked files,
+  with the repository's own git identity and your message as written);
+  **Push** sends commits to its upstream, or the first time to `origin`
+  (or its only remote). Files the mod's own tools write are orange, from
+  `mod.json` "generated":
+  `"generated": ["encounters/gaza_*.json", {"file": "maps/gaza.json", "keys": ["hqs", "interiors"]}]`
+  (a glob, relative to the mod folder; or a JSON file with only some keys
+  generated): an edit to them is overwritten when those tools run again.
+  **Build** builds the game's source mods as the launcher does before a
+  modded launch (`mod sync`), in the background, its output shown in the
+  panel; **Build + playtest zip** then packages the game folder for
+  another PC (`packaging/playtest.py`; only when the editor runs from the
+  toolkit's source tree).
 - Shows a map's terrain and objects. Pick the map at the top (`swn` is the
   opening mission, `sw` and `nw` the two free-roam maps). Objects near the view
   show their real models with textures (the model the game draws: an object's

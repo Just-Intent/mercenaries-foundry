@@ -13,6 +13,7 @@
 <header>
   <strong>Foundry editor</strong>
   <label>Saving to <button id="mod" title="The mod everything you save goes into: click to switch to another, make one, rename it or delete one"></button></label>
+  <button id="changes-open" title="The mod's changed files: commit and push them (when the mod is under git), and build it as the launcher does">Changes</button>
   <label>Map <select id="map"></select></label>
   <input id="search" type="search" placeholder="Find object by name or model" list="names">
   <datalist id="names"></datalist>
@@ -334,6 +335,11 @@
       <h2>Mods</h2>
       <div id="mods-body"></div>
       <div class="buttons"><button id="mods-close">Close</button></div>
+    </div>
+    <div id="changes" hidden>
+      <h2>Changes</h2>
+      <div id="changes-body"></div>
+      <div class="buttons"><button id="changes-close">Close</button></div>
     </div>
     <div id="mapset" hidden>
       <h2>Map <span id="mapset-map" class="hint"></span></h2>

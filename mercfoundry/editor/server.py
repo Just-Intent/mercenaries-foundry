@@ -74,6 +74,13 @@ POST /api/terrain/paint        {"map", "layers": {layer: {"texture", "pixels": [
 POST /api/terrain/roads        {"map", "roads": [{"texture", "span", "points": [[x, z], ...]}]}
 POST /api/save                 {"moved": {...}, "copies": [...], "removed": [...]}
                                -> objects/editor.json
+GET  /api/git                  the mod's own git repository: changed files (each marked if the
+                               mod's tools write it: mod.json "generated"), branch, remotes
+POST /api/git/commit           {"message", "paths": [...]}: those files committed
+POST /api/git/push             push to its upstream (or its first remote, origin first)
+GET  /api/build                the background build: running, step, lines, ok, zip
+POST /api/build                {"playtest"?}: build the game's source mods as the launcher does
+                               (mod sync), then a playtest zip (from a toolkit source tree)
 """
 import json
 import mimetypes
@@ -82,7 +89,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from importlib import resources
 from urllib.parse import unquote, urlparse
 
-from . import anims
+from . import anims, gitpanel
 from .live import Live
 from .scene import Scene
 
@@ -109,6 +116,8 @@ def make_handler(scene: Scene, mod_name: str, live: Live = None):
     # textures need none: at worst one is built twice.
     objects_lock, terrain_lock, context_lock = threading.RLock(), threading.RLock(), threading.RLock()
     anims_lock = threading.RLock()       # the Animations panel (its first look reads every layer)
+    git_lock = threading.Lock()          # the Changes panel's git commands, one at a time
+    builds = gitpanel.Builds()
     live = live or Live()
 
     class Handler(BaseHTTPRequestHandler):
@@ -149,6 +158,14 @@ def make_handler(scene: Scene, mod_name: str, live: Live = None):
                 if path == "/api/mods":
                     with objects_lock:
                         return self.send(200, scene.mods())
+                if path == "/api/git":
+                    with git_lock:
+                        st = gitpanel.status(scene.mod)
+                    st["game"] = scene.game_dir() is not None
+                    st["playtest"] = gitpanel.playtest_script() is not None
+                    return self.send(200, st)
+                if path == "/api/build":
+                    return self.send(200, builds.state())
                 if path.startswith("/api/missions/check/"):     # the build's checks for one mission
                     with objects_lock:
                         return self.send(200, scene.check_mission(path[len("/api/missions/check/"):]))
@@ -285,6 +302,14 @@ def make_handler(scene: Scene, mod_name: str, live: Live = None):
                                               f"Nothing was saved: reload the page, or switch back in Mods")
                 if path == "/api/live/send":
                     return self.send(200, {"queued": live.send(doc.get("commands", []))})
+                if path == "/api/git/commit":
+                    with git_lock:
+                        return self.send(200, gitpanel.commit(scene.mod, doc.get("message"), doc.get("paths")))
+                if path == "/api/git/push":
+                    with git_lock:
+                        return self.send(200, gitpanel.push(scene.mod))
+                if path == "/api/build":
+                    return self.send(200, builds.start(scene.game_dir(), bool(doc.get("playtest"))))
                 if path == "/api/save":
                     with objects_lock:
                         n = scene.save_edits(doc.get("moved", {}), doc.get("copies", []), doc.get("removed", []),
