@@ -23,6 +23,7 @@ it (an xcl_ cue and xsl_ sound chunk, copied from one of the bank's simple
 cues) in the assets.dsk record that lists the bank's cues. Scripts then play
 it like any other: Audio_PlayVoiceover('fio.MyLine01').
 """
+import re
 from pathlib import Path
 
 from . import ucfb, xsb, xwb
@@ -174,8 +175,37 @@ def _template(lib, bank, kids):
     for c in sb.cues:
         tag = sounds.get(f"{bank}.{c.name}".lower())
         if tag and c.sound < len(sb.sounds) and sb.sounds[c.sound].kind == "simple" and sb.sounds[c.sound].waves:
-            return c, tag
-    raise ValueError(f"sound bank {bank} has no simple cue to base new cues on")
+            return c, tag, f"{bank}.{c.name}"
+    # Banks of streamed loops (ambient): every cue is a tracks sound that
+    # plays one wave, looped; its cue entry names a sound entry of its own.
+    # Prefer a plain loop (loop_count -1, one component: no volume curves,
+    # as ambient.city_dense_dist_war) over a one-off like intro_jet.
+    plain = []
+    for c in sb.cues:
+        if c.sound >= len(sb.sounds) or sb.sounds[c.sound].kind != "tracks" or len(sb.sounds[c.sound].waves) != 1:
+            continue
+        cue_entry = next((b for t, b in kids if t == b"xcl_" and _entry_name(b).lower() == f"{bank}.{c.name}".lower()),
+                         None)
+        ref = _sound_ref(cue_entry) if cue_entry else None
+        body = next((b for t, b in kids if t in (b"xsl_", b"xsh_") and ref and _entry_name(b).lower() == ref.lower()),
+                    b"")
+        if b"loop_count\0-1\0" in body and b"num_components\x001\0" in body:
+            plain.append(c)
+    for c in plain + list(sb.cues):
+        if c.sound >= len(sb.sounds) or sb.sounds[c.sound].kind != "tracks" or len(sb.sounds[c.sound].waves) != 1:
+            continue
+        cue_entry = next((b for t, b in kids if t == b"xcl_" and _entry_name(b).lower() == f"{bank}.{c.name}".lower()),
+                         None)
+        ref = _sound_ref(cue_entry) if cue_entry else None
+        if ref and ref.lower() in sounds:
+            return c, sounds[ref.lower()], ref
+    raise ValueError(f"sound bank {bank} has no cue to base new cues on")
+
+
+def _sound_ref(cue_entry):
+    """The sound entry a cue entry (xcl_) plays: its SNDS REC_ name."""
+    m = re.search(rb"SNDS.{4}REC_.{4}name\0([^\0]+)\0", cue_entry, re.S)
+    return m.group(1).decode("latin-1") if m else None
 
 
 def _registry(data, bank):
@@ -190,9 +220,10 @@ def _registry(data, bank):
     raise ValueError(f"no assets.dsk record lists sound bank {bank}'s cues")
 
 
-def _copy_entry(kids, tag, old, new, wave=None):
+def _copy_entry(kids, tag, old, new, wave=None, also=()):
     """A copy of a registry chunk renamed from old to new (and, for a sound,
-    playing `wave` = (wave bank, index))."""
+    playing `wave` = (wave bank, index)); `also`: more (old, new) names in
+    it to rename (a cue entry's sound entry)."""
     body = next((b for t, b in kids if t == tag and _entry_name(b).lower() == old.lower()), None)
     if body is None:
         raise ValueError(f"no {tag.decode()} entry for {old}")
@@ -211,7 +242,10 @@ def _copy_entry(kids, tag, old, new, wave=None):
         if parent == b"WAVE" and wave:
             return b"name\0%s.%s\0bank\0%s\0wave_entry_index\0%d\0" % (
                 wave[0].encode(), new_b.split(b".", 1)[1], wave[0].encode(), wave[1])
-        return d.replace(b"name\0" + old_b + b"\0", b"name\0" + new_b + b"\0")
+        d = d.replace(b"name\0" + old_b + b"\0", b"name\0" + new_b + b"\0")
+        for o, n in also:
+            d = d.replace(b"name\0" + o.encode("latin-1") + b"\0", b"name\0" + n.encode("latin-1") + b"\0")
+        return d
 
     return ucfb.split(ser(tree, None, edit))[0][0]
 
@@ -226,10 +260,11 @@ def finish(data, result):
     for bank, cues in sorted(data.sound_new.items()):
         sb = lib.sound_bank(bank)
         a, r, kids, pad = _registry(data, bank)
-        template, tag = _template(lib, bank, kids)
+        template, tag, sound_entry = _template(lib, bank, kids)
         wbank, windex = sb.sounds[template.sound].waves[0]
         e = lib.wave_bank(wbank).entries[windex]
         new_cues, new_kids = [], []
+        cue_entry = f"{bank}.{template.name}"
         for name, body, _, label in cues.values():
             try:
                 wave = xwb.encode_like(e, body)
@@ -237,11 +272,12 @@ def finish(data, result):
                 raise ValueError(f"{label}: {err}") from err
             adds = added.setdefault(wbank.lower(), [])
             index = len(lib.wave_bank(wbank).entries) + len(adds)
-            adds.append((e.format, wave, name))
+            adds.append((e.format, wave, name, e.flags))
             new_cues.append((name, index, sb.wave_banks.index(wbank), template.sound))
             full = f"{bank}.{name}"
-            new_kids.append(_copy_entry(kids, b"xcl_", f"{bank}.{template.name}", full))
-            new_kids.append(_copy_entry(kids, tag, f"{bank}.{template.name}", full, (wbank, index)))
+            other = [(sound_entry, full)] if sound_entry.lower() != cue_entry.lower() else []
+            new_kids.append(_copy_entry(kids, b"xcl_", cue_entry, full, also=other))
+            new_kids.append(_copy_entry(kids, tag, sound_entry, full, (wbank, index)))
             ch, rate, _ = xwb.read_wav(body)
             if (ch, rate) != (e.channels, e.rate):
                 result.warnings.append(f"{label}: converted from {ch} channel{'s' if ch != 1 else ''} at {rate} Hz "
@@ -250,9 +286,13 @@ def finish(data, result):
         data.files[lib.rel(path)] = xsb.add_cues(path.read_bytes(), new_cues)
         body = ucfb.pack_chunk(b"ucfb", ucfb.pack_children(kids + new_kids, pad[1]), pad[0])
         data.set(a, r, body)
+        entry = next(b for t, b in kids if t == tag and _entry_name(b).lower() == sound_entry.lower())
+        kind = sb.sounds[template.sound].kind
         result.changes.append(f"sound bank {bank}: {len(new_cues)} new cue{'s' if len(new_cues) != 1 else ''} "
-                              f"(settings from {template.name}" + (", 3D: fades with distance" if tag == b"xsh_" else "")
-                              + f"), registered in {a}")
+                              f"(settings from {template.name}"
+                              + (", 3D: fades with distance"
+                                 if tag == b"xsh_" and b"positional\x000\x00" not in entry else "")
+                              + (", looped whole" if kind == "tracks" else "") + f"), registered in {a}")
     by_bank = {}
     for (bank, index), (body, _, label) in data.sound_waves.items():
         by_bank.setdefault(bank.lower(), {})[index] = (body, label)

@@ -193,16 +193,48 @@ def add_cues(data: bytes, cues) -> bytes:
                 p += EVENT_SIZE[kind] if kind in EVENT_SIZE else 8 + struct.unpack_from("<I", data, p + 4)[0]
     new_cues, new_sounds, names = bytearray(), bytearray(), bytearray()
     end = len(data) + shift
-    for j, (name, wave, wbank, template) in enumerate(cues):
-        new_cues += struct.pack("<HHIIII", 0, nsound + j, end + len(names), 0xFFFFFFFF, 0, 0x07FFFFFF)
+    for name, *_ in cues:
         names += name.encode("latin-1") + b"\0"
+    names += b"\0" * (-(end + len(names)) % 4)
+    tracks_blob = bytearray()            # new tracks sounds' track tables and events, after the names
+    names_at = 0
+    for j, (name, wave, wbank, template) in enumerate(cues):
+        new_cues += struct.pack("<HHIIII", 0, nsound + j, end + names_at, 0xFFFFFFFF, 0, 0x07FFFFFF)
+        names_at += len(name.encode("latin-1")) + 1
         rec = bytearray(data[cue_end + 20 * template:cue_end + 20 * template + 20])
-        struct.pack_into("<I", rec, 0, wave | wbank << 16)
-        rec[8] = 1
-        rec[11] = (rec[11] & ~(SIMPLE | VARIATION)) | SIMPLE
+        if rec[11] & (SIMPLE | VARIATION):
+            struct.pack_into("<I", rec, 0, wave | wbank << 16)
+            rec[8] = 1
+            rec[11] = (rec[11] & ~(SIMPLE | VARIATION)) | SIMPLE
+        else:
+            # a tracks sound (streamed loops: ambient, music): the template's
+            # tracks and events, every play event playing the new wave
+            what, ntracks = struct.unpack_from("<I", rec, 0)[0], rec[8]
+            table_at = end + len(names) + len(tracks_blob)
+            events = bytearray()
+            table = bytearray()
+            for t in range(ntracks):
+                entry, = struct.unpack_from("<I", data, what + 4 * t)
+                p, count = entry >> 8, entry & 0xFF
+                start = len(events)
+                for _ in range(count):
+                    kind = data[p]
+                    size = EVENT_SIZE[kind] if kind in EVENT_SIZE else 8 + struct.unpack_from("<I", data, p + 4)[0]
+                    ev = bytearray(data[p:p + size])
+                    if kind in PLAY_EVENTS:
+                        if struct.unpack_from("<I", ev, 4)[0] & EVENT_VARIATION:
+                            raise ValueError("can't base a new cue on a sound that plays a random wave")
+                        struct.pack_into("<HH", ev, 8, wave, wbank)
+                    events += ev
+                    p += size
+                table += struct.pack("<I", count | (table_at + 4 * ntracks + start) << 8)
+            tracks_blob += table + events
+            tracks_blob += b"\0" * (-len(tracks_blob) % 4)
+            struct.pack_into("<I", rec, 0, table_at)
         new_sounds += rec
     body = bytes(out)
-    result = bytearray(body[:cue_end] + new_cues + body[cue_end:sound_end] + new_sounds + body[sound_end:] + names)
+    result = bytearray(body[:cue_end] + new_cues + body[cue_end:sound_end] + new_sounds + body[sound_end:] + names
+                       + tracks_blob)
     struct.pack_into("<HH", result, 0x1C, nsound + len(cues), ncue + len(cues))
     # The cue name table: as many slots as cues (16 at least), each cue
     # keeping its slot; a changed size moves every cue's slot.

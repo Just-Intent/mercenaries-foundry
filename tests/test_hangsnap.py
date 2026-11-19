@@ -243,7 +243,7 @@ class HeapTest(unittest.TestCase):
         sizes = [137_920, 100_000, 79_200]
         put(hangsnap.MAIN_HEAP, struct.pack("<7I", 0x9C0000, 19_487_104, sum(sizes), 0, 0x406298, 7000, 3))
         put(0x406298, b"".join(struct.pack("<II", 0x1000000 + i, s) for i, s in enumerate(sizes)))
-        put(0x300C3C, b".\Source\RedModel.cpp [1492]\0")
+        put(0x300C3C, b".\\Source\\RedModel.cpp [1492]\0")
         stack = [0x8BF9D4, 0x2C2C1, 0x269E0, 0x300C3C, 1, 0]
         put(0x8BF650, struct.pack(f"<{len(stack)}I", *stack))
         read = lambda va, n: bytes(mem.get(va + i, 0) for i in range(n))

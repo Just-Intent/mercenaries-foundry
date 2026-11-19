@@ -93,7 +93,9 @@ def registry_record(bank, cue, wave, tag=b"xsl_"):
            c(b"SSET", c(b"INFO", b"name\0sound_set\0num_elements\x001\0") + c(b"SNDS", c(b"REC_", b"name\0" + full + b"\0"))))
     play = c(b"INFO", b"num_elements\x001\0") + c(b"WAVE", c(b"REC_", b"name\0%s.%s\0bank\0%s\0wave_entry_index\x000\0" % (
         bank.encode(), wave.encode(), bank.encode())))
-    xsl = (c(b"INFO", b"name\0" + full + b"\0num_components\x001\0") + c(b"FLOT", b"positional\x000\0volume\x00-300\0") +
+    positional = b"1" if tag == b"xsh_" else b"0"
+    xsl = (c(b"INFO", b"name\0" + full + b"\0num_components\x001\0") +
+           c(b"FLOT", b"positional\0" + positional + b"\0volume\x00-300\0") +
            c(b"STRG", b"bank\0" + bank.encode() + b"\0category\0voiceover\0") +
            c(b"TSET", c(b"INFO", b"name\0track_set\0num_elements\x001\0") + c(b"TRKS", c(b"REC_", c(b"PLAY", play)))))
     return c(b"ucfb", c(b"xcl_", xcl) + c(tag, xsl))
@@ -189,6 +191,28 @@ class SoundBankTest(unittest.TestCase):
                                            "[SoundBanks]\nbank fx\tdataxbox/sound/sfx/fx.xsb\n")
         self.assertEqual(waves, {"fx": "sound/sfx/fx.xwb"})
         self.assertEqual(sounds_, {"fx": "sound/sfx/fx.xsb"})
+
+
+GAME_AMBIENT = Path(__file__).resolve().parent.parent / "game_files" / "DATAxbox" / "SOUND" / "ambient" / "ambient.xsb"
+
+
+class TracksCueTest(unittest.TestCase):
+    @unittest.skipUnless(GAME_AMBIENT.exists(), "needs the game's ambient.xsb")
+    def test_new_cue_copies_a_looped_track(self):
+        # ambient's cues are all tracks (a streamed wave looped by its play
+        # event): a new one copies a template's tracks, playing its own wave
+        data = GAME_AMBIENT.read_bytes()
+        bank = xsb.parse(data)
+        template = bank.cue("city_dense_dist_war")
+        out = xsb.add_cues(data, [("gaza_city", 80, 0, template.sound), ("gaza_market", 81, 0, template.sound)])
+        new = xsb.parse(out)
+        self.assertEqual(new.problems, [])
+        self.assertEqual(xsb.crc(out), struct.unpack_from("<H", out, 6)[0])
+        for name, wave in (("gaza_city", 80), ("gaza_market", 81)):
+            s = new.sounds[new.cue(name).sound]
+            self.assertEqual((s.kind, s.waves), ("tracks", [("ambient", wave)]))
+        for c in bank.cues:                  # the game's own are unchanged
+            self.assertEqual(new.sounds[new.cue(c.name).sound].waves, bank.sounds[c.sound].waves)
 
 
 class SoundModTest(unittest.TestCase):

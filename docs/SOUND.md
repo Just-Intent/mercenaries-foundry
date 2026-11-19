@@ -82,6 +82,23 @@ Some limits:
   `son` (General Song's voice: 70 m, rolloff 0.5), `b_crane`, `vh_lbird`,
   `vh_heli2` (50 m, rolloff 1), and the faction voice banks `aso`, `cso`,
   `mso`, `nks`, `ske`, `sks` (35 m, rolloff 0.8).
+- **Ambient (streamed loops):** banks with no simple cues are handled too, such as
+  `ambient`, whose 81 cues are all "tracks". A new cue there copies a plain
+  looping cue, `ambient.city_dense_dist_war`, and loops its wave whole for as
+  long as it plays.
+  - **How the copy works:** the cue gets its own track and events, with the
+    play event (loop count -1) pointing at the new wave. Its registry entries
+    are the cue's `xcl_` and the sound entry that cue names (city_d_dist_war),
+    both renamed.
+  - **File format:** `sounds/ambient/new/<cue>.wav` is any PCM .wav, mono or
+    stereo, at any rate. It is converted to the bank's stereo 22,050 Hz Xbox
+    ADPCM.
+  - **Size:** about 24 KB a second on disk, so a 4-minute loop is about
+    6 MB in `ambient.xwb`. It streams from disk, not through the game's heap.
+  - **Using it:** name it in a map's soundscape with `"ambience_add"`
+    (EDITOR.md).
+  - **Loop seam:** make the ends of the recording meet (a short crossfade);
+    the loop has no gap of its own.
 
 ### How a new cue is added
 

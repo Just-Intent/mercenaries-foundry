@@ -201,7 +201,7 @@ def encode_like(e: Entry, wav_data: bytes) -> bytes:
 
 def rebuild(bank: WaveBank, replace: dict, add=()) -> bytes:
     """The bank with some waves' data replaced ({index: wave data in the
-    entry's format}) and new waves added at the end ([(format, data, name)]).
+    entry's format}) and new waves added at the end ([(format, data, name[, entry flags])]).
     Other waves keep their bytes; the wave data is laid out again at the
     bank's alignment. Replaced waves lose their loop points unless the
     original looped the whole wave (then the new one does too)."""
@@ -238,9 +238,11 @@ def rebuild(bank: WaveBank, replace: dict, add=()) -> bytes:
     # wave data starts again at the next aligned offset after them.
     names = bytearray(data[regions[2][0]:regions[2][0] + regions[2][1]]) if regions[2][1] else None
     _, name_size, _ = struct.unpack_from("<III", data, regions[0][0] + 24)
-    for fmt, body, label in add:
+    for item in add:
+        fmt, body, label = item[:3]
+        flags = item[3] if len(item) > 3 else 0x10000      # a template entry's, e.g. 0x10002 (ambient)
         out_waves += b"\0" * (-len(out_waves) % align)
-        entries += struct.pack("<6I", 0x10000, fmt, len(out_waves), len(body), 0, 0)
+        entries += struct.pack("<6I", flags, fmt, len(out_waves), len(body), 0, 0)
         entries += b"\0" * (bank.meta_size - 24)
         out_waves += body
         if names is not None:
