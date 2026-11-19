@@ -811,6 +811,34 @@ class ModelSizeTests(unittest.TestCase):
         self.assertNotIn("block_2", result.warnings[0])
 
 
+class EffectsTests(unittest.TestCase):
+    def test_effects_json(self):
+        # effects.json: values in the game's effects table, changed in place,
+        # added (a string to STRG, a number to FLOT) or removed (null)
+        from mercfoundry import ucfb
+        c = ucfb.pack_chunk
+        fx = c(b"fx3_", c(b"INFO", b"name\0littlebird_l\0num_components\x000\0") +
+               c(b"FLOT", b"num_rotor_blades\x005.000000\0") +
+               c(b"STRG", b"category\0helicopter_low_detail\0rotor\0base.vehicle_smallheli_rotor\0npc_exit\0x\0"))
+        with tempfile.TemporaryDirectory() as tmp:
+            data, mod, out = Path(tmp) / "data", Path(tmp) / "mod", Path(tmp) / "out"
+            data.mkdir()
+            build(data / "assets.dsk", [(name_hash("effects"), name_hash("effects"), c(b"ucfb", fx))])
+            modbuild.new_project(mod, "fx")
+            (mod / "effects.json").write_text(json.dumps({"littlebird_l": {
+                "rotor": "vh_lbird.air_heli_engine", "npc_exit": None, "pitch": 1.5}}))
+            result = modbuild.build(mod, data, out)
+            self.assertTrue(any(ch.startswith("effects littlebird_l") for ch in result.changes))
+            arc = dsk.Archive(out / "assets.dsk")
+            body = arc.read(arc.records[0])
+            self.assertIn(b"category\0helicopter_low_detail\0rotor\0vh_lbird.air_heli_engine\0", body)
+            self.assertNotIn(b"npc_exit", body)
+            self.assertIn(b"num_rotor_blades\x005.000000\0pitch\x001.500000\0", body)
+            (mod / "effects.json").write_text(json.dumps({"nothing_here": {"a": "b"}}))
+            with self.assertRaisesRegex(ValueError, "no entry 'nothing_here'"):
+                modbuild.build(mod, data, out)
+
+
 class AmbienceTests(unittest.TestCase):
     def test_copy_add_and_default(self):
         # maps json "ambience": a game map's soundscapes into the new map's

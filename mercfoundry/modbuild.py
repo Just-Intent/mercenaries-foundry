@@ -2945,6 +2945,80 @@ def _apply_sounds(data, folder, result):
     sounds.apply(data, folder, result)
 
 
+def _fx_pairs(body):
+    parts = body.split(b"\0")
+    return [(parts[i].decode("latin-1"), parts[i + 1].decode("latin-1")) for i in range(0, len(parts) - 1, 2)
+            if parts[i]]
+
+
+def _fx_body(pairs):
+    return b"".join(k.encode("latin-1") + b"\0" + v.encode("latin-1") + b"\0" for k, v in pairs)
+
+
+def _apply_effects(data, folder, result):
+    """effects.json {"<entry>": {"<key>": value or null}}: values in the
+    game's effects table (assets.dsk "effects": sound and effect sets such as
+    a helicopter's littlebird_l, chatter events, impact effects). A string
+    goes in the entry's STRG pairs, a number in its FLOT ones; null removes
+    the key. E.g. {"littlebird_l": {"rotor": "vh_lbird.air_heli_engine"}}
+    gives littlebird_set its high-detail engine at a distance too."""
+    from . import ucfb
+    f = folder / "effects.json"
+    if not f.exists():
+        return
+    doc = json.loads(f.read_text(encoding="utf-8"))
+    hit = [(a, r) for a, r in data.records(name_hash("effects"), ("assets.dsk",)) if r.key == name_hash("effects")]
+    if not hit:
+        raise ValueError("effects.json: the game data has no effects table")
+    a, r = hit[0]
+    roots = ucfb.parse(data.current(a, r))
+    entries = {}
+    for c in roots[0].children:
+        info = next((k for k in c.children if k.tag == b"INFO"), None)
+        name = dict(_fx_pairs(info.data)).get("name") if info else None
+        if name:
+            entries[name.lower()] = c
+    for entry, values in doc.items():
+        c = entries.get(entry.lower())
+        if c is None:
+            raise ValueError(f"effects.json: the effects table has no entry {entry!r}")
+        if not isinstance(values, dict):
+            raise ValueError(f"effects.json: {entry}: give an object of keys and values")
+        for key, value in values.items():
+            if any(ch.isspace() or ch == "\0" for ch in key) or key.lower() in ("name", "num_components"):
+                raise ValueError(f"effects.json: {entry}: {key!r} can't be set")
+            if value is not None and not isinstance(value, (str, int, float)):
+                raise ValueError(f"effects.json: {entry}: {key}: a string, a number or null")
+            want = None if value is None else (b"STRG" if isinstance(value, str) else b"FLOT")
+            text = None if value is None else (value if isinstance(value, str) else f"{float(value):.6f}")
+            placed = False
+            for tag in (b"STRG", b"FLOT"):
+                chunk = next((k for k in c.children if k.tag == tag), None)
+                if chunk is None:
+                    continue
+                pairs = []
+                for k, v in _fx_pairs(chunk.data):
+                    if k.lower() != key.lower():
+                        pairs.append((k, v))
+                    elif tag == want:               # changed where it was
+                        pairs.append((k, text))
+                        placed = True
+                chunk.data = _fx_body(pairs)
+            if want and not placed:
+                chunk = next((k for k in c.children if k.tag == want), None)
+                if chunk is None:
+                    chunk = ucfb.Chunk(want, b"", [])
+                    c.children.append(chunk)
+                chunk.data = _fx_body(_fx_pairs(chunk.data) + [(key, text)])
+        result.changes.append(f"effects {entry}: " + ", ".join(f"{k} {v}" for k, v in values.items()))
+
+    # always three levels (ucfb > fx3_ > INFO/FLOT/STRG): leaves by their data,
+    # whatever parse guessed about them
+    body = b"".join(ucfb.pack_chunk(e.tag, b"".join(ucfb.pack_chunk(k.tag, k.data) for k in e.children))
+                    for e in roots[0].children)
+    data.set(a, r, ucfb.pack_chunk(roots[0].tag, body))
+
+
 def _apply_game_squads(data, folder, result):
     """encounters/*.json "game_squads": squad records added to the game's own
     encounters (after layout changes, which replace whole encounters); their
@@ -3251,7 +3325,7 @@ def _swap_model(data, old, new):
 
 STEPS = (_apply_text, _apply_scripts, _apply_objects, _apply_encounters, _apply_missions,
          _apply_textures, _apply_models, _apply_collision_flags, _apply_layout, _apply_game_squads,
-         _apply_animations, _apply_animtables, _apply_bone_moves, _apply_maps, _apply_terrain, _apply_sounds, _apply_sky,
+         _apply_animations, _apply_animtables, _apply_bone_moves, _apply_maps, _apply_terrain, _apply_sounds, _apply_effects, _apply_sky,
          _trim_map_skies, _map_texture_total,
          _apply_factions, _apply_configs)
 
