@@ -213,7 +213,10 @@ class Builds:
                 raise ValueError("a build is already running")
             self.job = {"running": True, "step": "build", "lines": [], "ok": None, "started": time.time(),
                         "zip": None}
-        steps = [("build", [sys.executable, "-m", "mercfoundry", "mod", "sync", str(game), "--enable"], None)]
+        # run in the game folder: python -m puts the working folder first on
+        # the import path, so a stray .py where the editor was started could
+        # stand in for a standard module
+        steps = [("build", [sys.executable, "-m", "mercfoundry", "mod", "sync", str(game), "--enable"], game)]
         if playtest:
             script = playtest_script()
             if script is None:
