@@ -23,6 +23,7 @@ it (an xcl_ cue and xsl_ sound chunk, copied from one of the bank's simple
 cues) in the assets.dsk record that lists the bank's cues. Scripts then play
 it like any other: Audio_PlayVoiceover('fio.MyLine01').
 """
+import json
 import re
 from pathlib import Path
 
@@ -108,9 +109,27 @@ def apply(data, folder, result):
     """sounds/<bank>/<cue>[.<n>].wav: queue wave replacements (written by finish())."""
     root = Path(folder) / "sounds"
     files = sorted(p for p in root.rglob("*") if p.is_file() and p.suffix.lower() == ".wav") if root.is_dir() else []
-    if not files:
+    likes = sorted(root.glob("*/new/*.json")) if root.is_dir() else []
+    if not files and not likes:
         return
     lib = _library(data)
+    # sounds/<bank>/new/<cue>.json {"like": <a cue of the bank>}: a copy of
+    # that cue as it is (all its tracks and settings), its own waves from
+    # <cue>.<n>.wav (or <cue>.wav for every one), the rest the cue's
+    copies = {}
+    for j in likes:
+        bank, label = j.parent.parent.name, f"sounds/{j.relative_to(root).as_posix()}"
+        if bank.lower() not in lib.sound_paths:
+            raise ValueError(f"{label}: the game has no sound bank {bank!r}")
+        try:
+            like = str(json.loads(j.read_text(encoding="utf-8")).get("like") or "")
+        except (ValueError, AttributeError):
+            raise ValueError(f"{label}: give {{\"like\": \"<a cue of {bank}>\"}}") from None
+        sb = lib.sound_bank(bank)
+        cue = sb.cue(like)
+        if cue is None:
+            raise ValueError(f"{label}: {bank} has no cue {like!r} to copy")
+        copies[(bank.lower(), j.stem.lower())] = _queue_like(data, lib, bank, j.stem, cue, label, result)
     for f in files:
         rel = f.relative_to(root)
         new = len(rel.parts) == 3 and rel.parts[1].lower() == "new"
@@ -126,6 +145,19 @@ def apply(data, folder, result):
         except ValueError as err:
             raise ValueError(f"{label}: {err}") from err
         if new:
+            stem = f.stem
+            base, _, n = stem.rpartition(".")
+            copy_ = copies.get((bank.lower(), stem.lower())) or (
+                copies.get((bank.lower(), base.lower())) if base and n.isdigit() else None)
+            if copy_ is not None:
+                waves = copy_["waves"]
+                which = range(len(waves)) if stem.lower() == copy_["name"].lower() else [int(n) - 1]
+                if not all(0 <= i < len(waves) for i in which):
+                    raise ValueError(f"{label}: {bank}.{copy_['like']} plays {len(waves)} "
+                                     f"wave{'s' if len(waves) != 1 else ''}, not {n}")
+                for i in which:
+                    copy_["files"][i] = (body, label)
+                continue
             _queue_new(data, lib, bank, f.stem, body, label, result)
             continue
         cue, waves = targets(lib, bank, f.stem)
@@ -158,6 +190,27 @@ def _queue_new(data, lib, bank, name, body, label, result):
     queued[name.lower()] = (name, body, data.project, label)
     result.changes.append(f"sound {bank}.{name}: new cue (play it with Audio_PlayVoiceover('{bank}.{name}') "
                           "or as any other cue)")
+
+
+def _queue_like(data, lib, bank, name, cue, label, result):
+    """A copy of a cue under a new name (queued; written by finish())."""
+    if not name or len(name) > 60 or not all(c.isalnum() or c == "_" for c in name):
+        raise ValueError(f"{label}: name new cues with letters, digits and _ (60 at most)")
+    sb = lib.sound_bank(bank)
+    if sb.cue(name):
+        raise ValueError(f"{label}: {bank} already has a cue {sb.cue(name).name}")
+    if cue.sound >= len(sb.sounds) or sb.sounds[cue.sound].kind == "variation":
+        raise ValueError(f"{label}: {bank}.{cue.name} picks a wave at random; such a cue can't be copied yet")
+    queued = data.sound_new.setdefault(bank.lower(), {})
+    prev = queued.get(name.lower())
+    if prev and prev[2] != data.project:
+        data.conflicts.append(f"{data.project}'s {label} adds cue {bank}.{name}, which {prev[2]}'s {prev[3]} "
+                              f"also adds; {prev[2]}'s is lost")
+    copy_ = {"name": name, "like": cue.name, "cue": cue, "waves": sb.cue_waves(cue), "files": {}}
+    queued[name.lower()] = (name, copy_, data.project, label)
+    result.changes.append(f"sound {bank}.{name}: new cue, a copy of {bank}.{cue.name} (name it where the game "
+                          f"names a cue: an effects entry's \"rotor\", Audio_PlaySound...)")
+    return copy_
 
 
 def _entry_name(body):
@@ -239,6 +292,14 @@ def _copy_entry(kids, tag, old, new, wave=None, also=()):
     old_b, new_b = old.encode("latin-1"), new.encode("latin-1")
 
     def edit(d, parent):
+        if parent == b"WAVE" and isinstance(wave, dict):
+            # a copied sound: {(wave bank, old index): (new index, wave name)}
+            m = re.match(rb"name\0[^\0]*\0bank\0([^\0]+)\0wave_entry_index\0(\d+)\0", d)
+            hit = m and wave.get((m.group(1).decode("latin-1").lower(), int(m.group(2))))
+            if hit:
+                return b"name\0%s\0bank\0%s\0wave_entry_index\0%d\0" % (
+                    hit[1].encode("latin-1"), m.group(1), hit[0]) + d[m.end():]
+            return d
         if parent == b"WAVE" and wave:
             return b"name\0%s.%s\0bank\0%s\0wave_entry_index\0%d\0" % (
                 wave[0].encode(), new_b.split(b".", 1)[1], wave[0].encode(), wave[1])
@@ -248,6 +309,48 @@ def _copy_entry(kids, tag, old, new, wave=None, also=()):
         return d
 
     return ucfb.split(ser(tree, None, edit))[0][0]
+
+
+def _add_copy(lib, data, bank, sb, kids, copy_, label, added, new_cues, new_kids, result):
+    """A copied cue (new/<cue>.json "like"): its waves appended to their wave
+    banks, its sound a copy of the cue's (every track) playing them, and its
+    registry entries copies of the cue's (xcl_, and the sound entry it names,
+    xsl_/xsh_, with those waves' WAVE records)."""
+    cue, name = copy_["cue"], copy_["name"]
+    remap, reg_map = {}, {}
+    for i, (body, flabel) in sorted(copy_["files"].items()):
+        wbank, old = copy_["waves"][i]
+        e = lib.wave_bank(wbank).entries[old]
+        try:
+            wave = xwb.encode_like(e, body)
+        except ValueError as err:
+            raise ValueError(f"{flabel}: {err}") from err
+        adds = added.setdefault(wbank.lower(), [])
+        index = len(lib.wave_bank(wbank).entries) + len(adds)
+        wname = f"{name}_{i + 1}"
+        adds.append((e.format, wave, wname, e.flags))
+        remap[(old, sb.wave_banks.index(wbank))] = index
+        reg_map[(wbank.lower(), old)] = (index, f"{bank}.{wname}")
+        ch, rate, _ = xwb.read_wav(body)
+        if (ch, rate) != (e.channels, e.rate):
+            result.warnings.append(f"{flabel}: converted from {ch} channel{'s' if ch != 1 else ''} at {rate} Hz "
+                                   f"to the game's {e.channels} at {e.rate} Hz")
+    new_cues.append((name, remap, None, cue.sound))
+    cue_entry, full = f"{bank}.{cue.name}", f"{bank}.{name}"
+    body = next((b for t, b in kids if t == b"xcl_" and _entry_name(b).lower() == cue_entry.lower()), None)
+    if body is None:
+        raise ValueError(f"{label}: the game registers no cue entry for {cue_entry}")
+    sound_entry = _sound_ref(body)
+    tag = next((t for t, b in kids if t in (b"xsl_", b"xsh_") and sound_entry
+                and _entry_name(b).lower() == sound_entry.lower()), None)
+    if tag is None:
+        raise ValueError(f"{label}: no sound entry for {cue_entry} ({sound_entry})")
+    other = [(sound_entry, full)] if sound_entry.lower() != cue_entry.lower() else []
+    new_kids.append(_copy_entry(kids, b"xcl_", cue_entry, full, also=other))
+    new_kids.append(_copy_entry(kids, tag, sound_entry, full, reg_map))
+    shared = len(copy_["waves"]) - len(copy_["files"])
+    result.changes.append(f"sound {bank}.{name}: {len(copy_['files'])} of {bank}.{cue.name}'s "
+                          f"{len(copy_['waves'])} waves its own" + (f", {shared} shared with it" if shared else ""))
 
 
 def finish(data, result):
@@ -260,12 +363,17 @@ def finish(data, result):
     for bank, cues in sorted(data.sound_new.items()):
         sb = lib.sound_bank(bank)
         a, r, kids, pad = _registry(data, bank)
-        template, tag, sound_entry = _template(lib, bank, kids)
-        wbank, windex = sb.sounds[template.sound].waves[0]
-        e = lib.wave_bank(wbank).entries[windex]
+        simple = any(not isinstance(body, dict) for _, body, _, _ in cues.values())
+        if simple:
+            template, tag, sound_entry = _template(lib, bank, kids)
+            wbank, windex = sb.sounds[template.sound].waves[0]
+            e = lib.wave_bank(wbank).entries[windex]
+            cue_entry = f"{bank}.{template.name}"
         new_cues, new_kids = [], []
-        cue_entry = f"{bank}.{template.name}"
         for name, body, _, label in cues.values():
+            if isinstance(body, dict):
+                _add_copy(lib, data, bank, sb, kids, body, label, added, new_cues, new_kids, result)
+                continue
             try:
                 wave = xwb.encode_like(e, body)
             except ValueError as err:
@@ -286,6 +394,10 @@ def finish(data, result):
         data.files[lib.rel(path)] = xsb.add_cues(path.read_bytes(), new_cues)
         body = ucfb.pack_chunk(b"ucfb", ucfb.pack_children(kids + new_kids, pad[1]), pad[0])
         data.set(a, r, body)
+        if not simple:
+            result.changes.append(f"sound bank {bank}: {len(new_cues)} new cue{'s' if len(new_cues) != 1 else ''} "
+                                  f"(copies), registered in {a}")
+            continue
         entry = next(b for t, b in kids if t == tag and _entry_name(b).lower() == sound_entry.lower())
         kind = sb.sounds[template.sound].kind
         result.changes.append(f"sound bank {bank}: {len(new_cues)} new cue{'s' if len(new_cues) != 1 else ''} "

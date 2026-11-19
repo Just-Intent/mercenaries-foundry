@@ -215,6 +215,59 @@ class TracksCueTest(unittest.TestCase):
             self.assertEqual(new.sounds[new.cue(c.name).sound].waves, bank.sounds[c.sound].waves)
 
 
+class CopiedCueTest(unittest.TestCase):
+    """new/<cue>.json {"like": <cue>}: a copy of a multi-track cue (as a
+    helicopter engine's), its own waves where given, the rest shared."""
+
+    def test_copy_of_a_tracks_cue(self):
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        root = Path(tmp.name)
+        data = root / "game" / "DATAxbox"
+        (data / "SOUND" / "sfx").mkdir(parents=True)
+        waves = [(adpcm_format(), xwb.encode_adpcm(tone(640), 1)), (adpcm_format(), xwb.encode_adpcm(tone(320, 220), 1))]
+        (data / "SOUND" / "sfx" / "fx.xwb").write_bytes(make_xwb("fx", waves))
+        play = lambda w: (0, struct.pack("<IHH", 0, w, 0))
+        (data / "SOUND" / "sfx" / "fx.xsb").write_bytes(make_xsb(
+            ["fx"], [("engine", 0), ("one", 1)],
+            [("tracks", [[play(0), (3, b"\0" * 4)], [play(1), (3, b"\0" * 4)]]), ("simple", 0, 0)]))
+        (data.parent / "rsm_xbox.ini").write_text(
+            "[ResidentWaveBanks]\nbank fx\tdataxbox/sound/sfx/fx.xwb\n[SoundBanks]\nbank fx\tdataxbox/sound/sfx/fx.xsb\n")
+        c = ucfb.pack_chunk
+        rec = lambda w, i: c(b"REC_", c(b"PLAY", c(b"INFO", b"num_elements\x001\0loop_count\0-1\0") + c(
+            b"WAVE", c(b"REC_", b"name\0fx.%s\0bank\0fx\0wave_entry_index\0%d\0" % (w, i)))))
+        xcl = (c(b"INFO", b"name\0fx.engine\0num_components\x001\0") + c(b"FLOT", b"positional\x001\0") +
+               c(b"STRG", b"bank\0fx\0") + c(b"SSET", c(b"INFO", b"name\0sound_set\0num_elements\x001\0") +
+                                             c(b"SNDS", c(b"REC_", b"name\0fx.engine_snd\0"))))
+        xsh = (c(b"INFO", b"name\0fx.engine_snd\0num_components\x001\0") + c(b"FLOT", b"positional\x001\0") +
+               c(b"STRG", b"bank\0fx\0") + c(b"TSET", c(b"INFO", b"name\0track_set\0num_elements\x002\0") +
+                                             c(b"TRKS", rec(b"slow", 0) + rec(b"fast", 1))))
+        build(data / "assets.dsk", [(name_hash("sounds"), sounds.REGISTRY, c(b"ucfb", c(b"xcl_", xcl) + c(b"xsh_", xsh)))])
+        mod = root / "mod"
+        new = mod / "sounds" / "fx" / "new"
+        new.mkdir(parents=True)
+        (new / "heli.json").write_text('{"like": "engine"}')
+        (new / "heli.2.wav").write_bytes(xwb.wav(tone(3000, 660), 1, 22050))
+        out = root / "out"
+        result = modbuild.build(mod, data, out)
+        self.assertIn("sound fx.heli: 1 of fx.engine's 2 waves its own, 1 shared with it", result.changes)
+        sb = xsb.parse((out / "DATAxbox/SOUND/sfx/fx.xsb").read_bytes())
+        self.assertEqual(sb.problems, [])
+        self.assertEqual(sb.sounds[sb.cue("heli").sound].waves, [("fx", 0), ("fx", 2)])
+        self.assertEqual(sb.sounds[sb.cue("engine").sound].waves, [("fx", 0), ("fx", 1)])     # the game's as it was
+        self.assertEqual(len(xwb.parse((out / "DATAxbox/SOUND/sfx/fx.xwb").read_bytes()).entries), 3)
+        arc = dsk.Archive(out / "assets.dsk")
+        raw = arc.read(arc.records[0])
+        added = raw[len(c(b"ucfb", c(b"xcl_", xcl) + c(b"xsh_", xsh))):]
+        self.assertIn(b"name\0fx.heli\0", added)
+        self.assertIn(b"name\0fx.slow\0bank\0fx\0wave_entry_index\x000\0", added)          # shared
+        self.assertIn(b"name\0fx.heli_2\0bank\0fx\0wave_entry_index\x002\0", added)        # its own
+        self.assertNotIn(b"fx.engine_snd", added)
+        (new / "heli.3.wav").write_bytes(xwb.wav(tone(3000, 660), 1, 22050))
+        with self.assertRaisesRegex(ValueError, "plays 2 waves, not 3"):
+            modbuild.build(mod, data, out)
+
+
 class SoundModTest(unittest.TestCase):
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory()

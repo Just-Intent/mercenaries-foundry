@@ -452,6 +452,18 @@ class ModBuildTests(unittest.TestCase):
         for lay in ("template_vehicles_ch3", "template_humans"):
             for o in world.iter_objects(recs[(name_hash(lay), WORLD)]):
                 self.assertNotIn("armour", dict(o["properties"]))
+        # an object placed from the copy's name (built before the copies are):
+        # the game template with the copy's properties, under its name
+        (self.project / "encounters").mkdir(exist_ok=True)
+        self.write("encounters/isle_things.json", json.dumps({"map": "island", "load": "map", "objects": [
+            {"from": "template_island_driver", "name": "isle_guard_1", "position": [1, 2, 3], "yaw": 0}]}))
+        result = modbuild.build(self.project, self.data, self.out)
+        placed = {o["name"]: dict(o["properties"]) for o in
+                  world.iter_objects(self.records("assets.dsk")[(name_hash("isle_things"), WORLD)])}
+        self.assertEqual(placed["isle_guard_1"]["GeometryFile"], "sample")
+        loads = self.records("assets.dsk")[(name_hash("isle_things"), name_hash("list"))].decode("latin-1")
+        self.assertIn("load sample", loads)
+        (self.project / "encounters" / "isle_things.json").unlink()
         # template_wep_small loads on every map: not copied, so the rule warns
         self.assertTrue(any("objects/island.json: \"map\": island: no template island copies matches "
                             "'template_wep_small'" in w for w in result.warnings))
@@ -509,6 +521,22 @@ class ModBuildTests(unittest.TestCase):
         self.assertEqual(self.records("streamed.dsk")[(name_hash("sample"), model.SEGMENTS)], self.sr)  # base unchanged
         loads = self.records("assets.dsk")[(name_hash("sw"), name_hash("list"))].decode("latin-1")
         self.assertIn("load tex2", loads)
+        # models/guy.glb edits the copy (as it would a game model), and the
+        # copy's textures hold on the pieces it edits
+        from mercfoundry import gltf
+        from tests.test_gltf_model import write_glb
+        doc, binary = gltf.read(gltf.export(base))
+        nodes = [n for n in doc["nodes"] if "mesh" in n]
+        nodes[0]["name"] = "decal_" + nodes[0]["name"]                  # one piece added
+        write_glb(self.project / "models" / "guy.glb", doc, binary)
+        result = modbuild.build(self.project, self.data, self.out)
+        self.assertTrue(any(c.startswith("model guy (a copy): ") and "1 added" in c for c in result.changes),
+                        result.changes)
+        arc = dsk.Archive(self.out / "streamed.dsk")
+        recs = {r.kind: arc.read(r) for r in arc.records if r.key == name_hash("guy")}
+        self.assertNotIn(name_hash("tex"), model.texture_hashes(recs[model.SEGMENTS]))
+        self.assertEqual(self.records("streamed.dsk")[(name_hash("sample"), model.SEGMENTS)], self.sr)
+        (self.project / "models" / "guy.glb").unlink()
         for spec, msg in (({"base": "sample", "copy": True, "textures": {"nope": "tex2"}}, "doesn't draw a texture named 'nope'"),
                           ({"base": "sample", "copy": True, "textures": {"tex": "missing"}}, "no texture named 'missing'")):
             self.write("models/guy.new.json", json.dumps(spec))
@@ -925,6 +953,23 @@ class EffectsTests(unittest.TestCase):
             (mod / "effects.json").write_text(json.dumps({"nothing_here": {"a": "b"}}))
             with self.assertRaisesRegex(ValueError, "no entry 'nothing_here'"):
                 modbuild.build(mod, data, out)
+            # "copy": a new entry, a copy of a game one; the game's stays
+            (mod / "effects.json").write_text(json.dumps({"isle_heli_l": {
+                "copy": "littlebird_l", "rotor": "vh_lbird.isle_engine"}}))
+            result = modbuild.build(mod, data, out)
+            self.assertIn("effects isle_heli_l: new, a copy of littlebird_l", result.changes)
+            arc = dsk.Archive(out / "assets.dsk")
+            root = ucfb.parse(arc.read(arc.records[0]))[0]
+            self.assertEqual(len(root.children), 2)
+            body = arc.read(arc.records[0])
+            self.assertIn(b"rotor\0base.vehicle_smallheli_rotor\0", body)          # littlebird_l as it was
+            self.assertIn(b"name\0isle_heli_l\0num_components\x000\0", body)
+            self.assertIn(b"rotor\0vh_lbird.isle_engine\0", body)
+            for bad, msg in (({"littlebird_l": {"copy": "littlebird_l"}}, "already has an entry"),
+                             ({"x_l": {"copy": "nope"}}, "no entry 'nope' to copy")):
+                (mod / "effects.json").write_text(json.dumps(bad))
+                with self.assertRaisesRegex(ValueError, msg):
+                    modbuild.build(mod, data, out)
 
 
 class AmbienceTests(unittest.TestCase):

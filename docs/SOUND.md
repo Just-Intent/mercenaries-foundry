@@ -46,6 +46,7 @@ out the cue names to export the whole bank.
 | `sounds/<bank>/<cue>.wav` | Replace every wave the cue can play |
 | `sounds/<bank>/<cue>.<n>.wav` | Replace only the cue's n-th wave (as `sound export` names them) |
 | `sounds/<bank>/new/<cue>.wav` | Add a new cue to the bank, played like any other: `Audio_PlayVoiceover('fio.MyLine01')` |
+| `sounds/<bank>/new/<cue>.json` `{"like": "<cue>"}` | Add a copy of one of the bank's cues, every track and setting as it is (a helicopter engine's rotor-speed layers), under a new name; `sounds/<bank>/new/<cue>.<n>.wav` gives the copy its own n-th wave (numbered as `sound export` numbers the copied cue's), `<cue>.wav` all of them, and the rest stay the original's (shared) |
 
 The `.wav` must be PCM, 16-bit, at any rate, mono or stereo. The build converts
 it to the replaced wave's own format: Xbox ADPCM, with that wave's channel

@@ -727,12 +727,24 @@ changing the game's anywhere else (these are files, not editor tools yet):
   (`textures/isle_guard_body.png`), and its `_nm` normal map too when both
   exist. Wherever the copy is loaded, the textures it draws are loaded with it.
   No `.glb` is needed (for new shapes, leave out `"copy"` and give one).
+  `models/<name>.glb` (and `.lod<N>.glb`) beside it edits the copy as it
+  would edit the game's model (pieces edited or added on its skin and
+  skeleton); the copy's textures still apply to the pieces it edits.
+- **Sounds of its own:** a copied sound cue (`sounds/<bank>/new/<cue>.json`
+  `{"like": "air_heli_engine"}`, SOUND.md) with its own waves, and a copied
+  effects entry naming it, in `effects.json`:
+  `{"isle_heli_h": {"copy": "littlebird_h", "rotor": "vh_lbird.isle_heli_engine"}, "isle_heli_set": {"copy": "littlebird_set", "high_detail": "isle_heli_h"}}`;
+  a template copy with `"set": {"effectset": "isle_heli_set"}` then sounds
+  its own (the game's helicopters keep theirs).
 - **A template under its own name:** a new map's `maps/<name>.json`
   `"templates"` takes `{"template": "template_sk_soldier", "as": "template_isle_guard", "set": {"GeometryFile": "isle_guard"}}`
   as well as plain names: a copy of a game template (even one every map
   loads, such as template_vehicles_ch2's) under the new name, with those
   properties, in the map's template layer. The map's squads, placed objects
   and missions then use `template_isle_guard`; the game's soldier is unchanged.
+  Anything the build places from a template by name (`"from"` in
+  encounters, HQ guards, travel pilots, mission givers) takes the copy's
+  name too: the game template with the copy's properties.
 - **Rules for one map:** an objects rule with `"map"` changes only that map:
   `"map": "<a mod's new map>"` changes (`"set"` only) the map's template
   copies it matches by `"template"` or `"model"` (a template every map loads

@@ -153,7 +153,10 @@ def add_cues(data: bytes, cues) -> bytes:
     """The bank with new simple cues appended: cues = [(name, wave, wave bank
     index, template sound)], each playing one wave; its sound copies the
     template sound's settings (volume, category, 3D). Everything after the
-    cue and sound tables moves down, and every offset into it is moved too."""
+    cue and sound tables moves down, and every offset into it is moved too.
+    wave may instead be {(wave, wave bank index): new wave}: a copy of the
+    template sound as it is (all its tracks), playing the new waves where
+    it played those (and its other waves as before)."""
     if not cues:
         return data
     bank = parse(data)
@@ -202,7 +205,14 @@ def add_cues(data: bytes, cues) -> bytes:
         new_cues += struct.pack("<HHIIII", 0, nsound + j, end + names_at, 0xFFFFFFFF, 0, 0x07FFFFFF)
         names_at += len(name.encode("latin-1")) + 1
         rec = bytearray(data[cue_end + 20 * template:cue_end + 20 * template + 20])
-        if rec[11] & (SIMPLE | VARIATION):
+        remap = wave if isinstance(wave, dict) else None
+        if remap is not None and rec[11] & VARIATION:
+            raise ValueError("can't copy a sound that plays a random wave")
+        if remap is not None and rec[11] & SIMPLE:
+            what, = struct.unpack_from("<I", rec, 0)
+            w, b = what & 0xFFFF, what >> 16
+            struct.pack_into("<I", rec, 0, remap.get((w, b), w) | b << 16)
+        elif rec[11] & (SIMPLE | VARIATION):
             struct.pack_into("<I", rec, 0, wave | wbank << 16)
             rec[8] = 1
             rec[11] = (rec[11] & ~(SIMPLE | VARIATION)) | SIMPLE
@@ -224,7 +234,11 @@ def add_cues(data: bytes, cues) -> bytes:
                     if kind in PLAY_EVENTS:
                         if struct.unpack_from("<I", ev, 4)[0] & EVENT_VARIATION:
                             raise ValueError("can't base a new cue on a sound that plays a random wave")
-                        struct.pack_into("<HH", ev, 8, wave, wbank)
+                        if remap is not None:
+                            w, b = struct.unpack_from("<HH", ev, 8)
+                            struct.pack_into("<HH", ev, 8, remap.get((w, b), w), b)
+                        else:
+                            struct.pack_into("<HH", ev, 8, wave, wbank)
                     events += ev
                     p += size
                 table += struct.pack("<I", count | (table_at + 4 * ntracks + start) << 8)

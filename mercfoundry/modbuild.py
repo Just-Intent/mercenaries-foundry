@@ -756,10 +756,24 @@ def _apply_encounters(data, folder, result):
 
     current_map = [""]
     by_name, by_model = _world_index(data, archives)
+    # a new map's own templates ("templates" {"template", "as", "set"}): built
+    # in the maps step, after this one, so an object copied from one here is
+    # its game template with the copy's properties, under the copy's name
+    aliases = {}
+    for mf in sorted((folder / "maps").glob("*.json")) if (folder / "maps").is_dir() else []:
+        try:
+            tdoc = json.loads(mf.read_text(encoding="utf-8"))
+        except ValueError:
+            continue
+        for t in tdoc.get("templates") or []:
+            if isinstance(t, dict) and t.get("as") and t.get("template"):
+                aliases[str(t["as"]).lower()] = (str(t["as"]), str(t["template"]), t.get("set") or {})
 
     def source_hit(name):
         """The object to copy: a named one, or for "model:<model>" the first
         unnamed scenery object with that model (preferring this map's layers)."""
+        if name.lower() in aliases and not by_name.get(name.lower()):
+            return source_hit(aliases[name.lower()][1])
         if name.lower().startswith("model:"):
             m = name[6:]
             hits = sorted(by_model.get(m.lower(), []),
@@ -773,6 +787,13 @@ def _apply_encounters(data, folder, result):
         return hits[0]
 
     def find_source(name):
+        if name.lower() in aliases and not by_name.get(name.lower()):
+            as_, base, set_ = aliases[name.lower()]
+            inst = copy.deepcopy(find_source(base))
+            inst["template"] = as_
+            if set_:
+                _apply_rule(inst, {"set": set_})
+            return inst
         hit = source_hit(name)
         layer = hit["layer"]
         if layer not in layers:
@@ -788,6 +809,15 @@ def _apply_encounters(data, folder, result):
     map_keys = {r.key for _, r in data.records(name_hash("Terrain"))}
 
     def source_loads(name):
+        if name.lower() in aliases and not by_name.get(name.lower()):
+            as_, base, set_ = aliases[name.lower()]
+            loads = {k: list(v) for k, v in source_loads(base).items()}
+            # the models its "set" gives it (a copied character's, ...)
+            for k, v in set_.items():
+                if str(k).lower() in encounters.MODEL_PROPERTIES and v and \
+                        str(v).lower() not in {m.lower() for m in loads.get("model", [])}:
+                    loads.setdefault("model", []).append(str(v))
+            return loads
         obj = source_hit(name)
         layer = obj["layer"]
         if layer not in lists:
@@ -2966,8 +2996,9 @@ def _new_models(data, folder, result):
         if not src:
             raise ValueError(f"{where}: \"base\" names no game model ({base!r})")
         if spec_doc.get("copy"):
+            # not in made: models/<name>.glb (and .lod<N>.glb) then edit the
+            # copy as they would edit a game model
             _copy_model(data, name, base, src, spec_doc, where, keep_shadow, result)
-            made.add(name.lower())
             continue
         files = [f for f in (folder / "models").glob(f"{name}.*") if f.suffix.lower() in (".glb", ".gltf", ".obj")]
         if not files:
@@ -3070,6 +3101,8 @@ def _copy_model(data, name, base, src, spec_doc, where, keep_shadow, result):
         if name_hash(old + "_nm") in have and name_hash(new + "_nm") in have:
             mapping[name_hash(old + "_nm")] = name_hash(new + "_nm")
     sr = model.retextured(sr, mapping)
+    data.copy_swaps = getattr(data, "copy_swaps", {})
+    data.copy_swaps[name.lower()] = mapping
     key = name_hash(name)
     data.new("streamed.dsk", key, model.MODEL, mr)
     data.new("streamed.dsk", key, model.SEGMENTS, sr)
@@ -3161,6 +3194,28 @@ def _apply_models(data, folder, result):
             recs = {r.kind: r for r in data.archive(a).records if r.key == key and r.kind in (model.MODEL, model.SEGMENTS)}
             if len(recs) == 2:
                 found[a] = recs
+        copy_swaps = getattr(data, "copy_swaps", {}).get(name.lower())
+        if not found and copy_swaps is not None:
+            # a copied model (models/<name>.new.json "copy"): edit the copy
+            mr, sr = data.find_added(key, model.MODEL), data.find_added(key, model.SEGMENTS)
+            if is_changes and is_gltf:
+                from . import model_changes
+                nm, ns, report = model_changes.import_changes(mr, sr, f)
+            elif is_gltf:
+                from . import gltf_model
+                nm, ns, report = gltf_model.import_gltf(mr, sr, f, lod, damaged,
+                                                        material_hash=_glb_textures(data, name, f, result))
+            else:
+                nm, ns, report = model_import.import_obj(mr, sr, text, lod, damaged)
+            # the copy's own textures, on edited pieces that name the base's again
+            ns = model.retextured(ns, copy_swaps)
+            data.replace_added(key, model.MODEL, nm)
+            data.replace_added(key, model.SEGMENTS, ns)
+            result.changes.append(f"model {name} (a copy): {len(report.edited)} pieces edited, {len(report.added)} "
+                                  f"added, {len(report.removed)} removed, {report.collision_boxes} collision boxes "
+                                  f"added (from {f.name})")
+            result.warnings += [f"model {name}: {w}" for w in report.warnings]
+            continue
         if not found:
             raise ValueError(f"models/{f.name}: no model named {name!r}")
         report = None
@@ -3297,11 +3352,28 @@ def _apply_effects(data, folder, result):
         if name:
             entries[name.lower()] = c
     for entry, values in doc.items():
-        c = entries.get(entry.lower())
-        if c is None:
-            raise ValueError(f"effects.json: the effects table has no entry {entry!r}")
         if not isinstance(values, dict):
             raise ValueError(f"effects.json: {entry}: give an object of keys and values")
+        c = entries.get(entry.lower())
+        if values.get("copy") is not None:
+            # a new entry: a copy of a game one under this name (a helicopter
+            # sound set of a mod's own, for its templates' effectset)
+            src = entries.get(str(values["copy"]).lower())
+            if c is not None:
+                raise ValueError(f"effects.json: the effects table already has an entry {entry!r}")
+            if src is None:
+                raise ValueError(f"effects.json: {entry}: no entry {values['copy']!r} to copy")
+            if not re.fullmatch(r"[A-Za-z0-9_]+", entry):
+                raise ValueError(f"effects.json: {entry!r}: name new entries with letters, digits and _")
+            c = ucfb.Chunk(src.tag, src.data, [ucfb.Chunk(k.tag, k.data, []) for k in src.children])
+            info = next(k for k in c.children if k.tag == b"INFO")
+            info.data = _fx_body([(k, entry if k == "name" else v) for k, v in _fx_pairs(info.data)])
+            roots[0].children.append(c)
+            entries[entry.lower()] = c
+            result.changes.append(f"effects {entry}: new, a copy of {values['copy']}")
+            values = {k: v for k, v in values.items() if k != "copy"}
+        if c is None:
+            raise ValueError(f"effects.json: the effects table has no entry {entry!r}")
         for key, value in values.items():
             if any(ch.isspace() or ch == "\0" for ch in key) or key.lower() in ("name", "num_components"):
                 raise ValueError(f"effects.json: {entry}: {key!r} can't be set")
