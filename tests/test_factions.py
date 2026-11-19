@@ -31,6 +31,11 @@ class FactionTests(unittest.TestCase):
         e = factions.plan(STRINGS, {"china": {"name": "Jade", "adjective": "Imperial"}, "everywhere": True, "subtitles": True})
         self.assertEqual(e["vo.fio.x1"], "The Imperial want it done.")
 
+    def test_map_key_is_allowed(self):
+        # "map": the renames go on that map only (the build's concern)
+        e = factions.plan(STRINGS, {"china": {"name": "Jade", "adjective": "Imperial"}, "map": "isle"})
+        self.assertEqual(e["interface.datapod.china"], "JADE")
+
     def test_acronyms_and_people(self):
         e = factions.plan(STRINGS, {"sk": {"name": "Kingdom", "adjective": "Royal", "short": "KR", "people": "Royals"},
                                     "allies": {"name": "Coalition"}})

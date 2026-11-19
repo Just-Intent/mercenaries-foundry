@@ -1783,7 +1783,7 @@ def retail_lua_names(data):
                 sources.append(script.decode(data.archive(a).read(r)).source)
             except Exception:
                 continue
-        data._retail_names = luacheck.known_names(sources)
+        data._retail_names = luacheck.known_names(sources) | luacheck.PLUGIN_COMMANDS
     return data._retail_names
 
 
@@ -3230,8 +3230,8 @@ def _copy_model(data, name, base, src, spec_doc, where, keep_shadow, result):
     for h in model.texture_hashes(sr):
         n = names.get(h) or next((str(v) for v in swaps.values() if name_hash(str(v)) == h), None)
         if n is None:
-            result.warnings.append(f"{where}: the copy draws a texture ({h:08x}) no load list names, so it may "
-                                   f"not be loaded where the copy is")
+            # one the base draws that no list loads by name (or the game hasn't
+            # at all): the copy draws it as the base does
             continue
         textures_.append(n)
         nm = n + "_nm"

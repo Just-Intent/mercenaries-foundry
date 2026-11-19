@@ -427,6 +427,12 @@ def names(source):
     return p.defined, p.called, p.callbacks
 
 
+# Script commands Foundry Console adds (docs/OVERLAY.md): generated scripts
+# call them only after checking they exist (`if Foundry_MapText then`).
+PLUGIN_COMMANDS = frozenset({"Foundry_TrafficZone", "Foundry_SetHandling", "Foundry_Range", "Foundry_Sample",
+                             "Foundry_Label", "Foundry_MapText", "Foundry_MapTexture"})
+
+
 def known_names(sources):
     """Every global a set of scripts defines or calls (the retail scripts: the
     game's own functions and the engine's), and the library functions they

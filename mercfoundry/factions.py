@@ -174,7 +174,7 @@ def plan(strings, doc):
             if new != edits.get(key, text):
                 edits[key] = new
     for k in doc:
-        if k not in FACTIONS and k not in ("everywhere", "subtitles"):
+        if k not in FACTIONS and k not in ("everywhere", "subtitles", "map"):
             raise ValueError(f"factions.json: {k!r} isn't a faction the game lets a mod rename "
                              f"({', '.join(FACTIONS)}; its 8 faction slots are fixed)")
     return edits
