@@ -478,6 +478,46 @@ class ModBuildTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "can't move, copy or remove"):
             modbuild.build(self.project, self.data, self.out)
 
+    def test_map_text(self):
+        # text/*.json with "map": the game's text stays; the new map's own
+        # goes in beside it, and the map's master script asks Foundry
+        # Console to show it there
+        from mercfoundry import ucfb
+        tern = ucfb.wrap(b"tern", ucfb.pack_chunk(b"NAME", b"blank\0") + ucfb.pack_chunk(b"INFO", b"\0" * 8))
+        wrld = ucfb.wrap(b"wrld", ucfb.pack_chunk(b"NAME", b"blank\0") + ucfb.pack_chunk(b"TNAM", b"blank\0"))
+        build(self.data / "assets.dsk", [
+            (name_hash("blank"), name_hash("Terrain"), tern), (name_hash("blank"), WORLD, wrld),
+            (name_hash("blank"), SCRIPT, script.encode(script.new("blank", "function ScriptInit()\nx = 1\nend\n"))),
+            (name_hash("blank"), name_hash("list"), b"\n[world]\n\nload blank\n"),
+        ])
+        (self.data / "levels.ini").write_text("[LevelNamesList]\n\nLevelName\tLV_blank\n\n[LV_blank]\nName\t\t\tblank\n"
+                                              "Path\t\t\t\\TEST\\\nConfigFile\t\t\\TEST\\blank.ini\n", encoding="latin-1")
+        (self.data / "TEST").mkdir()
+        (self.data / "TEST" / "blank.ini").write_text("SkyTexture\t\tsky\n", encoding="latin-1")
+        (self.project / "maps").mkdir(exist_ok=True)
+        self.write("maps/island.json", json.dumps({"from": "blank", "loads_like": None}))
+        (self.project / "text").mkdir(exist_ok=True)
+        self.write("text/island.json", json.dumps({"map": "island", "strings": {
+            "veh.jeep": "Island Jeep", "island.new": "Only here"}}))
+        result = modbuild.build(self.project, self.data, self.out)
+        self.assertTrue(any("2 strings of island's own" in c for c in result.changes), result.changes)
+        arc = dsk.Archive(self.out / "english.dsk")
+        strings = registry.Registry(arc.read(arc.records[0])).strings()
+        self.assertEqual(strings["veh.jeep"], "Jeep")                         # the game's, as it was
+        self.assertEqual(strings["veh.jeep.foundry_map_island"], "Island Jeep")
+        self.assertEqual(strings["island.new"], "Only here")
+        recs = self.records("assets.dsk")
+        lua = script.decode(recs[(name_hash("foundry_maptext_island"), SCRIPT)]).source
+        self.assertIn("'veh.jeep', 'veh.jeep.foundry_map_island',", lua)
+        self.assertIn("if not Foundry_MapText then return 0 end", lua)
+        master = script.decode(recs[(name_hash("island"), SCRIPT)]).source
+        self.assertIn("function ScriptInit()\nUtility_LoadUtilityScript('foundry_maptext_island')\nfoundry_MapText()\n",
+                      master)
+        self.assertIn("load foundry_maptext_island", recs[(name_hash("island"), name_hash("list"))].decode("latin-1"))
+        self.write("text/island.json", json.dumps({"map": "sw", "strings": {"veh.jeep": "x"}}))
+        with self.assertRaisesRegex(ValueError, "isn't a mod's new map"):
+            modbuild.build(self.project, self.data, self.out)
+
     def test_map_rule_on_a_game_map(self):
         # "map": <a game map>: only the layers its load list loads
         build(self.data / "assets.dsk", [

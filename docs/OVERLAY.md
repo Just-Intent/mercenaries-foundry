@@ -26,6 +26,14 @@ Script commands it adds, for the Lua box or any script:
   in the game's own script commands. Wheel friction is copied to the tyres
   only at setup. Compiled; not yet run in game (new native builds don't run
   on the PC it was written on).
+- `Foundry_MapText('<key>', '<other key>')` shows the other key's text for
+  the key, until the next level loads (a `Level_Load` hook puts the game's
+  back). It repoints the key's UTF-16 text pointer in the game's string table
+  (`Registry_Find(*g_StringTables)`: count at +4, text pointers at +0xC, key
+  hashes at +0x10, probed as `HashTable_Find`), and returns true, or nil when
+  a key isn't there. A mod's new map with texts of its own (`text/*.json` or
+  `factions.json` with `"map"`) calls it from its master script, through the
+  generated `foundry_maptext_<map>`. Compiled; not yet run in game.
 - `Foundry_Range()` runs the [test range](ENCOUNTERS.md#test-range)'s
   `range.lua` in the calling script state. It looks for the file in
   `mods\Foundry Test Range` first, then in the launcher's runtime copy, where

@@ -745,6 +745,15 @@ changing the game's anywhere else (these are files, not editor tools yet):
   Anything the build places from a template by name (`"from"` in
   encounters, HQ guards, travel pilots, mission givers) takes the copy's
   name too: the game template with the copy's properties.
+- **Text of its own:** `text/<file>.json`
+  `{"map": "isle", "strings": {"faction.allies": "an Isle Guard", ...}}`, and
+  `factions.json` with `"map": "isle"`, change the game's texts on that map
+  only. Each goes in beside the game's (`<key>.foundry_map_isle`), and the
+  map's master script asks Foundry Console (`Foundry_MapText`, OVERLAY.md) to
+  show it there; the next level load puts the game's back. Without Foundry
+  Console the game's texts show. Keys the game doesn't have are simply
+  added. Not yet tried in game: texts the game reads once and keeps (some
+  HUD labels may) won't change.
 - **Rules for one map:** an objects rule with `"map"` changes only that map:
   `"map": "<a mod's new map>"` changes (`"set"` only) the map's template
   copies it matches by `"template"` or `"model"` (a template every map loads

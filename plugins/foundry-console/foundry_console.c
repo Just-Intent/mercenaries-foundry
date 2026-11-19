@@ -2815,6 +2815,100 @@ static void sampler_shutdown(void)
     sample_thread = NULL;
 }
 
+/* ---- Text of a map's own (Foundry_MapText) ----
+ * The game's strings are one hash table, Registry_Find(*g_StringTables)
+ * (StringTable_GetAscii, 0x1211B0: mask at +4 (count - 1), UTF-16 text
+ * pointers at +0xC, key hashes at +0x10, probed from key & mask on, as
+ * HashTable_Find). A mod's new map asks, from its master script, for some
+ * keys to show another key's text while it's loaded (the build adds those
+ * texts: text/*.json and factions.json with "map"); the next level load
+ * puts them back. */
+#define MAPTEXT_MAX 4096
+typedef struct { uint32_t table, slot, original, replaced; } MapTextSwap;
+static MapTextSwap maptext[MAPTEXT_MAX];
+static unsigned maptext_count;
+
+static uint32_t string_table(void)
+{
+    uint32_t name = 0, args[1];
+    MercGuestCall c;
+    if (!host->read_guest(host->context, MF_VAR_g_StringTables, &name, 4) || !name) return 0;
+    args[0] = name;
+    return guest(MF_FN_Registry_Find, 0, 1, args, &c) ? c.eax : 0;
+}
+
+/* the slot holding key in the table, or -1 */
+static int string_slot(uint32_t table, uint32_t key, uint32_t *values)
+{
+    uint32_t count = 0, keys = 0, k = 0;
+    if (!key || !host->read_guest(host->context, table + 4, &count, 4) || !count || (count & (count - 1)) ||
+        !host->read_guest(host->context, table + 0xC, values, 4) ||
+        !host->read_guest(host->context, table + 0x10, &keys, 4)) return -1;
+    uint32_t mask = count - 1, i = key & mask;
+    for (uint32_t n = 0; n < count; n++, i = (i + 1) & mask) {
+        if (!host->read_guest(host->context, keys + 4 * i, &k, 4) || !k) return -1;
+        if (k == key) return (int)i;
+    }
+    return -1;
+}
+
+static void maptext_restore(void)
+{
+    unsigned put = 0;
+    for (unsigned i = maptext_count; i-- > 0;) {
+        MapTextSwap *s = &maptext[i];
+        uint32_t values = 0, now = 0;
+        if (host->read_guest(host->context, s->table + 0xC, &values, 4) &&
+            host->read_guest(host->context, values + 4 * s->slot, &now, 4) && now == s->replaced) {
+            host->write_guest(host->context, values + 4 * s->slot, &s->original, 4);
+            put++;
+        }
+    }
+    if (maptext_count) {
+        char line[96];
+        snprintf(line, sizeof(line), "map text: %u of %u strings put back", put, maptext_count);
+        host->log(host->context, line);
+    }
+    maptext_count = 0;
+}
+
+static void MERC_PLUGIN_CALL level_load_before(void *ud, MercHookContext *c)
+{
+    (void)ud; (void)c;
+    maptext_restore();
+}
+
+/* Foundry_MapText(key, other): key shows other's text until the next level
+ * loads. Returns true, or nil when either key isn't in the game's strings. */
+static int MERC_PLUGIN_CALL cmd_map_text(void *ud, uint32_t L)
+{
+    char key[160], other[160];
+    (void)ud;
+    if (!lua_arg_text(L, 1, key, sizeof(key)) || !lua_arg_text(L, 2, other, sizeof(other))) return 0;
+    uint32_t table = string_table(), values = 0, text = 0, original = 0;
+    if (!table) return 0;
+    int to = string_slot(table, hash_name(key), &values);
+    int from = string_slot(table, hash_name(other), &values);
+    if (to < 0 || from < 0 ||
+        !host->read_guest(host->context, values + 4 * (uint32_t)from, &text, 4) ||
+        !host->read_guest(host->context, values + 4 * (uint32_t)to, &original, 4)) return 0;
+    if (original != text) {
+        unsigned i;
+        for (i = 0; i < maptext_count; i++)               /* asked again: keep the first original */
+            if (maptext[i].table == table && maptext[i].slot == (uint32_t)to) break;
+        if (i == maptext_count) {
+            if (maptext_count == MAPTEXT_MAX) return 0;
+            maptext[maptext_count++] = (MapTextSwap){table, (uint32_t)to, original, text};
+        } else {
+            maptext[i].replaced = text;
+        }
+        host->write_guest(host->context, values + 4 * (uint32_t)to, &text, 4);
+    }
+    uint32_t args[2] = {L, 1};
+    lua_call(MF_FN_Lua_PushBool, 2, args);
+    return 1;
+}
+
 MERC_PLUGIN_EXPORT int MERC_PLUGIN_CALL MercenariesPlugin_Init(
     const MercPluginHost *h, MercPlugin *plugin, char *error, uint32_t error_size)
 {
@@ -2838,9 +2932,13 @@ MERC_PLUGIN_EXPORT int MERC_PLUGIN_CALL MercenariesPlugin_Init(
         !h->add_lua_command(h->context, "Foundry_Range", cmd_range, NULL) ||
         !h->add_lua_command(h->context, "Foundry_Sample", cmd_sample, NULL) ||
         !h->add_lua_command(h->context, "Foundry_Label", cmd_label, NULL) ||
-        !h->add_lua_command(h->context, "Foundry_SetHandling", cmd_set_handling, NULL))
+        !h->add_lua_command(h->context, "Foundry_SetHandling", cmd_set_handling, NULL) ||
+        !h->add_lua_command(h->context, "Foundry_MapText", cmd_map_text, NULL))
         h->log(h->context, "script commands unavailable; Foundry_TrafficZone, Foundry_Range, Foundry_Sample, "
-                           "Foundry_Label and Foundry_SetHandling may not exist");
+                           "Foundry_Label, Foundry_SetHandling and Foundry_MapText may not exist");
+    if (!h->hook_guest(h->context, MF_FN_Level_Load, level_load_before, NULL, NULL))
+        h->log(h->context, "level load hook unavailable (run port-hooks); a map's own text (Foundry_MapText) "
+                           "stays after leaving it");
     sampler_init();
     plugin->on_update = on_update;
     plugin->on_shutdown = on_shutdown;

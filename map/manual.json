@@ -1144,7 +1144,8 @@
   {
    "address": "0x00413FC0",
    "name": "g_StringTables",
-   "evidence": "inferred: Lua_Player_AdjustMoney passes it to 0x121650 with a hashed table name before StringTable_GetAscii"
+   "notes": "Holds the name hash of the game's string table: Registry_Find(*g_StringTables) is the StringTable (count +4, UTF-16 text pointers +0xC, key hashes +0x10, default +0x14). Foundry Console's Foundry_MapText repoints a key's text pointer there.",
+   "evidence": "retail code: MissionData_SetText (0x15F5F0) pushes MEM32(0x413FC0) to Registry_Find and calls StringTable_GetAscii on the result; Lua_Player_AdjustMoney does the same"
   },
   {
    "address": "0x003717A0",
