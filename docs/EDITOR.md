@@ -272,8 +272,12 @@ toolkit bundle run it the same way: `foundry\python\python.exe foundry\mercfound
   "greeting": [line], "idle": [line]}}`. A line is `{"speaker", "text",
   "seconds", "sound"? (<bank>.<cue>)}` or just text; seconds default to the
   text's length. The guard (a layer the map loads; `template_<faction>_bouncer`
-  unless set) is marked as the bouncers are, with the faction's HQ flag (so
-  `"hqs"` skips that faction). Using it fades to black and puts the player
+  unless set) is marked as the bouncers are, with the faction's HQ flag,
+  unless `"hqs"` gives that faction a point: then the point has the flag
+  (always there, even before the guard is) and the guard a ring and name
+  in the world. The guards are looked for every second at first, then
+  every 5 s while free roam lasts, so one far from where you arrive is
+  armed once it's there. Using it fades to black and puts the player
   at the room's position; the greeting plays, then the faction's next
   contract here: its briefing lines and its yes/no box (yes starts it as a
   giver does). With no contract, the idle lines. The leaders (actors placed

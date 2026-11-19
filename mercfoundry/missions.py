@@ -1829,7 +1829,7 @@ def interiors(where, map_name, doc):
     return out
 
 
-def interiors_lua(prefix, inside):
+def interiors_lua(prefix, inside, flagged=()):
     """Lua for a new map's HQ interiors: using the HQ guard fades to black,
     puts the player in the room (where they stood is kept), and plays the
     greeting; then the faction's next contract here ("contact": {"interior":
@@ -1837,8 +1837,13 @@ def interiors_lua(prefix, inside):
     contract's yes/no box, or, with none, the idle lines. Using the leader
     (when the way out is a door) talks again; using the way out fades and
     puts the player back where they stood by the guard. {prefix}HqArm()
-    arms the guards (again each second, up to 15 s, while their layer
-    hasn't brought them)."""
+    arms the guards and keeps looking (each second for 15 s, then every
+    5 s, for as long as free roam lasts): a guard far from the player may
+    not exist yet, and one that comes back (dormant, reloaded) is a new
+    actor to arm again. Its rules are set again on each look. flagged:
+    factions with an HQ point flag ("hqs"): their guard gets a ring and
+    name in the world only, not a second HQ blip; others carry the HQ
+    flag themselves, as the bouncers do."""
     P = prefix
     rows = []
     for f, i in inside.items():
@@ -1846,7 +1851,7 @@ def interiors_lua(prefix, inside):
             "%s = { guard = %s, prompt = %s, name = %s, side = %s, marker = %s, rx = %.2f, ry = %.2f, rz = %.2f, "
             "rh = %.1f, leaders = { %s }, door = %s, doorprompt = %s, talkprompt = %s,\n greeting = %s,\n idle = %s },"
             % (f, _lua(i["guard"]), _lua_str(i["prompt"]), _lua_str(i["name"]), _lua(i["side"]),
-               "true" if i["marker"] == "hq" else "false", *i["room"], i["rheading"],
+               ("'ring'" if f in flagged else "'hq'") if i["marker"] == "hq" else "false", *i["room"], i["rheading"],
                ", ".join(_lua(a) for a in i["leaders"]), _lua(i["door"]), _lua_str(i["door_prompt"]),
                _lua_str(i["talk_prompt"]), i["greeting"], i["idle"]))
     return f"""-- HQ interiors (Mercenaries Foundry: maps json "interiors")
@@ -1862,29 +1867,34 @@ Actor_SetVerifiable(name, FALSE)
 Actor_SetInvincible(name, true)
 end
 function {P}HqArm()
-local waiting = false
+-- one look-timer at a time: a new start replaces the one waiting
+if {P}HqTimer then Event_CancelEvent({P}HqTimer) {P}HqTimer = nil end
+{P}HqWaits = 0
+{P}HqLook()
+end
+function {P}HqLook()
 for f, h in {P}Hq do
 if Utility_DoesActorExist(h.guard) then
 local iActor = Utility_GetActorAsInt(h.guard)
+Ai_SetFaction(h.guard, h.side)   -- again each look: a side set while it slept doesn't hold
+{P}HqRules(h.guard)
 if {P}HqArmed[h.guard] ~= iActor then
 {P}HqArmed[h.guard] = iActor
-Ai_SetFaction(h.guard, h.side)
-{P}HqRules(h.guard)
 Ai_CommandQueue(h.guard, 'Wait', 'hiPri')
-if h.marker then
+if h.marker == 'hq' then
 util_SetupSingleTargetActorObjective(h.guard, h.name, '', 'OBJECTIVE_TYPE_PRIMARY', h.guard, h.name, 'TARGET_TYPE_HQ_' .. string.upper(f), TRUE, TRUE, TRUE, 'hq' .. f)
+elseif h.marker == 'ring' then
+util_SetupSingleTargetActorObjective(h.guard, h.name, '', 'OBJECTIVE_TYPE_SECONDARY', h.guard, h.name, 'TARGET_TYPE_OBJECTIVE_SECONDARY', FALSE, FALSE, TRUE, 'blip')
 end
 {P}HqUse(h.guard, h.prompt, '{P}HqEnter_' .. f)
 end
-else
-waiting = true   -- its layer hasn't brought it yet
 end
 end
-if waiting and {P}HqWaits < 15 then
 {P}HqWaits = {P}HqWaits + 1
-Event_RelativeTimer('{P}HqArm', 'b', 1.0)
+if {P}HqWaits <= 15 then
+{P}HqTimer = Event_RelativeTimer('{P}HqLook', 'b', 1.0)
 else
-{P}HqWaits = 0
+{P}HqTimer = Event_RelativeTimer('{P}HqLook', 'b', 5.0)
 end
 end
 function {P}HqUse(name, prompt, cb)

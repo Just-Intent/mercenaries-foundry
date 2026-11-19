@@ -2222,13 +2222,12 @@ def map_script(name, doc, layers, pilots=(), contacts=False, extra=(), hqs=None,
         text += funcs
     if hqs:
         from .missions import hq_flags_lua
-        text += hq_flags_lua(f"foundry_{name.lower()}_", hqs,
-                             skip=[f for f, i in (inside or {}).items() if i["marker"] == "hq"])
+        text += hq_flags_lua(f"foundry_{name.lower()}_", hqs)
     if inside:
         from .missions import interiors_lua
         if not contacts:
             text += f"sFoundryOnMap = {_lua_str(name.lower())}\n"
-        text += interiors_lua(f"foundry_{name.lower()}_", inside)
+        text += interiors_lua(f"foundry_{name.lower()}_", inside, flagged=list(hqs or {}))
     return text
 
 

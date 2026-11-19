@@ -909,8 +909,16 @@ class MapScriptTests(unittest.TestCase):
         self.assertIn("foundry_gaza_HqFlags()", init)
         self.assertIn("foundry_gaza_HqArm()", init)
         self.assertIn("sFoundryOnMap = 'gaza'", text)
-        # the guard carries the Allied flag, so only China's is a point of its own
-        self.assertNotIn("'foundry_hq_allies'", text)
+        # every HQ point gets its flag, guard or not (a far guard may not exist
+        # yet); a guard whose HQ has a point is ringed in the world only
+        self.assertIn("Objective_SetTargetVector('foundry_hq_allies'", text)
+        self.assertIn("marker = 'ring'", text)
+        self.assertIn("'TARGET_TYPE_OBJECTIVE_SECONDARY', FALSE, FALSE, TRUE, 'blip'", text)
+        # the guards are looked for for as long as free roam lasts
+        self.assertIn("Event_RelativeTimer('foundry_gaza_HqLook', 'b', 5.0)", text)
+        self.assertNotIn("HqWaits < 15", text)
+        solo = modbuild.map_script("gaza", {}, [], inside=inside)          # no "hqs": the guard is the flag
+        self.assertIn("marker = 'hq'", solo)
         self.assertIn("Objective_SetTargetVector('foundry_hq_china', 'foundry_hq_china', "
                       "Utility_GetStringById('standardMission.bouncer.china.tgtCaption'), 'TARGET_TYPE_HQ_CHINA', "
                       "4.00, 5.00, 6.00, 'hqchina', TRUE, TRUE, FALSE, 'hqchina')", text)
