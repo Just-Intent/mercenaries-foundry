@@ -23,15 +23,21 @@ MAX_INDEX = 0xFFFF
 
 
 CUTOUT = 0x10      # MTRL word 5: the game alpha-tests the piece's texture (gltf.cutout_flag)
+# MTRL word 5 bit 0: drawn translucent (blended, without hiding what's behind
+# it). Retail sets it on glass, rotor blur and flags (mafia_veh_littlebird:
+# apache_window, apache_rotorblur, mafia_veh_flag; 0x101 against 0x100 for
+# the body). A solid piece with it shows its far side through its near one.
+TRANSLUCENT = 0x1
 
 
 def _cutout(words, alpha):
     """A piece's MTRL words with the cut-out bit as its glTF material's
-    alphaMode says (MASK or BLEND on, OPAQUE off; none given: as they are)."""
+    alphaMode says (MASK or BLEND on, OPAQUE off and not translucent either;
+    none given: as they are)."""
     mode = str(alpha or "").upper()
     if mode and len(words) > 5:
         words = list(words)
-        words[5] = words[5] | CUTOUT if mode in ("MASK", "BLEND") else words[5] & ~CUTOUT
+        words[5] = words[5] | CUTOUT if mode in ("MASK", "BLEND") else words[5] & ~(CUTOUT | TRANSLUCENT)
     return words
 
 
@@ -39,10 +45,19 @@ def template_piece(pieces, texture):
     """The piece a new piece of this texture copies its material from: of the
     model's pieces drawing it, one with the material most of them have (a
     car's glass is translucent on most of its panes, opaque on an odd one;
-    a first-found template could be that one), else the model's first piece."""
+    a first-found template could be that one). For a texture the model
+    doesn't draw, its first piece that isn't translucent (cut out is fine: a
+    new frond on a palm copies its leaves), the biggest if several: the first
+    piece may be glass or a flag (a drone drawn on mafia_veh_littlebird
+    copied its translucent flag and showed its top through its underside)."""
     same = [p for p in pieces if p.texture == texture]
     if not same:
-        return pieces[0] if pieces else None
+        if not pieces:
+            return None
+        solid = [p for p in pieces if not (len(p.material) > 5 and p.material[5] & TRANSLUCENT)]
+        if not solid or solid[0] is pieces[0]:
+            return pieces[0]
+        return max(solid, key=lambda p: len(getattr(p, "positions", ()) or ()))
     counts = {}
     for p in same:
         counts[tuple(p.material)] = counts.get(tuple(p.material), 0) + 1

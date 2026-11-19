@@ -157,6 +157,12 @@ class GltfModelImportTests(unittest.TestCase):
         self.assertIs(template_piece(pieces, glass), usual)
         self.assertIs(template_piece(pieces, name_hash("other")), first)
         self.assertIsNone(template_piece([], glass))
+        # a base whose first piece is translucent (a flag): a new texture
+        # copies its biggest piece that isn't (else it draws see-through)
+        flag = P(texture=glass, material=(1, 2, 2, glass, 0, 0x101, 1), positions=[0] * 22)
+        small = P(texture=body, material=(1, 4, 4, body, 0, 0x100, 1), positions=[0] * 14)
+        big = P(texture=body, material=(1, 4, 4, body, 0, 0x100, 1), positions=[0] * 1496)
+        self.assertIs(template_piece([flag, small, big], name_hash("other")), big)
 
     def test_editor_shows_new_models_cut_out_as_built(self):
         from types import SimpleNamespace
