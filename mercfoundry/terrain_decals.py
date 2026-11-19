@@ -28,9 +28,17 @@ do (u from about -500 to 2550).  Clamping them at the edge instead bends the
 texture differently in each cell, and a road that doesn't run along the grid
 breaks into staggered squares.  Where roads cross, each cell takes the road
 whose centre line is nearest.
+
+Where roads of a family with junction textures (sw_decal_road_straight ->
+_t, _cross) meet square (within SKEW degrees), the build lays the game's T or
+cross piece over the strips' overlap, as retail does ("junctions": false in
+the decals file keeps the roads crossing). Skewed junctions and road ends
+meeting at an angle keep the straight roads: the square pieces leave jagged
+edges there.
 """
 
 import math
+import re
 import struct
 
 from . import terrain_layers as tl
@@ -145,6 +153,204 @@ def road_decals(road, size, spacing):
     return out
 
 
+# Junctions. Retail lays a junction as one texture square about the road's
+# span a side (SW: 2048 units over ~41 m, usually a 5 x 5 block of cells),
+# turned to the roads: <family>_t, _cross and _corner beside _straight
+# (sw_decal_road_*, nk_decal_road_*). In texture terms (all of SW's and NW's
+# junction blocks): a T's arms leave by its u+ edge (the stem) and both v
+# edges (the road it joins); a corner's by u+ and v-; a cross's by all four.
+JUNCTION_KINDS = ("t", "cross")
+ARM_MERGE = 30.0          # degrees: arms closer than this are one
+STRAIGHT_THROUGH = 150.0  # degrees: two arms wider than this are a straight road, not a corner
+# how far from the square's middle a block cell's centre may be (u, v), as a
+# share of the square: a T stops across its through road at that road's strip
+BLOCK = {"t": (0.36, 0.5), "cross": (0.5, 0.5)}
+# The pieces are drawn for roads meeting square: a T's stem or a cross's
+# second road further than this from square keeps the straight roads (a
+# square piece on a skewed junction leaves jagged ends)
+SKEW = 15.0
+
+
+def junction_texture(straight, kind):
+    """sw_decal_road_straight(alpha) -> sw_decal_road_<kind>; None for a
+    texture with no junction family."""
+    m = re.match(r"(?i)^(.*_road)_straight(?:alpha|a?2)?$", straight or "")
+    return f"{m.group(1)}_{kind}" if m else None
+
+
+def _segments(pts):
+    return [((ax, az), (bx, bz)) for (ax, az), (bx, bz) in zip(pts, pts[1:]) if (ax, az) != (bx, bz)]
+
+
+def _hit(p, q, r, s):
+    """Where segments p-q and r-s cross: (t on the first, u on the second) or None."""
+    dx1, dz1, dx2, dz2 = q[0] - p[0], q[1] - p[1], s[0] - r[0], s[1] - r[1]
+    den = dx1 * dz2 - dz1 * dx2
+    if abs(den) < 1e-9:
+        return None
+    t = ((r[0] - p[0]) * dz2 - (r[1] - p[1]) * dx2) / den
+    u = ((r[0] - p[0]) * dz1 - (r[1] - p[1]) * dx1) / den
+    return (t, u) if -1e-6 <= t <= 1 + 1e-6 and -1e-6 <= u <= 1 + 1e-6 else None
+
+
+def _nearest_on(pts, x, z):
+    """(distance, point, along) of the nearest point of a polyline."""
+    best, s0 = None, 0.0
+    for p, q in _segments(pts):
+        dx, dz = q[0] - p[0], q[1] - p[1]
+        l2 = dx * dx + dz * dz
+        t = max(0.0, min(1.0, ((x - p[0]) * dx + (z - p[1]) * dz) / l2))
+        px, pz = p[0] + dx * t, p[1] + dz * t
+        d = math.hypot(x - px, z - pz)
+        if best is None or d < best[0]:
+            best = (d, (px, pz), s0 + t * math.sqrt(l2))
+        s0 += math.sqrt(l2)
+    return best
+
+
+def _length(pts):
+    return sum(math.hypot(q[0] - p[0], q[1] - p[1]) for p, q in _segments(pts))
+
+
+def _point_at(pts, s):
+    for p, q in _segments(pts):
+        l = math.hypot(q[0] - p[0], q[1] - p[1])
+        if s <= l:
+            return (p[0] + (q[0] - p[0]) * s / l, p[1] + (q[1] - p[1]) * s / l)
+        s -= l
+    return pts[-1]
+
+
+def find_junctions(roads, tol=2.0):
+    """[(x, z, [arm directions], span, straight texture, [road indices])]: where roads cross
+    or one ends on another (within tol m), with the directions the roads
+    leave the point, merged and counted."""
+    lines = [([(float(x), float(z)) for x, z in r["points"]], float(r.get("span", 25.0)), r.get("texture"))
+             for r in roads if len(r.get("points", [])) >= 2]
+    points = []          # (x, z, road indices)
+    for i, (a, _, _) in enumerate(lines):
+        for j in range(i + 1, len(lines)):
+            b = lines[j][0]
+            for p, q in _segments(a):
+                for r, s in _segments(b):
+                    h = _hit(p, q, r, s)
+                    if h:
+                        points.append((p[0] + (q[0] - p[0]) * h[0], p[1] + (q[1] - p[1]) * h[0], {i, j}))
+            for end in (a[0], a[-1]):
+                d, at, _ = _nearest_on(b, *end)
+                if d <= tol:
+                    points.append((at[0], at[1], {i, j}))
+            for end in (b[0], b[-1]):
+                d, at, _ = _nearest_on(a, *end)
+                if d <= tol:
+                    points.append((at[0], at[1], {i, j}))
+    # merge points closer than half the widest span there
+    merged = []
+    for x, z, ids in points:
+        reach = max(lines[k][1] for k in ids) / 2
+        for m in merged:
+            if math.hypot(m[0] - x, m[1] - z) < reach:
+                m[2] |= ids
+                break
+        else:
+            merged.append([x, z, set(ids)])
+    out = []
+    for x, z, ids in merged:
+        arms = []
+        for k in ids:
+            pts, span, _ = lines[k]
+            d, _, s = _nearest_on(pts, x, z)
+            total = _length(pts)
+            step = max(span / 2, 4.0)
+            for t in (s + step, s - step):
+                if 0 <= t <= total and (t > s and total - s > span / 4 or t < s and s > span / 4):
+                    px, pz = _point_at(pts, t)
+                    arms.append(math.atan2(pz - z, px - x))
+        dirs = []
+        for ang in sorted(arms):
+            if not any(abs(math.degrees((ang - b + math.pi) % (2 * math.pi) - math.pi)) < ARM_MERGE for b in dirs):
+                dirs.append(ang)
+        if len(dirs) < 2:
+            continue
+        widest = max(ids, key=lambda k: lines[k][1])
+        out.append((x, z, dirs, lines[widest][1], lines[widest][2], sorted(ids)))
+    return out
+
+
+def junction_decals(roads, size, spacing, covered=None):
+    """Decal entries for the junctions of a decals document's roads: as
+    retail lays them, the cells where the meeting roads' strips overlap
+    (a T: the road it joins across, the stem's width along), the junction
+    texture's square centred on the meeting point at the roads' own scale
+    (2048 a span). covered: {cell: set of road indices whose decals cover
+    it} (made here if not given)."""
+    half = size * spacing / 2
+    ox, oz = half, half - spacing
+    if covered is None:
+        covered = {}
+        for k, road in enumerate(roads):
+            if len(road.get("points", [])) >= 2:
+                for e in road_decals(road, size, spacing):
+                    covered.setdefault(tuple(int(v) for v in e["cell"]), set()).add(k)
+    out = []
+    for x, z, dirs, span, straight, ids in find_junctions(roads):
+        def gap(a, b):
+            return abs(math.degrees((a - b + math.pi) % (2 * math.pi) - math.pi))
+        if len(dirs) == 2:
+            # two roads meeting end to end: no piece. A street that turns is
+            # one road (gis joins them) and bends smoothly; two arms here are
+            # mostly road ends that come near each other, where a corner
+            # piece leaves gaps
+            continue
+        elif len(dirs) == 3:
+            kind = "t"
+            # the two arms most nearly opposite are the road it joins; the third is the stem (u+)
+            pairs = [(gap(dirs[i], dirs[j]), i, j) for i in range(3) for j in range(i + 1, 3)]
+            _, i, j = max(pairs)
+            stem = ({0, 1, 2} - {i, j}).pop()
+            if abs(gap(dirs[stem], dirs[i]) - 90) > SKEW or abs(gap(dirs[stem], dirs[j]) - 90) > SKEW:
+                continue
+            a, b_ang = dirs[stem], dirs[i]
+        else:
+            kind = "cross"
+            if len(dirs) > 4 or any(min(abs(gap(d, dirs[0]) - k) for k in (0, 90, 180)) > SKEW for d in dirs):
+                continue
+            a, b_ang = dirs[0], dirs[0] + math.pi / 2
+        texture = junction_texture(straight, kind)
+        if not texture:
+            continue
+        au = (math.cos(a), math.sin(a))
+        # v axis: perpendicular to u, on the side b_ang points to
+        bv = (-au[1], au[0])
+        if bv[0] * math.cos(b_ang) + bv[1] * math.sin(b_ang) < 0:
+            bv = (au[1], -au[0])
+
+        def uv_at(px, pz):
+            dx, dz = px - x, pz - z
+            return ((dx * au[0] + dz * au[1]) / span + 0.5) * 2048, ((dx * bv[0] + dz * bv[1]) / span + 0.5) * 2048
+
+        mine = set(ids)
+        # the block: cells on the meeting roads whose centres lie within the
+        # piece's square, across a T's through road only as far as its strip
+        # (retail: centres u 0.18..0.76, v 0.03..0.99 of the square)
+        eu, ev = BLOCK[kind]
+        reach = span
+        c0, c1 = int(math.floor((x - reach + ox) / spacing)), int(math.ceil((x + reach + ox) / spacing))
+        r0, r1 = int(math.floor((z - reach + oz) / spacing)), int(math.ceil((z + reach + oz) / spacing))
+        for r in range(r0, r1):
+            for c in range(c0, c1):
+                if not covered.get((c, r), set()) & mine:
+                    continue
+                cx, cz = (c + 0.5) * spacing - ox, (r + 0.5) * spacing - oz
+                u, v = uv_at(cx, cz)
+                if abs(u - 1024) > eu * 2048 or abs(v - 1024) > ev * 2048:
+                    continue
+                uv = [[int(round(k)) for k in uv_at((c + dx) * spacing - ox, (r + dz) * spacing - oz)]
+                      for dz, dx in CORNERS]
+                out.append({"cell": [c, r], "texture": texture, "uv": uv})
+    return out
+
+
 def apply(chunks, doc):
     """New INFO, DTEX, PTCH and DCAL bodies for a decals document."""
     spacing, size, side, _, _ = _info(chunks)
@@ -157,13 +363,20 @@ def apply(chunks, doc):
     # road's): stacked decals would overflow a patch (the game holds at most
     # MAX_PER_PATCH, one per cell) and corrupt the game's memory.
     laid = {}
-    for road in doc.get("roads", []):
+    covered = {}
+    for n, road in enumerate(doc.get("roads", [])):
         for e in road_decals(road, size, spacing):
             k = tuple(int(v) for v in e["cell"])
+            covered.setdefault(k, set()).add(n)
             if k not in laid or e["_dist"] <= laid[k]["_dist"]:      # crossing roads: the nearer centre line
                 laid[k] = e
     for e in laid.values():
         e.pop("_dist", None)
+    # junctions: the game's T, cross and corner pieces over where roads meet
+    # ("junctions": false keeps the straight roads crossing as they lay)
+    if doc.get("roads") and doc.get("junctions", True):
+        for e in junction_decals(doc["roads"], size, spacing, covered):
+            laid[tuple(int(v) for v in e["cell"])] = e
     if laid:
         entries = [e for e in entries if tuple(int(v) for v in e["cell"]) not in laid] + list(laid.values())
 

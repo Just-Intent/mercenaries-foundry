@@ -394,8 +394,9 @@ class JoinRoadsTest(unittest.TestCase):
         self.assertEqual(gis.join_roads(r), [("primary", [(0, 0), (10, 0), (20, 0), (30, 5)])])
         r.append(("primary", [(10, 0), (10, 10)]))                      # a junction at (10, 0)
         self.assertEqual(len(gis.join_roads(r)), 3)
-        r = [("primary", [(0, 0), (10, 0)]), ("secondary", [(10, 0), (20, 0)])]   # classes stay apart
-        self.assertEqual(len(gis.join_roads(r)), 2)
+        # a street changing class joins as the bigger (no jump in width or texture)
+        r = [("secondary", [(10, 0), (20, 0)]), ("primary", [(0, 0), (10, 0)])]
+        self.assertEqual(gis.join_roads(r), [("primary", [(0, 0), (10, 0), (20, 0)])])
         r = [("primary", [(0, 0), (10, 0)]), ("primary", [(10, 0), (2, 3)])]          # a hairpin: not joined
         self.assertEqual(len(gis.join_roads(r)), 2)
 

@@ -365,6 +365,29 @@ class DecalTests(unittest.TestCase):
         self.assertEqual(tex[cell(4, 0)], "dirt")           # nearer the second's centre line
         self.assertEqual(tex[cell(-12, 4)], "asphalt")      # nearer the first's
 
+    def test_junction_pieces(self):
+        # where roads of a family with junction textures meet square: the
+        # game's cross and T pieces over the strips' overlap, as retail lays
+        # them (a T's u rises toward its stem); a skewed T keeps the roads
+        st = "sw_decal_road_straight"
+        roads = [{"texture": st, "points": [[-120, 0], [120, 0]], "span": 26},
+                 {"texture": st, "points": [[0, -120], [0, 120]], "span": 26},       # a cross at (0, 0)
+                 {"texture": st, "points": [[300, 0], [600, 0]], "span": 26},
+                 {"texture": st, "points": [[450, 0], [450, 120]], "span": 26}]      # a T at (450, 0), stem +z
+        out = terrain_decals.junction_decals(roads, SIZE, 8.0)
+        half = SIZE * 8 / 2
+        cell = lambda x, z: (int((x + half) // 8), int((z + half - 8) // 8))
+        tex = {tuple(e["cell"]): e for e in out}
+        self.assertEqual(tex[cell(2, 2)]["texture"], "sw_decal_road_cross")
+        self.assertEqual(tex[cell(452, 4)]["texture"], "sw_decal_road_t")
+        self.assertEqual(tex[cell(452, -4)]["texture"], "sw_decal_road_t")    # across the whole through road
+        self.assertNotIn(cell(452, 30), tex)                                  # the stem goes on as itself
+        uv = tex[cell(452, 4)]["uv"]                       # corners (x, z+1), (x+1, z+1), (x, z), (x+1, z)
+        self.assertGreater(uv[0][0], uv[2][0])             # u rises with z, toward the stem
+        skewed = roads[2:3] + [{"texture": st, "points": [[450, 0], [550, 60]], "span": 26}]
+        self.assertEqual(terrain_decals.junction_decals(skewed, SIZE, 8.0), [])
+        self.assertIsNone(terrain_decals.junction_texture("asphalt", "t"))
+
     def test_roads_keep_existing_decals(self):
         chunks = decal_chunks()
         doc = {"roads": [{"texture": "asphalt", "points": [[-100, 0], [-60, 0]]}]}

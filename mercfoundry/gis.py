@@ -1220,11 +1220,13 @@ def clip_line(pts, inside):
     return out
 
 
-def drop_doubled_roads(roads, share=0.6):
-    """Leave out roads lying mostly on another's asphalt (OSM draws dual
-    carriageways and links as separate ways; squeezed, they overlap and
-    their decals alternate cell by cell).  Bigger classes and longer roads
-    are kept first.  roads: [(class, [(x, z)])]."""
+def drop_doubled_roads(roads, share=0.6, reach=0.5):
+    """Leave out roads lying mostly within another's decal (OSM draws dual
+    carriageways and links as separate ways, 10-20 m apart; a road's decal
+    reaches half its span either side, so both carriageways' decals overlap
+    and alternate cell by cell, a staircase).  reach: how far from a kept
+    road, in spans, counts as on it (0.5: its decal).  Bigger classes and
+    longer roads are kept first.  roads: [(class, [(x, z)])]."""
     def length(p):
         return sum(math.hypot(b[0] - a[0], b[1] - a[1]) for a, b in zip(p, p[1:]))
     order = sorted(roads, key=lambda t: (ROAD_ORDER.index(t[0]) if t[0] in ROAD_ORDER else 99, -length(t[1])))
@@ -1252,7 +1254,7 @@ def drop_doubled_roads(roads, share=0.6):
         if samples and sum(near(x, z) for x, z in samples) >= share * len(samples):
             continue
         kept.append((k, pts))
-        hw = ROADS[k][1] / 4 + 2.0 if k in ROADS else 6.0      # its asphalt, and a little
+        hw = ROADS[k][1] * reach if k in ROADS else 6.0      # its decal's half width
         for (ax, az), (bx, bz) in zip(pts, pts[1:]):
             for i in range(int(min(ax, bx) // cell), int(max(ax, bx) // cell) + 1):
                 for j in range(int(min(az, bz) // cell), int(max(az, bz) // cell) + 1):
@@ -1261,10 +1263,12 @@ def drop_doubled_roads(roads, share=0.6):
 
 
 def join_roads(roads, tol=1.0, max_turn=50.0):
-    """OSM splits a road into many ways: join pieces of a class that meet
-    end to end (where exactly two ends meet: not at junctions, and turning
-    less than max_turn degrees: a sharp bend's outer cells show the
-    texture curled), so the road's texture and markings run on unbroken.
+    """OSM splits a road into many ways: join pieces that meet end to end
+    (where exactly two ends meet: not at junctions, and turning less than
+    max_turn degrees: a sharp bend's outer cells show the texture curled),
+    so the road's texture and markings run on unbroken.  Pieces of different
+    classes join too, as the bigger class (OSM changes a street's class
+    along it; two roads would jump in width and texture where it does).
     roads: [(class, [(x, z)])]."""
     def key(pt):
         return round(pt[0] / tol), round(pt[1] / tol)
@@ -1274,45 +1278,50 @@ def join_roads(roads, tol=1.0, max_turn=50.0):
         h1 = math.atan2(b[1] - a[1], b[0] - a[0])
         h2 = math.atan2(c[1] - b[1], c[0] - b[0])
         return abs((math.degrees(h2 - h1) + 180) % 360 - 180)
-    out = []
-    for k in dict.fromkeys(c for c, _ in roads):
-        pieces = [list(p) for c, p in roads if c == k and len(p) > 1]
-        ends = {}
-        for i, p in enumerate(pieces):
-            ends.setdefault(key(p[0]), []).append(i)
-            ends.setdefault(key(p[-1]), []).append(i)
-        used = [False] * len(pieces)
 
-        def next_piece(tip):
-            at = ends.get(key(tip), [])
-            if len(at) != 2:
-                return None
-            free = [o for o in at if not used[o]]
-            return free[0] if free else None
-        for i in range(len(pieces)):
-            if used[i]:
-                continue
-            used[i] = True
-            line = pieces[i][:]
-            while True:                          # grow at the end
-                o = next_piece(line[-1])
-                if o is None:
-                    break
-                p = pieces[o] if key(pieces[o][0]) == key(line[-1]) else pieces[o][::-1]
-                if len(line) < 2 or turn(line[-2], line[-1], p[1]) > max_turn:
-                    break
-                used[o] = True
-                line += p[1:]
-            while True:                          # and at the start
-                o = next_piece(line[0])
-                if o is None:
-                    break
-                p = pieces[o] if key(pieces[o][-1]) == key(line[0]) else pieces[o][::-1]
-                if len(line) < 2 or turn(p[-2], line[0], line[1]) > max_turn:
-                    break
-                used[o] = True
-                line = p[:-1] + line
-            out.append((k, line))
+    def rank(k):
+        return ROAD_ORDER.index(k) if k in ROAD_ORDER else len(ROAD_ORDER)
+    out = []
+    pieces = [(c, list(p)) for c, p in roads if len(p) > 1]
+    ends = {}
+    for i, (_, p) in enumerate(pieces):
+        ends.setdefault(key(p[0]), []).append(i)
+        ends.setdefault(key(p[-1]), []).append(i)
+    used = [False] * len(pieces)
+
+    def next_piece(tip):
+        at = ends.get(key(tip), [])
+        if len(at) != 2:
+            return None
+        free = [o for o in at if not used[o]]
+        return free[0] if free else None
+    # bigger classes first, so a street grows from its main stretch
+    for i in sorted(range(len(pieces)), key=lambda i: rank(pieces[i][0])):
+        if used[i]:
+            continue
+        used[i] = True
+        k, line = pieces[i][0], pieces[i][1][:]
+        while True:                          # grow at the end
+            o = next_piece(line[-1])
+            if o is None:
+                break
+            p = pieces[o][1] if key(pieces[o][1][0]) == key(line[-1]) else pieces[o][1][::-1]
+            if len(line) < 2 or turn(line[-2], line[-1], p[1]) > max_turn:
+                break
+            used[o] = True
+            line += p[1:]
+            k = min(k, pieces[o][0], key=rank)
+        while True:                          # and at the start
+            o = next_piece(line[0])
+            if o is None:
+                break
+            p = pieces[o][1] if key(pieces[o][1][-1]) == key(line[0]) else pieces[o][1][::-1]
+            if len(line) < 2 or turn(p[-2], line[0], line[1]) > max_turn:
+                break
+            used[o] = True
+            line = p[:-1] + line
+            k = min(k, pieces[o][0], key=rank)
+        out.append((k, line))
     return out
 
 
@@ -2652,9 +2661,16 @@ def place_plants(plan, strip, landcover, ground, hm, base, roads, buildings, urb
         inner[:] = b"\x01" * (side * side)
     n = len(hm)
 
+    # painted streets (the town layout's at street_paint, OSM's minor streets
+    # at 255) stay clear too, not only the decal roads: their paint is above
+    # halfway between a street's and a block's (block_paint)
+    on_street = (int(plan.get("street_paint", 200)) + int(plan.get("block_paint", 90))) // 2
+
     def ok(x, z):
         c, r = int(round((x - ox) / SPACING)), int(round((z - oz) / SPACING))
         if not (0 <= c < side and 0 <= r < side) or not inner[r * side + c] or clear[r * side + c]:
+            return False
+        if urban is not None and urban[r * side + c] >= on_street:
             return False
         return hm[min(r, n - 1)][min(c, n - 1)] > base + 1.5 and free(x, z)
 
