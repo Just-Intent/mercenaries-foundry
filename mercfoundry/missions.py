@@ -2169,12 +2169,20 @@ Utility_LoadUtilityScript('util_debug')
 Utility_LoadUtilityScript('util_misc')
 Utility_LoadUtilityScript('gameflow')
 gameflow_GenericInit()
-local q = Utility_ReadStringFromScribbleMemory('SkipTo_Map')
-if not q then
-Utility_WriteStringToScribbleMemory('foundry_map_start', 'no SkipTo_Map')
-Ui_PrintHudMessage('Mercenaries Foundry: no SkipTo_Map, so no contract to start')
+-- The arc's map: loading this map sets SkipTo_Map to it (tried in game:
+-- 'gaza'), so the contract keeps its arc's in a key of its own, and
+-- SkipTo_Map is the arc's again while the mission runs (mission.lua reads
+-- it for the mission's id, its layer and its mission.ini data).
+local q = Utility_ReadStringFromScribbleMemory('foundry_play_arc')
+local tArcs = util_GetMissionArcTable()
+if not q or not tArcs[f] or not tArcs[f][q] then
+Utility_WriteStringToScribbleMemory('foundry_map_start', 'no ' .. f .. ' arc for ' .. (q or 'no map'))
+Ui_PrintHudMessage('Mercenaries Foundry: no ' .. f .. ' arc for that contract, so it does not start')
+Utility_EraseValueFromScribbleMemory('SkipTo_Faction')
+Utility_EraseValueFromScribbleMemory('SkipTo_MissionNumber')
 return false
 end
+Utility_WriteStringToScribbleMemory('SkipTo_Map', q)
 Utility_EraseValueFromScribbleMemory('SkipTo_Faction')
 Utility_EraseValueFromScribbleMemory('SkipTo_MissionNumber')
 if not Utility_ReadNumberFromScribbleMemory('mission_accepted') then
@@ -2206,7 +2214,12 @@ function foundry_MapStart()
 return Utility_ReadStringFromScribbleMemory('foundry_map_start') or 'no contract start on a new map yet'
 end
 function {P}FreeRoam()
+if Utility_ReadStringFromScribbleMemory('foundry_play_arc') then
+-- back from a mission played here: this map's free roam again
+Utility_WriteStringToScribbleMemory('SkipTo_Map', {_lua(map_name)})
+end
 Utility_EraseValueFromScribbleMemory('foundry_play_map')
+Utility_EraseValueFromScribbleMemory('foundry_play_arc')
 Utility_LoadUtilityScript('foundry_contracts')
 foundry_ReturnFromContract()
 foundry_SetupContracts()
@@ -2614,6 +2627,7 @@ def contracts_script(contracts, insertions=()):
                 "Utility_EraseValueFromScribbleMemory('mission_accepted')",
                 f"Utility_WriteStringToScribbleMemory('SkipTo_Map', {_lua(parse_id(c['id'])[0])})",
                 f"Utility_WriteStringToScribbleMemory('foundry_play_map', {_lua(c['play'])})",
+                f"Utility_WriteStringToScribbleMemory('foundry_play_arc', {_lua(parse_id(c['id'])[0])})",
                 f"Utility_WriteStringToScribbleMemory('foundry_map_start', {_lua('accepted ' + c['id'] + ', loading ' + c['play'])})",
                 f"Utility_ResetToBaseLayerOnly({_lua(c['play'])})",
                 "end"]

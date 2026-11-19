@@ -848,6 +848,7 @@ class NewMapMissionTests(unittest.TestCase):
         self.assertEqual(luacheck.check(lua), [])
         start = lua[lua.index("function foundry_Start_sw_china12()"):]
         self.assertIn("Utility_WriteStringToScribbleMemory('foundry_play_map', 'isle')\n"
+                      "Utility_WriteStringToScribbleMemory('foundry_play_arc', 'sw')\n"
                       "Utility_WriteStringToScribbleMemory('foundry_map_start', 'accepted sw_china12, loading isle')\n"
                       "Utility_ResetToBaseLayerOnly('isle')", start)
         self.assertNotIn("DebugSkipToMission", start[:start.index("\nend")])
@@ -866,3 +867,14 @@ class NewMapMissionTests(unittest.TestCase):
         # not in the arc: free roam instead, said on screen and noted for foundry_MapStart()
         self.assertIn("'not in the ' .. f .. ' ' .. q .. ' arc'", funcs)
         self.assertIn("function foundry_MapStart()", funcs)
+        # loading the map sets SkipTo_Map to it (tried in game): the arc's map
+        # is the contract's own key, put back in SkipTo_Map for the mission
+        self.assertIn("local q = Utility_ReadStringFromScribbleMemory('foundry_play_arc')", funcs)
+        self.assertNotIn("local q = Utility_ReadStringFromScribbleMemory('SkipTo_Map')", funcs)
+        self.assertLess(funcs.index("Utility_WriteStringToScribbleMemory('SkipTo_Map', q)"),
+                        funcs.index("Utility_RunLuaScript("))
+        self.assertLess(funcs.index("if not q or not tArcs[f] or not tArcs[f][q] then"),
+                        funcs.index("util_MissionAssetNumToMissionSeqNum("))
+        free = funcs[funcs.index("function foundry_isle_FreeRoam()"):]
+        self.assertIn("Utility_WriteStringToScribbleMemory('SkipTo_Map', 'isle')", free)
+        self.assertIn("Utility_EraseValueFromScribbleMemory('foundry_play_arc')", free)

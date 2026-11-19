@@ -267,13 +267,14 @@ export function createMissions(ctx) {
     drawWaves();
     drawOutline();
     const id = m ? m.id : null;
-    // a mission played on a new map: its arc's map stays SkipTo_Map, and the
-    // new map's own script starts it (foundry_play_map)
+    // a mission played on a new map: loading the map sets SkipTo_Map to it, so
+    // its arc's map goes in foundry_play_arc, and the new map's own script
+    // starts it (foundry_play_map)
     const onNew = st.arc !== st.map;
     $('ms-start').textContent = id
       ? `Utility_WriteStringToScribbleMemory('SkipTo_Map','${st.arc}') Utility_WriteStringToScribbleMemory('SkipTo_Faction','${m.faction}') `
         + `Utility_WriteNumberToScribbleMemory('SkipTo_MissionNumber',${m.number}) Utility_WriteStringToScribbleMemory('skipto_via_cheating','true') `
-        + (onNew ? `Utility_WriteStringToScribbleMemory('foundry_play_map','${st.map}') ` : '')
+        + (onNew ? `Utility_WriteStringToScribbleMemory('foundry_play_map','${st.map}') Utility_WriteStringToScribbleMemory('foundry_play_arc','${st.arc}') ` : '')
         + `Utility_EraseValueFromScribbleMemory('mission_accepted') Utility_ResetToBaseLayerOnly('${st.map}')`
       : '';
     $('ms-start-row').hidden = !id;
