@@ -107,3 +107,16 @@ class ModelTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class ShadowTest(unittest.TestCase):
+    def test_without_shadow(self):
+        # a vehicle's shadow is a mesh in its modl (shdw); a new model on a
+        # vehicle base can drop it
+        from mercfoundry import ucfb
+        body = ucfb.pack_children([(b"NAME", b"car\0"), (b"INFO", b"\0" * 8), (b"shdw", b"INFO" + b"\0" * 12)], True)
+        rec = ucfb.wrap(b"modl", body)
+        self.assertTrue(model.has_shadow(rec))
+        out = model.without_shadow(rec)
+        self.assertFalse(model.has_shadow(out))
+        self.assertEqual([t for t, _ in ucfb.iter_chunks(ucfb.unwrap(out, b"modl"))], [b"NAME", b"INFO"])

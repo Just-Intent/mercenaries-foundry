@@ -392,6 +392,21 @@ def renamed(model_record: bytes, name: str) -> bytes:
     return ucfb.wrap(b"modl", ucfb.pack_children(items, pad_last), pads)
 
 
+def without_shadow(model_record: bytes) -> bytes:
+    """The Model record without its shadow mesh (modl's shdw chunk). 98
+    retail models carry one (vehicles: the game draws their shadow from it,
+    not from the drawn pieces); 2,199 have none. A new model built on a
+    vehicle keeps the base's shadow unless this takes it out."""
+    body, pads = ucfb.unwrap(model_record, b"modl", with_pad=True)
+    items, pad_last = ucfb.split(body)
+    items = [(t, b) for t, b in items if t != b"shdw"]
+    return ucfb.wrap(b"modl", ucfb.pack_children(items, pad_last), pads)
+
+
+def has_shadow(model_record: bytes) -> bool:
+    return any(t == b"shdw" for t, _ in ucfb.iter_chunks(ucfb.unwrap(model_record, b"modl")))
+
+
 def without_collision(segments_record: bytes) -> bytes:
     """The segments record with its collision (cshp) taken out: a new model
     made from another gets collision fitted to its own pieces instead."""

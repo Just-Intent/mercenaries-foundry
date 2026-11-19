@@ -2753,7 +2753,13 @@ def _new_models(data, folder, result):
         key = name_hash(name)
         if any(r.key == key and r.kind == model.MODEL for _, r in data.records(model.MODEL)):
             raise ValueError(f"{where}: the game already has a model named {name!r} (replace it with models/{name}.glb)")
-        base = str(json.loads(spec.read_text(encoding="utf-8")).get("base") or "")
+        spec_doc = json.loads(spec.read_text(encoding="utf-8"))
+        base = str(spec_doc.get("base") or "")
+        # "shadow": false drops the base's shadow mesh (vehicles draw their
+        # shadow from it: a drone on the Little Bird cast the Little Bird's)
+        keep_shadow = spec_doc.get("shadow", True)
+        if keep_shadow not in (True, False):
+            raise ValueError(f"{where}: \"shadow\" is true (the base's, the default) or false (none)")
         src = None
         for a in ("streamed.dsk", "locked.dsk"):
             if not (data.dir / a).exists():
@@ -2771,6 +2777,9 @@ def _new_models(data, folder, result):
         f = files[0]
         a, recs = src
         mr = model.renamed(data.archive(a).read(recs[model.MODEL]), name)
+        dropped_shadow = not keep_shadow and model.has_shadow(mr)
+        if dropped_shadow:
+            mr = model.without_shadow(mr)
         base_sr = data.archive(a).read(recs[model.SEGMENTS])
         vehicle = collision.is_vehicle_collision(model.decode(data.archive(a).read(recs[model.MODEL]), base_sr).collision)
         sr = model.without_collision(base_sr)
@@ -2808,7 +2817,8 @@ def _new_models(data, folder, result):
                               f"{report.collision_boxes} collision boxes"
                               + (f", {len(report.edited) + len(report.kept)} of the base's pieces kept from the file"
                                  if report.edited or report.kept else "")
-                              + f" ({len(empty.pieces) - len(in_file)} of the base's pieces left out)")
+                              + f" ({len(empty.pieces) - len(in_file)} of the base's pieces left out)"
+                              + (", without the base's shadow" if dropped_shadow else ""))
         result.warnings += [f"model {name}: {w}" for w in report.warnings]
     return made
 
