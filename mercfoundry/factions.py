@@ -1,8 +1,8 @@
 """Faction re-skins: a faction's names in the game's text.
 
 The game has eight faction slots fixed in its code (Faction_FromHash): a
-mod can't add a faction, but it can give one of the four employers new
-names. factions.json:
+mod can't add a faction, but it can give the four employers and North
+Korea ("nk") new names. factions.json:
 
     {"mafia": {"name": "Yakuza", "adjective": "Yakuza", "short": "Yakuza"},
      "everywhere": false}
@@ -11,7 +11,10 @@ names. factions.json:
   "Allied Nations" / "Allies");
 - "adjective": as in "Chinese Officer", "Allied HQ" (default: the name);
 - "short": the short form ("Mafia", "SK", "AN"; default: the name);
-- "people": as in "Witnessed by South Koreans" (default: the adjective).
+- "people": as in "Witnessed by South Koreans" (default: the adjective);
+- "army" (nk only): the Korean People's Army, "KPA Soldier" (default: the
+  adjective). North Korea's old forms are North Korea and DPRK (name), North
+  Korean (adjective), North Koreans (people), NK (short).
 
 By default only the interface's faction strings change: the PDA and
 contracts menu names, the trespassing and disguise messages, mission info,
@@ -40,16 +43,21 @@ animations play on another's model, as retail's mixed models show.
 """
 import re
 
-FACTIONS = ("allies", "china", "mafia", "sk")
+FACTIONS = ("allies", "china", "mafia", "sk", "nk")
 # each faction's names in the game's text, longest first: (form, which new name)
 OLD = {
     "allies": [("Allied Nations", "name"), ("Allies", "name"), ("Allied", "adjective"), ("AN", "short")],
     "china": [("China", "name"), ("Chinese", "adjective")],
     "mafia": [("Russian Mafia", "name"), ("Mafia", "short")],
     "sk": [("South Koreans", "people"), ("South Korean", "adjective"), ("South Korea", "name"), ("SK", "short")],
+    # North Korea, the enemy: also DPRK (the name) and its army, the Korean
+    # People's Army / KPA ("KPA Soldier"), which take "army" (default: the
+    # adjective)
+    "nk": [("Korean People's Army", "army"), ("North Koreans", "people"), ("North Korean", "adjective"),
+           ("North Korea", "name"), ("DPRK", "name"), ("KPA", "army"), ("NK", "short")],
 }
 # acronyms match in capitals only ("an Allied" isn't AN)
-ACRONYMS = {"AN", "SK"}
+ACRONYMS = {"AN", "SK", "NK", "KPA", "DPRK"}
 
 
 # A vehicle's working joints: what its template's seats, doors, wheels,
@@ -102,7 +110,8 @@ def names_of(spec):
         return None
     adjective = str(spec.get("adjective") or name).strip()
     return {"name": name, "adjective": adjective, "short": str(spec.get("short") or name).strip(),
-            "people": str(spec.get("people") or adjective).strip()}
+            "people": str(spec.get("people") or adjective).strip(),
+            "army": str(spec.get("army") or adjective).strip()}
 
 
 def rename(text, faction, names):
@@ -120,7 +129,7 @@ def rename(text, faction, names):
         out = re.sub(rf"\b{re.escape(old)}\b", repl, out, flags=re.IGNORECASE)
     if out != text:
         # "a"/"an" before a new name follow its first letter
-        for which in ("adjective", "name", "short", "people"):
+        for which in ("adjective", "name", "short", "people", "army"):
             new = names[which]
             art = "an" if new[:1].lower() in "aeiou" else "a"
             out = re.sub(rf"\b([Aa])n? (?={re.escape(new)}\b)",

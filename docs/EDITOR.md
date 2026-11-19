@@ -264,8 +264,10 @@ toolkit bundle run it the same way: `foundry\python\python.exe foundry\mercfound
   remove them in the Map panel.
   On SW or NW, "Where you arrive back from <map>" is where the pilot back
   puts the player (and which way they face): move it into the open.
-- **Factions**: new names for the four employers (`factions.json`): name,
-  adjective, short form and people, per faction; **Everywhere** for mission
+- **Factions**: new names for the four employers and North Korea
+  (`factions.json`, `"nk"`): name, adjective, short form and people, per
+  faction. North Korea also has `"army"`, for the Korean People's Army and
+  "KPA Soldier", and DPRK counts as its name. **Everywhere** for mission
   text too, and voiced lines' subtitles if wanted. **Preview** lists the
   strings that change. The game's eight faction slots are fixed in its code,
   so a faction can be renamed but not added.

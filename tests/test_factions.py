@@ -39,8 +39,21 @@ class FactionTests(unittest.TestCase):
         self.assertEqual(e["faction.allies"], "a Coalition")                                  # "an Allied": not AN
         self.assertEqual(e["nw.allieshq.target"], "Coalition HQ")
 
+    def test_north_korea(self):
+        # the enemy too: DPRK as the name, KPA and the Korean People's Army
+        # as "army" (default: the adjective); South Korea untouched
+        strings = {"a": "North Korea and the DPRK", "b": "a KPA Soldier of the Korean People's Army",
+                   "c": "North Koreans fired on South Korean troops", "d": "Destroy NK forces", "e": "an NK tank"}
+        e = factions.plan(strings, {"nk": {"name": "Hamas", "people": "Hamas fighters", "army": "Qassam"},
+                                    "everywhere": True})
+        self.assertEqual(e["a"], "Hamas and the Hamas")
+        self.assertEqual(e["b"], "a Qassam Soldier of the Qassam")
+        self.assertEqual(e["c"], "Hamas fighters fired on South Korean troops")
+        self.assertEqual(e["d"], "Destroy Hamas forces")
+        self.assertEqual(e["e"], "a Hamas tank")
+
     def test_refused(self):
-        for doc in ({"nk": {"name": "X"}}, {"china": {"adjective": "X"}}, {"china": "X"}):
+        for doc in ({"nkorea": {"name": "X"}}, {"china": {"adjective": "X"}}, {"china": "X"}):
             with self.assertRaises(ValueError):
                 factions.plan(STRINGS, doc)
 
