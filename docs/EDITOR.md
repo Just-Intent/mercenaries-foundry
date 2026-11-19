@@ -534,7 +534,11 @@ toolkit bundle run it the same way: `foundry\python\python.exe foundry\mercfound
   coming on and failing, squads arriving, orders, radio lines, completion),
   for test runs. With it or without, the last dozen steps are kept in the
   game's scribble memory, so they outlive the mission: type `foundry_Log()`
-  in Foundry Console's Lua box to read them, even after it failed.
+  in Foundry Console's Lua box to read them, even after it failed. For a
+  mission played on a new map, `foundry_MapStart()` says how far its start
+  got (accepted and loading, began, running the mission's script, ran), and
+  a contract the map can't start is said on screen and leaves you in free
+  roam.
 
   **Start at (for testing)** starts the mission at a later main objective,
   skipping the ones before it, to test a later part without playing the

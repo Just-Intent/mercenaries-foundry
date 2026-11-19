@@ -2163,11 +2163,18 @@ if Utility_ReadStringFromScribbleMemory('foundry_play_map') ~= {_lua(map_name)} 
 local f = Utility_ReadStringFromScribbleMemory('SkipTo_Faction')
 local n = Utility_ReadNumberFromScribbleMemory('SkipTo_MissionNumber')
 if not f or not n then return false end
+-- where the start got to, for Foundry Console (foundry_MapStart())
+Utility_WriteStringToScribbleMemory('foundry_map_start', 'began ' .. f .. ' ' .. n)
 Utility_LoadUtilityScript('util_debug')
 Utility_LoadUtilityScript('util_misc')
 Utility_LoadUtilityScript('gameflow')
 gameflow_GenericInit()
 local q = Utility_ReadStringFromScribbleMemory('SkipTo_Map')
+if not q then
+Utility_WriteStringToScribbleMemory('foundry_map_start', 'no SkipTo_Map')
+Ui_PrintHudMessage('Mercenaries Foundry: no SkipTo_Map, so no contract to start')
+return false
+end
 Utility_EraseValueFromScribbleMemory('SkipTo_Faction')
 Utility_EraseValueFromScribbleMemory('SkipTo_MissionNumber')
 if not Utility_ReadNumberFromScribbleMemory('mission_accepted') then
@@ -2179,10 +2186,24 @@ Utility_WriteStringToScribbleMemory('current_faction', f)
 Utility_WriteNumberToScribbleMemory('current_' .. f .. '_mission', n)
 Utility_WriteNumberToScribbleMemory('mission_accepted', 1)
 end
+local a = n and util_MissionSeqNumToMissionAssetNum(q, f, n)
+if not a then
+-- not in the arc util_misc has: nothing to run, so free roam
+Utility_WriteStringToScribbleMemory('foundry_map_start', 'not in the ' .. f .. ' ' .. q .. ' arc')
+Ui_PrintHudMessage('Mercenaries Foundry: that contract is not in the ' .. f .. ' ' .. q .. ' arc')
+Utility_EraseValueFromScribbleMemory('mission_accepted')
+return false
+end
 util_DefaultSupport()
 Utility_WriteStringToScribbleMemory('full_mission_id', q .. '_' .. f .. n)
-Utility_RunLuaScript({_lua(P + 'FreeRoam')}, q .. '_' .. f .. util_MissionSeqNumToMissionAssetNum(q, f, n))
+Utility_WriteStringToScribbleMemory('foundry_map_start', 'running ' .. q .. '_' .. f .. a)
+local ok = Utility_RunLuaScript({_lua(P + 'FreeRoam')}, q .. '_' .. f .. a)
+-- (only noted: what it gives back when it works isn't known yet)
+Utility_WriteStringToScribbleMemory('foundry_map_start', 'ran ' .. q .. '_' .. f .. a .. ': ' .. tostring(ok))
 return true
+end
+function foundry_MapStart()
+return Utility_ReadStringFromScribbleMemory('foundry_map_start') or 'no contract start on a new map yet'
 end
 function {P}FreeRoam()
 Utility_EraseValueFromScribbleMemory('foundry_play_map')
@@ -2593,6 +2614,7 @@ def contracts_script(contracts, insertions=()):
                 "Utility_EraseValueFromScribbleMemory('mission_accepted')",
                 f"Utility_WriteStringToScribbleMemory('SkipTo_Map', {_lua(parse_id(c['id'])[0])})",
                 f"Utility_WriteStringToScribbleMemory('foundry_play_map', {_lua(c['play'])})",
+                f"Utility_WriteStringToScribbleMemory('foundry_map_start', {_lua('accepted ' + c['id'] + ', loading ' + c['play'])})",
                 f"Utility_ResetToBaseLayerOnly({_lua(c['play'])})",
                 "end"]
         else:

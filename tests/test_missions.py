@@ -848,6 +848,7 @@ class NewMapMissionTests(unittest.TestCase):
         self.assertEqual(luacheck.check(lua), [])
         start = lua[lua.index("function foundry_Start_sw_china12()"):]
         self.assertIn("Utility_WriteStringToScribbleMemory('foundry_play_map', 'isle')\n"
+                      "Utility_WriteStringToScribbleMemory('foundry_map_start', 'accepted sw_china12, loading isle')\n"
                       "Utility_ResetToBaseLayerOnly('isle')", start)
         self.assertNotIn("DebugSkipToMission", start[:start.index("\nend")])
         self.assertIn("local map = sFoundryOnMap or Utility_ReadStringFromScribbleMemory('SkipTo_Map')", lua)
@@ -860,5 +861,8 @@ class NewMapMissionTests(unittest.TestCase):
         start, funcs = missions.map_mission_lua("isle")
         self.assertEqual(start, ["sFoundryOnMap = 'isle'", "if not foundry_isle_Mission() then foundry_isle_FreeRoam() end"])
         self.assertEqual(luacheck.check(funcs), [])
-        self.assertIn("Utility_RunLuaScript('foundry_isle_FreeRoam', q .. '_' .. f .. "
-                      "util_MissionSeqNumToMissionAssetNum(q, f, n))", funcs)
+        self.assertIn("local a = n and util_MissionSeqNumToMissionAssetNum(q, f, n)", funcs)
+        self.assertIn("local ok = Utility_RunLuaScript('foundry_isle_FreeRoam', q .. '_' .. f .. a)", funcs)
+        # not in the arc: free roam instead, said on screen and noted for foundry_MapStart()
+        self.assertIn("'not in the ' .. f .. ' ' .. q .. ' arc'", funcs)
+        self.assertIn("function foundry_MapStart()", funcs)
