@@ -253,6 +253,11 @@ class ModBuildTests(unittest.TestCase):
         with unittest.mock.patch.object(modbuild, "PATH_TABLE", 1):
             with self.assertRaisesRegex(ValueError, "it loads 1 paths"):
                 modbuild.build(self.project, self.data, self.out)
+        # and its traffic routes (t_/p_ paths) against the game's 1,024
+        self.assertIn("map island: 1 traffic routes of the game's 1024 (isle_camp 1)", result.changes)
+        with unittest.mock.patch.object(modbuild, "ROUTE_CAP", 0):
+            result = modbuild.build(self.project, self.data, self.out)
+        self.assertTrue(any("never join their zones" in w for w in result.warnings))
         # "scripts": a mod script run after the master script's own set-up
         self.write("scripts/isle_events.lua", "function isle_events_Start()\nend\n")
         self.write("maps/island.json", json.dumps({"from": "blank", "message": "Welcome to the island",

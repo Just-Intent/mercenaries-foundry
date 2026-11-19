@@ -1406,19 +1406,41 @@ MAP_PATH_ROOM = 200
 PATH = name_hash("path")
 
 
-def _count_paths(data, layer):
+def _path_names(data, layer):
+    """The names of the paths a layer loads ([] if none)."""
     key = name_hash(layer)
     body = data.find_added(key, PATH)
     if body is None:
         hit = [(a, r) for a, r in data.records(PATH) if r.key == key]
         body = data.current(*hit[0]) if hit else None
     if not body:
-        return 0
+        return []
     from . import aidata
     try:
-        return sum(1 for t, _, _ in aidata.items(aidata.to_json(body, "path")) if t == "path")
+        return [n for t, n, _ in aidata.items(aidata.to_json(body, "path")) if t == "path"]
     except Exception:
-        return 0
+        return []
+
+
+def _count_paths(data, layer):
+    return len(_path_names(data, layer))
+
+
+# Traffic routes (paths named t_<zone>_<id> for vehicles, p_<zone>_<id> for
+# walkers) join their zones only up to the game's 1,024; the rest never do
+# (Gaza's car lanes, after 1,020 walker routes, stayed empty: "0 of 1024 routes").
+ROUTE_CAP = 1024
+_ROUTE = re.compile(r"(?i)^[tp]_[^_]+_")
+
+
+def map_route_count(data, name):
+    """{layer: traffic routes} a new map loads at once (as map_path_count)."""
+    out = {}
+    for layer in map_path_count(data, name):
+        n = sum(1 for p in _path_names(data, layer) if p and _ROUTE.match(p))
+        if n:
+            out[layer] = n
+    return out
 
 
 def map_path_count(data, name):
@@ -1452,6 +1474,15 @@ def _check_map_paths(data, result):
         if total > PATH_TABLE - 1 - MAP_PATH_ROOM:
             result.warnings.append(f"map {name}: {total} paths leave under {MAP_PATH_ROOM} for missions' layers "
                                    f"(the game hangs at {PATH_TABLE})")
+        routes = map_route_count(data, name)
+        rtotal = sum(routes.values())
+        if rtotal:
+            rparts = ", ".join(f"{l} {n}" for l, n in sorted(routes.items(), key=lambda kv: -kv[1]))
+            result.changes.append(f"map {name}: {rtotal} traffic routes of the game's {ROUTE_CAP} ({rparts})")
+            if rtotal > ROUTE_CAP:
+                result.warnings.append(f"map {name}: {rtotal} traffic routes (t_ and p_ paths: {rparts}); the game "
+                                       f"keeps {ROUTE_CAP}, and the routes past that never join their zones (their "
+                                       f"traffic stays empty): use fewer")
 
 
 # A model's geometry (its segments record's CSEG) is unpacked into one block
