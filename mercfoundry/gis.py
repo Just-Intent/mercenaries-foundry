@@ -37,6 +37,7 @@ z = row * 8 - (size * 4 - 8), as the game places them.
 import json
 import math
 import random
+import re
 import urllib.parse
 import urllib.request
 from pathlib import Path
@@ -1915,6 +1916,21 @@ def sea_zone(sea, hm, grid, level, step_rows=8, margin=24.0):
             "properties": dict(WATER, height=f"{level:.2f}")}
 
 
+def write_sea_zones(bpath, name, zones):
+    """Put the sea zones in a map's boundaries.json as <map>_sea (or
+    <map>_sea_<n>), replacing gis's earlier ones and keeping the mod's other
+    zones there (killboxes, ambience zones); no zones left: no file."""
+    ours = re.compile(rf"(?i)^{re.escape(name)}_sea(_\d+)?$")
+    doc = json.loads(bpath.read_text(encoding="utf-8")) if bpath.exists() else {}
+    bounds = {k: v for k, v in (doc.get("boundaries") or {}).items() if not ours.match(k)}
+    bounds.update({f"{name}_sea{'' if len(zones) == 1 else f'_{i + 1}'}": z for i, z in enumerate(zones)})
+    if bounds:
+        bpath.parent.mkdir(parents=True, exist_ok=True)
+        bpath.write_text(json.dumps({**doc, "boundaries": bounds}, indent=1) + "\n", encoding="utf-8")
+    elif bpath.exists():
+        bpath.unlink()
+
+
 def sea_zones(sea, hm, grid, level, tile=2048.0, step_rows=8, margin=24.0, cells=(16, 128), inset=4.0, props=None):
     """The sea as several water zones, one per tile of the map (tile metres
     square) that has sea: the retail game's biggest water zone is about 3 km
@@ -3018,13 +3034,7 @@ def build(plan, mod, log=print):
                       cells=tuple(plan.get("water_cells", (16, 128))), props=plan.get("water"))
     # the sea goes in the map's own boundaries: the game makes water only
     # from a map's own lineregion record, not from a layer's
-    bpath = mod / "maps" / name / "boundaries.json"
-    if zones:
-        bpath.parent.mkdir(parents=True, exist_ok=True)
-        bounds = {f"{name}_sea{'' if len(zones) == 1 else f'_{i + 1}'}": z for i, z in enumerate(zones)}
-        bpath.write_text(json.dumps({"boundaries": bounds}, indent=1) + "\n", encoding="utf-8")
-    elif bpath.exists():
-        bpath.unlink()
+    write_sea_zones(mod / "maps" / name / "boundaries.json", name, zones)
     (edir / f"{name}_gis.json").write_text(json.dumps(layer, indent=1) + "\n", encoding="utf-8")
     # plants and camps: layers of their own (encounters/<map>_plants.json, _camps.json)
     for what, objs in (("plants", plants), ("camps", camps), ("harbour", harbour), ("parked", parked)):

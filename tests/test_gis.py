@@ -749,3 +749,23 @@ class WreckTest(unittest.TestCase):
         objs = [{"from": "model:h"}, {"from": "model:h_dmg"}, {"from": "model:h_ruin"}, {"from": "model:other"}]
         self.assertEqual(gis.set_wrecks(objs, extras), 3)
         self.assertEqual([o.get("set", {}).get("geometryNameRuined") for o in objs], ["h_wreck"] * 3 + [None])
+
+
+class SeaZoneFileTest(unittest.TestCase):
+    def test_keeps_other_zones(self):
+        # a regenerate replaces gis's own sea zones and keeps the mod's others
+        import json, tempfile
+        from pathlib import Path
+        with tempfile.TemporaryDirectory() as tmp:
+            p = Path(tmp) / "maps" / "gaza" / "boundaries.json"
+            p.parent.mkdir(parents=True)
+            p.write_text(json.dumps({"boundaries": {"gaza_sea_1": {"old": 1}, "gaza_sea_2": {"old": 2},
+                                                    "gaza_killbox": {"k": 1}, "amb_market": {"a": 1}}}))
+            gis.write_sea_zones(p, "gaza", [{"new": 1}])
+            got = json.loads(p.read_text())["boundaries"]
+            self.assertEqual(got, {"gaza_killbox": {"k": 1}, "amb_market": {"a": 1}, "gaza_sea": {"new": 1}})
+            gis.write_sea_zones(p, "gaza", [])
+            self.assertEqual(set(json.loads(p.read_text())["boundaries"]), {"gaza_killbox", "amb_market"})
+            p.write_text(json.dumps({"boundaries": {"gaza_sea": {}}}))
+            gis.write_sea_zones(p, "gaza", [])
+            self.assertFalse(p.exists())
