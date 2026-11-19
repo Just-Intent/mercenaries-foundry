@@ -34,6 +34,15 @@ Script commands it adds, for the Lua box or any script:
   a key isn't there. A mod's new map with texts of its own (`text/*.json` or
   `factions.json` with `"map"`) calls it from its master script, through the
   generated `foundry_maptext_<map>`. Compiled; not yet run in game.
+- `Foundry_MapTexture('<texture>', '<other texture>')` makes every HUD and
+  PDA sprite drawn from the texture draw from the other one (the same part
+  of it) until the next level loads, and returns how many sprites. Sprites
+  are 0x20-byte objects (constructor 0x216E60: +0 their name hash, +4 their
+  texture's hash, then UVs over the texture's size) in a hash map at
+  `MEM32(0x842E20) + 0x10` (+0 size, +8 sprite pointers, +0xC keys); each
+  frame the HUD looks a sprite up and turns its +4 hash into a texture with
+  Texture_Find (0xC2740), which draws nothing unless that texture is loaded.
+  Used by a new map's `"hud_textures"`. Compiled; not yet run in game.
 - `Foundry_Range()` runs the [test range](ENCOUNTERS.md#test-range)'s
   `range.lua` in the calling script state. It looks for the file in
   `mods\Foundry Test Range` first, then in the launcher's runtime copy, where

@@ -2872,10 +2872,76 @@ static void maptext_restore(void)
     maptext_count = 0;
 }
 
+/* ---- HUD art of a map's own (Foundry_MapTexture) ----
+ * HUD and PDA sprites are 0x20-byte objects (constructor 0x216E60: +0 the
+ * sprite's name hash, +4 its texture's hash, then UVs over the texture's
+ * size) in a hash map at MEM32(0x842E20) + 0x10 (+0 size, +8 values: the
+ * sprite objects, +0xC keys), filled by 0x108520. Each frame the drawer
+ * (0x20B900, then the renderer 0x20DB40) looks the sprite up and turns its
+ * +4 hash into a texture with Texture_Find (0xC2740), so a new hash there
+ * draws another (loaded) texture, the same part of it. */
+#define SPRITE_MAP_PTR 0x842E20u
+#define MAPSPRITE_MAX 512
+typedef struct { uint32_t sprite, original, replaced; } MapSpriteSwap;
+static MapSpriteSwap mapsprite[MAPSPRITE_MAX];
+static unsigned mapsprite_count;
+
+static void mapsprite_restore(void)
+{
+    unsigned put = 0;
+    for (unsigned i = mapsprite_count; i-- > 0;) {
+        uint32_t now = 0;
+        if (host->read_guest(host->context, mapsprite[i].sprite + 4, &now, 4) && now == mapsprite[i].replaced) {
+            host->write_guest(host->context, mapsprite[i].sprite + 4, &mapsprite[i].original, 4);
+            put++;
+        }
+    }
+    if (mapsprite_count) {
+        char line[96];
+        snprintf(line, sizeof(line), "map HUD art: %u of %u sprites put back", put, mapsprite_count);
+        host->log(host->context, line);
+    }
+    mapsprite_count = 0;
+}
+
+/* Foundry_MapTexture(texture, other): every HUD sprite drawn from texture is
+ * drawn from other until the next level loads (other must be loaded: in the
+ * map's load list). Returns how many sprites, or nil. */
+static int MERC_PLUGIN_CALL cmd_map_texture(void *ud, uint32_t L)
+{
+    char from[96], to[96];
+    (void)ud;
+    if (!lua_arg_text(L, 1, from, sizeof(from)) || !lua_arg_text(L, 2, to, sizeof(to))) return 0;
+    uint32_t want = hash_name(from), other = hash_name(to), map = 0, size = 0, values = 0, keys = 0;
+    if (!want || !other || !host->read_guest(host->context, SPRITE_MAP_PTR, &map, 4) || !map) return 0;
+    map += 0x10;
+    if (!host->read_guest(host->context, map, &size, 4) || !size || size > 0x100000 ||
+        !host->read_guest(host->context, map + 8, &values, 4) ||
+        !host->read_guest(host->context, map + 0xC, &keys, 4)) return 0;
+    unsigned n = 0;
+    for (uint32_t i = 0; i < size; i++) {
+        uint32_t key = 0, sprite = 0, tex = 0;
+        if (!host->read_guest(host->context, keys + 4 * i, &key, 4) || !key) continue;
+        if (!host->read_guest(host->context, values + 4 * i, &sprite, 4) || !sprite) continue;
+        if (!host->read_guest(host->context, sprite + 4, &tex, 4) || tex != want) continue;
+        if (mapsprite_count == MAPSPRITE_MAX) break;
+        mapsprite[mapsprite_count++] = (MapSpriteSwap){sprite, tex, other};
+        host->write_guest(host->context, sprite + 4, &other, 4);
+        n++;
+    }
+    MercGuestCall c;
+    uint32_t push[3] = {L, 0, 0};
+    double d = (double)n;
+    memcpy(&push[1], &d, 8);
+    guest(MF_FN_lua_pushnumber, 0, 3, push, &c);
+    return 1;
+}
+
 static void MERC_PLUGIN_CALL level_load_before(void *ud, MercHookContext *c)
 {
     (void)ud; (void)c;
     maptext_restore();
+    mapsprite_restore();
 }
 
 /* Foundry_MapText(key, other): key shows other's text until the next level
@@ -2933,7 +2999,8 @@ MERC_PLUGIN_EXPORT int MERC_PLUGIN_CALL MercenariesPlugin_Init(
         !h->add_lua_command(h->context, "Foundry_Sample", cmd_sample, NULL) ||
         !h->add_lua_command(h->context, "Foundry_Label", cmd_label, NULL) ||
         !h->add_lua_command(h->context, "Foundry_SetHandling", cmd_set_handling, NULL) ||
-        !h->add_lua_command(h->context, "Foundry_MapText", cmd_map_text, NULL))
+        !h->add_lua_command(h->context, "Foundry_MapText", cmd_map_text, NULL) ||
+        !h->add_lua_command(h->context, "Foundry_MapTexture", cmd_map_texture, NULL))
         h->log(h->context, "script commands unavailable; Foundry_TrafficZone, Foundry_Range, Foundry_Sample, "
                            "Foundry_Label, Foundry_SetHandling and Foundry_MapText may not exist");
     if (!h->hook_guest(h->context, MF_FN_Level_Load, level_load_before, NULL, NULL))

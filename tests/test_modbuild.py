@@ -514,6 +514,22 @@ class ModBuildTests(unittest.TestCase):
         self.assertIn("function ScriptInit()\nUtility_LoadUtilityScript('foundry_maptext_island')\nfoundry_MapText()\n",
                       master)
         self.assertIn("load foundry_maptext_island", recs[(name_hash("island"), name_hash("list"))].decode("latin-1"))
+        # "hud_textures": the HUD draws the map's own art there (loaded with it)
+        self.write("textures/isle_flags.png", png.encode(8, 8, red(8, 8)))
+        self.write("maps/island.json", json.dumps({"from": "blank", "loads_like": None,
+                                                  "hud_textures": {"tex": "isle_flags"}}))
+        modbuild.build(self.project, self.data, self.out)
+        recs = self.records("assets.dsk")
+        lua = script.decode(recs[(name_hash("foundry_maptext_island"), SCRIPT)]).source
+        self.assertIn("tFoundryMapHud = {\n'tex', 'isle_flags',\n}", lua)
+        self.assertIn("if not Foundry_MapTexture then return 0 end", lua)
+        self.assertIn("foundry_MapText()\nfoundry_MapHud()\n", script.decode(recs[(name_hash("island"), SCRIPT)]).source)
+        self.assertIn("load isle_flags", recs[(name_hash("island"), name_hash("list"))].decode("latin-1"))
+        self.write("maps/island.json", json.dumps({"from": "blank", "loads_like": None,
+                                                  "hud_textures": {"tex": "nothing"}}))
+        with self.assertRaisesRegex(ValueError, "no texture named 'nothing'"):
+            modbuild.build(self.project, self.data, self.out)
+        self.write("maps/island.json", json.dumps({"from": "blank", "loads_like": None}))
         self.write("text/island.json", json.dumps({"map": "sw", "strings": {"veh.jeep": "x"}}))
         with self.assertRaisesRegex(ValueError, "isn't a mod's new map"):
             modbuild.build(self.project, self.data, self.out)

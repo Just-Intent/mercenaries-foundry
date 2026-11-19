@@ -754,6 +754,15 @@ changing the game's anywhere else (these are files, not editor tools yet):
   Console the game's texts show. Keys the game doesn't have are simply
   added. Not yet tried in game: texts the game reads once and keeps (some
   HUD labels may) won't change.
+- **HUD art of its own:** `maps/<name>.json`
+  `"hud_textures": {"bigflags": "isle_bigflags", "icons01": "isle_icons01", "radarmapels": "isle_radarmapels"}`
+  makes the HUD and PDA draw the map's textures (`textures/isle_*.png`,
+  loaded with the map) where they drew the game's, while the map is loaded
+  (Foundry Console, `Foundry_MapTexture`). Keep the same layout: each sprite
+  draws the same part of the image (its place as a fraction of the size), so
+  a different size works if everything scales with it. A texture drawn on a
+  3D model (global_skflag, the SK flag) isn't HUD art: give the model a copy
+  with its own texture instead.
 - **Rules for one map:** an objects rule with `"map"` changes only that map:
   `"map": "<a mod's new map>"` changes (`"set"` only) the map's template
   copies it matches by `"template"` or `"model"` (a template every map loads

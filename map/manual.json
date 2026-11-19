@@ -1,6 +1,20 @@
 {
  "functions": [
   {
+   "address": "0x000C2740",
+   "name": "Texture_Find",
+   "signature": "void * __thiscall Texture_Find(void *unused, uint32 textureHash)",
+   "notes": "A loaded texture by name hash, or 0: HashTable_Find on the table at 0x793510 (keys MEM32(0x79351C), values MEM32(0x793518), default 0x793520); 0 unless the object's +0x2C (u16) is set and +0x20 is 0 or 7 (or +0x21 is 1). Width +0x28, height +0x2A (u16).",
+   "evidence": "retail code: the HUD sprite drawer 0x20B900 and the renderer 0x20DB40 call it with a sprite's texture hash every frame; 0xC52EF calls it with bigflags' hash (0x75621230) to see whether it's loaded (research pass over the recompiled code, 2026-11-19)"
+  },
+  {
+   "address": "0x00216E60",
+   "name": "Sprite_Construct",
+   "signature": "Sprite * __thiscall Sprite_Construct(Sprite *this, uint32 spriteHash, float x, float y, float w, float h, uint32 textureHash, float textureW, float textureH, int flags)",
+   "notes": "A HUD/PDA sprite, 0x20 bytes: +0 its name hash, +4 its texture's hash, +8..+0x1C six floats (UVs over the texture's size). The static ones (0x3643C8-0x365C88) go into the sprite map at MEM32(0x842E20) + 0x10 (0x108520); drawing finds them there and resolves +4 with Texture_Find each frame, so a new hash at +4 draws another texture (Foundry_MapTexture).",
+   "evidence": "retail code: static constructors near 0x24EE67 call it with ecx = 0x364E88, 0x364EA8... and bigflags' hash; it ends ret 0x24 (research pass over the recompiled code, 2026-11-19)"
+  },
+  {
    "address": "0x001F29F0",
    "name": "HashName",
    "signature": "uint32 __cdecl HashName(const char *name)",
