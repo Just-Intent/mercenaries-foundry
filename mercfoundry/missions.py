@@ -1862,13 +1862,17 @@ def interiors_lua(prefix, inside, flagged=()):
     rows = []
     for f, i in inside.items():
         rows.append(
-            "%s = { guard = %s, prompt = %s, name = %s, side = %s, marker = %s, rx = %.2f, ry = %.2f, rz = %.2f, "
+            "%s = { guard = %s, prompt = %s, name = %s, side = %s, marker = %s, ttype = %s, blip = %s, rx = %.2f, ry = %.2f, rz = %.2f, "
             "rh = %.1f, leaders = { %s }, door = %s, doorprompt = %s, talkprompt = %s,\n greeting = %s,\n idle = %s },"
             % (f, _lua(i["guard"]), _lua_str(i["prompt"]), _lua_str(i["name"]), _lua(i["side"]),
-               ("'ring'" if f in flagged else "'hq'") if i["marker"] == "hq" else "false", *i["room"], i["rheading"],
+               ("'ring'" if f in flagged else "'hq'") if i["marker"] == "hq" else "false",
+               _lua(f"TARGET_TYPE_HQ_{f.upper()}"), _lua(f"hq{f}"), *i["room"], i["rheading"],
                ", ".join(_lua(a) for a in i["leaders"]), _lua(i["door"]), _lua_str(i["door_prompt"]),
                _lua_str(i["talk_prompt"]), i["greeting"], i["idle"]))
     return f"""-- HQ interiors (Mercenaries Foundry: maps json "interiors")
+-- util_objectives' helpers call util_misc's util_SetDefault; on SW global
+-- has loaded it, on a new map nothing else does
+Utility_LoadUtilityScript('util_misc')
 Utility_LoadUtilityScript('util_objectives')
 {P}Hq = {{
 {chr(10).join(rows)}
@@ -1887,6 +1891,13 @@ if {P}HqTimer then Event_CancelEvent({P}HqTimer) {P}HqTimer = nil end
 {P}HqLook()
 end
 function {P}HqLook()
+-- the next look first, so an error in this one doesn't stop the looking
+{P}HqWaits = {P}HqWaits + 1
+if {P}HqWaits <= 15 then
+{P}HqTimer = Event_RelativeTimer('{P}HqLook', 'b', 1.0)
+else
+{P}HqTimer = Event_RelativeTimer('{P}HqLook', 'b', 5.0)
+end
 for f, h in {P}Hq do
 if Utility_DoesActorExist(h.guard) then
 local iActor = Utility_GetActorAsInt(h.guard)
@@ -1896,19 +1907,13 @@ if {P}HqArmed[h.guard] ~= iActor then
 {P}HqArmed[h.guard] = iActor
 Ai_CommandQueue(h.guard, 'Wait', 'hiPri')
 if h.marker == 'hq' then
-util_SetupSingleTargetActorObjective(h.guard, h.name, '', 'OBJECTIVE_TYPE_PRIMARY', h.guard, h.name, 'TARGET_TYPE_HQ_' .. string.upper(f), TRUE, TRUE, TRUE, 'hq' .. f)
+util_SetupSingleTargetActorObjective(h.guard, h.name, '', 'OBJECTIVE_TYPE_PRIMARY', h.guard, h.name, h.ttype, TRUE, TRUE, TRUE, h.blip)   -- (the game's Lua has no string library)
 elseif h.marker == 'ring' then
 util_SetupSingleTargetActorObjective(h.guard, h.name, '', 'OBJECTIVE_TYPE_SECONDARY', h.guard, h.name, 'TARGET_TYPE_OBJECTIVE_SECONDARY', FALSE, FALSE, TRUE, 'blip')
 end
 {P}HqUse(h.guard, h.prompt, '{P}HqEnter_' .. f)
 end
 end
-end
-{P}HqWaits = {P}HqWaits + 1
-if {P}HqWaits <= 15 then
-{P}HqTimer = Event_RelativeTimer('{P}HqLook', 'b', 1.0)
-else
-{P}HqTimer = Event_RelativeTimer('{P}HqLook', 'b', 5.0)
 end
 end
 function {P}HqUse(name, prompt, cb)
@@ -2405,6 +2410,9 @@ def contracts_script(contracts, insertions=()):
                           if c.get("interior") else "")))
     out.append("}")
     out += [
+        "-- util_objectives' helpers call util_misc's util_SetDefault: on SW global",
+        "-- has loaded it, on a new map's free roam nothing else does",
+        "Utility_LoadUtilityScript('util_misc')",
         "Utility_LoadUtilityScript('util_objectives')",
         "-- Campaign values a side contract must not change: every faction's arc",
         "-- position and completed-mission counters (mission_MissionComplete2), and",

@@ -917,8 +917,14 @@ class MapScriptTests(unittest.TestCase):
         # the guards are looked for for as long as free roam lasts
         self.assertIn("Event_RelativeTimer('foundry_gaza_HqLook', 'b', 5.0)", text)
         self.assertNotIn("HqWaits < 15", text)
+        # the game's Lua has no string library (string.upper stopped the guards' set-up)
+        from mercfoundry import luacheck as lc
+        self.assertFalse([n for n, _ in lc.names(text)[1] if n.startswith(("string.", "math.", "os."))])
         solo = modbuild.map_script("gaza", {}, [], inside=inside)          # no "hqs": the guard is the flag
         self.assertIn("marker = 'hq'", solo)
+        # util_objectives needs util_misc (util_SetDefault), which a new map doesn't load
+        self.assertLess(text.index("Utility_LoadUtilityScript('util_misc')"),
+                        text.index("Utility_LoadUtilityScript('util_objectives')"))
         self.assertIn("Objective_SetTargetVector('foundry_hq_china', 'foundry_hq_china', "
                       "Utility_GetStringById('standardMission.bouncer.china.tgtCaption'), 'TARGET_TYPE_HQ_CHINA', "
                       "'hqchina', 4.00, 5.00, 6.00, TRUE, TRUE, FALSE)", text)    # blip, then x, y, z (sw_sk2's order)

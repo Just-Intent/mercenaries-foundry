@@ -264,6 +264,9 @@ toolkit bundle run it the same way: `foundry\python\python.exe foundry\mercfound
   roam on that map, as the HQ bouncers do on SW (an objective at the point
   with the faction's HQ target type and blip). SW's and NW's own HQs don't
   move.
+  The flags' art is in the texture `radarmapels`: 14 x 9 flags at x 112-125,
+  China at y 52, SK 65, Allied 78, Mafia 91, NK 104 (found by the Gaza mod,
+  which repaints them).
   **HQ interiors** (`"interiors"` in `maps/<name>.json`, file only):
   `{"allies": {"guard": {"position", "heading", "name", "template"?,
   "prompt"? ("Enter HQ"), "side"? ("civ"), "marker"? ("hq" or "none")},

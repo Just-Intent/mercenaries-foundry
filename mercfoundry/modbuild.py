@@ -3503,8 +3503,10 @@ def build(projects, data_dir, out_dir, name=None, description=None) -> Result:
             if getattr(data, "map_layers", None) or getattr(data, "travel_arrive", False) \
                     or getattr(data, "welcome", None):
                 _apply_map_layers(data, result)
-            _check_lua(data, result)
-    # after every step: a new map's step lists the scripts it runs
+    # after every step: the Lua check (the maps step writes new maps' master
+    # scripts after the missions step), and a new map's step lists the
+    # scripts it runs
+    _check_lua(data, result)
     _check_new_scripts(data, result)
     _check_map_paths(data, result)
     _check_model_sizes(data, result)
