@@ -2580,11 +2580,17 @@ def _sun_angle(data, folder, name):
 def _apply_surfaces(data, f, name, result):
     """terrain/<name>.surfaces.json -> the level config (a loose DATAxbox file)."""
     from . import terrain_surfaces
+    # levels.ini as the build has it: a mod's new map adds its level there
+    # and its config is a loose file the build wrote
     levels = data.dir / "levels.ini"
-    config = terrain_surfaces.level_config(levels.read_text(encoding="latin-1"), name) if levels.exists() else None
-    if not config or not (data.dir / config).exists():
+    lpath = "DATAxbox/levels.ini"
+    levels_text = data.files[lpath].decode("latin-1") if lpath in data.files else \
+        (levels.read_text(encoding="latin-1") if levels.exists() else "")
+    config = terrain_surfaces.level_config(levels_text, name) if levels_text else None
+    path = "DATAxbox/" + config.replace("\\", "/").lstrip("/") if config else None
+    if not config or not (path in data.files or (data.dir / config.lstrip("\\/")).exists()):
         raise ValueError(f"terrain/{f.name}: no level uses terrain {name!r}")
-    path = "DATAxbox/" + config.replace("\\", "/")
+    config = config.lstrip("\\/")
     ini = data.files[path].decode("latin-1") if path in data.files else \
         (data.dir / config).read_bytes().decode("latin-1")
     text, changes, warnings = terrain_surfaces.apply(ini, json.loads(f.read_text(encoding="utf-8")))

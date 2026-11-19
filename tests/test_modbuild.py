@@ -214,6 +214,13 @@ class ModBuildTests(unittest.TestCase):
         self.assertIn("detailType 2 detail_rock01\n", xbox)
         self.assertIn("layerDetail 0 2\n", xbox)
         self.assertIn("layerDetail 16 1\n", xbox)
+        # terrain/<map>.surfaces.json reaches the new map's own config
+        (self.project / "terrain").mkdir(exist_ok=True)
+        self.write("terrain/island.surfaces.json", json.dumps({"textures": [{"slot": 0, "surface": "dirt"}]}))
+        result = modbuild.build(self.project, self.data, self.out)
+        self.assertIn("terrainPhysicsType", (self.out / "DATAxbox" / "TEST" / "island.ini").read_text(encoding="latin-1"))
+        self.assertTrue(any(c.startswith("surfaces island") for c in result.changes))
+        (self.project / "terrain" / "island.surfaces.json").unlink()
         # its master script (its load list loads one of its own name; a missing one hangs the game)
         self.assertEqual(script.decode(recs[(name_hash("island"), SCRIPT)]).source, "function ScriptInit()\nend\n")
         # a mod's own scripts/island.lua wins
