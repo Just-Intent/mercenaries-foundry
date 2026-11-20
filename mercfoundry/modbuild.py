@@ -521,6 +521,41 @@ def _turn(rotation, degrees):
     return [[r[0] * c + r[2] * s, r[1], -r[0] * s + r[2] * c] for r in rotation]
 
 
+def _move_player_start(body, medevac, where):
+    """maps json "medevac": {"position", "heading"?}: where the player is put
+    back on the map. The game respawns the player (a medevac from the pause
+    menu, a contract given up after dying, free roam starting) at the
+    location scribble memory's PlayerStartLocationName names, which retail's
+    scripts set to 'loc_playerstart' (on SW the Allied MASH). A new map's
+    copy of its source's world has the source's loc_playerstart (blank's at
+    about -73, 20, -70); this moves it. heading: placed objects' yaw (0
+    along +z)."""
+    if not isinstance(medevac, dict) or not isinstance(medevac.get("position"), (list, tuple)) \
+            or len(medevac["position"]) != 3:
+        raise ValueError(f"{where}: \"medevac\" is {{\"position\": [x, y, z], \"heading\"?: degrees}}")
+    doc = world.to_json(body)
+    found = []
+
+    def walk(n):
+        if isinstance(n, dict):
+            if n.get("tag") == "inst" and str(n.get("template") or "").lower() == "loc_playerstart":
+                found.append(n)
+            for v in n.values():
+                walk(v)
+        elif isinstance(n, list):
+            for v in n:
+                walk(v)
+    walk(doc)
+    if not found:
+        raise ValueError(f"{where}: \"medevac\": the map's world has no loc_playerstart to move "
+                         f"(its \"from\" map has none)")
+    a = math.radians(float(medevac.get("heading") or 0))
+    for inst in found:
+        inst["position"] = [float(v) for v in medevac["position"]]
+        inst["rotation"] = [[math.cos(a), 0.0, -math.sin(a)], [0.0, 1.0, 0.0], [math.sin(a), 0.0, math.cos(a)]]
+    return world.from_json(doc)
+
+
 def _to_marker(inst):
     """An object's place in its layer kept as an invisible, unnamed location
     marker: saved games know objects by their place in the layer."""
@@ -2609,6 +2644,9 @@ def _apply_maps(data, folder, result):
                 body = text.encode("latin-1")
             else:
                 body = _renamed_record(body, name)
+            if kind == "world" and mdoc.get("medevac"):
+                body = _move_player_start(body, mdoc["medevac"], where)
+                made.append("its medevac point (loc_playerstart moved)")
             if kind == "lineregion" and own_bounds:
                 from . import aidata, encounters, modpack
                 doc = aidata.to_json(body, "lineregion")
