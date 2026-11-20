@@ -154,7 +154,8 @@ def make_handler(scene: Scene, mod_name: str, live: Live = None):
                     with objects_lock:
                         from ..modbuild import project_name
                         return self.send(200, {"mod": project_name(scene.mod), "folder": scene.mod.name,
-                                               "maps": scene.maps()})
+                                               "maps": scene.maps(),
+                                               "can_switch": bool(getattr(self.server, "can_switch", False))})
                 if path == "/api/mods":
                     with objects_lock:
                         return self.send(200, scene.mods())
@@ -310,6 +311,13 @@ def make_handler(scene: Scene, mod_name: str, live: Live = None):
                         return self.send(200, gitpanel.push(scene.mod))
                 if path == "/api/build":
                     return self.send(200, builds.start(scene.game_dir(), bool(doc.get("playtest"))))
+                if path == "/api/switch":             # back to the mod list (serve's loop)
+                    if not getattr(self.server, "can_switch", False):
+                        return self.fail(400, "started for one mod: restart the editor without a mod to choose")
+                    self.server.switch = True
+                    self.send(200, {"ok": True})
+                    threading.Thread(target=self.server.shutdown, daemon=True).start()
+                    return None
                 if path == "/api/save":
                     with objects_lock:
                         n = scene.save_edits(doc.get("moved", {}), doc.get("copies", []), doc.get("removed", []),
@@ -435,18 +443,36 @@ class _Server(ThreadingHTTPServer):
     daemon_threads = True
 
 
-def serve(mod_dir, data_dir, port=8740, open_browser=True):
+def serve(mod_dir, data_dir, port=8740, open_browser=True, game=None):
+    """The editor for mod_dir; with none, the mod list first (picker.py), and
+    the editor's Switch mod (POST /api/switch) goes back to it."""
     from ..modbuild import project_name
-    scene = Scene(mod_dir, data_dir)
-    server = _Server(("127.0.0.1", port), make_handler(scene, project_name(mod_dir)))
-    url = f"http://127.0.0.1:{server.server_address[1]}/"
-    print(f"Foundry editor for {project_name(mod_dir)}: {url}  (Ctrl+C stops it)", flush=True)
-    if open_browser:
-        import webbrowser
-        webbrowser.open(url)
-    try:
-        server.serve_forever()
-    except KeyboardInterrupt:
-        pass
-    finally:
-        server.server_close()
+    from . import picker
+    first = True
+    while True:
+        if mod_dir is None:
+            if not game:
+                raise SystemExit("no game folder found: give --game <folder with mods\\ and game_files\\>")
+            mod_dir = picker.pick(game, port, _Server, open_browser and first)
+            if mod_dir is None:
+                return
+            first = False                 # the picker's page goes on to the editor by itself
+        scene = Scene(mod_dir, data_dir)
+        server = _Server(("127.0.0.1", port), make_handler(scene, project_name(mod_dir)))
+        server.switch = False
+        server.can_switch = bool(game)
+        url = f"http://127.0.0.1:{server.server_address[1]}/"
+        print(f"Foundry editor for {project_name(mod_dir)}: {url}  (Ctrl+C stops it)", flush=True)
+        if open_browser and first:
+            import webbrowser
+            webbrowser.open(url)
+        first = False
+        try:
+            server.serve_forever()
+        except KeyboardInterrupt:
+            return
+        finally:
+            server.server_close()
+        if not server.switch:
+            return
+        mod_dir = None

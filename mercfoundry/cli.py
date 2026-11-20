@@ -345,10 +345,19 @@ def cmd_mod_sync(args):
 
 
 def cmd_edit(args):
-    from .editor import server
-    if not Path(args.folder).is_dir():
-        sys.exit(f"{args.folder} is not a folder (make one with: mod new {args.folder})")
-    server.serve(args.folder, args.data, args.port, not args.no_browser)
+    from .editor import picker, server
+    folder = Path(args.folder) if args.folder else None
+    if folder is not None and not folder.is_dir():
+        sys.exit(f"{folder} is not a folder (make one with: mod new {folder})")
+    # the game folder: given, else the one the mod is in (<game>/mods/<mod>),
+    # else the one this toolkit is installed in, else the current one
+    game = picker.find_game(args.game or (folder.resolve().parent.parent if folder else None))
+    data = Path(args.data) if args.data else picker.find_data(game)
+    if data is None or not Path(data).is_dir():
+        sys.exit("no game data found: give --data <...\\DATAxbox> or --game <the game folder>")
+    if folder is None and game is None:
+        sys.exit("no game folder found: give a mod folder, or --game <folder with mods\\ and game_files\\>")
+    server.serve(folder, data, args.port, not args.no_browser, game=game)
 
 
 def cmd_texture(args):
@@ -902,8 +911,9 @@ def main(argv=None):
     m.add_argument("--install-hook", action="store_true",
                    help="write foundry-sync.cmd so the launcher syncs before every modded launch")
     s = add("edit", cmd_edit, "open the editor (a local web app) for a mod project")
-    s.add_argument("folder", help="mod project folder")
-    s.add_argument("--data", required=True, help="the game's DATAxbox folder")
+    s.add_argument("folder", nargs="?", help="mod project folder (none: choose from the game's mods)")
+    s.add_argument("--data", help="the game's DATAxbox folder (found from the game folder if left out)")
+    s.add_argument("--game", help="the game folder (with mods\\ and game_files\\); found if left out")
     s.add_argument("--port", type=int, default=8740, help="local port (default 8740)")
     s.add_argument("--no-browser", action="store_true", help="don't open a browser tab")
     s = add("texture", cmd_texture, "export a texture to PNG")

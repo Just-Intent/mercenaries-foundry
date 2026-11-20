@@ -12,6 +12,11 @@ This starts a server on 127.0.0.1 (port 8740; `--port` changes it) and opens the
 editor in your browser. Nothing is served to other computers. Players with the
 toolkit bundle run it the same way: `foundry\python\python.exe foundry\mercfoundry.pyz edit ...`.
 
+## Starting it
+
+- In a game folder with the toolkit (the launcher's, or a playtest package): run `Foundry Editor.cmd`. A page opens in your browser with the game's Foundry mods: open one, or make a new one. The editor's Switch mod goes back to the list. Close the window to stop it.
+- From the command line: `python -m mercfoundry edit` (the game folder is found: the one the toolkit is in, or the current one; `--game <folder>` names another), or `python -m mercfoundry edit "mods\My Mod"` for one mod. The game's DATAxbox is found from the game folder (`--data` names another).
+
 ## What it does
 
 - **Saving to** (top left) names the mod everything you save goes into.

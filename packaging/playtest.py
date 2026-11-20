@@ -34,7 +34,8 @@ RELEASE = ROOT / "external" / "Mercenaries-Recompiled" / "build" / "mercenaries"
 BUILT_MOD = "Foundry Mods"          # rebuilt from source mods on the other PC
 ROOT_FILES = ("Mercenaries Recompiled.exe", "mercenaries_recomp.exe", "mercenaries_recomp.map",
               "developer.ini", "modcompatibility.ini", "mercenaries_recomp.ini", "foundry-sync.cmd",
-              "mercenaries-build-provenance.json", "SDL2-LICENSE.txt")
+              "mercenaries-build-provenance.json", "SDL2-LICENSE.txt",
+              "Foundry Editor.cmd")
 ROOT_DIRS = ("compat", "tools", "licenses")
 SKIP_SUFFIXES = (".bak", ".preparing")
 
@@ -80,6 +81,10 @@ First time on a PC
 Updating to a newer playtest build
   Unzip the new one over this folder and replace files when asked. Your game
   data, saves and logs stay.
+
+Making or editing mods
+  Run "Foundry Editor.cmd": a page opens in your browser with this game's
+  mods. Open one, or make a new one.
 
 Sending results back
   - Something went wrong (crash, odd behaviour, a launch error): run
@@ -187,6 +192,8 @@ def main():
     readme = README.format(name=name, rule="=" * (31 + len(name)), version=__version__, exe_hash=exe_hash,
                            mods=", ".join(mods) or "(none)")
     with zipfile.ZipFile(path, "w", zipfile.ZIP_DEFLATED, compresslevel=6) as z:
+        if not (release / "Foundry Editor.cmd").is_file():      # the editor's starter, from packaging/
+            z.write(ROOT / "packaging" / "Foundry Editor.cmd", f"{top}/Foundry Editor.cmd")
         for f in ROOT_FILES:
             if (release / f).is_file():
                 z.write(release / f, f"{top}/{f}")
