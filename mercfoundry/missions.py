@@ -3179,14 +3179,30 @@ def contracts_script(contracts, insertions=()):
         if not c.get("interior"):
             out.append(f"Objective_Remove(foundry_ContactName(tFoundryContracts[{contracts.index(c) + 1}]))")
         if c.get("play"):
-            # As DebugSkipToMission, but the level is the new map, whose own
+            # As retail's HQ starter, then the level is the new map, whose own
             # script starts the mission (map_mission_lua); the arc map stays
             # SkipTo_Map, so the game's mission code finds it in its arc.
+            # mission_accepted is set before the map loads, as the starter
+            # sets it: the pause menu is built when a level loads, with SAVE
+            # GAME only while it is unset (CANCEL CONTRACT while set). A
+            # contract not in its arc goes the old way, for the map's script
+            # to report.
+            arc = _lua(parse_id(c['id'])[0])
             out += [
+                "Utility_LoadUtilityScript('util_misc')",
                 "Utility_WriteStringToScribbleMemory('SkipTo_Faction', f)",
+                f"local n = util_MissionAssetNumToMissionSeqNum({arc}, f, {c['number']})",
+                "if n then",
+                "Utility_WriteNumberToScribbleMemory('SkipTo_MissionNumber', n)",
+                "Utility_EraseValueFromScribbleMemory('skipto_via_cheating')",
+                "Utility_WriteStringToScribbleMemory('current_faction', f)",
+                "Utility_WriteNumberToScribbleMemory('current_' .. f .. '_mission', n)",
+                "Utility_WriteNumberToScribbleMemory('mission_accepted', 1)",
+                "else",
                 f"Utility_WriteNumberToScribbleMemory('SkipTo_MissionNumber', {c['number']})",
                 "Utility_WriteStringToScribbleMemory('skipto_via_cheating', 'true')",
                 "Utility_EraseValueFromScribbleMemory('mission_accepted')",
+                "end",
                 f"Utility_WriteStringToScribbleMemory('SkipTo_Map', {_lua(parse_id(c['id'])[0])})",
                 f"Utility_WriteStringToScribbleMemory('foundry_play_map', {_lua(c['play'])})",
                 f"Utility_WriteStringToScribbleMemory('foundry_play_arc', {_lua(parse_id(c['id'])[0])})",

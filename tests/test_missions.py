@@ -895,7 +895,18 @@ class NewMapMissionTests(unittest.TestCase):
                       "Utility_WriteStringToScribbleMemory('foundry_play_arc', 'sw')\n"
                       "Utility_WriteStringToScribbleMemory('foundry_map_start', 'accepted sw_china12, loading isle')\n"
                       "Utility_ResetToBaseLayerOnly('isle')", start)
-        self.assertNotIn("DebugSkipToMission", start[:start.index("\nend")])
+        self.assertNotIn("DebugSkipToMission", start[:start.index("\ntFoundryStart")])
+        # accepted before the map loads, as retail's starter: the pause menu
+        # built with the level then offers no SAVE GAME during the contract
+        self.assertIn("local n = util_MissionAssetNumToMissionSeqNum('sw', f, 12)\n"
+                      "if n then\n"
+                      "Utility_WriteNumberToScribbleMemory('SkipTo_MissionNumber', n)\n"
+                      "Utility_EraseValueFromScribbleMemory('skipto_via_cheating')\n"
+                      "Utility_WriteStringToScribbleMemory('current_faction', f)\n"
+                      "Utility_WriteNumberToScribbleMemory('current_' .. f .. '_mission', n)\n"
+                      "Utility_WriteNumberToScribbleMemory('mission_accepted', 1)\n"
+                      "else", start)
+        self.assertLess(start.index("'mission_accepted', 1"), start.index("Utility_ResetToBaseLayerOnly('isle')"))
         self.assertIn("local map = sFoundryOnMap or Utility_ReadStringFromScribbleMemory('SkipTo_Map')", lua)
         # an HQ contact for it stays at the HQ, and still takes the player to the island
         c2, _ = missions.contract("sw_china12", {"map": "isle"}, "t", "d")

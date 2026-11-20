@@ -1296,6 +1296,19 @@
    "notes": "The PDA Deck screen draws these by hash. Foundry Console points them at a new map's own keys (<key>.foundry_map_<map>) so cached wrapped text doesn't keep the game's."
   },
   {
+   "address": "0x000D7060",
+   "file": "RsFrontEnd.cpp",
+   "file_evidence": "string",
+   "names": [
+    "FrontEnd_BuildPauseMenu"
+   ],
+   "evidence": [
+    "retail code: vtable 0x2F4EE8 slot +0x38 (the pause screen at front end +0x3B14, run by the front end's set-up 0xD4AE0); adds CONTINUE (interface.pause.continue) and CONTROLS, then CANCEL CONTRACT when g_ScribbleMemory has mission_accepted (0x4C713AB3), else SAVE GAME (interface.shell.savesavedgame) and LOAD GAME when also 0x403384 is 0; MEDIVAC, OPTIONS; RsFrontEnd.cpp [3552]-[3580]"
+   ],
+   "signature": "void __thiscall FrontEnd_BuildPauseMenu(void *screen, void *front_end)",
+   "notes": "Where retail takes saving away during a contract. Foundry Console logs the contract flags when it runs."
+  },
+  {
    "address": "0x000C98A0",
    "file": "RsDataPodVM.cpp",
    "file_evidence": "between"

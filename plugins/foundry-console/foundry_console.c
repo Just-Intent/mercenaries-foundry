@@ -3291,6 +3291,27 @@ static void MERC_PLUGIN_CALL datapod_cards_after(void *ud, MercHookContext *c)
     datapod_remap();
 }
 
+/* Retail's pause menu (0xD7060) offers SAVE GAME and LOAD GAME only while
+ * scribble memory has no mission_accepted (CANCEL CONTRACT while it has).
+ * Logged each time the menu is built, with the contract a mod started, so a
+ * log shows when the menu was made and what it saw. */
+static void MERC_PLUGIN_CALL pause_menu_before(void *ud, MercHookContext *c)
+{
+    (void)ud; (void)c;
+    MercGuestCall g;
+    uint32_t key = hash_name("mission_accepted");
+    int accepted = guest(MF_FN_ScribbleMemory_GetString, MF_VAR_g_ScribbleMemory, 1, &key, &g) && g.eax;
+    key = hash_name("foundry_active_contract");
+    char contract[64] = "";
+    if (guest(MF_FN_ScribbleMemory_GetString, MF_VAR_g_ScribbleMemory, 1, &key, &g) && g.eax)
+        read_text(g.eax, contract, sizeof(contract));
+    char msg[160];
+    snprintf(msg, sizeof(msg), "pause menu built: %s (mission_accepted %s; foundry contract %s)",
+             accepted ? "CANCEL CONTRACT, no saving" : "SAVE GAME offered",
+             accepted ? "set" : "unset", contract[0] ? contract : "none");
+    host->log(host->context, msg);
+}
+
 /* Retail's HQ briefing (Briefing_Init 0x175B10, Briefing_Deinit 0x1758D0)
  * sets the player up with the player as a human (0x8ED00, vtable +0x2C of
  * the object named player0): 0x5CA70(1) puts the weapon away (0x5BF30 with
@@ -3482,6 +3503,8 @@ MERC_PLUGIN_EXPORT int MERC_PLUGIN_CALL MercenariesPlugin_Init(
     if (!h->hook_guest(h->context, MF_FN_DataPod_BuildCards, datapod_cards_before, datapod_cards_after, NULL))
         h->log(h->context, "PDA card list hook unavailable (run port-hooks); cards the Deck screen showed before "
                            "may keep the game's texts on a map with its own");
+    if (!h->hook_guest(h->context, MF_FN_FrontEnd_BuildPauseMenu, pause_menu_before, NULL, NULL))
+        h->log(h->context, "pause menu hook unavailable (run port-hooks); its contract check isn't logged");
     if (!h->hook_guest(h->context, MF_FN_DataPod_DrawTexture, datapod_draw_before, NULL, NULL))
         h->log(h->context, "PDA draw hook unavailable (run port-hooks); a map's own card portraits show once the "
                            "game's have loaded (a moment of the game's first)");
