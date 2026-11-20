@@ -506,12 +506,15 @@ class Scene:
             from .. import modbuild
             gen = getattr(self, "_terrain_gen", 0)
             data = modbuild._Data(self.data)
+            data.new_maps = self._new_map_names()      # as the build sets it (traffic, map text)
             errors = []
             for p in self.context:
                 data.project = modbuild.project_name(p)
                 # A mod's file the build refuses leaves its ground as far as it
                 # got (shown as an error), not every map unloadable.
-                for step, folder in ((modbuild._apply_maps, "maps"), (modbuild._apply_terrain, "terrain")):
+                # (the scripts first: a new map's "scripts" must be the mod's or the game's)
+                for step, folder in ((modbuild._apply_scripts, "scripts"), (modbuild._apply_maps, "maps"),
+                                     (modbuild._apply_terrain, "terrain")):
                     if (Path(p) / folder).is_dir():
                         try:
                             step(data, Path(p), modbuild.Result())
@@ -525,6 +528,11 @@ class Scene:
             self._terrain = data
             self._terrain_stamp = stamp
         return self._terrain
+
+    def _new_map_names(self):
+        """The shown mods' new maps (maps/<name>.json), as a build knows them."""
+        return {f.stem.lower() for p in self.context if (Path(p) / "maps").is_dir()
+                for f in (Path(p) / "maps").glob("*.json")}
 
     def _maps_stamp(self):
         """The shown mods' map, terrain, layer and object-rule files and when
@@ -665,9 +673,12 @@ class Scene:
         (a new map: its source's): the ones that can't be removed."""
         from .. import modbuild, terrain_paint
         data = modbuild._Data(self.data)
+        data.new_maps = self._new_map_names()      # as the build sets it (traffic, map text)
         for p in self.context:
             if (Path(p) / "maps").is_dir():
                 try:
+                    if (Path(p) / "scripts").is_dir():       # a new map's "scripts" must exist first
+                        modbuild._apply_scripts(data, Path(p), modbuild.Result())
                     modbuild._apply_maps(data, Path(p), modbuild.Result())
                 except (ValueError, KeyError, OSError):
                     pass
@@ -2146,6 +2157,7 @@ class Scene:
             self._ctx_stamp = stamp
             from .. import modbuild
             data = modbuild._Data(self.data)
+            data.new_maps = self._new_map_names()      # as the build sets it (traffic, map text)
             mine = self.mod.resolve()
             for p in self.context:
                 p = Path(p)
