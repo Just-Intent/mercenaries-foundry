@@ -15,6 +15,7 @@ const TOOLS = [
   ['deck-mode', 'deck', 'deck-close'],
   ['look-mode', 'look', 'look-close'],
   ['limits-mode', 'limits', 'limits-close'],
+  ['text-mode', 'text', 'text-close'],
 ];
 
 export function exclusivePanels($) {

@@ -26,6 +26,7 @@ import {createHq} from './hq.js';
 import {createDeck} from './deck.js';
 import {createLook} from './look.js';
 import {createLimits} from './limits.js';
+import {createText} from './text.js';
 import {exclusivePanels} from './panels.js';
 
 const $ = (id) => document.getElementById(id);
@@ -1751,6 +1752,7 @@ const lookPanel = createLook({$, status, post: postJSON, mapName: () => state.ma
 createLimits({$, stats: () => ({map: state.map, objects: state.records.filter((r) => !r.removed && !r.context).length,
                                placed: state.records.filter((r) => String(r.id || '').startsWith('placed:') && !r.removed).length,
                                removed: state.records.filter((r) => r.removed).length})});
+createText({$, status, post: postJSON});
 exclusivePanels($);
 // Back to the game's list of mods (when the editor was started without one).
 $('switch-mod').onclick = async () => {

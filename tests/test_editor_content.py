@@ -69,5 +69,32 @@ class DeckFilesTests(unittest.TestCase):
             self.assertIsNone(content.mod_png(mod, "../x.png"))
 
 
+class TextAndMailTests(unittest.TestCase):
+    def test_text_files_mail_and_search(self):
+        with tempfile.TemporaryDirectory() as t:
+            mod = Path(t)
+            (mod / "maps").mkdir()
+            (mod / "maps" / "isle.json").write_text("{}")
+            (mod / "mod.json").write_text(json.dumps({"name": "Isle"}))
+            content.save_text(mod, "text/names.json", None, {"faction.allies": "Blue"})
+            content.save_text(mod, "text/isle.json", "isle", {"faction.china": "Red"})
+            files = {f["file"]: f for f in content.text_files(mod)}
+            self.assertEqual(files["text/names.json"]["strings"], {"faction.allies": "Blue"})
+            self.assertEqual(files["text/isle.json"]["map"], "isle")
+            with self.assertRaises(ValueError):
+                content.save_text(mod, "text/x.json", "sw", {"a": "b"})          # not a new map
+            with self.assertRaises(ValueError):
+                content.save_text(mod, "../x.json", None, {})
+            content.save_welcome_mail(mod, {"sender": "Broker", "subject": "Hi", "body": "Go.", "map": ""})
+            self.assertEqual(content.welcome_mail(mod)["mail"], {"sender": "Broker", "subject": "Hi", "body": "Go."})
+            with self.assertRaises(ValueError):
+                content.save_welcome_mail(mod, {"subject": "no body"})
+            content.save_welcome_mail(mod, None)
+            self.assertIsNone(content.welcome_mail(mod)["mail"])
+        hits = content.search_strings({"faction.allies": "Allied Nations", "x.y": "Pyongyang"}, "allied")
+        self.assertEqual(hits, [["faction.allies", "Allied Nations"]])
+        self.assertEqual(content.search_strings({"a": "b"}, "a"), [])                  # too short
+
+
 if __name__ == "__main__":
     unittest.main()

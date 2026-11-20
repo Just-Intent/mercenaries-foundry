@@ -2796,7 +2796,37 @@ class Scene:
             out.append({"name": o["name"], "type": props.get("objecttype", ""),
                         "faction": props.get("faction", ""), "model": o["model"], "layer": o["layer"],
                         "geometry": props.get("geometryfile", o["model"])})
+        out += self.map_template_copies(out)
         out.sort(key=lambda t: (t["type"] != "human", t["name"].lower()))
+        return out
+
+    def map_template_copies(self, game_templates=None):
+        """The mod's new maps' own template copies (maps/<map>.json "templates"
+        entries {"template", "as", "set"?}): placeable and usable in squads
+        under their "as" names, drawn as the template they copy (or the model
+        their "set" GeometryFile names)."""
+        if getattr(self, "mod", None) is None or not (self.mod / "maps").is_dir():
+            return []
+        if game_templates is None:
+            game_templates = [t for t in self.templates() if not t.get("copy")]
+        by_name = {t["name"].lower(): t for t in game_templates}
+        out = []
+        folder = self.mod / "maps"
+        for f in sorted(folder.glob("*.json")) if folder.is_dir() else []:
+            try:
+                doc = json.loads(f.read_text(encoding="utf-8"))
+            except ValueError:
+                continue
+            for e in doc.get("templates") or []:
+                if not isinstance(e, dict) or not e.get("as") or not e.get("template"):
+                    continue
+                base = by_name.get(str(e["template"]).lower(), {})
+                sets = {str(k).lower(): v for k, v in (e.get("set") or {}).items()}
+                geometry = str(sets.get("geometryfile") or base.get("geometry") or base.get("model") or e["template"])
+                out.append({"name": str(e["as"]), "type": str(sets.get("objecttype") or base.get("type", "")),
+                            "faction": str(sets.get("faction") or base.get("faction", "")),
+                            "model": base.get("model") or geometry, "geometry": geometry,
+                            "layer": f"{f.stem} (the map's copy of {e['template']})", "copy": True, "map": f.stem.lower()})
         return out
 
     def placeables(self):
@@ -2822,7 +2852,10 @@ class Scene:
             order = {"template": 0, "object": 1, "model": 2}
             out.sort(key=lambda p: (order[p["kind"]], p["name"].lower()))
             self._placeables = out
-        return self._placeables
+        # the mod's map copies: read each time (the maps' files change as you work)
+        copies = [{"name": c["name"], "kind": "template", "model": c["model"], "geometry": c["geometry"],
+                   "type": c["type"], "layer": c["layer"], "copy": True} for c in self.map_template_copies()]
+        return copies + self._placeables
 
     def save_game_encounters(self, edits):
         """edits: [{layer, name, points: {set: [[x, y, z], ...]}}] for the

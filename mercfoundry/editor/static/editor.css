@@ -217,3 +217,14 @@ code.copyable { display: block; white-space: pre-wrap; word-break: break-all; fo
 .lim-bar.warn i { background: #c9a227; } .lim-bar.bad i { background: #d0554a; }
 .lim-list { padding-left: 18px; color: #b8c2cc; } .lim-list li { margin: 4px 0; }
 #status { flex: 0 1 38%; min-width: 120px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* Text & mail */
+.text-row { display: grid; grid-template-columns: 1fr auto; gap: 2px 6px; margin: 6px 0; }
+.text-row code { font-size: 11px; color: #9fb3c8; word-break: break-all; }
+.text-row textarea { grid-column: 1 / -1; width: 100%; box-sizing: border-box; font: inherit; }
+.text-hit { display: grid; gap: 2px; padding: 4px 6px; border-radius: 4px; cursor: pointer; margin: 2px 0; }
+.text-hit:hover { background: #30353c; }
+.text-hit code { font-size: 11px; color: #9fb3c8; word-break: break-all; }
+.text-hit span { font-size: 12px; color: #c9d1d9; }
+#text-search { width: 100%; }
+#text textarea { width: 100%; box-sizing: border-box; font: inherit; }
+.text-hit span { display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden; }

@@ -173,3 +173,77 @@ def mod_png(mod, rel):
     if Path(mod).resolve() not in p.parents or not p.is_file():
         return None
     return p.read_bytes()
+
+
+# ---------------------------------------------------------------- text and mail
+
+def text_files(mod):
+    """The mod's text/*.json: [{file, map (or null: everywhere), strings}]."""
+    folder = Path(mod) / "text"
+    out = []
+    for f in sorted(folder.glob("*.json")) if folder.is_dir() else []:
+        rel = f"text/{f.name}"
+        try:
+            doc = json.loads(f.read_text(encoding="utf-8"))
+        except ValueError as e:
+            out.append({"file": rel, "error": f"not JSON: {e}"})
+            continue
+        if isinstance(doc, dict) and "map" in doc:
+            out.append({"file": rel, "map": doc.get("map"), "strings": doc.get("strings") or {},
+                        "generated": _generated_keys(mod, rel)})
+        else:
+            out.append({"file": rel, "map": None, "strings": doc if isinstance(doc, dict) else {},
+                        "generated": _generated_keys(mod, rel)})
+    return out
+
+
+def save_text(mod, rel, map_name, strings):
+    """text/<name>.json: {key: text}, or {"map", "strings"} for a new map's own."""
+    rel = rel.replace("\\", "/")
+    if not re.fullmatch(r"text/[A-Za-z0-9_\-]+\.json", rel):
+        raise ValueError("a text file is text/<name>.json")
+    if not isinstance(strings, dict) or not all(isinstance(k, str) and k and isinstance(v, str) for k, v in strings.items()):
+        raise ValueError("the strings are {key: text}")
+    if map_name:
+        maps = {f.stem.lower() for f in (Path(mod) / "maps").glob("*.json")} if (Path(mod) / "maps").is_dir() else set()
+        if str(map_name).lower() not in maps:
+            raise ValueError(f"{map_name!r} isn't one of this mod's new maps (text only for a game map isn't possible)")
+        doc = {"map": str(map_name).lower(), "strings": strings}
+    else:
+        doc = strings
+    _write(Path(mod) / rel, doc)
+    return {"file": rel, "count": len(strings)}
+
+
+def search_strings(english, q, limit=60):
+    """The game's strings whose key or text has q: [[key, text]]."""
+    q = (q or "").strip().lower()
+    if len(q) < 2:
+        return []
+    out = []
+    for k, v in english.items():
+        if q in k.lower() or q in str(v).lower():
+            out.append([k, str(v)])
+            if len(out) >= limit:
+                break
+    return out
+
+
+def welcome_mail(mod):
+    meta = _read(Path(mod) / "mod.json") or {}
+    return {"mail": meta.get("welcome_mail") or None}
+
+
+def save_welcome_mail(mod, mail):
+    """mod.json "welcome_mail" ({sender, subject, body, map?}, or null)."""
+    from .. import missions
+    from ..modbuild import project_name
+    p = Path(mod) / "mod.json"
+    meta = _read(p) or {}
+    if mail:
+        missions.welcome_mail(project_name(mod), mail)       # as the build checks it
+        meta["welcome_mail"] = {k: v for k, v in mail.items() if v not in (None, "")}
+    else:
+        meta.pop("welcome_mail", None)
+    _write(p, meta)
+    return {"file": "mod.json"}

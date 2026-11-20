@@ -94,7 +94,7 @@ import mimetypes
 import threading
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from importlib import resources
-from urllib.parse import unquote, urlparse
+from urllib.parse import parse_qs, unquote, urlparse
 
 from . import anims, content, gitpanel
 from .live import Live
@@ -170,6 +170,14 @@ def make_handler(scene: Scene, mod_name: str, live: Live = None):
                     return self.send(200, content.map_keys(scene.mod, path.rsplit("/", 1)[1]))
                 if path == "/api/deck":
                     return self.send(200, content.deck_files(scene.mod))
+                if path == "/api/text":
+                    return self.send(200, {"files": content.text_files(scene.mod),
+                                           "maps": [m for m in scene.maps() if (scene.mod / "maps" / f"{m}.json").exists()],
+                                           **content.welcome_mail(scene.mod)})
+                if path == "/api/text/search":
+                    q = parse_qs(urlparse(self.path).query).get("q", [""])[0]
+                    with objects_lock:
+                        return self.send(200, content.search_strings(scene._english(), q))
                 if path.startswith("/api/modfile/"):          # one of the mod's own PNGs
                     data = content.mod_png(scene.mod, path[len("/api/modfile/"):])
                     return self.send(200, data, "image/png") if data is not None else self.fail(404, "no such PNG")
@@ -333,6 +341,11 @@ def make_handler(scene: Scene, mod_name: str, live: Live = None):
                 if path == "/api/deck/portrait":
                     return self.send(200, content.save_portrait(scene.mod, str(doc.get("suit") or ""),
                                                                 str(doc.get("card") or ""), doc.get("png") or ""))
+                if path == "/api/text/save":
+                    return self.send(200, content.save_text(scene.mod, str(doc.get("file") or ""), doc.get("map"),
+                                                            doc.get("strings") or {}))
+                if path == "/api/mail/save":
+                    return self.send(200, content.save_welcome_mail(scene.mod, doc.get("mail")))
                 if path == "/api/texture/upload":
                     return self.send(200, content.save_texture(scene.mod, str(doc.get("name") or ""), doc.get("png") or ""))
                 if path == "/api/switch":             # back to the mod list (serve's loop)
