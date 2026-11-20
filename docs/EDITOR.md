@@ -792,6 +792,49 @@ changing the game's anywhere else (these are files, not editor tools yet):
   the ones its scripts load by chapter). A rule without `"map"` changes every
   layer in the game.
 
+## A new map's own Deck of 52
+
+`deck/<suit>.json` (file only) gives a new map a suit of its own cards, played
+as retail's deck. Shape:
+
+```json
+{"suit": "clubs", "map": "gaza",
+ "cards": [{"card": "2", "name": "Iyad Kassab", "alias": "The Mole", "role": "Tunnel foreman",
+            "description": "...", "bounty": 40000,
+            "actor": "gaza_card_clubs02", "layer": "gaza_card_clubs02", "face": "deck/clubs2.png"},
+           {"card": "Q", "name": "...", "description": "...", "bounty": 300000}]}
+```
+
+- `"card"`: 2 to 10, J, Q, K or A. `"map"` can be left out when the mod has one new map.
+- **Text:** the PDA's Deck screen and the verify screen show `"name"` and a bio.
+  The bio is `"bio"`, or "Known as <alias>. <role>. <description>". They show
+  instead of the game's card (`cards.<suit>.<rank>.Name/.charName/.bio`) while
+  the map is loaded, with Foundry Console (map text). Give the card
+  character's template the name `cards.<suit>.<rank>.charName` to show it
+  above them.
+- **Portrait:** `"face"` (or `deck/<suit><rank>.png` if it's there) is the card's
+  picture in the PDA: 128x128, with the rank and suit drawn in the top left
+  corner as the game's are (export `<suit><rank>_face` to see one). It's
+  added as `<map>_<suit><rank>_face` and drawn instead of the game's while
+  the map is loaded (Foundry Console: `Foundry_MapTexture`, through the
+  texture table, since the PDA draws portraits by name).
+- **Number cards (2 to 10)** are characters you place in an encounters layer
+  with the editor, guards and all. `"actor"` is the card's name there.
+  `"layer"` (optional) is loaded only while the card is at large, as retail
+  loads its `<map>_deck_<suit>NN` layers; leave it out if the layer loads
+  with the map anyway. In free roam on the map each card at large gets
+  retail's verify objective: unmarked until it's in view or within 30 m,
+  then marked with the suit's blip. Killed or taken down, its state is
+  written, the verify screen shows the card, and `"bounty"` is paid for a
+  kill, double alive (default 12,500, retail's chapter 1).
+- **Face cards** (J, Q, K, A) get their text and portrait; they come through
+  contracts.
+- **The PDA's card states** are the game's own save keys
+  (`<suit><rank>status` and friends), which the PDA reads itself. Free roam
+  on the map swaps in the map's own states (kept under
+  `foundry_deck_<map>_*`), and free roam on SW or NW puts the game's back.
+  So the map's clubs don't count for retail's clubs, nor the other way.
+
 ## Not yet
 
 - Undo for making a new map; the history covers objects, paths, zones, squads, missions,

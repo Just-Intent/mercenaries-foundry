@@ -278,6 +278,58 @@ def _map_strings(data, map_name, edits, where):
     return len(plain) + len(alt)
 
 
+def _apply_deck(data, folder, result):
+    """deck/<suit>.json: a mod's own Deck of 52 on its new map (deck.py): the
+    cards' texts and portraits shown there instead of the game's (map text,
+    HUD art), and foundry_deck, which swaps the PDA's card states while free
+    roam is there and arms its number cards."""
+    from . import deck as deckmod
+    files = sorted((folder / "deck").glob("*.json"))
+    if not files:
+        return
+    mod_maps = {f.stem.lower() for f in (folder / "maps").glob("*.json")} if (folder / "maps").is_dir() else set()
+    data.decks = getattr(data, "decks", [])
+    for f in files:
+        where = f"deck/{f.name}"
+        d = deckmod.parse(where, json.loads(f.read_text(encoding="utf-8")), mod_maps, folder)
+        if any(o["map"] == d["map"] for o in data.decks):
+            raise ValueError(f"{where}: {d['map']} already has a deck (one suit per map for now)")
+        _map_strings(data, d["map"], deckmod.strings(d), where)
+        faces = 0
+        for c in d["cards"]:
+            if not c["face"]:
+                continue
+            path = folder / c["face"]
+            if not path.is_file():
+                raise ValueError(f"{where}: no {c['face']} (the {deckmod.RANK_NAMES[c['rank']].lower()}'s portrait)")
+            w, h, rgba = png.decode(path.read_bytes())
+            if (w, h) != (128, 128):
+                result.warnings.append(f"{where}: {c['face']} is {w}x{h}; the game's card portraits are 128x128 "
+                                       "(the PDA draws them at that shape)")
+            tname = deckmod.face_texture(d["map"], d["suit"], c["rank"])
+            built = texture.encode(texture.new(tname, w, h, rgba))
+            data.new("streamed.dsk", name_hash(tname), texture.TEXTURE, built)
+            data.map_hud = getattr(data, "map_hud", {})
+            data.map_hud.setdefault(d["map"], {})[f"{d['suit']}{c['rank']}_face"] = tname
+            faces += 1
+        data.decks.append(d)
+        number = [c for c in d["cards"] if c["rank"] <= 10]
+        placed = [c for c in number if c["actor"]]
+        result.changes.append(
+            f"{where}: {d['suit']} on {d['map']}: {len(d['cards'])} cards' texts, {faces} portraits, "
+            f"{len(placed)} of {len(number)} number cards placed (verify objectives in free roam there)")
+        for c in number:
+            if not c["actor"]:
+                result.warnings.append(f"{where}: the {deckmod.RANK_NAMES[c['rank']].lower()} has no \"actor\" "
+                                       "(its placed character): it can't be found or verified yet")
+    key = name_hash(deckmod.SCRIPT)
+    src = deckmod.script(data.decks)
+    if data.find_added(key, SCRIPT) is not None:
+        data.replace_added(key, SCRIPT, script.encode(script.new(deckmod.SCRIPT, src)))
+    else:
+        data.new("assets.dsk", key, SCRIPT, script.encode(script.new(deckmod.SCRIPT, src)))
+
+
 def _write_map_text(data, result):
     """After every step: each new map with texts of its own (_map_strings)
     gets a script, foundry_maptext_<map>, listing them, that its master
@@ -1602,11 +1654,14 @@ def _apply_map_layers(data, result):
                                                                 missions.layers_script(getattr(data, "map_layers", []),
                                                                 getattr(data, "travel_pilots", []),
                                                                 getattr(data, "travel_arrive", False),
-                                                                getattr(data, "welcome", [])))))
+                                                                getattr(data, "welcome", []),
+                                                                deck=bool(getattr(data, "decks", None))))))
     for map_ in missions.FREE_ROAM_MAPS:
         for a, r in data.records(name_hash("list")):
             if r.key == name_hash(map_):
                 text_list = missions.add_to_list(data.current(a, r).decode("latin-1"), "script", missions.LAYERS_SCRIPT)
+                if getattr(data, "decks", None):
+                    text_list = missions.add_to_list(text_list, "script", "foundry_deck")
                 data.set(a, r, text_list.encode("latin-1"))
     hit = [(a, r) for a, r in data.records(SCRIPT) if r.key == name_hash("global")]
     if not hit:
@@ -2378,7 +2433,7 @@ def _renamed_record(body, new):
 OBJECTIVE_SLOTS = 16      # objectives the game holds at once (0x3C31B8, 0x1760 bytes each)
 
 
-def map_script(name, doc, layers, pilots=(), contacts=False, extra=(), hqs=None, inside=None):
+def map_script(name, doc, layers, pilots=(), contacts=False, extra=(), hqs=None, inside=None, deck=False):
     """A new map's master script (run as the map loads): blank's set-up, its
     layers, where the player arrives, a message, and its travel pilots
     (missions.travel_lua) armed. extra: scripts (maps json "scripts") loaded
@@ -2386,7 +2441,9 @@ def map_script(name, doc, layers, pilots=(), contacts=False, extra=(), hqs=None,
     master script's, so their timers' callbacks work), each started with its
     <script>_Start() if it has one. hqs: faction HQ flags ("hqs",
     missions.hq_flags_lua); inside: HQ interiors ("interiors",
-    missions.interiors_lua); both set up when free roam starts there."""
+    missions.interiors_lua); both set up when free roam starts there. deck:
+    the map has a mod's Deck of 52 (deck/*.json): free roam there shows its
+    cards in the PDA and arms its number cards (deck.script)."""
     from .missions import _lua_str, travel_lua
     lines = [f"-- {name}: written by mercfoundry from maps/{name}.json (scripts/{name}.lua replaces it)",
              "function ScriptInit()",
@@ -2415,6 +2472,10 @@ def map_script(name, doc, layers, pilots=(), contacts=False, extra=(), hqs=None,
         hq.append(f"foundry_{name.lower()}_HqFlags()")
     if inside:
         hq.append(f"foundry_{name.lower()}_HqArm()")
+    if deck:
+        hq += ["Utility_LoadUtilityScript('foundry_deck')",
+               f"foundry_DeckEnter({_lua_str(name.lower())})",
+               f"foundry_DeckArm({_lua_str(name.lower())})"]
     if contacts:                  # a mission played here, else free roam with its contacts
         from .missions import map_mission_lua
         start, funcs = map_mission_lua(name.lower(), hq)
@@ -2589,7 +2650,7 @@ def _apply_maps(data, folder, result):
             raise ValueError(f"{where}: \"hud_textures\" is {{<game texture>: <texture>}}")
         if hud:
             data.map_hud = getattr(data, "map_hud", {})
-            data.map_hud[name.lower()] = {str(k): str(v) for k, v in hud.items()}
+            data.map_hud.setdefault(name.lower(), {}).update({str(k): str(v) for k, v in hud.items()})
             data.map_text = getattr(data, "map_text", {})
             data.map_text.setdefault(name.lower(), {})
         inside = getattr(data, "new_map_interiors", {}).get(name.lower())
@@ -2609,6 +2670,14 @@ def _apply_maps(data, folder, result):
                 f"{where}: free roam here marks {marks} things ({len(givers)} mission givers, {len(hqs or {})} HQ "
                 f"flags, {len(guards)} HQ guards), but the game holds {OBJECTIVE_SLOTS} objectives at once: the "
                 f"rest get no marker (give some givers \"marker\": \"none\", or offer them inside an HQ)")
+        deck = any(d["map"] == name.lower() for d in getattr(data, "decks", []))
+        if deck:
+            lkey = data.find_added(key, name_hash("list"))
+            if lkey is not None:
+                text = lkey.decode("latin-1")
+                for s_ in ("mission_objective", "mission_objectiveverify", "util_misc", "util_debug", "foundry_deck"):
+                    text = missions.add_to_list(text, "script", s_)
+                data.replace_added(key, name_hash("list"), text.encode("latin-1"))
         if (hqs or inside) and not contacts:
             lkey = data.find_added(key, name_hash("list"))
             if lkey is not None:
@@ -2649,8 +2718,8 @@ def _apply_maps(data, folder, result):
                 data.replace_added(key, name_hash("list"), text.encode("latin-1"))
         if not any(r.key == key for _, r in data.records(SCRIPT)) and data.find_added(key, SCRIPT) is None:
             if mdoc.get("start") or mdoc.get("message") or mdoc.get("weather") or layers or pilots or contacts or extra \
-                    or hqs or inside:
-                source = map_script(name, mdoc, layers, pilots, contacts, extra, hqs, inside)
+                    or hqs or inside or deck:
+                source = map_script(name, mdoc, layers, pilots, contacts, extra, hqs, inside, deck=deck)
                 made.append("script (" + ", ".join(
                     (["where you arrive"] if (mdoc.get("start") or {}).get("position") else [])
                     + ([f"loads {', '.join(layers)}"] if layers else [])
@@ -2659,7 +2728,8 @@ def _apply_maps(data, folder, result):
                     + ([f"missions {', '.join(played)}" if played else "contracts"] if contacts else [])
                     + ([f"runs {', '.join(extra)}"] if extra else [])
                     + ([f"HQ flags for {', '.join(hqs)}"] if hqs else [])
-                    + ([f"HQ interiors for {', '.join(inside)}"] if inside else [])) + ")")
+                    + ([f"HQ interiors for {', '.join(inside)}"] if inside else [])
+                    + (["its Deck of 52"] if deck else [])) + ")")
             else:
                 hit = [(a, r) for a, r in data.records(SCRIPT) if r.key == name_hash(src)]
                 source = script.decode(data.current(*hit[0])).source if hit else map_script(name, mdoc, [])
@@ -3837,7 +3907,7 @@ def _swap_model(data, old, new):
     return n
 
 
-STEPS = (_apply_text, _apply_scripts, _apply_objects, _apply_encounters, _apply_missions,
+STEPS = (_apply_text, _apply_deck, _apply_scripts, _apply_objects, _apply_encounters, _apply_missions,
          _apply_textures, _apply_models, _apply_collision_flags, _apply_layout, _apply_game_squads,
          _apply_animations, _apply_animtables, _apply_bone_moves, _apply_maps, _apply_terrain, _apply_sounds, _apply_effects, _apply_sky,
          _trim_map_skies, _map_texture_total,
@@ -3890,7 +3960,7 @@ def build(projects, data_dir, out_dir, name=None, description=None) -> Result:
             for project, pname in zip(projects, mod_names):
                 _apply_welcome_mail(data, project, pname, result)
             if getattr(data, "map_layers", None) or getattr(data, "travel_arrive", False) \
-                    or getattr(data, "welcome", None):
+                    or getattr(data, "welcome", None) or getattr(data, "decks", None):
                 _apply_map_layers(data, result)
     # after every step: the Lua check (the maps step writes new maps' master
     # scripts after the missions step), and a new map's step lists the

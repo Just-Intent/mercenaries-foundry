@@ -2961,9 +2961,94 @@ static unsigned maptex_swap(uint32_t want, uint32_t other)
     return n;
 }
 
+/* Textures drawn by name hash, not through a sprite (the PDA's card
+ * portraits, "%s%i_face", RsDataPodDisplay 0xC7340 -> 0xC5900 ->
+ * Texture_Find): Texture_Find's table (0x793510 count, a power of two;
+ * 0x793518 values, the textures; 0x79351C keys, linear probing as
+ * HashTable_Find) gets the other texture under the game's key until the
+ * next level loads. Looked up by key each time; every 2 s a key back on the
+ * game's texture gets the map's again. */
+#define TEXTABLE_COUNT 0x793510u
+#define TEXTABLE_VALUES 0x793518u
+#define TEXTABLE_KEYS 0x79351Cu
+#define MAPTEXALIAS_MAX 64
+typedef struct { uint32_t key, original, replaced, other; } MapTexAlias;
+static MapTexAlias maptexalias[MAPTEXALIAS_MAX];
+static unsigned maptexalias_count;
+static double maptexalias_timer;
+
+static int texture_slot(uint32_t key, uint32_t *values)
+{
+    uint32_t count = 0, keys = 0, k = 0;
+    if (!key || !host->read_guest(host->context, TEXTABLE_COUNT, &count, 4) || !count || (count & (count - 1)) ||
+        !host->read_guest(host->context, TEXTABLE_VALUES, values, 4) ||
+        !host->read_guest(host->context, TEXTABLE_KEYS, &keys, 4)) return -1;
+    uint32_t mask = count - 1, i = key & mask;
+    for (uint32_t n = 0; n < count; n++, i = (i + 1) & mask) {
+        if (!host->read_guest(host->context, keys + 4 * i, &k, 4) || !k) return -1;
+        if (k == key) return (int)i;
+    }
+    return -1;
+}
+
+/* key's texture becomes other's: 1, or 0 if either isn't in the table */
+static int maptexalias_set(uint32_t key, uint32_t other)
+{
+    uint32_t values = 0, ovalues = 0, mine = 0, theirs = 0;
+    int at = texture_slot(key, &values), from = texture_slot(other, &ovalues);
+    if (at < 0 || from < 0 ||
+        !host->read_guest(host->context, ovalues + 4 * (uint32_t)from, &theirs, 4) || !theirs ||
+        !host->read_guest(host->context, values + 4 * (uint32_t)at, &mine, 4)) return 0;
+    unsigned i;
+    for (i = 0; i < maptexalias_count; i++)
+        if (maptexalias[i].key == key) break;
+    if (i == maptexalias_count) {
+        if (maptexalias_count == MAPTEXALIAS_MAX) return 0;
+        maptexalias[maptexalias_count++] = (MapTexAlias){key, mine, theirs, other};
+    } else {
+        maptexalias[i].replaced = theirs;            /* asked again: keep the first original */
+    }
+    if (mine != theirs) host->write_guest(host->context, values + 4 * (uint32_t)at, &theirs, 4);
+    return 1;
+}
+
+static void maptexalias_restore(void)
+{
+    unsigned put = 0;
+    for (unsigned i = maptexalias_count; i-- > 0;) {
+        uint32_t values = 0, now = 0;
+        int at = texture_slot(maptexalias[i].key, &values);
+        if (at >= 0 && host->read_guest(host->context, values + 4 * (uint32_t)at, &now, 4) &&
+            now == maptexalias[i].replaced) {
+            host->write_guest(host->context, values + 4 * (uint32_t)at, &maptexalias[i].original, 4);
+            put++;
+        }
+    }
+    if (maptexalias_count) {
+        char line[96];
+        snprintf(line, sizeof(line), "map textures by name: %u of %u put back", put, maptexalias_count);
+        host->log(host->context, line);
+    }
+    maptexalias_count = 0;
+}
+
+static void maptexalias_poll(double dt)
+{
+    if (!maptexalias_count || (maptexalias_timer += dt) < 2.0) return;
+    maptexalias_timer = 0;
+    for (unsigned i = 0; i < maptexalias_count; i++) {
+        uint32_t values = 0, now = 0;
+        int at = texture_slot(maptexalias[i].key, &values);
+        if (at >= 0 && host->read_guest(host->context, values + 4 * (uint32_t)at, &now, 4) &&
+            now == maptexalias[i].original)
+            maptexalias_set(maptexalias[i].key, maptexalias[i].other);
+    }
+}
+
 /* each half second: swap the sprites of textures now loaded (gives up after 30 s) */
 static void maptex_poll(double dt)
 {
+    maptexalias_poll(dt);
     if (!maptex_pending_count) return;
     maptex_poll_timer += dt;
     if (maptex_poll_timer < 0.5) return;
@@ -2971,11 +3056,16 @@ static void maptex_poll(double dt)
     maptex_poll_timer = 0;
     for (unsigned i = 0; i < maptex_pending_count;) {
         MapTexPending *p = &maptex_pending[i];
-        char line[128];
+        char line[160];
         if (texture_loaded(p->to)) {
             unsigned n = maptex_swap(p->from, p->to);
-            snprintf(line, sizeof(line), "map HUD art: %08X drawn as %08X on %u sprites (loaded after %.1f s)",
-                     p->from, p->to, n, p->waited);
+            if (n)
+                snprintf(line, sizeof(line), "map HUD art: %08X drawn as %08X on %u sprites (loaded after %.1f s)",
+                         p->from, p->to, n, p->waited);
+            else                      /* drawn by name (no sprite): the texture table */
+                snprintf(line, sizeof(line), "map HUD art: %08X drawn by name as %08X: %s (loaded after %.1f s)",
+                         p->from, p->to, maptexalias_set(p->from, p->to) ? "swapped" :
+                         "the game's texture isn't in the texture table", p->waited);
         } else if ((p->waited += step) > 30.0) {
             snprintf(line, sizeof(line), "map HUD art: %08X never loaded; its sprites keep the game's %08X",
                      p->to, p->from);
@@ -3095,6 +3185,7 @@ static void MERC_PLUGIN_CALL level_load_before(void *ud, MercHookContext *c)
     (void)ud; (void)c;
     maptext_restore();
     mapsprite_restore();
+    maptexalias_restore();
     maptex_pending_count = 0;
     hq_mode_on = 0;               /* a new level has a new player */
 }
