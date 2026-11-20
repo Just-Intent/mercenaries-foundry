@@ -28,6 +28,7 @@ import {createLook} from './look.js';
 import {createLimits} from './limits.js';
 import {createText} from './text.js';
 import {createGenerators} from './gen.js';
+import {createSounds} from './sound.js';
 import {exclusivePanels} from './panels.js';
 
 const $ = (id) => document.getElementById(id);
@@ -1754,6 +1755,7 @@ createLimits({$, stats: () => ({map: state.map, objects: state.records.filter((r
                                placed: state.records.filter((r) => String(r.id || '').startsWith('placed:') && !r.removed).length,
                                removed: state.records.filter((r) => r.removed).length})});
 createText({$, status, post: postJSON});
+createSounds({$, status, post: postJSON});
 // Generators: kits stamped on free ground, zones filled, traffic laid on roads.
 function placeMany(items, label) {
   const added = items.map((it) => addPlaced(it.from, freshPlacedName(it.from), state.layerFile, it.position, it.rotation, false, it.set));

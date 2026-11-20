@@ -71,6 +71,24 @@ What Gaza's tools did by script, in the editor (World > Generators):
   map's buildings and props, in paths of up to 9 points linked at junctions: a traffic zone (its density and who
   spawns) written into an encounters layer (the zone's old paths replaced), and the map reloads to show it.
 - **Budgets:** the map's traffic routes (1,024 at most) and names (2,048 at most), counted over the mod's layers.
+### Sounds & effects
+- **Sounds:** pick a bank, find a cue, **Hear** it (each of its sounds). **Replace with a .wav** puts your sound in
+  its place (`sounds/<bank>/<cue>.wav`); **Copy as a new cue** keeps every track and setting under a new name
+  (`sounds/<bank>/new/<cue>.json` `{"like"}`), and each track then takes a .wav of yours (`<cue>.<n>.wav`);
+  **New cue from a .wav** adds one (`new/<cue>.wav`). The build fits each .wav to the bank's format.
+- **Effects:** find an entry of the game's effects table (a template's `effectset` names one), change its values, or
+  **Copy as a new entry** (e.g. a helicopter set whose `rotor` is your own engine cue). Saved to `effects.json`,
+  checked as the build checks it.
+
+### Zones and paths
+A zone or path of the mod's own shows its properties as a table: change, rename or remove a key, add one, or start
+from a preset (**Ambience zone**: `type` ambience, `sound` a soundscape, `width` the fade in metres; **Allowed area**:
+a killbox; **Trigger**). Each change is one Undo step. The game's own show theirs read only.
+
+### Models as built
+The view draws a mod's models as the build makes them: a copy (`models/<name>.new.json` `"copy"`) as its base
+model with the swapped textures, a game model the mod replaces (`models/<game model>.glb`), and every texture the
+mod adds or replaces (`textures/<name>.png`).
 ### Limits
 The open map's object count against the game's 16,384, and the other limits that freeze or hang the game rather than
 fail the build (traffic routes, the name table, texture sizes and memory, model sizes, objectives at once).

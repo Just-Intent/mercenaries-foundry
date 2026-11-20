@@ -95,11 +95,6 @@ class TextAndMailTests(unittest.TestCase):
         self.assertEqual(hits, [["faction.allies", "Allied Nations"]])
         self.assertEqual(content.search_strings({"a": "b"}, "a"), [])                  # too short
 
-
-if __name__ == "__main__":
-    unittest.main()
-
-
 class GeneratorTests(unittest.TestCase):
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory()
@@ -148,6 +143,21 @@ class GeneratorTests(unittest.TestCase):
         self.assertEqual(counts["routes"], len(doc["paths"]))
         with self.assertRaises(ValueError):
             content.traffic_from_roads(self.mod, "nowhere", "cars", {"centre": [0, 0]}, [], flat, "l", "z")
+
+
+class EffectsTests(unittest.TestCase):
+    def test_effects_checked_as_the_build(self):
+        table = {"littlebird_l": {"rotor": "vh_lbird.air_heli_engine", "num_rotor_blades": "5.0"}}
+        with tempfile.TemporaryDirectory() as t:
+            mod = Path(t)
+            content.save_effects(mod, {"gaza_heli_l": {"copy": "littlebird_l", "rotor": "vh_lbird.gaza_heli_engine"}}, table)
+            self.assertEqual(content.effects_doc(mod)["gaza_heli_l"]["copy"], "littlebird_l")
+            for bad in ({"nothing_like_it": {"rotor": "x"}}, {"littlebird_l": {"copy": "littlebird_l"}},
+                        {"x": {"copy": "missing"}}, {"littlebird_l": {"name": "y"}}, {"littlebird_l": {"rotor": [1]}}):
+                with self.assertRaises(ValueError):
+                    content.save_effects(mod, bad, table)
+            content.save_effects(mod, {}, table)
+            self.assertFalse((mod / "effects.json").exists())
 
 
 if __name__ == "__main__":

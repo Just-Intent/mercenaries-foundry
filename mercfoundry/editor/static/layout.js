@@ -497,9 +497,8 @@ export function createLayout(ctx) {
     $('item-title').textContent = it.name;
     $('item-kind').textContent = `${it.source === 'game' ? 'Game' : it.source === 'map' ? 'The map\'s own' : 'Mod'} ${label(it)}, ${it.points.length} points`;
     $('item-layer').textContent = it.layer;
-    const props = Object.entries(it.properties || {}).map(([k, v]) => `${k} = ${v}`).join(', ');
-    $('item-props').textContent = props || '(none)';
     const mod = editable(it);
+    drawProps(it, mod);
     $('item-add').hidden = $('item-del-point').hidden = $('item-delete').hidden = !mod;
     $('item-revert').hidden = it.source !== 'game';
     $('item-del-point').disabled = st.point === null;
@@ -515,6 +514,64 @@ export function createLayout(ctx) {
       $('point-label').textContent = `Point ${st.point}`;
       [$('qx').value, $('qy').value, $('qz').value] = p.map((v) => v.toFixed(2));
     }
+  }
+
+  // ---------------------------------------------------------------- properties
+  // A zone's or path's properties: read only for the game's, a table to edit
+  // for the mod's own (ambience zones: sound and width; killboxes; traffic
+  // paths' width...), with presets for the common kinds of zone.
+  const PRESETS = {
+    ambience: {label: 'Ambience zone', props: {type: 'ambience', sound: '', width: '20'},
+               hint: 'Switches the background sound (a soundscape: maps json "ambience") inside it, fading over width metres.'},
+    killbox: {label: 'Allowed area', props: {type: 'killbox', TestInside: 'false'},
+              hint: 'With TestInside false, leaving it is deadly: the edge of the playable map.'},
+    trigger: {label: 'Trigger', props: {type: 'trigger'}, hint: 'A zone missions watch (goto, hold, leave).'},
+  };
+  function drawProps(it, can) {
+    const esc = (v) => String(v ?? '').replace(/[&<>"]/g, (c) => ({'&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;'}[c]));
+    const entries = Object.entries(it.properties || {});
+    if (!can) {
+      $('item-props').textContent = entries.map(([k, v]) => `${k} = ${v}`).join(', ') || '(none)';
+      return;
+    }
+    const isZone = it.kind === 'boundary';
+    const type = (prop(it, 'type') || '').toLowerCase();
+    $('item-props').innerHTML = `<div class="props-table">${entries.map(([k, v]) => `<div class="prop-row" data-k="${esc(k)}">
+        <input class="prop-k" value="${esc(k)}" spellcheck="false"><input class="prop-v" value="${esc(v)}" spellcheck="false">
+        <button class="prop-del" title="Remove it">&times;</button></div>`).join('')}</div>
+      <div class="buttons"><button class="prop-add">+ Property</button>
+        ${isZone && !isWater(it) ? Object.entries(PRESETS).map(([k, p]) => `<button class="prop-preset ${type === k ? 'on' : ''}" data-preset="${k}" title="${esc(p.hint)}">${p.label}</button>`).join('') : ''}</div>
+      ${PRESETS[type] ? `<p class="hint">${esc(PRESETS[type].hint)}</p>` : ''}`;
+    const box = $('item-props');
+    const changed = () => { if (it.spec) it.spec.properties = it.properties; edited(it); buildVisual(it); };
+    const step = (fn) => onItem('Changed the properties of', fn);     // one undo step each
+    box.querySelectorAll('.prop-row').forEach((row) => {
+      const old = row.dataset.k;
+      row.querySelector('.prop-v').onchange = step((e) => { it.properties[old] = e.target.value; changed(); });
+      row.querySelector('.prop-k').onchange = step((e) => {
+        const nk = e.target.value.trim();
+        if (!nk || (nk !== old && nk in it.properties)) { e.target.value = old; return status('A property needs a name of its own', true); }
+        const v = it.properties[old];
+        delete it.properties[old];
+        it.properties[nk] = v;
+        changed(); showPanel();
+      });
+      row.querySelector('.prop-del').onclick = step(() => { delete it.properties[old]; changed(); showPanel(); });
+    });
+    box.querySelector('.prop-add').onclick = step(() => {
+      let k = 'key', n = 1;
+      while (k in it.properties) k = `key${++n}`;
+      it.properties[k] = '';
+      changed(); showPanel();
+      const rows = box.querySelectorAll('.prop-k');
+      if (rows.length) { rows[rows.length - 1].focus(); rows[rows.length - 1].select(); }
+    });
+    box.querySelectorAll('.prop-preset').forEach((b) => b.onclick = step(() => {
+      const pr = PRESETS[b.dataset.preset].props;
+      for (const [k, v] of Object.entries(pr)) if (k === 'type' || prop(it, k) === undefined) setProp(it, k, v);
+      setProp(it, 'type', pr.type);
+      changed(); showPanel();
+    }));
   }
 
   // ---------------------------------------------------------------- water settings

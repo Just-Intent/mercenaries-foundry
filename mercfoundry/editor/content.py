@@ -471,3 +471,162 @@ def height_fn(meta, data):
         b = h[(iz + 1) * size + ix] * (1 - tx) + h[(iz + 1) * size + ix + 1] * tx
         return a * (1 - tz) + b * tz
     return at
+
+
+# ---------------------------------------------------------------- sounds and effects
+
+def sound_banks(lib):
+    return sorted(lib.sound_paths)
+
+
+def bank_cues(mod, lib, bank):
+    """A bank's cues, with what the mod does to each: [{name, waves, mod}],
+    the mod's new ones too ("new": a .wav of its own, "like": a copy)."""
+    sb = lib.sound_bank(bank)
+    folder = Path(mod) / "sounds" / bank
+    out = []
+    for c in sb.cues:
+        mine = []
+        if (folder / f"{c.name}.wav").is_file():
+            mine.append("replaced")
+        out.append({"name": c.name, "waves": len(sb.cue_waves(c)), "mod": mine})
+    for f in sorted((folder / "new").glob("*")) if (folder / "new").is_dir() else []:
+        if f.suffix.lower() == ".json":
+            try:
+                like = json.loads(f.read_text(encoding="utf-8")).get("like")
+            except ValueError:
+                like = None
+            tracks = sorted(p.name for p in (folder / "new").glob(f"{f.stem}.*.wav"))
+            out.append({"name": f.stem, "waves": len(tracks), "mod": ["new"], "like": like, "tracks": tracks})
+        elif f.suffix.lower() == ".wav" and f.stem.count(".") == 0:
+            out.append({"name": f.stem, "waves": 1, "mod": ["new"]})
+    return {"bank": bank, "cues": out}
+
+
+def cue_wav(mod, lib, bank, cue, n=0):
+    """A cue's nth sound as .wav: the mod's own (a replacement, a new cue, a
+    copy's track) where it has one, else the game's."""
+    from .. import sounds
+    folder = Path(mod) / "sounds" / bank
+    for f in (folder / f"{cue}.wav", folder / "new" / f"{cue}.wav", folder / "new" / f"{cue}.{n + 1}.wav"):
+        if f.is_file():
+            return f.read_bytes()
+    sb = lib.sound_bank(bank)
+    c = sb.cue(cue)
+    like = None
+    if c is None:
+        spec = folder / "new" / f"{cue}.json"
+        if spec.is_file():
+            like = (json.loads(spec.read_text(encoding="utf-8")) or {}).get("like")
+            c = sb.cue(like) if like else None
+    if c is None:
+        raise ValueError(f"no cue {bank}.{cue}")
+    waves = sb.cue_waves(c)
+    if not waves:
+        raise ValueError(f"{bank}.{cue} plays no waves")
+    return sounds.decoded(lib, *waves[min(int(n), len(waves) - 1)])
+
+
+def save_sound(mod, lib, bank, cue, kind, wav_b64=None, like=None, track=None):
+    """kind "replace": sounds/<bank>/<cue>.wav (a game cue's sound);
+    "new": sounds/<bank>/new/<cue>.wav; "like": sounds/<bank>/new/<cue>.json
+    {"like"} (a copy of a game cue), and with a .wav its track (n, from 1)."""
+    if bank not in lib.sound_paths:
+        raise ValueError(f"no sound bank {bank!r}")
+    if not re.fullmatch(r"[A-Za-z0-9_]+", cue or ""):
+        raise ValueError("a cue's name is letters, digits and _")
+    folder = Path(mod) / "sounds" / bank
+    sb = lib.sound_bank(bank)
+    raw = base64.b64decode(wav_b64) if wav_b64 else None
+    if raw is not None and raw[:4] != b"RIFF":
+        raise ValueError("that isn't a .wav file")
+    if kind == "replace":
+        if sb.cue(cue) is None:
+            raise ValueError(f"{bank} has no cue {cue!r} to replace")
+        if raw is None:
+            raise ValueError("give a .wav")
+        folder.mkdir(parents=True, exist_ok=True)
+        (folder / f"{cue}.wav").write_bytes(raw)
+        return {"file": f"sounds/{bank}/{cue}.wav"}
+    if sb.cue(cue) is not None:
+        raise ValueError(f"{bank} already has a cue {cue!r}: pick a new name")
+    (folder / "new").mkdir(parents=True, exist_ok=True)
+    if kind == "new":
+        if raw is None:
+            raise ValueError("give a .wav")
+        (folder / "new" / f"{cue}.wav").write_bytes(raw)
+        return {"file": f"sounds/{bank}/new/{cue}.wav"}
+    if kind == "like":
+        if like and sb.cue(like) is None:
+            raise ValueError(f"{bank} has no cue {like!r} to copy")
+        spec = folder / "new" / f"{cue}.json"
+        if like:
+            _write(spec, {"like": like})
+        elif not spec.is_file():
+            raise ValueError("name the cue it copies")
+        files = [f"sounds/{bank}/new/{cue}.json"]
+        if raw is not None:
+            n = int(track or 1)
+            (folder / "new" / f"{cue}.{n}.wav").write_bytes(raw)
+            files.append(f"sounds/{bank}/new/{cue}.{n}.wav")
+        return {"file": ", ".join(files)}
+    raise ValueError("kind is replace, new or like")
+
+
+def effects_table(archives):
+    """The game's effects table: {entry: {key: value}} (INFO, STRG and FLOT pairs)."""
+    from .. import ucfb
+    from ..hashing import name_hash
+    from ..modbuild import _fx_pairs
+    out = {}
+    for a in archives:
+        if a.path.name.lower() != "assets.dsk":
+            continue
+        for r in a.records:
+            if r.kind == name_hash("effects") and r.key == name_hash("effects"):
+                roots = ucfb.parse(a.read(r))
+                for c in roots[0].children:
+                    vals = {}
+                    for k in c.children:
+                        if k.tag in (b"INFO", b"STRG", b"FLOT"):
+                            vals.update(dict(_fx_pairs(k.data)))
+                    if vals.get("name"):
+                        out[vals["name"]] = {k: v for k, v in vals.items() if k != "name"}
+                return out
+    return out
+
+
+def effects_doc(mod):
+    return _read(Path(mod) / "effects.json") or {}
+
+
+def save_effects(mod, doc, table):
+    """effects.json, checked against the game's table as the build checks it."""
+    if not isinstance(doc, dict):
+        raise ValueError("effects.json is {entry: {key: value}}")
+    names = {k.lower() for k in table}
+    for entry, values in doc.items():
+        if not isinstance(values, dict):
+            raise ValueError(f"{entry}: give an object of keys and values")
+        if values.get("copy") is not None:
+            if entry.lower() in names:
+                raise ValueError(f"the effects table already has an entry {entry!r}")
+            if str(values["copy"]).lower() not in names:
+                raise ValueError(f"{entry}: no entry {values['copy']!r} to copy")
+            if not re.fullmatch(r"[A-Za-z0-9_]+", entry):
+                raise ValueError(f"{entry!r}: name new entries with letters, digits and _")
+        elif entry.lower() not in names:
+            raise ValueError(f"the effects table has no entry {entry!r}")
+        for k, v in values.items():
+            if k == "copy":
+                continue
+            if any(ch.isspace() for ch in k) or k.lower() in ("name", "num_components"):
+                raise ValueError(f"{entry}: {k!r} can't be set")
+            if v is not None and not isinstance(v, (str, int, float)):
+                raise ValueError(f"{entry}: {k}: a string, a number or null")
+    p = Path(mod) / "effects.json"
+    if doc:
+        _write(p, doc)
+    elif p.exists():
+        p.unlink()
+    return {"file": "effects.json", "entries": len(doc)}

@@ -97,6 +97,7 @@ class Scene:
         self.context = context if context is not None else context_mods(mod_dir)
         self._objects = None
         self._models = {}
+        self._models_stamp = {}      # a game model's mod textures when it was exported
         self._names = None
         self._terrain = None
 
@@ -154,6 +155,7 @@ class Scene:
             delattr(self, k)
         self._terrain = None
         self._models = {}
+        self._models_stamp = {}      # a game model's mod textures when it was exported
         self.terrain_errors = []
         return self.mods()
 
@@ -2064,7 +2066,11 @@ class Scene:
         return {"textures": names, "decals": out}
 
     def texture_png(self, name):
-        """A game texture as PNG (its full-size image), cached."""
+        """A texture as PNG (its full-size image): the mod's textures/<name>.png
+        if it has one, else the game's (cached)."""
+        own = self.mod / "textures" / f"{name}.png" if getattr(self, "mod", None) else None
+        if own is not None and own.is_file():
+            return own.read_bytes()
         if not hasattr(self, "_pngs"):
             self._pngs = {}
         if name not in self._pngs:
@@ -2260,28 +2266,76 @@ class Scene:
 
     # ------------------------------------------------------------ models
     def model_glb(self, name):
+        """A model for the 3D view, as the build will make it: the mod's new
+        model (.glb + .new.json), a copy of a game model drawing other
+        textures (.new.json "copy"), a game model the mod replaces
+        (models/<game model>.glb), else the game's; textures the mod adds or
+        replaces (textures/<name>.png) drawn as they'll be."""
         own = self.mod / "models" / f"{name}.glb"
         spec = self.mod / "models" / f"{name}.new.json"
+        spec_doc = {}
+        if spec.is_file():
+            try:
+                spec_doc = json.loads(spec.read_text(encoding="utf-8"))
+            except ValueError:
+                spec_doc = {}
         if own.is_file() and spec.is_file():
             return self._new_model_glb(own.read_bytes(), spec)    # the mod's new model, as it'll be imported
-        if name not in self._models:
-            mr, sr = model.find(self.archives, name)
-            m = model.decode(mr, sr)
-            lod = 0
-            pieces = m.at_lod(lod, False)
-            wanted = {p.texture for p in pieces}
-            pngs = {}
-            from .. import png
-            for a in self.archives:
-                for r in a.records:
-                    if r.kind == texture.TEXTURE and r.key in wanted and r.key not in pngs:
-                        try:
-                            w, h, px = texture.decode(a.read(r)).rgba()
-                        except ValueError:
-                            continue
-                        pngs[r.key] = (png.encode(w, h, px, 4), any(px[i] < 255 for i in range(3, len(px), 4)))
-            self._models[name] = gltf.export(m, lod, False, pngs, lambda k: f"{k:08X}")
+        if spec_doc.get("copy") and spec_doc.get("base"):
+            # a copy: the base as it is, drawing the swapped textures
+            swaps = {name_hash(str(o)): str(n) for o, n in (spec_doc.get("textures") or {}).items()}
+            return self._export_game_model(str(spec_doc["base"]), swaps)
+        if own.is_file():
+            return own.read_bytes()                                # the mod's replacement for a game model
+        if name not in self._models or self._mod_textures_stamp() != self._models_stamp.get(name):
+            self._models[name] = self._export_game_model(name, {})
+            self._models_stamp[name] = self._mod_textures_stamp()
         return self._models[name]
+
+    def _mod_textures_stamp(self):
+        folder = self.mod / "textures"
+        if not folder.is_dir():
+            return None
+        return max((f.stat().st_mtime_ns for f in folder.glob("*.png")), default=None)
+
+    def _texture_png_data(self, key, name=None):
+        """(png bytes, see-through?) for a texture by hash: the mod's textures/<name>.png
+        if it has one, else the game's."""
+        from .. import png
+        names = self.names()
+        n = name or names.get(key)
+        own = self.mod / "textures" / f"{n}.png" if n else None
+        if own is not None and own.is_file():
+            data = own.read_bytes()
+            try:
+                w, h, px = png.decode(data)
+                return data, any(px[i] < 255 for i in range(3, len(px), 4))
+            except Exception:                 # noqa: BLE001 - a PNG the view can't read: the game's then
+                pass
+        for a in self.archives:
+            for r in a.records:
+                if r.kind == texture.TEXTURE and r.key == key:
+                    try:
+                        w, h, px = texture.decode(a.read(r)).rgba()
+                    except ValueError:
+                        return None
+                    return png.encode(w, h, px, 4), any(px[i] < 255 for i in range(3, len(px), 4))
+        return None
+
+    def _export_game_model(self, name, swaps):
+        """A game model as glb, its textures the mod's where it has them, and
+        swaps ({base texture hash: other texture's name}) drawn instead."""
+        mr, sr = model.find(self.archives, name)
+        m = model.decode(mr, sr)
+        lod = 0
+        pieces = m.at_lod(lod, False)
+        pngs = {}
+        for key in {p.texture for p in pieces}:
+            got = self._texture_png_data(name_hash(swaps[key]), swaps[key]) if key in swaps else None
+            got = got or self._texture_png_data(key)
+            if got:
+                pngs[key] = got
+        return gltf.export(m, lod, False, pngs, lambda k: f"{k:08X}")
 
     def _new_model_glb(self, glb, spec):
         """A new model's file for the 3D view, its materials see-through as the

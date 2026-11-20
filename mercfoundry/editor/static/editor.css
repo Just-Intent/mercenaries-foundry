@@ -228,3 +228,16 @@ code.copyable { display: block; white-space: pre-wrap; word-break: break-all; fo
 #text-search { width: 100%; }
 #text textarea { width: 100%; box-sizing: border-box; font: inherit; }
 .text-hit span { display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden; }
+
+/* a zone's or path's properties */
+#item dl { grid-template-columns: 50px 1fr; }
+.props-table { display: grid; gap: 3px; margin-bottom: 4px; }
+.prop-row { display: grid; grid-template-columns: 1fr 1.3fr auto; gap: 3px; }
+.prop-row input { min-width: 0; font-size: 12px; }
+/* Sounds & effects */
+.snd-list { max-height: 220px; overflow-y: auto; border: 1px solid #3a3f46; border-radius: 4px; margin: 4px 0; }
+.snd-cue { display: flex; justify-content: space-between; gap: 6px; padding: 3px 6px; cursor: pointer; font-size: 12px; }
+.snd-cue:hover { background: #30353c; } .snd-cue.on { background: #3f6390; }
+.snd-detail { border: 1px solid #3a3f46; border-radius: 5px; padding: 6px; margin: 6px 0; }
+#sound input[type=search] { width: 100%; }
+#sound input.changed { border-color: #c9a227; }

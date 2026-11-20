@@ -170,6 +170,20 @@ def make_handler(scene: Scene, mod_name: str, live: Live = None):
                     return self.send(200, content.map_keys(scene.mod, path.rsplit("/", 1)[1]))
                 if path == "/api/deck":
                     return self.send(200, content.deck_files(scene.mod))
+                if path == "/api/sound/banks":
+                    return self.send(200, content.sound_banks(scene.sound_library()))
+                if path.startswith("/api/sound/bank/"):
+                    return self.send(200, content.bank_cues(scene.mod, scene.sound_library(), path.rsplit("/", 1)[1]))
+                if path.startswith("/api/sound/cue/") and path.endswith(".wav"):
+                    # /api/sound/cue/<bank>/<cue>/<n>.wav
+                    _, bank, cue, n = path[:-4].rsplit("/", 3)
+                    return self.send(200, content.cue_wav(scene.mod, scene.sound_library(), bank, cue, int(n or 0)),
+                                     "audio/wav")
+                if path == "/api/effects":
+                    with objects_lock:
+                        if not hasattr(scene, "_fx_table"):
+                            scene._fx_table = content.effects_table(scene.archives)
+                    return self.send(200, {"table": scene._fx_table, "doc": content.effects_doc(scene.mod)})
                 if path == "/api/kits":
                     return self.send(200, content.kits(scene.mod))
                 if path.startswith("/api/gen/roads/"):
@@ -347,6 +361,14 @@ def make_handler(scene: Scene, mod_name: str, live: Live = None):
                 if path == "/api/deck/portrait":
                     return self.send(200, content.save_portrait(scene.mod, str(doc.get("suit") or ""),
                                                                 str(doc.get("card") or ""), doc.get("png") or ""))
+                if path == "/api/sound/save":
+                    return self.send(200, content.save_sound(scene.mod, scene.sound_library(), str(doc.get("bank") or ""),
+                                                             str(doc.get("cue") or ""), str(doc.get("kind") or ""),
+                                                             doc.get("wav"), doc.get("like"), doc.get("track")))
+                if path == "/api/effects/save":
+                    if not hasattr(scene, "_fx_table"):
+                        scene._fx_table = content.effects_table(scene.archives)
+                    return self.send(200, content.save_effects(scene.mod, doc.get("doc") or {}, scene._fx_table))
                 if path == "/api/kits/save":
                     return self.send(200, content.save_kit(scene.mod, str(doc.get("name") or ""), doc.get("doc") or {}))
                 if path == "/api/gen/traffic":
