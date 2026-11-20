@@ -221,10 +221,12 @@ end
 Utility_EraseValueFromScribbleMemory('foundry_deck_on')
 Utility_EraseValueFromScribbleMemory('foundry_deck_suit')
 end
--- A map's number cards: each at large has its layer loaded and a verify
--- objective, unmarked until identified (in view, or within 30 m), as
--- retail's. Looked for every 5 s while free roam lasts (an actor that comes
--- back is a new one to arm).
+-- A map's number cards: each at large has its layer loaded and, while it's
+-- awake, a verify objective, unmarked until identified (in view, or within
+-- 30 m), as retail's (gameflow_LoadLayers, gameflow_CardIsDormant): the
+-- objective and its events are made when the card wakes and taken away when
+-- it goes dormant, never kept on a dormant actor. Looked for every 5 s while
+-- free roam lasts (an actor that comes back is a new one to watch).
 function foundry_DeckArm(m)
 local d = tFoundryDecks[m]
 if not d then return end
@@ -254,10 +256,33 @@ local iActor = Utility_GetActorAsInt(c.actor)
 if tFoundryDeckArmed[c.actor] ~= iActor then
 tFoundryDeckArmed[c.actor] = iActor
 tFoundryDeckBy[iActor] = c
+c.awake = nil
+c.hWake = Event_ActorIsDormant('foundry_DeckWake', 'b', c.actor, FALSE)   -- when it wakes
+end
+end
+end
+end
+-- Woken (bDormant false): its objective; gone dormant: none (retail's
+-- gameflow_CardIsDormant). Then the next change is watched.
+function foundry_DeckWake(aCard, bDormant)
+local c = tFoundryDeckBy[Utility_GetActorAsInt(aCard)]
+if not c then return end
+c.hWake = nil
+if Utility_ReadStringFromScribbleMemory(c.suit .. c.rank .. 'status') then return end   -- verified meanwhile
+if bDormant then
+foundry_DeckSleep(c)
+else
+c.awake = 1
 foundry_DeckObjective(c.suit, c)
 end
+c.hWake = Event_ActorIsDormant('foundry_DeckWake', 'b', c.actor, not bDormant)
 end
-end
+function foundry_DeckSleep(c)
+c.awake = nil
+c.known = nil
+if c.hFocus then Event_CancelEvent(c.hFocus) c.hFocus = nil end
+if c.hNear then Event_CancelEvent(c.hNear) c.hNear = nil end
+mission_RemoveObjective('foundry_deck_' .. c.suit .. c.rank)
 end
 function foundry_DeckObjective(suit, c)
 local caption = Utility_GetStringById('cards.' .. suit .. '.' .. c.rank .. '.Name')
@@ -279,8 +304,8 @@ killCallbackFunc = foundry_DeckFound,
 subdueCallbackFunc = foundry_DeckFound,
 }}
 if not bKnown then
-Event_ActorInFocus('foundry_DeckFound', 'b', c.actor)
-Event_ActorToActorProximity('foundry_DeckNear', 'b', 'player0', c.actor, 30, TRUE)
+c.hFocus = Event_ActorInFocus('foundry_DeckFound', 'b', c.actor)
+c.hNear = Event_ActorToActorProximity('foundry_DeckNear', 'b', 'player0', c.actor, 30, TRUE)
 end
 end
 function foundry_DeckNear(aPlayer, aCard)
@@ -291,8 +316,10 @@ end
 function foundry_DeckFound(aCard)
 local c = tFoundryDeckBy[Utility_GetActorAsInt(aCard)]
 local d = tFoundryDecks[sFoundryDeckMap]
-if not c or not d or c.known then return end
+if not c or not d or c.known or not c.awake then return end
 c.known = 1
+if c.hFocus then Event_CancelEvent(c.hFocus) c.hFocus = nil end
+if c.hNear then Event_CancelEvent(c.hNear) c.hNear = nil end
 Utility_WriteNumberToScribbleMemory(c.suit .. c.rank .. 'identified', 1)
 mission_ModifyObjective{{ targets = {{ {{ actorName = c.actor, markInGPS = true, markInPDA = true, markInWorld = true }} }},
 bForceRemove = true, bForceRedraw = true }}
@@ -306,6 +333,9 @@ local d = tFoundryDecks[sFoundryDeckMap]
 if not c or not d then return end
 local state = 'captured'
 if bDead then state = 'killed' end
+if c.hWake then Event_CancelEvent(c.hWake) c.hWake = nil end
+if c.hFocus then Event_CancelEvent(c.hFocus) c.hFocus = nil end
+if c.hNear then Event_CancelEvent(c.hNear) c.hNear = nil end
 Utility_WriteStringToScribbleMemory(c.suit .. c.rank .. 'status', state)
 Utility_WriteStringToScribbleMemory('foundry_deck_' .. sFoundryDeckMap .. '_' .. c.suit .. c.rank .. 'status', state)
 local intel = 0
