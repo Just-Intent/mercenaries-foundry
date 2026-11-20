@@ -18,6 +18,7 @@ const TOOLS = [
   ['text-mode', 'text', 'text-close'],
   ['gen-mode', 'gen', 'gen-close'],
   ['sound-mode', 'sound', 'snd-close'],
+  ['models-mode', 'models', 'models-close'],
 ];
 
 export function exclusivePanels($) {

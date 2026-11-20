@@ -115,8 +115,22 @@ export function createHq(ctx) {
       <label class="check"><input type="checkbox" data-int-k="bribe.on" ${bribe !== false ? 'checked' : ''}> The guard takes a bribe when the faction is hostile</label>
       <label class="sky-row"><span>Bribe cost</span><input type="number" data-int-k="bribe.cost" value="${bribe && bribe.cost != null ? bribe.cost : ''}" placeholder="the chapter's (25,000 and up)"></label>
       <h4>Lines</h4>
-      <label class="field">Greeting (one line each; "Speaker: text")<textarea rows="3" data-int-lines="greeting">${esc(linesText(i.greeting))}</textarea></label>
+      <label class="field">Greeting on the first visit (one line each; "Speaker: text")<textarea rows="3" data-int-lines="greeting">${esc(linesText(i.greeting))}</textarea></label>
+      <p class="hint">Every visit, before the briefing: a greeting by the faction's mood toward the player, as retail's
+        (leave one empty to skip it).</p>
+      <label class="field">Friendly<textarea rows="2" data-int-lines="greetings.friendly">${esc(linesText((i.greetings || {}).friendly))}</textarea></label>
+      <label class="field">Neutral<textarea rows="2" data-int-lines="greetings.neutral">${esc(linesText((i.greetings || {}).neutral))}</textarea></label>
+      <label class="field">Unfriendly (and hostile, after a bribe)<textarea rows="2" data-int-lines="greetings.unfriendly">${esc(linesText((i.greetings || {}).unfriendly))}</textarea></label>
+      <label class="field">Nags while the contract waits (one per line: after 4 s, then every 8 s)<textarea rows="3" data-int-lines="nags">${esc(linesText(i.nags))}</textarea></label>
       <label class="field">With no contract<textarea rows="2" data-int-lines="idle">${esc(linesText(i.idle))}</textarea></label>
+      <h4>Atmosphere</h4>
+      <p class="hint">Inside, the music stops (as retail's HQs). A room ambience plays if set; it stops on leaving.</p>
+      <label class="sky-row"><span>Room ambience</span><input data-int-k="ambience" value="${esc(i.ambience || '')}" placeholder="a looping cue, e.g. ambient.hq_un_war"></label>
+      <label class="check" title="Retail hides the HUD inside because its lines are voiced. These lines are on-screen messages and the rings are HUD markers: hide it only if every line has a sound."><input type="checkbox" data-int-k="hide_hud" ${i.hide_hud ? 'checked' : ''}> Hide the HUD inside (only with voiced lines)</label>
+      <h4>The guard</h4>
+      <label class="check" title="Retail's bouncers nod at you when you're within 15 m: friendly, neutral or unfriendly by the faction's mood (needs a bouncer-like character)"><input type="checkbox" data-int-k="guard_moods" ${(i.guard_moods ?? /_bouncer$/i.test(g.template || `template_${f}_bouncer`)) ? 'checked' : ''}> Mood gestures when the player comes near</label>
+      <label class="check" title="Before going in, the guard says one of the faction's retail bouncer lines (allies, sk, china, mafia)"><input type="checkbox" data-int-k="banter.retail" ${i.banter === true ? 'checked' : ''}> Says a retail bouncer line before you go in</label>
+      ${i.banter === true ? '' : `<label class="sky-row"><span>Or these cues</span><input data-int-k="banter.cues" value="${esc(Array.isArray(i.banter) ? i.banter.join(', ') : '')}" placeholder="bank.cue, bank.cue (one is picked)"></label>`}
       <div class="buttons"><button data-int-remove="${f}">Remove this interior</button></div>
     </details>`;
   }
@@ -208,7 +222,15 @@ export function createHq(ctx) {
       else if (path === 'starter') { if (val) i.starter = val; else delete i.starter; }
       else if (path === 'bribe.on') i.bribe = val ? (typeof i.bribe === 'object' ? i.bribe : true) : false;
       else if (path === 'bribe.cost') i.bribe = val ? {cost: Math.max(0, Math.round(+val))} : true;
-      else {
+      else if (path === 'hide_hud') { if (val) i.hide_hud = true; else delete i.hide_hud; }
+      else if (path === 'guard_moods') i.guard_moods = !!val;
+      else if (path === 'banter.retail') {
+        if (val) i.banter = true; else if (i.banter === true) delete i.banter;
+        draw();
+      } else if (path === 'banter.cues') {
+        const cues = val ? val.split(',').map((s) => s.trim()).filter(Boolean) : [];
+        if (cues.length) i.banter = cues; else if (Array.isArray(i.banter)) delete i.banter;
+      } else {
         const [a, b] = path.split('.');
         const target = b ? (i[a] = i[a] || {}) : i;
         const key = b || a;
@@ -220,7 +242,12 @@ export function createHq(ctx) {
     box.querySelectorAll('[data-int-lines]').forEach((ta) => ta.onchange = () => {
       const f = ta.closest('[data-int]').dataset.int;
       const i = st.keys.interiors[f];
-      i[ta.dataset.intLines] = textLines(ta.value, i[ta.dataset.intLines]);
+      const [a, b] = ta.dataset.intLines.split('.');          // greetings.friendly: a mood's lines
+      const target = b ? (i[a] = i[a] || {}) : i;
+      const key = b || a;
+      const lines = textLines(ta.value, target[key]);
+      if (lines.length || key === 'greeting' || key === 'idle') target[key] = lines; else delete target[key];
+      if (b && !Object.keys(target).length) delete i[a];
       edited();
     });
     $('hq-raw-apply').onclick = () => {

@@ -2109,11 +2109,17 @@ def _check_animation_tables(data, result):
         except Exception:                          # noqa: BLE001
             continue
         for c in doc["chunks"]:
-            if c.get("tag") != "inst" or not c.get("model"):
+            if c.get("tag") != "inst":
                 continue
-            for k, v in c.get("properties") or []:
-                if str(k).lower() == "animationtable" and str(v).lower() in wanted:
-                    retail.setdefault(str(v).lower(), set()).add(str(c["model"]).lower())
+            props = {str(k).lower(): str(v) for k, v in c.get("properties") or []}
+            table = props.get("animationtable", "").lower()
+            if table not in wanted:
+                continue
+            # the models retail's own objects draw with it: the model word and
+            # the GeometryFile (a template names its model there)
+            for m in (c.get("model"), props.get("geometryfile")):
+                if m:
+                    retail.setdefault(table, set()).add(str(m).lower())
     wrong = []
     for (table, m), layers in sorted(pairs.items()):
         mine = joints(m)

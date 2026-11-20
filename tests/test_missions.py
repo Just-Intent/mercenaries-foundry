@@ -509,6 +509,13 @@ class MissionTests(unittest.TestCase):
         self.assertIn("function foundry_TooSlow(hDisplay, eState)\nif eState ~= HUD.STATE.LIMIT then return end", lua)
         finish = lua[lua.index("function foundry_Finish()"):]
         self.assertLess(finish.index("foundry_Done(o)"), finish.index("bFoundryOver = true"))   # paid before the payout
+        # however it ends (cancelled too), mission.lua's cleanup takes every
+        # marker and use prompt away (they outlive the script; a contract on a
+        # new map doesn't reload the level after)
+        cleanup = lua[lua.index("function pre_MissionCleanup()"):]
+        for s in ("Objective_Remove(o.name)", "Objective_Remove(o.name .. 'd' .. j)",
+                  "Actor_EnableScriptedUse(a, FALSE)", "{ tFoundryObjectives, tFoundryBonus }"):
+            self.assertIn(s, cleanup)
         self.assertEqual(missions.bonus_fee(doc), 20000)
         for bad in ([{"type": "fast", "seconds": 60}],                                          # not a bonus
                     [{"type": "fast", "bonus": 5}],                                            # no time

@@ -136,6 +136,9 @@ def text_plan(asset_id, doc, section):
     if "title" in doc:
         strings[f"MissionInfo.MissionTitle.{key}"] = doc["title"]
         ini["MissionTitleDbKey"] = f"MissionInfo.MissionTitle.{key}"
+        # the dateline retail shows on entering the HQ that offers it
+        # (briefing_utilities: Ui_DisplayDateline('mail.<asset>.dateline'))
+        strings.setdefault(f"mail.{asset_id.lower()}.dateline", f"'{doc['title']}'")
     if "description" in doc:
         strings[f"MissionInfo.Description.{key}"] = doc["description"]
         ini["ShortDescriptionDbKey"] = f"MissionInfo.Description.{key}"
@@ -1658,6 +1661,31 @@ for i, s in ipairs(tFoundryUnlocks) do Shop_UnlockItem(s) end
 if sFoundryDoneMail then Mail_Post(sFoundryDoneMail) end
 end
 
+-- However the contract ends (done, failed, cancelled, retried), mission.lua's
+-- mission_MissionCleanup calls this before closing the script: its markers and
+-- use prompts outlive the script, and a contract played on a new map doesn't
+-- reload the level after, so they'd stay on the targets (the world and the
+-- radar). Every marker the objectives can have and every use prompt goes.
+function pre_MissionCleanup()
+foundry_StopTimer()
+if bFoundryMusic then foundry_NormalMusic() end
+foundry_NormalWeather()
+for k, tList in ipairs({{ tFoundryObjectives, tFoundryBonus }}) do
+for i, o in ipairs(tList) do
+Objective_Remove(o.name)
+if o.targets then
+for j, a in ipairs(o.targets) do
+Objective_Remove(o.name .. 'v' .. j)
+Objective_Remove(o.name .. 'd' .. j)
+Objective_Remove(o.name .. 'c' .. j)
+if Utility_DoesActorExist(a) then Actor_EnableScriptedUse(a, FALSE) end
+end
+end
+if o.vehicle and Utility_DoesActorExist(o.vehicle) then Actor_EnableScriptedUse(o.vehicle, FALSE) end
+end
+end
+end
+
 function foundry_Finish()
 if bFoundryOver then return end
 if not bFoundryEndSaid then bFoundryEndSaid = true foundry_Radio('end') foundry_Musics('end') foundry_Weathers('end') end   -- the lines for the end
@@ -1915,6 +1943,28 @@ def interiors(where, map_name, doc):
             h = math.radians(float(room.get("heading") or 0))
             rp = [float(v) for v in room["position"]]
             cam_pos = [rp[0] - 1.2 * math.sin(h), rp[1] + 1.8, rp[2] - 1.2 * math.cos(h)]
+        # Retail's HQ visit (docs/HQS.md): the room's ambience with the music
+        # stopped, the HUD hidden (its lines are voiced: keep the HUD for
+        # message-box lines), a greeting by the faction's mood on every visit,
+        # the boss nagging while the contract waits, and the bouncer's banter
+        # and mood animations.
+        ambience = i.get("ambience")
+        if ambience is not None and not re.fullmatch(r"[A-Za-z0-9_]+\.[A-Za-z0-9_]+", str(ambience)):
+            raise ValueError(f"{w}: \"ambience\" is a sound cue <bank>.<cue>, like ambient.hq_un_war")
+        moods = i.get("greetings") or {}
+        if not isinstance(moods, dict) or set(moods) - {"friendly", "neutral", "unfriendly"}:
+            raise ValueError(f"{w}: \"greetings\" is {{\"friendly\": [line], \"neutral\": [...], \"unfriendly\": [...]}}")
+        banter = i.get("banter")
+        if banter is True:
+            banter = [f"{BANTER_BANKS[f]}{n}" for n in range(1, 6)] if f in BANTER_BANKS else []
+        if banter in (None, False):
+            banter = []
+        if not isinstance(banter, list) or not all(
+                isinstance(b, str) and re.fullmatch(r"[A-Za-z0-9_]+\.[A-Za-z0-9_]+", b) for b in banter):
+            raise ValueError(f"{w}: \"banter\" is true (the faction's retail bouncer lines) or [<bank>.<cue>, ...]")
+        guard_template = str(g.get("template") or f"template_{f}_bouncer")
+        guard_moods = i.get("guard_moods", guard_template.lower().endswith("_bouncer"))
+        respawn = f in (doc.get("hq_respawn") or {})
         exit_delay = exit_.get("delay", 5)
         exit_distance = exit_.get("distance", 3)
         if not isinstance(exit_distance, (int, float)) or exit_distance <= 0:
@@ -1936,8 +1986,17 @@ def interiors(where, map_name, doc):
                   "bribe": bribe is not False, "bribe_cost": bribe_cost,
                   "talk_prompt": str(i.get("talk_prompt") or "Talk"),
                   "greeting": _lines(f"{w} greeting", i.get("greeting")),
+                  "greetings": {m: _lines(f"{w} greetings {m}", moods[m]) for m in ("friendly", "neutral", "unfriendly")
+                                if moods.get(m)},
+                  "nags": _lines(f"{w} nags", i.get("nags")),
+                  "ambience": str(ambience) if ambience else None, "hide_hud": bool(i.get("hide_hud")),
+                  "banter": list(banter), "guard_moods": bool(guard_moods), "respawn": respawn,
                   "idle": _lines(f"{w} idle", i.get("idle") or [{"text": "Nothing for you right now. Come back later."}])}
     return out
+
+
+# Retail's bouncer banter (bouncer.lua BouncerUsed): <bank>.<cue prefix>, 1-5
+BANTER_BANKS = {"allies": "aso.bouaso0", "sk": "sks.bousks0", "china": "cso.boucso0", "mafia": "mso.boumso0"}
 
 
 def interiors_lua(prefix, inside, flagged=()):
@@ -1984,7 +2043,8 @@ def interiors_lua(prefix, inside, flagged=()):
             "%s = { guard = %s, prompt = %s, name = %s, side = %s, marker = %s, ttype = %s, blip = %s, rx = %.2f, ry = %.2f, rz = %.2f, "
             "rh = %.1f, leaders = { %s }, door = %s, doorprompt = %s, doordist = %.1f, exitdelay = %.1f, talkprompt = %s,\n"
             " starter = %s, acceptprompt = %s, bribe = %s, bribecost = %s,%s cx = %.2f, cy = %.2f, cz = %.2f,\n"
-            " greeting = %s,\n idle = %s },"
+            " amb = %s, hidehud = %s, banter = { %s }, moods = %s, respawn = %s,\n"
+            " greeting = %s,\n gmood = { %s },\n nags = %s,\n idle = %s },"
             % (f, _lua(i["guard"]), _lua_str(i["prompt"]), _lua_str(i["name"]), _lua(i["side"]),
                ("'ring'" if f in flagged else "'hq'") if i["marker"] == "hq" else "false",
                _lua(f"TARGET_TYPE_HQ_{f.upper()}"), _lua(f"hq{f}"), *i["room"], player_yaw(i["rheading"]),
@@ -1996,7 +2056,15 @@ def interiors_lua(prefix, inside, flagged=()):
                str(int(i["bribe_cost"])) if i.get("bribe_cost") is not None else "nil",
                (" dx = %.2f, dy = %.2f, dz = %.2f," % tuple(i["exit_position"])) if i.get("exit_position") else "",
                *(i.get("camera") or [i["room"][0], i["room"][1] + 1.8, i["room"][2]]),
-               i["greeting"], i["idle"]))
+               _lua(i["ambience"]) if i.get("ambience") else "nil",
+               "TRUE" if i.get("hide_hud") else "FALSE",
+               ", ".join(_lua(b) for b in i.get("banter") or []),
+               "TRUE" if i.get("guard_moods") else "FALSE",
+               "TRUE" if i.get("respawn") else "FALSE",
+               i["greeting"],
+               ", ".join(f"{m} = {lines}" for m, lines in (i.get("greetings") or {}).items()),
+               i.get("nags") or "{ }",
+               i["idle"]))
     return f"""-- HQ interiors (Mercenaries Foundry: maps json "interiors"), played as
 -- retail's HQs: bouncer, briefing and briefing_utilities
 -- util_objectives' helpers call util_misc's util_SetDefault; on SW global
@@ -2078,7 +2146,29 @@ end
 for i, a in h.leaders do
 {P}HqLeader(a)
 end
+if h.moods and {P}HqIn ~= f then {P}HqMood(f, h) end
 end
+end
+-- The guard's mood within 15 m (retail's BouncerMoodReaction): friendly,
+-- neutral or unfriendly by the faction's attitude, every 5 s or so; none when
+-- hostile.
+if not {P}HqMoodWait then {P}HqMoodWait = {{}} end
+function {P}HqMood(f, h)
+if not Utility_DoesActorExist(h.guard) then return end
+{P}HqMoodWait[f] = ({P}HqMoodWait[f] or 0) - 1
+if {P}HqMoodWait[f] > 0 then return end
+local px, py, pz = Actor_GetPosition('player0')
+local gx, gy, gz = Actor_GetPosition(h.guard)
+if not px or not gx then return end
+local dx, dy, dz = px - gx, py - gy, pz - gz
+if dx * dx + dy * dy + dz * dz > 225 then return end
+local att = Faction_GetAttitude(f, 'prokat')
+local anim = nil
+if att == 3 then anim = 'fb_mood_friendly' elseif att == 2 then anim = 'fb_mood_neutral' elseif att == 1 then anim = 'fb_mood_unfriendly' end
+if not anim then return end
+Actor_PlayHumanAnimationByHandle(Utility_GetActor(h.guard), anim)
+-- looked for each second at first, then each 5 s: about every 5 s either way
+if {P}HqWaits <= 15 then {P}HqMoodWait[f] = 5 else {P}HqMoodWait[f] = 1 end
 end
 -- A leader stands and never fights: cinematic control (retail's briefing
 -- boss and starter), once per actor; the rules each look.
@@ -2163,6 +2253,12 @@ if {P}HqHeld then return end
 {P}HqControl = Player_DisableControl()
 Player_EnableControl(13)
 if Foundry_HqMode then Foundry_HqMode(TRUE) end
+-- the room's atmosphere, as retail's briefing: the music stopped, the
+-- room's ambience cue, the HUD hidden if asked (retail's lines are voiced)
+local h = {P}HqIn and {P}Hq[{P}HqIn]
+Audio_StopMusic()
+if h and h.amb then Briefing_SetAmbientSoundCue(h.amb, 30, 40) {P}HqAmbOn = 1 end
+if h and h.hidehud then Ui_EnableHud(FALSE) {P}HqHudOff = 1 end
 end
 -- The camera inside: a fixed spot in the room (retail's briefing shows the
 -- room's own shot, never the follow camera, which a room on the map pushes
@@ -2186,6 +2282,9 @@ Camera_SetMode('RS_ACTOR_VIEW')
 end
 function {P}HqRelease()
 {P}HqCamOff()
+{P}HqNagStop()
+if {P}HqAmbOn then Briefing_SetAmbientSoundCue('', 0, 0) {P}HqAmbOn = nil end
+if {P}HqHudOff then Ui_EnableHud(TRUE) {P}HqHudOff = nil end
 if not {P}HqHeld then return end
 {P}HqHeld = nil
 if Foundry_HqMode then Foundry_HqMode(FALSE) end
@@ -2196,8 +2295,20 @@ function {P}HqEnter(f)
 local h = {P}Hq[f]
 {P}HqTrace('enter ' .. f)
 {P}HqIn = f
+{P}HqDated = nil
 {P}HqUnuse(h.guard)
 {P}HqBack = {{ Actor_GetPosition('player0') }}
+-- the guard's banter first, as retail's bouncer (BouncerUsed), then in
+local n = table.getn(h.banter)
+if n > 0 and Utility_DoesActorExist(h.guard) then
+local cue = h.banter[util_GetRandomIntInRange(1, n)]
+{P}HqTrace('banter ' .. cue)
+Audio_PlayVoiceoverCB(cue, '{P}HqGoIn', h.guard)
+else
+{P}HqGoIn()
+end
+end
+function {P}HqGoIn()
 Cinematic_FadeOut(0.5)
 Event_RelativeTimer('{P}HqInside', 'b', 0.6)
 end
@@ -2221,13 +2332,31 @@ Cinematic_FadeIn(0.5)
 -- the greeting on the first visit (per save, as retail's); later visits go
 -- straight to the next briefing, or the idle lines
 local sKey = 'foundry_hq_greeted_' .. {P}HqIn
-if Utility_ReadNumberFromScribbleMemory(sKey) == 1 then
+if Utility_ReadNumberFromScribbleMemory(sKey) == 1 or table.getn(h.greeting) == 0 then
 {P}HqTrace('lit: again, no greeting')
-{P}HqOffer()
+{P}HqMoodGreeting()
 else
 Utility_WriteNumberToScribbleMemory(sKey, 1)
 {P}HqTrace('lit: greeting')
-{P}HqSay(h.greeting, {P}HqOffer)
+{P}HqSay(h.greeting, {P}HqMoodGreeting)
+end
+end
+-- Every visit: a greeting by the faction's mood toward the player (retail's
+-- ch<n>_<faction>_greetings: friendly, neutral, unfriendly), then the offer.
+function {P}HqMoodGreeting()
+local f = {P}HqIn
+if not f then return end
+local h = {P}Hq[f]
+local att = Faction_GetAttitude(f, 'prokat')
+local lines = nil
+if att == 3 then lines = h.gmood.friendly
+elseif att == 2 then lines = h.gmood.neutral
+else lines = h.gmood.unfriendly end
+if lines and table.getn(lines) > 0 then
+{P}HqTrace('mood greeting ' .. att)
+{P}HqSay(lines, {P}HqOffer)
+else
+{P}HqOffer()
 end
 end
 -- The way out: its ring and prompt (retail's EnableExit).
@@ -2277,6 +2406,8 @@ local c = {P}HqContract(f)
 if c then
 {P}HqTrace('briefing ' .. c.id)
 {P}HqOffered = c
+-- the contract's dateline, once a visit (retail's SetupEvents)
+if not {P}HqDated then {P}HqDated = 1 Ui_DisplayDateline('mail.' .. c.id .. '.dateline') end
 {P}HqSay(c.briefing or {{}}, {P}HqAsk)
 else
 {P}HqTrace('no contract: idle lines')
@@ -2290,6 +2421,7 @@ local c = {P}HqOffered
 if not c or not {P}HqIn then return end
 local h = {P}Hq[{P}HqIn]
 {P}HqTalkArm()
+{P}HqNagStart()
 if h.starter and Utility_DoesActorExist(h.starter) then
 if not {P}HqStarterOn then
 {P}HqStarterOn = 1
@@ -2301,11 +2433,36 @@ else
 Utility_QuestionBox(Utility_GetStringById(c.title), Utility_GetStringById(c.descr), true, '{P}HqYes', '{P}HqTalkArm')
 end
 end
+-- The boss nags while the contract waits (retail: after 4 s, then every 8 s,
+-- up to the nag lines there are, 3 in retail).
+function {P}HqNagStart()
+{P}HqNagStop()
+local h = {P}HqIn and {P}Hq[{P}HqIn]
+if not h or table.getn(h.nags) == 0 then return end
+{P}HqNagN = 0
+{P}HqNagTimer = Event_RelativeTimer('{P}HqNag', 'b', 4.0)
+end
+function {P}HqNag()
+{P}HqNagTimer = nil
+local h = {P}HqIn and {P}Hq[{P}HqIn]
+if not h or not {P}HqOffered then return end
+if {P}HqLines then {P}HqNagTimer = Event_RelativeTimer('{P}HqNag', 'b', 2.0) return end   -- something is being said
+{P}HqNagN = ({P}HqNagN or 0) + 1
+local l = h.nags[{P}HqNagN]
+if not l then return end
+{P}HqSay({{ l }}, nil)
+{P}HqNagTimer = Event_RelativeTimer('{P}HqNag', 'b', l.seconds + 8.0)
+end
+function {P}HqNagStop()
+if {P}HqNagTimer then Event_CancelEvent({P}HqNagTimer) {P}HqNagTimer = nil end
+end
 function {P}HqYes()
 {P}HqTrace('accept')
 local c = {P}HqOffered
 local h = {P}HqIn and {P}Hq[{P}HqIn]
 if not c or not h then return end
+-- a death in the contract respawns by this HQ (retail's onUseStarter)
+if h.respawn then Utility_WriteStringToScribbleMemory('PlayerStartLocationName', 'loc_hq-' .. {P}HqIn .. '-respawn') end
 {P}HqTidy(h)
 {P}HqIn = nil
 {P}HqOffered = nil
@@ -2320,6 +2477,7 @@ end
 function {P}HqTidy(h)
 Ui_MessageBoxClear()
 {P}HqLines = nil
+{P}HqNagStop()
 if {P}HqDoorTimer then Event_CancelEvent({P}HqDoorTimer) {P}HqDoorTimer = nil end
 if {P}HqDoorEv then Event_CancelEvent({P}HqDoorEv) {P}HqDoorEv = nil end
 Objective_Remove('{P}obj_exit')

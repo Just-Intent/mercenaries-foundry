@@ -241,3 +241,9 @@ code.copyable { display: block; white-space: pre-wrap; word-break: break-all; fo
 .snd-detail { border: 1px solid #3a3f46; border-radius: 5px; padding: 6px; margin: 6px 0; }
 #sound input[type=search] { width: 100%; }
 #sound input.changed { border-color: #c9a227; }
+
+/* the mod's own models */
+.mdl-list { display: grid; gap: 4px; margin-top: 6px; }
+.mdl-row { border-bottom: 1px solid #333; padding: 4px 0; }
+.mdl-opts { display: flex; gap: 12px; flex-wrap: wrap; margin-top: 2px; }
+.mdl-row .warn, #models .warn { color: #e0a040; font-size: 12px; }

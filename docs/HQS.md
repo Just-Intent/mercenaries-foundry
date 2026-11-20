@@ -101,23 +101,23 @@ interiors_lua, from maps json `"interiors"`).
 | Retail | A new map's interior | |
 |---|---|---|
 | Bouncer: enter, or bribe when hostile | The guard: same prompts, retail's bribe cost and mood | same |
-| Bouncer banter line before entering | none | gap |
-| Bouncer mood animations within 15 m | none | gap |
+| Bouncer banter line before entering | `"banter"`: true (the faction's retail lines) or cues; then in (0.232) | same |
+| Bouncer mood animations within 15 m | `"guard_moods"` (on for bouncer templates): retail's fb_mood_* by attitude, about every 5 s (0.232) | same |
 | Player and bouncer invincible while entering | leaders invincible | partly |
 | Separate briefing scene, world reloaded after | a room on the map; fade and move, fade and move back | by design |
 | `mainkillbox` off while inside | not needed (the room is in the map) | - |
 | Control mode 13, weapon away, walking | the same (Foundry_HqMode) | same |
 | Seated in a chair, camera on the room's authored shot | **0.231: a fixed camera in the room** (`"camera"`), on the boss while lines play, on the player otherwise; the follow camera again on leaving. No chair or seating | closer |
 | Follow camera once standing (rooms built for it) | fixed camera throughout | differs |
-| HUD off | HUD on | gap |
+| HUD off | on; `"hide_hud"` hides it (for voiced lines only: ours are on-screen messages) (0.232) | by choice |
 | Room atmosphere, ambient light 80 | the map's own light | gap |
-| Music stopped, room ambience cue | not stopped | gap |
-| Dateline shown | none | gap |
-| Greeting by faction mood (friendly, neutral, unfriendly) | one greeting, first visit only (0.228) | partly |
+| Music stopped, room ambience cue | music stopped; `"ambience"` cue (Briefing_SetAmbientSoundCue), off on leaving (0.232) | same |
+| Dateline shown | the offered contract's (`mail.<id>.dateline`, made from its title), once a visit (0.232) | same |
+| Greeting by faction mood (friendly, neutral, unfriendly) | `"greeting"` on the first visit, then `"greetings"` by mood every visit (0.232) | same |
 | Briefing as a cinematic sequence (VO, boss and starter animations) | subtitled lines with optional voice, leaders under cinematic control | partly |
-| Boss nags (3 times) | none | gap |
+| Boss nags (3 times) | `"nags"`: one line each, after 4 s then every 8 s, until accepted or left (0.232) | same |
 | Voiced prop interactions | none | gap |
-| Starter: ring, 1.5 m, `mission_accepted`, `PlayerStartLocationName` | ring and accept prompt; the contract starts | `PlayerStartLocationName` not set |
+| Starter: ring, 1.5 m, `mission_accepted`, `PlayerStartLocationName` | ring and accept prompt; `loc_hq-<faction>-respawn` when the map has that faction's `"hq_respawn"` (0.232) | same |
 | Exit after 5 s, ring, 0.5 m | after the exit's delay (5 s), ring, 3 m | same |
 | Out: back at `loc_hq-<faction>-respawn` | back where the player stood by the guard | differs |
 
@@ -134,14 +134,14 @@ lines play, on the player otherwise; leaving or taking the contract gives
 the follow camera back. Without a spot it stands 1.2 m behind and 1.8 m
 above the room spot. Put it high in a corner, clear of the walls.
 
-### Next, to close the gaps
+### Still different
 
-- HUD off, the music stopped and a room ambience cue while inside.
-- The dateline of the offered contract on entering.
-- Greeting by the faction's mood (lines per mood).
-- The boss nagging while the contract waits.
-- Seating: a chair (object) the player is put in, with a "Stand up" prompt.
-- `PlayerStartLocationName` = the faction's HQ respawn point on accepting
-  (maps json `"hq_respawn"`), so a contract death respawns by the HQ as in
-  retail.
-- The guard's banter line and mood animations.
+- Seating: retail's chair (sit, a seated loop, stand up) uses animations and
+  hardpoints that only load with its briefing scene; the fixed camera does
+  the chair's job of framing the briefing.
+- Props with voiced interactions.
+- The way out puts the player back by the guard, not at the respawn point
+  (the world doesn't reload).
+
+All of these are set in the editor's HQs panel (an interior's Lines,
+Atmosphere and The guard sections).

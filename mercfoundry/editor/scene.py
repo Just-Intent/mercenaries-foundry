@@ -1178,6 +1178,55 @@ class Scene:
                 continue
         return out
 
+    def model_specs(self):
+        """The mod's own models (models/<name>.new.json): [{name, base, kind
+        ("new": a .glb on the base's skeleton, "copy": the base drawing other
+        textures), collision ("base" or "fitted"), shadow}], sorted."""
+        d = self.mod / "models"
+        out = []
+        for p in sorted(d.glob("*.new.json")) if d.is_dir() else []:
+            name = p.name[:-len(".new.json")]
+            try:
+                doc = json.loads(p.read_text(encoding="utf-8"))
+            except ValueError:
+                continue
+            copy = bool(doc.get("copy"))
+            out.append({"name": name, "base": str(doc.get("base") or ""), "kind": "copy" if copy else "new",
+                        "collision": "base" if copy or str(doc.get("collision") or "").lower() == "base" else "fitted",
+                        "shadow": doc.get("shadow", True) is not False,
+                        "has_glb": (d / f"{name}.glb").exists()})
+        return out
+
+    def save_model_spec(self, name, collision=None, shadow=None):
+        """A new model's settings in its models/<name>.new.json: collision
+        "base" (the base model's own shapes, kept whole: an aircraft's tuned
+        boxes) or "fitted" (a box fitted to each piece; the default), and
+        shadow (false: no shadow mesh). Other keys stay."""
+        import re
+        if not re.fullmatch(r"[A-Za-z0-9_\-]+", name or ""):
+            raise ValueError("a model name is letters, digits, _ and -")
+        p = self.mod / "models" / f"{name}.new.json"
+        if not p.exists():
+            raise ValueError(f"the mod has no model {name!r} of its own (models/{name}.new.json)")
+        doc = json.loads(p.read_text(encoding="utf-8"))
+        if collision is not None:
+            if collision not in ("base", "fitted"):
+                raise ValueError("collision is \"base\" or \"fitted\"")
+            if doc.get("copy"):
+                raise ValueError(f"{name} is a copy of {doc.get('base')}: it keeps its collision already")
+            if collision == "base":
+                doc["collision"] = "base"
+            else:
+                doc.pop("collision", None)
+        if shadow is not None:
+            if shadow:
+                doc.pop("shadow", None)
+            else:
+                doc["shadow"] = False
+        p.write_text(json.dumps(doc, indent=1) + "\n", encoding="utf-8")
+        self._models.pop(name, None)
+        return {"file": f"models/{p.name}", "spec": next(s for s in self.model_specs() if s["name"] == name)}
+
     def new_model(self, name, base, glb):
         """A new object's model: writes models/<name>.glb (glb: the file's
         bytes) and models/<name>.new.json naming the game model it's built on.

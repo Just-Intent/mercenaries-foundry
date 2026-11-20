@@ -67,6 +67,8 @@ POST /api/terrain/restorelayer {"map", "index", "layer", "trash"?}: undo removel
 POST /api/terrain/addlayer     {"map", "texture", "scale"?, "axis"?}: a new ground layer (terrain/<map>.layers.json)
 GET  /api/crowns              models whose branches bullets hit (models/<model>.collision.json "crown")
 POST /api/crown                {"model", "on"}: bullets hit that tree model's branches, or not
+GET  /api/modelspecs           the mod's own models (models/<name>.new.json): base, kind, collision, shadow
+POST /api/modelspecs/save      {"name", "collision"?: "base"|"fitted", "shadow"?: bool}: a new model's settings
 GET  /api/placeables           everything Place can copy, any map: templates, named objects, model:<model>
 POST /api/encounters/save      {"map", "files": {file: [encounter, ...]}}
 POST /api/placed/save          {"map", "files": {file: [{from, name, position, rotation}]}}: objects placed from templates
@@ -309,6 +311,9 @@ def make_handler(scene: Scene, mod_name: str, live: Live = None):
                 if path == "/api/crowns":
                     with objects_lock:
                         return self.send(200, scene.bullet_crowns())
+                if path == "/api/modelspecs":
+                    with objects_lock:
+                        return self.send(200, scene.model_specs())
                 if path == "/api/placeables":
                     with objects_lock:
                         return self.send(200, scene.placeables())
@@ -435,6 +440,9 @@ def make_handler(scene: Scene, mod_name: str, live: Live = None):
                 if path == "/api/crown":
                     with objects_lock:
                         return self.send(200, scene.bullet_crown(doc["model"], bool(doc.get("on"))))
+                if path == "/api/modelspecs/save":
+                    with objects_lock:
+                        return self.send(200, scene.save_model_spec(doc["name"], doc.get("collision"), doc.get("shadow")))
                 if path == "/api/marks/save":
                     with objects_lock:
                         return self.send(200, scene.save_map_marks(doc.get("marks") or []))

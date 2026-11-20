@@ -1144,7 +1144,17 @@ class MapScriptTests(unittest.TestCase):
         self.assertIn("foundry_gaza_HqCam(h.leaders[1])", text)
         # the greeting on the first visit only (per save), then the briefing
         self.assertIn("local sKey = 'foundry_hq_greeted_' .. foundry_gaza_HqIn", text)
-        self.assertIn("if Utility_ReadNumberFromScribbleMemory(sKey) == 1 then", text)
+        self.assertIn("if Utility_ReadNumberFromScribbleMemory(sKey) == 1 or table.getn(h.greeting) == 0 then", text)
+        # retail's visit (docs/HQS.md): music stopped, then on leaving the room's
+        # ambience and HUD put back; a greeting by mood every visit; the
+        # dateline; nags; the HQ respawn point on accepting; the guard's moods
+        self.assertIn("Audio_StopMusic()", text)
+        self.assertIn("function foundry_gaza_HqMoodGreeting()", text)
+        self.assertIn("Ui_DisplayDateline('mail.' .. c.id .. '.dateline')", text)
+        self.assertIn("function foundry_gaza_HqNag()", text)
+        self.assertIn("'PlayerStartLocationName', 'loc_hq-' .. foundry_gaza_HqIn .. '-respawn'", text)
+        self.assertIn("Actor_PlayHumanAnimationByHandle(Utility_GetActor(h.guard), anim)", text)
+        self.assertIn("moods = TRUE", text)                   # a bouncer template: moods on by default
         # util_objectives needs util_misc (util_SetDefault), which a new map doesn't load
         self.assertLess(text.index("Utility_LoadUtilityScript('util_misc')"),
                         text.index("Utility_LoadUtilityScript('util_objectives')"))
@@ -1198,7 +1208,9 @@ class MapScriptTests(unittest.TestCase):
         self.assertIn("exitdelay = 5.0", text)
         self.assertIn("doordist = 3.0", text)
         self.assertIn("Actor_EnableScriptedUse(name, TRUE, prompt, FALSE, dist)", text)
-        self.assertNotIn("Ui_EnableHud", text)              # our lines and rings are HUD
+        # our lines and rings are HUD: hidden only when an interior asks ("hide_hud")
+        self.assertIn("if h and h.hidehud then Ui_EnableHud(FALSE)", text)
+        self.assertIn("hidehud = FALSE", text)
         self.assertIn("function foundry_gaza_HqLog()", text)
         self.assertIn("starter = 'idf_second', acceptprompt = 'Accept contract'", text)
         # a hostile faction's guard offers retail's bribe
