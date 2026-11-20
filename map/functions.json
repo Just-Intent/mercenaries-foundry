@@ -1120,7 +1120,15 @@
   {
    "address": "0x000C5900",
    "file": "RsDataPodDisplay.cpp",
-   "file_evidence": "between"
+   "file_evidence": "between",
+   "names": [
+    "DataPod_DrawTexture"
+   ],
+   "evidence": [
+    "retail code: looks the texture hash up in the PDA alias table (0x842E20 + 0x10, HashTable_Find), then the texture manager at 0x7934C0 (0xC2740), and draws it (0x20A0D0); the Deck screen (RsDataPodDisplay 0xC7340) draws card portraits %s%i_face through it"
+   ],
+   "signature": "void __thiscall DataPod_DrawTexture(void *sprite, uint32_t texture_hash, int a, int b, int c, int d)",
+   "notes": "Foundry Console hooks it to draw a new map's own card portraits from the first frame."
   },
   {
    "address": "0x000C5980",

@@ -3075,6 +3075,32 @@ static void byname_wait_poll(void)
     }
 }
 
+/* DataPod_DrawTexture (0xC5900, the PDA's by-hash draw: card portraits
+ * "%s%i_face"): a hash with a map texture of its own draws that one, from the
+ * first frame the Deck screen shows. The table swap above only catches the
+ * game's portrait once the PDA has loaded it, so for a moment the game's own
+ * showed and then flickered to the map's. Only when the map's texture is
+ * resident; otherwise the game's draws as before. */
+static int byname_target(uint32_t from, uint32_t *to)
+{
+    for (unsigned i = 0; i < maptexalias_count; i++)
+        if (maptexalias[i].key == from) { *to = maptexalias[i].other; return 1; }
+    for (unsigned i = 0; i < byname_wait_count; i++)
+        if (byname_wait[i].from == from) { *to = byname_wait[i].to; return 1; }
+    return 0;
+}
+
+static void MERC_PLUGIN_CALL datapod_draw_before(void *ud, MercHookContext *c)
+{
+    (void)ud;
+    uint32_t hash = 0, to = 0, values = 0, tex = 0;
+    if ((!maptexalias_count && !byname_wait_count) ||
+        !host->read_guest(host->context, c->esp + 4, &hash, 4) || !byname_target(hash, &to)) return;
+    int at = texture_slot(to, &values);
+    if (at < 0 || !host->read_guest(host->context, values + 4 * (uint32_t)at, &tex, 4) || !tex) return;
+    host->write_guest(host->context, c->esp + 4, &to, 4);
+}
+
 static void maptexalias_poll(double dt)
 {
     if ((!maptexalias_count && !byname_wait_count) || (maptexalias_timer += dt) < 1.0) return;
@@ -3329,6 +3355,9 @@ MERC_PLUGIN_EXPORT int MERC_PLUGIN_CALL MercenariesPlugin_Init(
         !h->add_lua_command(h->context, "Foundry_HqMode", cmd_hq_mode, NULL))
         h->log(h->context, "script commands unavailable; Foundry_TrafficZone, Foundry_Range, Foundry_Sample, "
                            "Foundry_Label, Foundry_SetHandling and Foundry_MapText may not exist");
+    if (!h->hook_guest(h->context, MF_FN_DataPod_DrawTexture, datapod_draw_before, NULL, NULL))
+        h->log(h->context, "PDA draw hook unavailable (run port-hooks); a map's own card portraits show once the "
+                           "game's have loaded (a moment of the game's first)");
     if (!h->hook_guest(h->context, MF_FN_Level_Load, level_load_before, NULL, NULL))
         h->log(h->context, "level load hook unavailable (run port-hooks); a map's own text (Foundry_MapText) "
                            "stays after leaving it");
