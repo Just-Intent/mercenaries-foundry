@@ -1,4 +1,4 @@
-import json
+﻿import json
 import struct
 import tempfile
 import unittest
@@ -384,9 +384,42 @@ class DecalTests(unittest.TestCase):
         self.assertNotIn(cell(452, 30), tex)                                  # the stem goes on as itself
         uv = tex[cell(452, 4)]["uv"]                       # corners (x, z+1), (x+1, z+1), (x, z), (x+1, z)
         self.assertGreater(uv[0][0], uv[2][0])             # u rises with z, toward the stem
-        skewed = roads[2:3] + [{"texture": st, "points": [[450, 0], [550, 60]], "span": 26}]
-        self.assertEqual(terrain_decals.junction_decals(skewed, SIZE, 8.0), [])
         self.assertIsNone(terrain_decals.junction_texture("asphalt", "t"))
+
+    def test_plain_patches(self):
+        # a skewed T, and two road ends meeting at an angle: no square piece
+        # fits, so the strips' overlap gets plain asphalt (the cross piece's
+        # middle deep inside, the straight texture with its centre line
+        # squeezed out at the edges); ends meeting nearly straight keep theirs
+        st = "sw_decal_road_straight"
+        half = SIZE * 8 / 2
+        for roads in ([{"texture": st, "points": [[300, 0], [600, 0]], "span": 26},
+                       {"texture": st, "points": [[450, 0], [550, 60]], "span": 26}],
+                      [{"texture": st, "points": [[300, 0], [450, 0]], "span": 26},
+                       {"texture": st, "points": [[450, 0], [450, 150]], "span": 26}]):
+            covered = {}
+            for k, road in enumerate(roads):
+                for e in terrain_decals.road_decals(road, SIZE, 8.0):
+                    covered.setdefault(tuple(e["cell"]), set()).add(k)
+            out = terrain_decals.junction_decals(roads, SIZE, 8.0, covered)
+            self.assertTrue(out)
+            for e in out:
+                self.assertGreaterEqual(len(covered[tuple(e["cell"])]), 2)      # only where strips overlap
+                self.assertLess(math.hypot(e["cell"][0] * 8 - half - 450, e["cell"][1] * 8 - half + 8), 26 * 1.6)
+                if e["texture"] == st:                                           # never the centre line
+                    self.assertTrue(all(u >= 1024 + 0.06 * 2048 - 1 for u, _ in e["uv"]))
+                else:
+                    self.assertTrue(all(abs(c - 1024) <= 0.185 * 2048 for uv in e["uv"] for c in uv))
+        straight_on = [{"texture": st, "points": [[300, 0], [450, 0]], "span": 26},
+                       {"texture": st, "points": [[450, 0], [600, 20]], "span": 26}]
+        self.assertEqual(terrain_decals.junction_decals(straight_on, SIZE, 8.0), [])
+        # a wide road: cells deep in the overlap take the cross piece's plain middle
+        wide = [{"texture": st, "points": [[300, 4], [600, 4]], "span": 40},
+                {"texture": st, "points": [[452, 4], [552, 64]], "span": 40}]
+        self.assertTrue(any(e["texture"] == "sw_decal_road_cross"
+                            for e in terrain_decals.junction_decals(wide, SIZE, 8.0)))
+        # no junction family: the roads keep crossing
+        self.assertEqual(terrain_decals.junction_decals([dict(r, texture="asphalt") for r in wide], SIZE, 8.0), [])
 
     def test_roads_keep_existing_decals(self):
         chunks = decal_chunks()

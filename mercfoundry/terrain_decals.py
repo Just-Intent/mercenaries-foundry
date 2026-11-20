@@ -33,8 +33,9 @@ Where roads of a family with junction textures (sw_decal_road_straight ->
 _t, _cross) meet square (within SKEW degrees), the build lays the game's T or
 cross piece over the strips' overlap, as retail does ("junctions": false in
 the decals file keeps the roads crossing). Skewed junctions and road ends
-meeting at an angle keep the straight roads: the square pieces leave jagged
-edges there.
+meeting at an angle, where the square pieces would leave jagged edges, get a
+plain asphalt patch over the overlap instead: the road's own texture with no
+markings, soft-edged like the strips.
 """
 
 import math
@@ -169,6 +170,16 @@ BLOCK = {"t": (0.36, 0.5), "cross": (0.5, 0.5)}
 # second road further than this from square keeps the straight roads (a
 # square piece on a skewed junction leaves jagged ends)
 SKEW = 15.0
+# Where no piece fits (skewed junctions, ends meeting at an angle) the strips'
+# overlap gets a plain patch (plain_patch): two road ends closer to straight
+# than this keep their strips; the patch reaches this many spans from the
+# meeting point; and the across coordinate skips the texture's middle this
+# far each side (span shares: the yellow line and its shoulder)
+STRAIGHT_ENDS = 165.0
+PLAIN_REACH = 1.5
+PLAIN_FROM = 0.06
+PLAIN_INNER = 0.75        # a patch cell is the plain square when all its corners are this deep in asphalt
+PLAIN_SQUARE = 0.36      # the cross piece's markings-free middle, a share of its side (SW: 0.31..0.69)
 
 
 def junction_texture(straight, kind):
@@ -277,6 +288,68 @@ def find_junctions(roads, tol=2.0):
     return out
 
 
+def plain_patch(roads, ids, x, z, dirs, span, texture, size, spacing, covered):
+    """Decal entries for a plain asphalt patch where roads meet with no
+    junction piece to fit (skewed, or ends meeting at an angle): the cells
+    near the meeting point that two or more of the roads' strips cover, in
+    the road's own straight texture, its across coordinate the distance to
+    the nearest of the roads' centre lines with the centre line squeezed
+    out. So the patch has no markings, and the strips' union keeps their
+    soft edges (round at a road's end) instead of one road's lines crossing
+    the other."""
+    centre = junction_texture(texture, "cross")
+    if not centre:
+        return []                            # a texture with no junction family: the roads keep crossing
+    half = size * spacing / 2
+    ox, oz = half, half - spacing
+    lines = [[(float(px), float(pz)) for px, pz in roads[k]["points"]] for k in ids]
+    mine = set(ids)
+    asphalt = span * (0.5 - MARGIN)          # the texture's asphalt either side of its centre line
+    skip = span * PLAIN_FROM                 # what's squeezed out: the centre line and its shoulder
+    edge = span * MARGIN
+    ux, uz = math.cos(dirs[0]), math.sin(dirs[0])
+    radius = span * PLAIN_REACH
+    if spacing / span > PLAIN_SQUARE:
+        centre = None                        # cells wider than the plain square
+
+    def uv_at(px, pz):
+        a = min(_nearest_on(pts, px, pz)[0] for pts in lines)
+        if a < asphalt:
+            a = skip + a * (asphalt - skip) / asphalt
+        a = min(a, span / 2 + edge)
+        return (a / span * 2048 + 1024, ((px - x) * ux + (pz - z) * uz) / span * 2048)
+
+    out = []
+    c0, c1 = int(math.floor((x - radius + ox) / spacing)), int(math.ceil((x + radius + ox) / spacing))
+    r0, r1 = int(math.floor((z - radius + oz) / spacing)), int(math.ceil((z + radius + oz) / spacing))
+    for r in range(r0, r1):
+        for c in range(c0, c1):
+            if len(covered.get((c, r), set()) & mine) < 2:
+                continue
+            cx, cz = (c + 0.5) * spacing - ox, (r + 0.5) * spacing - oz
+            if math.hypot(cx - x, cz - z) > radius:
+                continue
+            corners = [((c + dx) * spacing - ox, (r + dz) * spacing - oz) for dz, dx in CORNERS]
+            if centre and all(min(_nearest_on(pts, px, pz)[0] for pts in lines) <= asphalt * PLAIN_INNER
+                              for px, pz in corners):
+                # inside the asphalt: the cross piece's plain middle at the
+                # road's scale (the distance mapping smears here, where
+                # every spot is near some centre line), a little shifted
+                # cell to cell so it doesn't tile
+                w = spacing / span * 2048
+                room = max(0.0, PLAIN_SQUARE * 2048 - w) / 2
+                ju, jv = ((c * 73 + r * 151) % 17 / 8 - 1) * room, ((c * 199 + r * 37) % 17 / 8 - 1) * room
+                out.append({"cell": [c, r], "texture": centre,
+                            "uv": [[int(round(1024 + ju + (dx - 0.5) * w)), int(round(1024 + jv + (dz - 0.5) * w))]
+                                   for dz, dx in CORNERS]})
+                continue
+            uv = [uv_at(px, pz) for px, pz in corners]
+            shift = math.floor(min(v for _, v in uv) / 2048) * 2048
+            out.append({"cell": [c, r], "texture": texture,
+                        "uv": [[int(round(u)), int(round(v - shift))] for u, v in uv]})
+    return out
+
+
 def junction_decals(roads, size, spacing, covered=None):
     """Decal entries for the junctions of a decals document's roads: as
     retail lays them, the cells where the meeting roads' strips overlap
@@ -296,11 +369,14 @@ def junction_decals(roads, size, spacing, covered=None):
     for x, z, dirs, span, straight, ids in find_junctions(roads):
         def gap(a, b):
             return abs(math.degrees((a - b + math.pi) % (2 * math.pi) - math.pi))
+        def plain():
+            out.extend(plain_patch(roads, ids, x, z, dirs, span, straight, size, spacing, covered))
         if len(dirs) == 2:
-            # two roads meeting end to end: no piece. A street that turns is
-            # one road (gis joins them) and bends smoothly; two arms here are
-            # mostly road ends that come near each other, where a corner
-            # piece leaves gaps
+            # two roads meeting end to end: a street that turns is one road
+            # (gis joins them) and bends smoothly. Ends meeting nearly
+            # straight keep their strips; at an angle they get a plain patch
+            if gap(dirs[0], dirs[1]) < STRAIGHT_ENDS:
+                plain()
             continue
         elif len(dirs) == 3:
             kind = "t"
@@ -309,15 +385,18 @@ def junction_decals(roads, size, spacing, covered=None):
             _, i, j = max(pairs)
             stem = ({0, 1, 2} - {i, j}).pop()
             if abs(gap(dirs[stem], dirs[i]) - 90) > SKEW or abs(gap(dirs[stem], dirs[j]) - 90) > SKEW:
+                plain()
                 continue
             a, b_ang = dirs[stem], dirs[i]
         else:
             kind = "cross"
             if len(dirs) > 4 or any(min(abs(gap(d, dirs[0]) - k) for k in (0, 90, 180)) > SKEW for d in dirs):
+                plain()
                 continue
             a, b_ang = dirs[0], dirs[0] + math.pi / 2
         texture = junction_texture(straight, kind)
         if not texture:
+            plain()
             continue
         au = (math.cos(a), math.sin(a))
         # v axis: perpendicular to u, on the side b_ang points to
