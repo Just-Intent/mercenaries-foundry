@@ -3049,10 +3049,37 @@ static void maptexalias_restore(void)
     maptexalias_count = 0;
 }
 
+/* by-name swaps whose game texture wasn't in the table yet: the PDA loads
+ * its portraits when its Deck screen opens, so they're looked for every
+ * second and swapped once there */
+#define BYNAME_WAIT_MAX 128
+typedef struct { uint32_t from, to; } ByNameWait;
+static ByNameWait byname_wait[BYNAME_WAIT_MAX];
+static unsigned byname_wait_count;
+
+static void byname_wait_poll(void)
+{
+    unsigned done = 0;
+    for (unsigned i = 0; i < byname_wait_count;) {
+        if (maptexalias_set(byname_wait[i].from, byname_wait[i].to)) {
+            byname_wait[i] = byname_wait[--byname_wait_count];
+            done++;
+        } else {
+            i++;
+        }
+    }
+    if (done) {
+        char line[96];
+        snprintf(line, sizeof(line), "map HUD art: %u textures drawn by name swapped once the game had them", done);
+        host->log(host->context, line);
+    }
+}
+
 static void maptexalias_poll(double dt)
 {
-    if (!maptexalias_count || (maptexalias_timer += dt) < 2.0) return;
+    if ((!maptexalias_count && !byname_wait_count) || (maptexalias_timer += dt) < 1.0) return;
     maptexalias_timer = 0;
+    byname_wait_poll();
     for (unsigned i = 0; i < maptexalias_count; i++) {
         uint32_t values = 0, now = 0;
         int at = texture_slot(maptexalias[i].key, &values);
@@ -3079,10 +3106,14 @@ static void maptex_poll(double dt)
             if (n)
                 snprintf(line, sizeof(line), "map HUD art: %08X drawn as %08X on %u sprites (loaded after %.1f s)",
                          p->from, p->to, n, p->waited);
-            else                      /* drawn by name (no sprite): the texture table */
+            else {                    /* drawn by name (no sprite): the texture table */
+                int now = maptexalias_set(p->from, p->to);
+                if (!now && byname_wait_count < BYNAME_WAIT_MAX)
+                    byname_wait[byname_wait_count++] = (ByNameWait){p->from, p->to};
                 snprintf(line, sizeof(line), "map HUD art: %08X drawn by name as %08X: %s (loaded after %.1f s)",
-                         p->from, p->to, maptexalias_set(p->from, p->to) ? "swapped" :
-                         "the game's texture isn't in the texture table", p->waited);
+                         p->from, p->to, now ? "swapped" :
+                         "the game's isn't loaded yet; swapped when it is", p->waited);
+            }
         } else if ((p->waited += step) > 30.0) {
             uint32_t values = 0, tex = 0;
             uint8_t state[2] = {0, 0};
@@ -3229,6 +3260,7 @@ static void MERC_PLUGIN_CALL level_load_before(void *ud, MercHookContext *c)
     maptext_restore();
     mapsprite_restore();
     maptexalias_restore();
+    byname_wait_count = 0;
     texreq_release();
     maptex_pending_count = 0;
     hq_mode_on = 0;               /* a new level has a new player */
