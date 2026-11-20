@@ -1182,8 +1182,16 @@ class Scene:
             raise ValueError(f"no game model {base!r} to build it on") from None
         d = self.mod / "models"
         d.mkdir(parents=True, exist_ok=True)
+        meta_path = d / f"{name}.new.json"
+        meta = {}
+        if meta_path.exists():        # imported again: its other settings (copy, textures, shadow) stay
+            try:
+                meta = json.loads(meta_path.read_text(encoding="utf-8"))
+            except ValueError:
+                meta = {}
+        meta["base"] = base
         (d / f"{name}.glb").write_bytes(glb)
-        (d / f"{name}.new.json").write_text(json.dumps({"base": base}, indent=1) + "\n", encoding="utf-8")
+        meta_path.write_text(json.dumps(meta, indent=1) + "\n", encoding="utf-8")
         self._models.pop(name, None)
         return {"files": [f"models/{name}.glb", f"models/{name}.new.json"]}
 
@@ -1451,6 +1459,8 @@ class Scene:
             clean["everywhere"] = True
         if named and doc.get("subtitles"):
             clean["subtitles"] = True
+        if clean and str(doc.get("map") or "").strip():     # only on that new map (the build's "map")
+            clean["map"] = str(doc["map"]).strip().lower()
         p = self.mod / "factions.json"
         if clean:
             p.write_text(json.dumps(clean, indent=1) + "\n", encoding="utf-8")
@@ -1803,7 +1813,8 @@ class Scene:
                 doc["mood"] = mood
             else:
                 doc.pop("mood", None)
-        doc["objectives"] = [{k: v for k, v in o.items() if k in ("type", "text", "prompt", "squad", "targets", "vehicle", "zone", "seconds", "marker", "blip", "alive", "extract", "together", "need",
+        doc["objectives"] = [{k: v for k, v in o.items() if k in ("type", "text", "prompt", "squad", "targets", "vehicle", "zone", "seconds", "marker", "blip", "alive", "extract", "together", "need", "kinds", "lost",
+                                                                       "card", "suit", "bounty", "breakable",
                                                             "bonus", "reveal")
                               and not (k == "bonus" and not v) and not (k == "reveal" and (v in ("", "start") or not o.get("bonus")))}
                              for o in mission.get("objectives") or []]

@@ -135,6 +135,7 @@ export function createFactions(ctx) {
     const named = st.list.some((f) => doc[f] && doc[f].name);
     if (named && st.doc.everywhere) doc.everywhere = true;
     if (named && st.doc.subtitles) doc.subtitles = true;
+    if (st.doc.map) doc.map = st.doc.map;          // only on that new map (factions.json "map")
     return doc;
   };
 
