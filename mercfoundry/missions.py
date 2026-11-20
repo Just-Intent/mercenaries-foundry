@@ -1845,9 +1845,13 @@ def interiors(where, map_name, doc):
         exit_ = i.get("exit") or {}
         if not isinstance(exit_, dict):
             raise ValueError(f"{w}: \"exit\" is {{\"object\": <name>, \"prompt\": ...}}")
-        door = str(exit_.get("object") or (leaders[0] if leaders else ""))
-        if not door:
-            raise ValueError(f"{w}: give an \"exit\" {{\"object\": <name>}} or \"leaders\" (the first one shows the way out)")
+        exit_pos = exit_.get("position")
+        if exit_pos is not None and (not isinstance(exit_pos, (list, tuple)) or len(exit_pos) != 3):
+            raise ValueError(f"{w}: the exit's \"position\" is [x, y, z]")
+        door = str(exit_.get("object") or ("" if exit_pos else (leaders[0] if leaders else "")))
+        if not door and not exit_pos:
+            raise ValueError(f"{w}: give an \"exit\" {{\"object\": <name>}} or {{\"position\": [x, y, z]}}, "
+                             f"or \"leaders\" (the first one shows the way out)")
         marker = str(g.get("marker") or "hq")
         if marker not in ("hq", "none"):
             raise ValueError(f"{w}: the guard's \"marker\" is hq or none, not {marker!r}")
@@ -1861,6 +1865,9 @@ def interiors(where, map_name, doc):
             raise ValueError(f"{w}: \"bribe\" is true, false or {{\"cost\": <money>}}")
         bribe_cost = int(bribe["cost"]) if isinstance(bribe, dict) and "cost" in bribe else None
         exit_delay = exit_.get("delay", 5)
+        exit_distance = exit_.get("distance", 3)
+        if not isinstance(exit_distance, (int, float)) or exit_distance <= 0:
+            raise ValueError(f"{w}: the exit's \"distance\" is metres (how near you use it; 3 unless set)")
         if not isinstance(exit_delay, (int, float)) or exit_delay < 0:
             raise ValueError(f"{w}: the exit's \"delay\" is seconds (5 unless set)")
         out[f] = {"guard": interior_guard(map_name, f),
@@ -1871,7 +1878,8 @@ def interiors(where, map_name, doc):
                   "marker": marker,
                   "room": [float(v) for v in room["position"]], "rheading": float(room.get("heading") or 0),
                   "leaders": leaders, "door": door, "door_prompt": str(exit_.get("prompt") or "Leave"),
-                  "exit_delay": float(exit_delay),
+                  "exit_delay": float(exit_delay), "exit_distance": float(exit_distance),
+                  "exit_position": [float(v) for v in exit_pos] if exit_pos else None,
                   "starter": starter, "accept_prompt": str(i.get("accept_prompt") or "Accept contract"),
                   "bribe": bribe is not False, "bribe_cost": bribe_cost,
                   "talk_prompt": str(i.get("talk_prompt") or "Talk"),
@@ -1921,17 +1929,18 @@ def interiors_lua(prefix, inside, flagged=()):
     for f, i in inside.items():
         rows.append(
             "%s = { guard = %s, prompt = %s, name = %s, side = %s, marker = %s, ttype = %s, blip = %s, rx = %.2f, ry = %.2f, rz = %.2f, "
-            "rh = %.1f, leaders = { %s }, door = %s, doorprompt = %s, exitdelay = %.1f, talkprompt = %s,\n"
-            " starter = %s, acceptprompt = %s, bribe = %s, bribecost = %s,\n greeting = %s,\n idle = %s },"
+            "rh = %.1f, leaders = { %s }, door = %s, doorprompt = %s, doordist = %.1f, exitdelay = %.1f, talkprompt = %s,\n"
+            " starter = %s, acceptprompt = %s, bribe = %s, bribecost = %s,%s\n greeting = %s,\n idle = %s },"
             % (f, _lua(i["guard"]), _lua_str(i["prompt"]), _lua_str(i["name"]), _lua(i["side"]),
                ("'ring'" if f in flagged else "'hq'") if i["marker"] == "hq" else "false",
                _lua(f"TARGET_TYPE_HQ_{f.upper()}"), _lua(f"hq{f}"), *i["room"], player_yaw(i["rheading"]),
                ", ".join(_lua(a) for a in i["leaders"]), _lua(i["door"]), _lua_str(i["door_prompt"]),
-               i.get("exit_delay", 5.0), _lua_str(i["talk_prompt"]),
+               i.get("exit_distance", 3.0), i.get("exit_delay", 5.0), _lua_str(i["talk_prompt"]),
                _lua(i["starter"]) if i.get("starter") else "false",
                _lua_str(i.get("accept_prompt") or "Accept contract"),
                "TRUE" if i.get("bribe", True) else "FALSE",
                str(int(i["bribe_cost"])) if i.get("bribe_cost") is not None else "nil",
+               (" dx = %.2f, dy = %.2f, dz = %.2f," % tuple(i["exit_position"])) if i.get("exit_position") else "",
                i["greeting"], i["idle"]))
     return f"""-- HQ interiors (Mercenaries Foundry: maps json "interiors"), played as
 -- retail's HQs: bouncer, briefing and briefing_utilities
@@ -1947,6 +1956,17 @@ if not {P}HqLeadArmed then {P}HqLeadArmed = {{}} end
 if not {P}HqGuardMode then {P}HqGuardMode = {{}} end
 if not {P}HqUsed then {P}HqUsed = {{}} end
 {P}HqWaits = 0
+-- The last steps inside, for finding out what happened: {P}HqLog() in
+-- Foundry Console's Lua box returns them.
+{P}HqSteps = {{}}
+function {P}HqTrace(s)
+table.insert({P}HqSteps, s)
+if table.getn({P}HqSteps) > 10 then table.remove({P}HqSteps, 1) end
+Utility_WriteStringToScribbleMemory('{P}hq_log', table.concat({P}HqSteps, ' | '))
+end
+function {P}HqLog()
+return Utility_ReadStringFromScribbleMemory('{P}hq_log') or 'no HQ steps yet'
+end
 function {P}HqRules(name)
 Ai_SetHostileRange(name, 0.0)
 Actor_SetVerifiable(name, FALSE)
@@ -2019,10 +2039,15 @@ Actor_LookAtActor(a, 'player0')
 end
 end
 -- Using an actor: one event at a time per actor (the one waiting is cancelled).
-function {P}HqUse(name, prompt, cb)
+function {P}HqUse(name, prompt, cb, dist)
 if Utility_DoesActorExist(name) then
 if {P}HqUsed[name] then Event_CancelEvent({P}HqUsed[name]) end
+if dist then
+-- (actor, on, prompt, flag, use distance), as retail's briefing exit and starter
+Actor_EnableScriptedUse(name, TRUE, prompt, FALSE, dist)
+else
 Actor_EnableScriptedUse(name, TRUE, prompt)
+end
 {P}HqUsed[name] = Event_ActorUsed(cb, 'b', name)
 end
 end
@@ -2073,27 +2098,27 @@ function {P}HqBribeDone()
 {P}HqBribing = nil
 {P}HqArm()
 end
--- Retail's briefing controls (Briefing_Init): control mode 13, no HUD, and with
+-- Retail's briefing controls (Briefing_Init): control mode 13, and with
 -- Foundry Console the weapon put away and walking pace; put back by
--- {P}HqRelease.
+-- {P}HqRelease. The HUD stays: retail's briefing hides it (its lines are
+-- voiced), but here the lines are message boxes and the rings HUD markers.
 function {P}HqHold()
 if {P}HqHeld then return end
 {P}HqHeld = 1
 {P}HqControl = Player_DisableControl()
 Player_EnableControl(13)
-Ui_EnableHud(FALSE)   -- as retail's briefing (briefing.lua ScriptInit)
 if Foundry_HqMode then Foundry_HqMode(TRUE) end
 end
 function {P}HqRelease()
 if not {P}HqHeld then return end
 {P}HqHeld = nil
 if Foundry_HqMode then Foundry_HqMode(FALSE) end
-Ui_EnableHud(TRUE)
 Player_EnableControl({P}HqControl or 0)
 {P}HqControl = nil
 end
 function {P}HqEnter(f)
 local h = {P}Hq[f]
+{P}HqTrace('enter ' .. f)
 {P}HqIn = f
 {P}HqUnuse(h.guard)
 {P}HqBack = {{ Actor_GetPosition('player0') }}
@@ -2102,6 +2127,7 @@ Event_RelativeTimer('{P}HqInside', 'b', 0.6)
 end
 function {P}HqInside()
 local h = {P}Hq[{P}HqIn]
+{P}HqTrace('inside')
 Actor_SetPosition('player0', h.rx, h.ry, h.rz)
 Actor_SetYaw('player0', h.rh)
 for i, a in h.leaders do
@@ -2113,6 +2139,7 @@ Event_RelativeTimer('{P}HqLit', 'b', 0.5)
 end
 function {P}HqLit()
 local h = {P}Hq[{P}HqIn]
+{P}HqTrace('lit: greeting')
 Cinematic_FadeIn(0.5)
 {P}HqDoorTimer = Event_RelativeTimer('{P}HqDoor', 'b', h.exitdelay)
 {P}HqSay(h.greeting, {P}HqOffer)
@@ -2122,10 +2149,35 @@ function {P}HqDoor()
 {P}HqDoorTimer = nil
 local h = {P}HqIn and {P}Hq[{P}HqIn]
 if not h then return end
-{P}HqUse(h.door, h.doorprompt, '{P}HqLeave')
-if Utility_DoesActorExist(h.door) then
+if h.door ~= '' and Utility_DoesActorExist(h.door) then
+{P}HqUse(h.door, h.doorprompt, '{P}HqLeave', h.doordist)
 Objective_SetTargetActor('{P}obj_exit', h.door, '', 'TARGET_TYPE_UNDEFINED', 'blip', TRUE, TRUE, TRUE, 0.5)
+{P}HqTrace('door ' .. h.door .. ' armed')
+elseif h.dx then
+-- a point ("exit" "position"): its ring, and coming near asks to leave
+Objective_SetTargetVector('{P}obj_exit', '{P}obj_exit', h.doorprompt, 'TARGET_TYPE_UNDEFINED', 'blip', h.dx, h.dy, h.dz, FALSE, FALSE, TRUE)
+{P}HqDoorNear()
+{P}HqTrace('door point armed')
+else
+{P}HqTrace('door ' .. h.door .. ' not found (give "exit" a "position")')
 end
+end
+function {P}HqDoorNear()
+local h = {P}HqIn and {P}Hq[{P}HqIn]
+if not h or not h.dx then return end
+{P}HqDoorEv = Event_ActorToVectorProximity('{P}HqAtDoor', 'b', 'player0', h.dx, h.dy, h.dz, h.doordist, TRUE)
+end
+function {P}HqAtDoor()
+{P}HqDoorEv = nil
+local h = {P}HqIn and {P}Hq[{P}HqIn]
+if not h then return end
+Utility_QuestionBox(h.doorprompt, h.doorprompt .. '?', true, '{P}HqLeave', '{P}HqDoorLater')
+end
+-- not now: asked again after stepping away and back
+function {P}HqDoorLater()
+local h = {P}HqIn and {P}Hq[{P}HqIn]
+if not h then return end
+{P}HqDoorEv = Event_ActorToVectorProximity('{P}HqDoorNear', 'b', 'player0', h.dx, h.dy, h.dz, h.doordist + 1, FALSE)
 end
 -- Using the first leader (when the way out is something else): the briefing again.
 function {P}HqTalk()
@@ -2137,9 +2189,11 @@ if not f then return end
 local h = {P}Hq[f]
 local c = {P}HqContract(f)
 if c then
+{P}HqTrace('briefing ' .. c.id)
 {P}HqOffered = c
 {P}HqSay(c.briefing or {{}}, {P}HqAsk)
 else
+{P}HqTrace('no contract: idle lines')
 {P}HqSay(h.idle, {P}HqTalkArm)
 end
 end
@@ -2153,7 +2207,8 @@ local h = {P}Hq[{P}HqIn]
 if h.starter and Utility_DoesActorExist(h.starter) then
 if not {P}HqStarterOn then
 {P}HqStarterOn = 1
-{P}HqUse(h.starter, h.acceptprompt, '{P}HqYes')
+{P}HqUse(h.starter, h.acceptprompt, '{P}HqYes', 1.5)
+{P}HqTrace('starter ' .. h.starter .. ' armed')
 Objective_SetTargetActor('{P}obj_starter', h.starter, '', 'TARGET_TYPE_UNDEFINED', 'blip', TRUE, TRUE, TRUE, 0.5)
 end
 else
@@ -2161,6 +2216,7 @@ Utility_QuestionBox(Utility_GetStringById(c.title), Utility_GetStringById(c.desc
 end
 end
 function {P}HqYes()
+{P}HqTrace('accept')
 local c = {P}HqOffered
 local h = {P}HqIn and {P}Hq[{P}HqIn]
 if not c or not h then return end
@@ -2179,6 +2235,7 @@ function {P}HqTidy(h)
 Ui_MessageBoxClear()
 {P}HqLines = nil
 if {P}HqDoorTimer then Event_CancelEvent({P}HqDoorTimer) {P}HqDoorTimer = nil end
+if {P}HqDoorEv then Event_CancelEvent({P}HqDoorEv) {P}HqDoorEv = nil end
 Objective_Remove('{P}obj_exit')
 Objective_Remove('{P}obj_starter')
 {P}HqStarterOn = nil
@@ -2187,6 +2244,7 @@ if h.starter then {P}HqUnuse(h.starter) end
 {P}HqUnuse(h.door)
 end
 function {P}HqLeave()
+{P}HqTrace('leave')
 if not {P}HqIn then return end
 {P}HqTidy({P}Hq[{P}HqIn])
 {P}HqOffered = nil

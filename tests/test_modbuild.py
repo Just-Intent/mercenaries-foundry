@@ -1157,6 +1157,10 @@ class MapScriptTests(unittest.TestCase):
         self.assertIn("Objective_SetTargetActor('foundry_gaza_obj_starter', h.starter, '', 'TARGET_TYPE_UNDEFINED'", text)
         self.assertIn("Objective_SetTargetActor('foundry_gaza_obj_exit', h.door", text)
         self.assertIn("exitdelay = 5.0", text)
+        self.assertIn("doordist = 3.0", text)
+        self.assertIn("Actor_EnableScriptedUse(name, TRUE, prompt, FALSE, dist)", text)
+        self.assertNotIn("Ui_EnableHud", text)              # our lines and rings are HUD
+        self.assertIn("function foundry_gaza_HqLog()", text)
         self.assertIn("starter = 'idf_second', acceptprompt = 'Accept contract'", text)
         # a hostile faction's guard offers retail's bribe
         self.assertIn("Faction_GetAttitude(f, 'prokat') == 0", text)

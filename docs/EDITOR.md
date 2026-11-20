@@ -291,7 +291,7 @@ toolkit bundle run it the same way: `foundry\python\python.exe foundry\mercfound
   "room": {"position", "heading"}, "leaders": ["<actor>", ...],
   "starter"? ("<actor>", or false), "accept_prompt"? ("Accept contract"),
   "bribe"? (true, false or {"cost": <money>}),
-  "exit": {"object": "<name>", "prompt"? ("Leave"), "delay"? (5)},
+  "exit": {"object": "<name>" or "position": [x, y, z], "prompt"? ("Leave"), "delay"? (5), "distance"? (3)},
   "talk_prompt"? ("Talk"), "greeting": [line], "idle": [line]}}`. A line is `{"speaker", "text",
   "seconds", "sound"? (<bank>.<cue>)}` or just text; seconds default to the
   text's length. The guard (a layer the map loads; `template_<faction>_bouncer`
@@ -324,6 +324,12 @@ toolkit bundle run it the same way: `foundry\python\python.exe foundry\mercfound
     (`false`, or one leader), a yes/no box. With no contract, the idle lines.
     The first leader offers Talk (the briefing again) when it isn't the way
     out or the starter.
+  - The HUD stays on (the lines and rings are HUD). `foundry_<map>_HqLog()` in
+    Foundry Console's Lua box lists the last steps inside (entered, greeting,
+    briefing, starter and door armed, accept, leave).
+  - A door that's scenery isn't an actor a script can use: give the exit a
+    `"position"` instead, and it gets a gold ring there; coming within
+    `"distance"` asks to leave.
   - After the exit's delay the exit object (the first leader if none is
     given) gets a ring and its prompt, as retail's exit after 5 s. Using it
     fades and puts the player back where they stood by the guard. A mission is offered there
