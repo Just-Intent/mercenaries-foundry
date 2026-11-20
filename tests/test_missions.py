@@ -328,7 +328,10 @@ class MissionTests(unittest.TestCase):
     def test_use_object(self):
         doc = {"objectives": [{"type": "use", "text": "Plant the charge", "prompt": "Plant charge", "targets": ["fuel_tank"]}]}
         lua = missions.objectives_script("sw_allies11", doc, lambda squad: [])
-        self.assertIn("targets = { 'fuel_tank' }, lost = 'sw.allies11.obj.foundry1.lost', act = 'sw.allies11.act.foundry1' }", lua)
+        self.assertIn("targets = { 'fuel_tank' }, lost = 'sw.allies11.obj.foundry1.lost', act = 'sw.allies11.act.foundry1', tough = true }", lua)
+        self.assertIn("if o.tough then for j, a in ipairs(o.targets) do if Utility_DoesActorExist(a) then Actor_SetInvincible(a, true)", lua)
+        doc2 = {"objectives": [dict(doc["objectives"][0], breakable=True)]}
+        self.assertNotIn("tough = true", missions.objectives_script("sw_allies11", doc2, lambda squad: []))
         self.assertIn("mission_ObjectiveAction{ callbackFunc = foundry_TargetDown, killCallbackFunc = foundry_TargetKilled,", lua)
         self.assertIn("actionCaption = o.act,", lua)
         strings, _, _ = missions.text_plan("sw_allies11", doc, "SW_Allies11")

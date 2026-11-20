@@ -458,6 +458,8 @@ def objectives_script(asset_id, doc, squad_members, layers=(), zone_centre=None)
                 row += ", extract = true"                                       # done when flown out
             if kind == "use":
                 row += f", act = {_lua_str(use_prompt_key(asset_id, i))}"      # the prompt on the object
+                if not o.get("breakable"):
+                    row += ", tough = true"      # can't be destroyed (only used): "breakable": true for retail's way
             if kind == "verify":
                 blip = o.get("blip") or "human"
                 if blip not in VERIFY_BLIPS:
@@ -1358,7 +1360,9 @@ end
 util_ObjMsgPrint{{ sMsg = o.text, sType = sMsg .. 'ADD', vIdx = iIdx,
                   tCounter = {{ vCurr = 0, vLim = table.getn(o.targets) }}, sObjective = o.name }}
 elseif o.kind == 'use' then
--- walk up and use it (retail's action verb); destroying it fails it
+-- walk up and use it (retail's action verb); destroying it fails it, so unless
+-- the objective is "breakable" the targets can't be destroyed
+if o.tough then for j, a in ipairs(o.targets) do if Utility_DoesActorExist(a) then Actor_SetInvincible(a, true) end end end
 mission_ObjectiveAction{{ callbackFunc = foundry_TargetDown, killCallbackFunc = foundry_TargetKilled,
                          objectiveName = o.name, objectiveDesc = o.text, actorName = o.targets,
                          actionCaption = o.act, objectiveType = sObjType, targetType = sTargetType }}
