@@ -606,7 +606,7 @@ class ModBuildTests(unittest.TestCase):
             (name_hash("mission"), SCRIPT, script.encode(script.new("mission", "x = 1\n"))),
             (name_hash("base_layer"), WORLD, world_record()),
             (name_hash("base_layer"), name_hash("list"), b"\n[world]\n\nload base_layer\n\n[model]\n\nload jeep_model\n"),
-        ])
+        ] + [(name_hash(m), model.MODEL, b"") for m in ("hilux", "hilux_wheel", "global_invisible")])
         (self.project / "objects").mkdir(exist_ok=True)
         self.write("objects/hilux.json", json.dumps([{"template": "jeep_template", "set": {
             "GeometryFile": "hilux", "geometrynamewheel": "hilux_wheel", "geometryNameRuinA": "global_invisible"}}]))
@@ -614,6 +614,11 @@ class ModBuildTests(unittest.TestCase):
         loads = self.records("assets.dsk")[(name_hash("base_layer"), name_hash("list"))].decode("latin-1")
         for m in ("hilux", "hilux_wheel", "global_invisible"):
             self.assertIn(f"load {m}\n", loads)
+        # a model that exists nowhere is refused: a character drawn with the
+        # game's stand-in corrupted memory once it woke (Gaza's number cards)
+        self.write("objects/hilux.json", json.dumps([{"template": "jeep_template", "set": {"GeometryFile": "no_such_model"}}]))
+        with self.assertRaisesRegex(ValueError, "no_such_model .*don't exist|don't exist.*no_such_model"):
+            modbuild.build(self.project, self.data, self.out)
 
     def test_layer_name_limit(self):
         # more names than the game's named-object table can take are refused

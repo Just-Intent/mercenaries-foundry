@@ -1932,6 +1932,51 @@ def _check_model_sizes(data, result):
         "Split big models into several, or cut vertices")
 
 
+def _check_models_exist(data, result):
+    """Every model a mod's load lists name (objects' models and their
+    GeometryFile and ruin models, which the layers list) is the game's or one
+    the mod builds. A character placed with a model that doesn't exist still
+    spawns: the game draws a stand-in, and once the actor wakes (about 220 m
+    away) animating its skeleton on the stand-in wrote out of bounds and
+    crashed the game later in unrelated places (Gaza's number cards, whose
+    models/gaza_card_*.new.json had gone missing: nine crashes)."""
+    from . import encounters
+    LIST = name_hash("list")
+    known = {r.key for _, r in data.records(model.MODEL)} | \
+        {k for k, kind, _ in data.added() if kind == model.MODEL}
+    # names the game's own lists already give (a copied map's whole list) are
+    # retail's business, missing or not; only names the mod brings are checked
+    for a, r in data.records(LIST):
+        for n in encounters.parse_list(data.archive(a).read(r).decode("latin-1")).get("model", []):
+            known.add(name_hash(n))
+    missing = {}
+    for recs in data.add.values():
+        for key, kind, body in recs:
+            if kind == LIST:
+                for n in encounters.parse_list(body.decode("latin-1")).get("model", []):
+                    if name_hash(n) not in known:
+                        missing.setdefault(n, []).append(data.label(key, LIST).split(" ", 1)[-1])
+    for name, pending in data.replace.items():
+        by_ident = {r.ident: r for r in data.archive(name).records if r.kind == LIST}
+        for ident, body in pending.items():
+            r = by_ident.get(ident)
+            if r is None:
+                continue
+            before = {m.lower() for m in encounters.parse_list(
+                data.archive(name).read(r).decode("latin-1")).get("model", [])}
+            for n in encounters.parse_list(body.decode("latin-1")).get("model", []):
+                if n.lower() not in before and name_hash(n) not in known:
+                    missing.setdefault(n, []).append(data.label(r.key, LIST).split(" ", 1)[-1])
+    if missing:
+        listed = "; ".join(f"{n} (in {', '.join(sorted(set(where))[:4])}"
+                           f"{' and more' if len(set(where)) > 4 else ''})" for n, where in sorted(missing.items())[:12])
+        raise ValueError(
+            f"{len(missing)} model(s) named by the mod's layers don't exist, in the game or the mod: {listed}"
+            f"{' and more' if len(missing) > 12 else ''}. An object or character given a model that doesn't exist "
+            f"(GeometryFile, a ruin model) still spawns, and a character animated on the game's stand-in corrupts "
+            f"memory once it wakes and crashes the game. Add the model (models/<name>.glb or .new.json) or fix the name")
+
+
 def _check_new_scripts(data, result):
     """The game only runs scripts that a load list names under [script]."""
     from . import encounters
@@ -4104,6 +4149,7 @@ def build(projects, data_dir, out_dir, name=None, description=None) -> Result:
     _check_new_scripts(data, result)
     _check_map_paths(data, result)
     _check_model_sizes(data, result)
+    _check_models_exist(data, result)
     from . import sounds
     data.project = "Foundry"
     sounds.finish(data, result)
