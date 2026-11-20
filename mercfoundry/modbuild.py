@@ -312,6 +312,19 @@ def _apply_deck(data, folder, result):
             data.map_hud = getattr(data, "map_hud", {})
             data.map_hud.setdefault(d["map"], {})[f"{d['suit']}{c['rank']}_face"] = tname
             faces += 1
+        o = d.get("others")
+        if o and o["face"]:
+            path = folder / o["face"]
+            if not path.is_file():
+                raise ValueError(f"{where}: no {o['face']} (\"others\" \"face\")")
+            w, h, rgba = png.decode(path.read_bytes())
+            tname = deckmod.other_face_texture(d["map"])
+            data.new("streamed.dsk", name_hash(tname), texture.TEXTURE, texture.encode(texture.new(tname, w, h, rgba)))
+            data.map_hud = getattr(data, "map_hud", {})
+            for suit in deckmod.SUITS:
+                if suit != d["suit"]:
+                    for rank in range(2, 15):
+                        data.map_hud.setdefault(d["map"], {})[f"{suit}{rank}_face"] = tname
         data.decks.append(d)
         number = [c for c in d["cards"] if c["rank"] <= 10]
         placed = [c for c in number if c["actor"]]
@@ -1634,9 +1647,27 @@ def _apply_welcome_mail(data, folder, pname, result):
         return
     mail = missions.welcome_mail(pname, m)
     mpath = "DATAxbox/DATAPOD/emails.ini"
-    mails = data.files[mpath].decode("latin-1") if mpath in data.files else \
-        (data.dir / "DATAPOD" / "emails.ini").read_bytes().decode("latin-1")
-    data.files[mpath] = missions.add_mail(mails, *mail[:4]).encode("latin-1")
+    retail = (data.dir / "DATAPOD" / "emails.ini").read_bytes().decode("latin-1")
+    mails = data.files[mpath].decode("latin-1") if mpath in data.files else retail
+    # A save keeps its inbox as positions in emails.ini (Mail_Post 0xCE860 ->
+    # 0xCE010 stores the mail's table index), so a mail that moves shows as
+    # another one. Welcome mails go right after the game's own, ahead of
+    # mission mails (which come and go as a mod grows), and their position
+    # goes in the "posted" flag: a save holding another position posts it again.
+    at = getattr(data, "welcome_end", None)
+    head = retail.rstrip("\r\n")
+    if at is None:
+        at = len(head) if mails.startswith(head) else len(mails.rstrip("\r\n"))
+    added = missions.add_mail(mails[:at], *mail[:4])
+    rest = mails[at:]
+    nl = "\r\n" if "\r\n" in mails else "\n"
+    slot = len(re.findall(r"^\[Mail\]", added, re.M)) - 1
+    added = added.rstrip("\r\n")
+    data.welcome_end = len(added)
+    data.files[mpath] = (added + (rest if rest.strip() else nl)).encode("latin-1")
+    if re.search(r"^Id\s+%s\s*$" % re.escape(mail[0]), rest, re.M | re.I):
+        raise ValueError(f"emails.ini already has a mail {mail[0]!r}")
+    mail = mail + (slot,)
     _set_strings(data, mail[4])
     data.welcome = getattr(data, "welcome", []) + [mail]
     result.changes.append(f"welcome mail {mail[0]}: posted once per save when free roam starts on {mail[5].upper()}")

@@ -99,7 +99,18 @@ def parse(where, doc, new_maps, mod_folder=None):
                       "actor": actor, "layer": layer, "face": str(face) if face else ""})
     if not cards:
         raise ValueError(f"{where}: no \"cards\"")
-    return {"map": m, "suit": suit, "cards": sorted(cards, key=lambda c: c["rank"])}
+    others = doc.get("others")
+    if others is not None:
+        if not isinstance(others, dict) or not set(others) <= {"name", "bio", "face"}:
+            raise ValueError(f"{where}: \"others\" is {{\"name\", \"bio\", \"face\"}}: what the other suits' "
+                             "cards show on the map")
+        others = {"name": str(others.get("name", "")), "bio": str(others.get("bio", "")),
+                  "face": str(others.get("face") or "")}
+    return {"map": m, "suit": suit, "cards": sorted(cards, key=lambda c: c["rank"]), "others": others}
+
+
+def other_face_texture(map_name):
+    return f"{map_name.lower()}_deck_other_face"
 
 
 def strings(deck):
@@ -110,6 +121,14 @@ def strings(deck):
         out[f"{k}.Name"] = f"{RANK_NAMES[c['rank']]} of {deck['suit'].title()}"
         out[f"{k}.charName"] = c["name"]
         out[f"{k}.bio"] = c["bio"]
+    o = deck.get("others")
+    if o:                        # the other suits' cards: the map's own stand-in
+        for suit in SUITS:
+            if suit == deck["suit"]:
+                continue
+            for rank in range(2, 15):
+                out[f"cards.{suit}.{rank}.charName"] = o["name"]
+                out[f"cards.{suit}.{rank}.bio"] = o["bio"]
     return out
 
 
@@ -161,6 +180,9 @@ if on then foundry_DeckLeave() end
 for i, k in ipairs(foundry_DeckKeys(d.suit)) do
 foundry_DeckCopy(k[1], 'foundry_deck_keep_' .. k[1], k[2])
 foundry_DeckCopy('foundry_deck_' .. m .. '_' .. k[1], k[1], k[2])
+end
+if not Utility_ReadNumberFromScribbleMemory('iCurrentIntel' .. d.suit) then   -- retail always has one
+Utility_WriteNumberToScribbleMemory('iCurrentIntel' .. d.suit, 0)
 end
 for rank = 11, 14 do       -- face cards come through contracts, as retail's
 if not Utility_ReadStringFromScribbleMemory(d.suit .. rank .. 'status') then

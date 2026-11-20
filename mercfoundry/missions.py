@@ -1710,14 +1710,18 @@ WELCOME_DELAY = 5.0     # after free roam starts: FirstTimeInSW posts its help m
 
 def welcome_lua(mails):
     """Lua (in foundry_layers) posting each welcome mail once per save: a
-    scribble flag foundry_mail_<id> (saved with the game) marks it posted."""
+    scribble flag foundry_mail_<id> (saved with the game) marks it posted.
+    The flag holds the mail's place in emails.ini (m[6], + 2; a save's
+    inbox is positions there): a save that got it at another place (an
+    older build's, now another mail) gets it again."""
     out = ["tFoundryWelcome = {"]
-    out += ["{ id = %s, map = %s }," % (_lua(m[0]), _lua(m[5])) for m in mails]
+    out += ["{ id = %s, map = %s, posted = %d }," % (_lua(m[0]), _lua(m[5]), (m[6] if len(m) > 6 else 0) + 2)
+            for m in mails]
     out += ["}",
             "function foundry_Welcome()",
             "local map = Utility_ReadStringFromScribbleMemory('SkipTo_Map')",
             "for i, m in tFoundryWelcome do",
-            "if m.map == map and not Utility_ReadNumberFromScribbleMemory('foundry_mail_' .. m.id) then",
+            "if m.map == map then",
             f"Event_RelativeTimer('foundry_WelcomePost', 'b', {WELCOME_DELAY:g})",
             "return",
             "end",
@@ -1726,8 +1730,11 @@ def welcome_lua(mails):
             "function foundry_WelcomePost()",
             "local map = Utility_ReadStringFromScribbleMemory('SkipTo_Map')",
             "for i, m in tFoundryWelcome do",
-            "if m.map == map and not Utility_ReadNumberFromScribbleMemory('foundry_mail_' .. m.id) then",
-            "Utility_WriteNumberToScribbleMemory('foundry_mail_' .. m.id, 1)",
+            "if m.map == map then",
+            "-- every time: Mail_Post does nothing for a mail already in the inbox",
+            "-- (0xCE010 asks 0xCC840 first), and a trip to another map can drop it",
+            "-- from the inbox until the save is loaded again",
+            "Utility_WriteNumberToScribbleMemory('foundry_mail_' .. m.id, m.posted)",
             "Mail_Post(m.id)",
             "end",
             "end",
@@ -1975,7 +1982,9 @@ Ai_CommandQueue(h.guard, 'Wait', 'hiPri')
 if h.marker == 'hq' then
 util_SetupSingleTargetActorObjective(h.guard, h.name, '', 'OBJECTIVE_TYPE_PRIMARY', h.guard, h.name, h.ttype, TRUE, TRUE, TRUE, h.blip)   -- (the game's Lua has no string library)
 elseif h.marker == 'ring' then
-util_SetupSingleTargetActorObjective(h.guard, h.name, '', 'OBJECTIVE_TYPE_SECONDARY', h.guard, h.name, 'TARGET_TYPE_OBJECTIVE_SECONDARY', FALSE, FALSE, TRUE, 'blip')
+-- the bouncers' gold ring and caption (the HQ target type), in the world
+-- only: the HQ point already has the flag on the radar and PDA map
+util_SetupSingleTargetActorObjective(h.guard, h.name, '', 'OBJECTIVE_TYPE_PRIMARY', h.guard, h.name, h.ttype, FALSE, FALSE, TRUE, h.blip)
 end
 end
 if {P}HqGuardMode[f] ~= sWants and {P}HqIn ~= f and {P}HqBribing ~= f then
@@ -2060,7 +2069,7 @@ function {P}HqBribeDone()
 {P}HqBribing = nil
 {P}HqArm()
 end
--- Retail's briefing controls (Briefing_Init): control mode 13, and with
+-- Retail's briefing controls (Briefing_Init): control mode 13, no HUD, and with
 -- Foundry Console the weapon put away and walking pace; put back by
 -- {P}HqRelease.
 function {P}HqHold()
@@ -2068,12 +2077,14 @@ if {P}HqHeld then return end
 {P}HqHeld = 1
 {P}HqControl = Player_DisableControl()
 Player_EnableControl(13)
+Ui_EnableHud(FALSE)   -- as retail's briefing (briefing.lua ScriptInit)
 if Foundry_HqMode then Foundry_HqMode(TRUE) end
 end
 function {P}HqRelease()
 if not {P}HqHeld then return end
 {P}HqHeld = nil
 if Foundry_HqMode then Foundry_HqMode(FALSE) end
+Ui_EnableHud(TRUE)
 Player_EnableControl({P}HqControl or 0)
 {P}HqControl = nil
 end

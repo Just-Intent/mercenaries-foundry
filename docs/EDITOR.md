@@ -309,7 +309,7 @@ toolkit bundle run it the same way: `foundry\python\python.exe foundry\mercfound
     in. `"bribe": false` turns that off.
   - Using the guard fades to black and puts the player at the room's position.
   - Inside, the player has retail's briefing controls: no firing or weapon
-    switching (control mode 13, which `Briefing_Init` sets), and, with
+    switching (control mode 13, which `Briefing_Init` sets), no HUD, and, with
     Foundry Console, the weapon put away and walking pace (`Foundry_HqMode`).
     Both are put back on leaving or taking the contract.
   - The leaders (actors placed in a map layer, by name) stand where they are
@@ -827,6 +827,9 @@ as retail's deck. Shape:
   then marked with the suit's blip. Killed or taken down, its state is
   written, the verify screen shows the card, and `"bounty"` is paid for a
   kill, double alive (default 12,500, retail's chapter 1).
+- **The other suits** on the map: `"others": {"name", "bio", "face"}` shows that
+  name, bio and portrait for every card of the three suits the deck doesn't
+  use, so the PDA shows only the map's people there.
 - **Face cards** (J, Q, K, A) get their text and portrait; they come through
   contracts.
 - **The PDA's card states** are the game's own save keys

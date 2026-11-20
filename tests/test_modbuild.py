@@ -1097,7 +1097,7 @@ class MapScriptTests(unittest.TestCase):
         # yet); a guard whose HQ has a point is ringed in the world only
         self.assertIn("Objective_SetTargetVector('foundry_hq_allies'", text)
         self.assertIn("marker = 'ring'", text)
-        self.assertIn("'TARGET_TYPE_OBJECTIVE_SECONDARY', FALSE, FALSE, TRUE, 'blip'", text)
+        self.assertIn("'OBJECTIVE_TYPE_PRIMARY', h.guard, h.name, h.ttype, FALSE, FALSE, TRUE, h.blip)", text)   # gold, no blip
         # the guards are looked for for as long as free roam lasts
         self.assertIn("Event_RelativeTimer('foundry_gaza_HqLook', 'b', 5.0)", text)
         self.assertNotIn("HqWaits < 15", text)
@@ -1186,6 +1186,35 @@ class MapScriptTests(unittest.TestCase):
         lua = missions.layers_script([], welcome=[mail])
         self.assertEqual(luacheck.check(lua), [])
         self.assertIn("foundry_Welcome()", lua)
-        self.assertIn("Utility_WriteNumberToScribbleMemory('foundry_mail_' .. m.id, 1)\nMail_Post(m.id)", lua)
+        self.assertIn("Utility_WriteNumberToScribbleMemory('foundry_mail_' .. m.id, m.posted)\nMail_Post(m.id)", lua)
+        # a save's inbox is places in emails.ini: the flag holds the place (+ 2,
+        # so an older build's 1 posts it again)
+        placed = missions.layers_script([], welcome=[mail + (7,)])
+        self.assertIn("posted = 9 }", placed)
         with self.assertRaises(ValueError):
             missions.welcome_mail("x", {"subject": "a"})
+
+    def test_welcome_mail_goes_before_mission_mails(self):
+        import tempfile
+        from pathlib import Path
+        with tempfile.TemporaryDirectory() as t:
+            root = Path(t)
+            (root / "DATAPOD").mkdir()
+            retail = "[Mail]\r\nId\t\tretail_a\r\n\r\n[Mail]\r\nId\t\tretail_b\r\n"
+            (root / "DATAPOD" / "emails.ini").write_bytes(retail.encode("latin-1"))
+            data = modbuild._Data(root)
+            mpath = "DATAxbox/DATAPOD/emails.ini"
+            data.files[mpath] = (retail + "\r\n[Mail]\r\nId\t\tsw_allies20_initial\r\n").encode("latin-1")
+            mod = root / "mod"
+            mod.mkdir()
+            (mod / "mod.json").write_text('{"welcome_mail": {"subject": "Hi", "body": "Go."}}')
+            seen = {}
+            modbuild._set_strings = lambda d, e, _o=modbuild._set_strings: seen.update(e) or (0, 0)
+            try:
+                modbuild._apply_welcome_mail(data, mod, "Gaza", modbuild.Result())
+            finally:
+                modbuild._set_strings = modbuild._set_strings.__defaults__[0]
+            text = data.files[mpath].decode("latin-1")
+            ids = [l.split()[1] for l in text.splitlines() if l.startswith("Id")]
+            self.assertEqual(ids, ["retail_a", "retail_b", "foundry_welcome_gaza", "sw_allies20_initial"])
+            self.assertEqual(data.welcome[0][6], 2)              # its place among the mails

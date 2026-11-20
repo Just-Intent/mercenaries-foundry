@@ -62,6 +62,17 @@ class DeckTests(unittest.TestCase):
         self.assertIn("'iCurrentIntel' .. suit", lua)
         self.assertIn("iFoundryDeckPay = c.bounty * 2", lua)        # alive pays double
 
+    def test_others_stand_in(self):
+        doc = dict(DOC, others={"name": "Unknown", "bio": "Not on this front.", "face": "deck/other.png"})
+        d = deck.parse("deck/clubs.json", doc, {"gaza"})
+        s = deck.strings(d)
+        self.assertEqual(s["cards.spades.14.charName"], "Unknown")
+        self.assertEqual(s["cards.diamonds.2.bio"], "Not on this front.")
+        self.assertNotIn("cards.clubs.4.charName", s)         # the deck's own suit: only its cards
+        self.assertEqual(deck.other_face_texture("Gaza"), "gaza_deck_other_face")
+        with self.assertRaises(ValueError):
+            deck.parse("deck/clubs.json", dict(DOC, others={"colour": "red"}), {"gaza"})
+
     def test_map_and_free_roam_hooks(self):
         text = modbuild.map_script("gaza", {}, [], deck=True)
         self.assertIn("Utility_LoadUtilityScript('foundry_deck')\nfoundry_DeckEnter('gaza')\nfoundry_DeckArm('gaza')",
