@@ -34,6 +34,26 @@ class EncounterTests(unittest.TestCase):
         # its ruin, wheels and break-up pieces load too (a node name isn't a model)
         self.assertEqual(models, ["foundry_crate", "foundry_crate_ruin", "foundry_wheel", "foundry_tail"])
 
+    def test_copied_object_leaves_its_encounter(self):
+        # a copy of an encounter's actor (a Deck card: encounter clubs3, squad
+        # Squad1) outside any squad says "none" for both, as retail's loose
+        # actors; its path stays, and "set" still wins
+        card = dict(SOURCE, properties=[["objectType", "human"], ["encounter", "clubs3"], ["squad", "Squad1"],
+                                        ["path", "p_patrol"]])
+        doc = {"map": "swn", "objects": [{"from": "deck_clubs03", "name": "Card", "position": [0, 0, 0]},
+                                         {"from": "deck_clubs03", "name": "Kept", "position": [1, 0, 0],
+                                          "set": {"squad": "Squad2"}}]}
+        rec = encounters.build("my_layer", doc, lambda name: card)[encounters.WORLD]
+        insts = [c for c in world.to_json(rec)["chunks"] if c.get("tag") == "inst"]
+        props = dict(insts[0]["properties"])
+        self.assertEqual((props["encounter"], props["squad"], props["path"]), ("none", "none", "p_patrol"))
+        self.assertEqual(dict(insts[1]["properties"])["squad"], "Squad2")
+        # a source with no such properties gets none added
+        bare = dict(SOURCE, properties=[["objectType", "prop"]])
+        rec = encounters.build("my_layer", {"map": "swn", "objects": doc["objects"][:1]}, lambda name: bare)
+        inst = [c for c in world.to_json(rec[encounters.WORLD])["chunks"] if c.get("tag") == "inst"][0]
+        self.assertEqual([k for k, _ in inst["properties"]], ["objectType"])
+
     def test_shared_models_load_once(self):
         # thousands of copies sharing a few models list each model once
         objs = [{"from": "RoadblockRunner", "name": f"C{k}", "position": [k, 0, 0],

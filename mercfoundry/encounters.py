@@ -404,7 +404,16 @@ def build(layer, doc, find_source, source_loads=None):
             insts.append(_member(find_source(m["from"]), m,
                                  {"encounter": sq["encounter"], "squad": sq["name"], "path": "none"}))
     for o in doc.get("objects", []):
-        inst = _member(find_source(o["from"]), o)
+        source = find_source(o["from"])
+        # An object copied out of an encounter (a Deck card, a squad's soldier)
+        # keeps naming that encounter and squad, which the new layer doesn't
+        # have: the actor crashed the game where it woke, about 220 m away
+        # (eax -4 in 0x1F7D90; Gaza's number cards copied from deck_clubsNN,
+        # encounter clubsN, squad Squad1). Retail's actors outside any
+        # encounter say "none" for both (2,908 objects).
+        own = {k.lower() for k, _ in source.get("properties", [])}
+        loose = {k: "none" for k in ("encounter", "squad") if k in own}
+        inst = _member(source, o, loose)
         if doc.get("unnamed"):
             # "unnamed": true writes the objects as unnamed scenery, as retail's
             # buildings are: the game's named-object table holds 2048 names
