@@ -1940,7 +1940,8 @@ def interiors_lua(prefix, inside, flagged=()):
       cinematic control (as retail's briefing boss and starter) and looks
       at the player, set once per actor (one that comes back is a new
       actor), with no hostile range and invincible.
-    - The greeting plays, then the faction's next contract here ("contact":
+    - The greeting plays on the first visit (per save: scribble
+      foundry_hq_greeted_<faction>), then the faction's next contract here ("contact":
       {"interior": faction}, from foundry_contracts' table) has its
       briefing; then the second in command ("starter") gets a gold ring and
       the accept prompt, as retail's starter_trigger; using them starts the
@@ -2173,10 +2174,19 @@ Event_RelativeTimer('{P}HqLit', 'b', 0.5)
 end
 function {P}HqLit()
 local h = {P}Hq[{P}HqIn]
-{P}HqTrace('lit: greeting')
 Cinematic_FadeIn(0.5)
 {P}HqDoorTimer = Event_RelativeTimer('{P}HqDoor', 'b', h.exitdelay)
+-- the greeting on the first visit (per save, as retail's); later visits go
+-- straight to the next briefing, or the idle lines
+local sKey = 'foundry_hq_greeted_' .. {P}HqIn
+if Utility_ReadNumberFromScribbleMemory(sKey) == 1 then
+{P}HqTrace('lit: again, no greeting')
+{P}HqOffer()
+else
+Utility_WriteNumberToScribbleMemory(sKey, 1)
+{P}HqTrace('lit: greeting')
 {P}HqSay(h.greeting, {P}HqOffer)
+end
 end
 -- The way out: its ring and prompt (retail's EnableExit).
 function {P}HqDoor()

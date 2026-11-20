@@ -1136,6 +1136,9 @@ class MapScriptTests(unittest.TestCase):
         self.assertFalse([n for n, _ in lc.names(text)[1] if n.startswith(("string.", "math.", "os."))])
         solo = modbuild.map_script("gaza", {}, [], inside=inside)          # no "hqs": the guard is the flag
         self.assertIn("marker = 'hq'", solo)
+        # the greeting on the first visit only (per save), then the briefing
+        self.assertIn("local sKey = 'foundry_hq_greeted_' .. foundry_gaza_HqIn", text)
+        self.assertIn("if Utility_ReadNumberFromScribbleMemory(sKey) == 1 then", text)
         # util_objectives needs util_misc (util_SetDefault), which a new map doesn't load
         self.assertLess(text.index("Utility_LoadUtilityScript('util_misc')"),
                         text.index("Utility_LoadUtilityScript('util_objectives')"))
