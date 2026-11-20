@@ -1136,6 +1136,12 @@ class MapScriptTests(unittest.TestCase):
         self.assertFalse([n for n, _ in lc.names(text)[1] if n.startswith(("string.", "math.", "os."))])
         solo = modbuild.map_script("gaza", {}, [], inside=inside)          # no "hqs": the guard is the flag
         self.assertIn("marker = 'hq'", solo)
+        # a fixed camera in the room (never the follow camera behind its walls):
+        # on the boss while lines play, on the player otherwise, off on leaving
+        self.assertIn("Camera_SetMode('RS_SCRIPT_VIEW')", text)
+        self.assertIn("Camera_SetMode('RS_ACTOR_VIEW')", text)
+        self.assertRegex(text, r"cx = [-\d.]+, cy = [-\d.]+, cz = [-\d.]+")
+        self.assertIn("foundry_gaza_HqCam(h.leaders[1])", text)
         # the greeting on the first visit only (per save), then the briefing
         self.assertIn("local sKey = 'foundry_hq_greeted_' .. foundry_gaza_HqIn", text)
         self.assertIn("if Utility_ReadNumberFromScribbleMemory(sKey) == 1 then", text)

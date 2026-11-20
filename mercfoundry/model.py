@@ -421,6 +421,29 @@ def without_collision(segments_record: bytes) -> bytes:
     return ucfb.wrap(b"CSEG", struct.pack("<II", len(new_tree), len(packed)) + packed, cseg_pad)
 
 
+def with_collision_of(segments_record: bytes, base_segments_record: bytes) -> bytes:
+    """The segments record with its own collision (cshp) replaced by another
+    record's (a new model's base: same skeleton, its joints the same): for a
+    look-alike whose base's collision was tuned by hand (an aircraft's
+    fuselage boxes, which landing and loading checks use), not fitted box by
+    box to the new pieces."""
+    def tree_of(rec):
+        cseg, pad = ucfb.unwrap(rec, b"CSEG", with_pad=True)
+        size, _ = struct.unpack_from("<II", cseg)
+        return script.decompress(cseg[8:], size), pad
+
+    tree, cseg_pad = tree_of(segments_record)
+    base_tree, _ = tree_of(base_segments_record)
+    roots, tree_pad = ucfb.split(tree)
+    items, pad_last = ucfb.split(roots[0][1])
+    base_items, _ = ucfb.split(ucfb.split(base_tree)[0][0][1])
+    shapes = [(t, b) for t, b in base_items if t == b"cshp"]
+    items = [(t, b) for t, b in items if t != b"cshp"] + shapes
+    new_tree = ucfb.pack_children([(b"ucfb", ucfb.pack_children(items, pad_last))], tree_pad)
+    packed = script.compress(new_tree)
+    return ucfb.wrap(b"CSEG", struct.pack("<II", len(new_tree), len(packed)) + packed, cseg_pad)
+
+
 def texture_hashes(segments_record: bytes) -> list:
     """The texture hashes the pieces draw (each segm MTRL's word 3, and word 4
     where a piece has a second texture), in order, without repeats."""

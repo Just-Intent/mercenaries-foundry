@@ -26,6 +26,10 @@ Project layout (every part optional):
     models/<name>.obj|.glb|.gltf  an edited export from the `model` command
     models/<name>.collision.json  {"shapes": {"0": 7}}: sets collision
                           shape flags (see docs/formats/dsk.md)
+    models/<name>.new.json   {"base": <game model>} with models/<name>.glb: a
+                          new model on the base's skeleton; "collision": "base"
+                          keeps the base's own collision (an aircraft's tuned
+                          boxes) instead of a box fitted to each new piece
     animations/*.glb|.gltf   clips replace the game animations with the same
                           names (export them with `model --glb --anim`)
     animations/new.json   {"new clip": "template clip"}: clips with these
@@ -3594,7 +3598,16 @@ def _new_models(data, folder, result):
             for p in empty.pieces:
                 all_lods |= p.lod_mask
             ns = model.set_lod_masks(ns, all_lods)
-        if vehicle and report.collision_boxes and len(model.decode(nm, ns).collision) == 1:
+        keep_base_collision = str(spec_doc.get("collision") or "").lower() == "base"
+        if spec_doc.get("collision") not in (None, "base", "fitted"):
+            raise ValueError(f"{where}: \"collision\" is \"base\" (keep the base model's) or \"fitted\" "
+                             f"(boxes fitted to the new pieces; the default)")
+        if keep_base_collision:
+            # the base's own shapes: an aircraft's tuned fuselage boxes, not one
+            # box per piece (a rotor's box held the extraction Black Hawk off
+            # the ground and off its passengers, and made landing "too risky")
+            ns = model.with_collision_of(ns, base_sr)
+        elif vehicle and report.collision_boxes and len(model.decode(nm, ns).collision) == 1:
             # a vehicle's boxes as its two bodies: one shape alone becomes the
             # driving body and bullets pass through (collision.VEHICLE_BODY)
             ns = collision.split_segments_vehicle_boxes(ns)
@@ -3602,7 +3615,8 @@ def _new_models(data, folder, result):
         data.new("streamed.dsk", key, model.SEGMENTS, ns)
         made.add(name.lower())
         result.changes.append(f"model {name}: new, from {f.name} on {base}'s skeleton: {len(report.added)} pieces, "
-                              f"{report.collision_boxes} collision boxes"
+                              + (f"{base}'s own collision" if keep_base_collision else
+                                 f"{report.collision_boxes} collision boxes")
                               + (f", {len(report.edited) + len(report.kept)} of the base's pieces kept from the file"
                                  if report.edited or report.kept else "")
                               + f" ({len(empty.pieces) - len(in_file)} of the base's pieces left out)"

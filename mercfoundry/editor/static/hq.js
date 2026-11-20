@@ -68,6 +68,11 @@ export function createHq(ctx) {
       i.exit = i.exit || {};
       return [i.exit, 'position', 'point'];
     }
+    if (kind === 'camera') {
+      const i = k.interiors[f];
+      i.camera = i.camera || {};
+      return [i.camera, 'position', 'point'];
+    }
     return [null];
   }
 
@@ -91,6 +96,10 @@ export function createHq(ctx) {
       <label class="sky-row"><span>Template</span><input data-int-k="guard.template" list="templates" value="${esc(g.template || '')}" placeholder="template_${f}_bouncer"></label>
       <label class="sky-row"><span>Prompt</span><input data-int-k="guard.prompt" value="${esc(g.prompt || '')}" placeholder="Enter HQ"></label>
       ${spotRow('Room', i.room, `room:${f}`)}
+      ${spotRow('Camera', i.camera && i.camera.position ? {position: i.camera.position} : null, `camera:${f}`, {noHeading: true})}
+      <p class="hint">Where the camera stands inside (a fixed spot, as retail's briefing shots; it looks at the boss while
+        lines play, else at the player). Put it high in a corner, clear of the walls; unset, it stands 1.2 m behind
+        and 1.8 m above the room spot.</p>
       <label class="sky-row"><span>Leaders</span><input data-int-k="leaders" value="${esc((i.leaders || []).join(', '))}" placeholder="actor names, the boss first"></label>
       <label class="sky-row"><span>Second in command</span><input data-int-k="starter" value="${esc(i.starter === false ? '' : (i.starter || ''))}" placeholder="the second leader (accepts the contract)"></label>
       <label class="sky-row"><span>Accept prompt</span><input data-int-k="accept_prompt" value="${esc(i.accept_prompt || '')}" placeholder="Accept contract"></label>
@@ -154,6 +163,7 @@ export function createHq(ctx) {
     box.querySelectorAll('[data-here]').forEach((b) => b.onclick = () => {
       const id = b.dataset.here, [obj, key, kind] = slot(id);
       const p = viewCentre().map(num);
+      if (id.startsWith('camera:')) p[1] = num(p[1] + 1.8);      // the view's centre is on the floor: head height
       if (kind === 'point') obj[key] = p;
       else obj[key] = {...(obj[key] || {}), position: p, heading: (obj[key] && obj[key].heading) || 0};
       edited(); draw();

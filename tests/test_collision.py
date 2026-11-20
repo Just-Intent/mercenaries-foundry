@@ -62,6 +62,24 @@ class CollisionTests(unittest.TestCase):
         self.assertEqual(len(collision.parse(body)[0].boxes), 1)
 
 
+    def test_with_collision_of(self):
+        # a new model keeping its base's collision ("collision": "base" in its
+        # .new.json): its own fitted shapes go, the base's come in whole
+        piece = segm(QUAD, [0, 1, 2, 3], "root")
+        base = segments_record([piece, cshp([box_shape(9, "root", [((0, 1, 0), (1, 2, 3))]),
+                                             box_shape(6, "root", [((0, 4, 0), (4, 0.2, 4))])], 2)])
+        fitted = segments_record([piece, piece, cshp([box_shape(7, "root", [((0, 4, 0), (8, 0.3, 8))])], 1)])
+        out = model.with_collision_of(fitted, base)
+
+        def parts(rec):
+            cseg = ucfb.unwrap(rec, b"CSEG")
+            size, _ = struct.unpack_from("<II", cseg)
+            return list(ucfb.iter_chunks(list(ucfb.iter_chunks(script.decompress(cseg[8:], size)))[0][1]))
+
+        kinds = [t for t, _ in parts(out)]
+        self.assertEqual(kinds, [b"segm", b"segm", b"cshp"])               # its own pieces, one collision block
+        self.assertEqual(parts(out)[-1], parts(base)[-1])                     # the base's, byte for byte
+
     def test_split_vehicle_boxes(self):
         # one generated shape (7) on a vehicle becomes its body (9) and a hull
         # copy (6) bullets hit, as retail vehicles have

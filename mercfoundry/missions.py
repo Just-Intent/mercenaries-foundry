@@ -28,6 +28,7 @@ many of its retail contracts (see hqsequence).  The mod supplies the script
 (scripts/sw_allies9.lua) and the layer (encounters/sw_allies9.json).
 """
 
+import math
 import re
 
 FACTIONS = ("allies", "china", "mafia", "sk")
@@ -1898,6 +1899,22 @@ def interiors(where, map_name, doc):
                                                              and isinstance(bribe.get("cost", 0), (int, float))):
             raise ValueError(f"{w}: \"bribe\" is true, false or {{\"cost\": <money>}}")
         bribe_cost = int(bribe["cost"]) if isinstance(bribe, dict) and "cost" in bribe else None
+        # The camera inside: retail never shows the follow camera during a
+        # briefing (the player sits; the camera plays the room's authored
+        # shot), and a follow camera in a room on the map is pushed behind
+        # its walls in tight spots. A fixed spot in the room: "camera"
+        # {"position"}, else 1.2 m behind and 1.8 m above where the player
+        # stands, along their heading.
+        cam = i.get("camera") or {}
+        if not isinstance(cam, dict) or (cam.get("position") is not None and (
+                not isinstance(cam["position"], (list, tuple)) or len(cam["position"]) != 3)):
+            raise ValueError(f"{w}: \"camera\" is {{\"position\": [x, y, z]}} (a spot inside the room)")
+        if cam.get("position"):
+            cam_pos = [float(v) for v in cam["position"]]
+        else:
+            h = math.radians(float(room.get("heading") or 0))
+            rp = [float(v) for v in room["position"]]
+            cam_pos = [rp[0] - 1.2 * math.sin(h), rp[1] + 1.8, rp[2] - 1.2 * math.cos(h)]
         exit_delay = exit_.get("delay", 5)
         exit_distance = exit_.get("distance", 3)
         if not isinstance(exit_distance, (int, float)) or exit_distance <= 0:
@@ -1911,6 +1928,7 @@ def interiors(where, map_name, doc):
                   "prompt": str(g.get("prompt") or "Enter HQ"), "side": str(g.get("side") or "civ"),
                   "marker": marker,
                   "room": [float(v) for v in room["position"]], "rheading": float(room.get("heading") or 0),
+                  "camera": cam_pos,
                   "leaders": leaders, "door": door, "door_prompt": str(exit_.get("prompt") or "Leave"),
                   "exit_delay": float(exit_delay), "exit_distance": float(exit_distance),
                   "exit_position": [float(v) for v in exit_pos] if exit_pos else None,
@@ -1965,7 +1983,8 @@ def interiors_lua(prefix, inside, flagged=()):
         rows.append(
             "%s = { guard = %s, prompt = %s, name = %s, side = %s, marker = %s, ttype = %s, blip = %s, rx = %.2f, ry = %.2f, rz = %.2f, "
             "rh = %.1f, leaders = { %s }, door = %s, doorprompt = %s, doordist = %.1f, exitdelay = %.1f, talkprompt = %s,\n"
-            " starter = %s, acceptprompt = %s, bribe = %s, bribecost = %s,%s\n greeting = %s,\n idle = %s },"
+            " starter = %s, acceptprompt = %s, bribe = %s, bribecost = %s,%s cx = %.2f, cy = %.2f, cz = %.2f,\n"
+            " greeting = %s,\n idle = %s },"
             % (f, _lua(i["guard"]), _lua_str(i["prompt"]), _lua_str(i["name"]), _lua(i["side"]),
                ("'ring'" if f in flagged else "'hq'") if i["marker"] == "hq" else "false",
                _lua(f"TARGET_TYPE_HQ_{f.upper()}"), _lua(f"hq{f}"), *i["room"], player_yaw(i["rheading"]),
@@ -1976,6 +1995,7 @@ def interiors_lua(prefix, inside, flagged=()):
                "TRUE" if i.get("bribe", True) else "FALSE",
                str(int(i["bribe_cost"])) if i.get("bribe_cost") is not None else "nil",
                (" dx = %.2f, dy = %.2f, dz = %.2f," % tuple(i["exit_position"])) if i.get("exit_position") else "",
+               *(i.get("camera") or [i["room"][0], i["room"][1] + 1.8, i["room"][2]]),
                i["greeting"], i["idle"]))
     return f"""-- HQ interiors (Mercenaries Foundry: maps json "interiors"), played as
 -- retail's HQs: bouncer, briefing and briefing_utilities
@@ -2144,7 +2164,28 @@ if {P}HqHeld then return end
 Player_EnableControl(13)
 if Foundry_HqMode then Foundry_HqMode(TRUE) end
 end
+-- The camera inside: a fixed spot in the room (retail's briefing shows the
+-- room's own shot, never the follow camera, which a room on the map pushes
+-- behind its walls): on the speaker while lines play, else on the player.
+function {P}HqCam(sLook)
+local h = {P}HqIn and {P}Hq[{P}HqIn]
+if not h then return end
+if not {P}HqCamOn then
+Camera_DetachFromActor()
+Camera_SetMode('RS_SCRIPT_VIEW')
+Camera_SetPosition(h.cx, h.cy, h.cz)
+{P}HqCamOn = 1
+end
+if not sLook or not Utility_DoesActorExist(sLook) then sLook = 'player0' end
+Camera_SetInterestActor(sLook)
+end
+function {P}HqCamOff()
+if not {P}HqCamOn then return end
+{P}HqCamOn = nil
+Camera_SetMode('RS_ACTOR_VIEW')
+end
 function {P}HqRelease()
+{P}HqCamOff()
 if not {P}HqHeld then return end
 {P}HqHeld = nil
 if Foundry_HqMode then Foundry_HqMode(FALSE) end
@@ -2170,6 +2211,7 @@ for i, a in h.leaders do
 if Utility_DoesActorExist(a) then Actor_LookAtActor(a, 'player0') end
 end
 {P}HqHold()
+{P}HqCam(h.leaders[1])
 Event_RelativeTimer('{P}HqLit', 'b', 0.5)
 end
 function {P}HqLit()
@@ -2312,6 +2354,8 @@ function {P}HqSay(lines, fDone)
 {P}HqLines = lines
 {P}HqLine = 0
 {P}HqDone = fDone
+local h = {P}HqIn and {P}Hq[{P}HqIn]
+if h and table.getn(lines) > 0 then {P}HqCam(h.leaders[1]) end
 {P}HqNext()
 end
 function {P}HqNext()
@@ -2321,6 +2365,7 @@ local l = {P}HqLines[{P}HqLine]
 Ui_MessageBoxClear()
 if not l then
 {P}HqLines = nil
+{P}HqCam('player0')
 if {P}HqDone then {P}HqDone() end
 return
 end
