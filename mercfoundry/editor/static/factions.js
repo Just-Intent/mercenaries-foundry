@@ -50,6 +50,13 @@ export function createFactions(ctx) {
         </details>
       </div>`;
     }).join('') + `<datalist id="fx-models">${st.models.map((m) => `<option value="${esc(m)}">`).join('')}</datalist>`;
+    // only on one of the mod's new maps ("map"), or everywhere
+    fetch('/api/text').then((r) => r.json()).then((d) => {
+      const maps = d.maps || [];
+      $('fx-map').innerHTML = '<option value="">On every map</option>'
+        + maps.map((m) => `<option value="${esc(m)}" ${st.doc.map === m ? 'selected' : ''}>Only on ${esc(m)}</option>`).join('')
+        + (st.doc.map && !maps.includes(st.doc.map) ? `<option selected value="${esc(st.doc.map)}">Only on ${esc(st.doc.map)}</option>` : '');
+    }).catch(() => {});
     $('fx-everywhere').checked = !!st.doc.everywhere;
     $('fx-subtitles').checked = !!st.doc.subtitles;
   }
@@ -125,6 +132,7 @@ export function createFactions(ctx) {
     if (!Object.keys(st.doc[f]).length) delete st.doc[f];
     edited();
   });
+  $('fx-map').onchange = () => { if ($('fx-map').value) st.doc.map = $('fx-map').value; else delete st.doc.map; edited(); };
   $('fx-everywhere').onchange = () => { if ($('fx-everywhere').checked) st.doc.everywhere = true; else delete st.doc.everywhere; edited(); };
   $('fx-subtitles').onchange = () => { if ($('fx-subtitles').checked) st.doc.subtitles = true; else delete st.doc.subtitles; edited(); };
 

@@ -5,7 +5,7 @@ the game, and saves ordinary mod files, so editing in it and editing files by
 hand work on the same mod.
 
 ```bash
-python -m mercfoundry edit my_mod --data game_files/DATAxbox
+python -m mercfoundry edit            # or: Foundry Editor.cmd in the game folder
 ```
 
 This starts a server on 127.0.0.1 (port 8740; `--port` changes it) and opens the
@@ -16,6 +16,50 @@ toolkit bundle run it the same way: `foundry\python\python.exe foundry\mercfound
 
 - In a game folder with the toolkit (the launcher's, or a playtest package): run `Foundry Editor.cmd`. A page opens in your browser with the game's Foundry mods: open one, or make a new one. The editor's Switch mod goes back to the list. Close the window to stop it.
 - From the command line: `python -m mercfoundry edit` (the game folder is found: the one the toolkit is in, or the current one; `--game <folder>` names another), or `python -m mercfoundry edit "mods\My Mod"` for one mod. The game's DATAxbox is found from the game folder (`--data` names another).
+
+## The layout
+
+- **Top bar:** the mod you're saving to (click for the Mods panel), **Switch mod** (back to the game's list of mods),
+  the **Map**, **Find** (an object, path, zone or squad by name), the live game link, the status line (hover for all
+  of it), **Undo**, **Redo**, **Save** and **Changes** (the mod's changed files, git and builds).
+- **Tool rail** (left), by what each tool is for:
+  - *World:* **Place** (type or pick a template, named object or `model:<model>`, then click the ground; a new map's
+    own template copies are here too), **New path**, **New zone**, **New water**, **New squad**, **Terrain**.
+  - *Map setup:* **Map** (make a new map; its arrival point, message, layers and travel pilots), **HQs & medevac**,
+    **Sky**.
+  - *Content:* **Missions**, **Deck of 52**, **Factions**, **Text & mail**, **Look**, **Animations**.
+  - *Project:* **Limits**.
+- **Show** (top left of the view): which of objects, paths, zones, water and squads the view draws.
+- One tool panel at a time: opening a tool closes the one that was open (unsaved edits stay until you save or leave).
+
+### HQs & medevac (a new map)
+Everything about a new map's HQs in one place, saved to `maps/<map>.json`, checked as the build checks it:
+the **medevac point**, the **HQ respawn points** (one per faction), the **HQ flags** on the radar and PDA map, and
+each faction's **interior**: the guard (where, name, template, prompt), the room, the leaders and the second in
+command, the way out (an exit object, or a point with its prompt, delay and distance), the bribe when the faction is
+hostile, and the greeting and idle lines. **Here** puts a point at the middle of the view; **Look** goes to it.
+A raw JSON box at the bottom edits anything the form doesn't show. Keys the mod's own tools write (mod.json
+`generated`) are flagged: the tools' next run replaces edits to them.
+
+### Deck of 52 (a new map)
+A tab per suit file (`deck/<suit>.json`; **+ Suit** makes one): each card's name, alias, role, bounty, description or
+bio, portrait (preview, and a PNG to upload: `deck/<suit><rank>.png`), and for number cards the placed character
+(**Find** goes to it) and the layer loaded while it's at large. **Other suits** sets the stand-in for suits no deck on
+the map uses. Saving runs the build's own check, and the file's other keys (yours or your tools') are kept.
+
+### Text & mail
+The mod's **welcome mail** (`mod.json`), and its reworded game text: a tab per `text/*.json`, each **everywhere**
+or **only on** one of the mod's new maps. **Find the game's text** searches keys and words; click a result to add it
+to the open file with its current words, then change them.
+
+### Look (a new map)
+The HUD and PDA art drawn instead of the game's while the map is loaded (`hud_textures`): each row shows the game's
+sheet and yours, takes a PNG (saved as `textures/<name>.png`), and **Add a sheet** lists the ones worth repainting
+(radar markers, flags, faction icons, the Deck screen, PDA frames and buttons).
+
+### Limits
+The open map's object count against the game's 16,384, and the other limits that freeze or hang the game rather than
+fail the build (traffic routes, the name table, texture sizes and memory, model sizes, objectives at once).
 
 ## What it does
 
@@ -340,11 +384,11 @@ toolkit bundle run it the same way: `foundry\python\python.exe foundry\mercfound
     fades and puts the player back where they stood by the guard. A mission is offered there
   with `"map": "<new map>"` and `"contact": {"interior": "<faction>",
   "briefing": [line]}` (no position: the guard is its way in).
-  **Medevac point** (`"medevac": {"position": [x, y, z], "heading"?}` in`
+  **Medevac point** (`"medevac": {"position": [x, y, z], "heading"?}` in
   `maps/<name>.json`): where the game puts the player back on the map: a
   medevac from the pause menu, a contract given up after dying, free roam
-  starting. The game respawns at the location scribble memory's`
-  `PlayerStartLocationName` names, which retail's scripts set to`
+  starting. The game respawns at the location scribble memory's
+  `PlayerStartLocationName` names, which retail's scripts set to
   `loc_playerstart` (on SW the Allied MASH); the build moves the map's copy of
   its source's `loc_playerstart` (blank's is at about -73, 20, -70) there.
   **HQ respawn points** (`"hq_respawn": {"<faction>": {"position", "heading"?}}`):
@@ -816,7 +860,7 @@ changing the game's anywhere else (these are files, not editor tools yet):
 
 ## A new map's own Deck of 52
 
-`deck/<suit>.json` (file only, one per suit: a map can have several) gives a new map a suit of its own cards, played
+`deck/<suit>.json` (one per suit: a map can have several; also in the editor: Deck of 52) gives a new map a suit of its own cards, played
 as retail's deck. Shape:
 
 ```json
