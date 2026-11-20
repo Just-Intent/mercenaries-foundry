@@ -11,43 +11,60 @@
 </head>
 <body>
 <header>
-  <strong>Foundry editor</strong>
-  <label>Saving to <button id="mod" title="The mod everything you save goes into: click to switch to another, make one, rename it or delete one"></button></label>
-  <button id="changes-open" title="The mod's changed files: commit and push them (when the mod is under git), and build it as the launcher does">Changes</button>
-  <label>Map <select id="map"></select></label>
-  <input id="search" type="search" placeholder="Find object by name or model" list="names">
+  <strong class="brand">Foundry editor</strong>
+  <button id="mod" title="The mod everything you save goes into: click to switch to another, make one, rename it or delete one"></button>
+  <button id="switch-mod" hidden title="Back to the game's list of mods">Switch mod</button>
+  <label class="top-map">Map <select id="map"></select></label>
+  <input id="search" type="search" placeholder="Find an object by name or model" list="names">
   <datalist id="names"></datalist>
-  <label class="check"><input id="show-objects" type="checkbox" checked> Objects</label>
-  <label class="check"><input id="show-paths" type="checkbox" checked> Paths</label>
-  <label class="check"><input id="show-zones" type="checkbox" checked> Zones</label>
-  <label class="check"><input id="show-water" type="checkbox" checked> Water</label>
-  <label class="check"><input id="show-squads" type="checkbox" checked> Squads</label>
-  <button id="new-path">New path</button>
-  <button id="new-zone">New zone</button>
-  <button id="new-water" title="Draw a water area's outline: it goes in the map's own zones, where the game makes water">New water</button>
-  <button id="new-squad">New squad</button>
-  <input id="place-template" type="text" list="placeables" spellcheck="false" placeholder="Template, object or model: to place"
-         title="Anything from any map: a template (vehicle, prop, character), a named object, or model:<model> for a building or prop. Click Place, then the ground.">
-  <button id="place" title="Place it where you click (P)">Place</button>
-  <button id="terrain-mode" title="Edit the ground's height (T)">Terrain</button>
-  <button id="missions-mode" title="Make and edit contracts">Missions</button>
-  <button id="sky-mode" title="The map's sky and weather presets">Sky</button>
-  <button id="anims-mode" title="A character's animation table: which clip plays when, with a 3D preview">Animations</button>
-  <button id="factions-mode" title="Give a faction new names in the game's text">Factions</button>
-  <button id="mapset-mode" title="Make a new map, or set where you arrive on one and what loads with it">Map</button>
   <datalist id="templates"></datalist>
   <datalist id="placeables"></datalist>
   <span class="spacer"></span>
-  <button id="live">Live (no game)</button>
-  <button id="to-player" disabled title="Look at where the player is">To player</button>
-  <button id="player-here" disabled title="Teleport the player to the middle of the view">Player here</button>
+  <span class="live-box">
+    <button id="live">Live (no game)</button>
+    <button id="to-player" disabled title="Look at where the player is">To player</button>
+    <button id="player-here" disabled title="Teleport the player to the middle of the view">Player here</button>
+  </span>
   <span id="status">Loading...</span>
   <button id="undo" disabled title="Nothing to undo (Ctrl+Z)">Undo</button>
   <button id="redo" disabled title="Nothing to redo (Ctrl+Y)">Redo</button>
   <button id="save" disabled>Save</button>
+  <button id="changes-open" title="The mod's changed files: commit and push them (when the mod is under git), and build it as the launcher does">Changes</button>
 </header>
 <main>
+  <nav id="rail" aria-label="Tools">
+    <div class="rail-group">World</div>
+    <div class="rail-place">
+      <input id="place-template" type="text" list="placeables" spellcheck="false" placeholder="Template, object or model:"
+             title="Anything from any map: a template (vehicle, prop, character), a named object, or model:<model> for a building or prop. Click Place, then the ground.">
+      <button id="place" title="Place it where you click (P)">Place</button>
+    </div>
+    <button id="new-path" title="Draw a path: click points on the ground, double-click to finish">New path</button>
+    <button id="new-zone" title="Draw a zone's outline: click points, double-click to finish">New zone</button>
+    <button id="new-water" title="Draw a water area's outline: it goes in the map's own zones, where the game makes water">New water</button>
+    <button id="new-squad" title="A squad of characters for the mod's encounters">New squad</button>
+    <button id="terrain-mode" title="Edit the ground's height, paint it and draw roads (T)">Terrain</button>
+    <div class="rail-group">Map setup</div>
+    <button id="mapset-mode" title="Make a new map, or set where you arrive on one and what loads with it">Map</button>
+    <button id="hq-mode" title="A new map's faction HQs: flags, guards, interiors, the medevac point and HQ respawn points">HQs &amp; medevac</button>
+    <button id="sky-mode" title="The map's sky and weather presets">Sky</button>
+    <div class="rail-group">Content</div>
+    <button id="missions-mode" title="Make and edit contracts">Missions</button>
+    <button id="deck-mode" title="A new map's own Deck of 52: cards, portraits, bounties, number cards' characters">Deck of 52</button>
+    <button id="factions-mode" title="Give a faction new names in the game's text">Factions</button>
+    <button id="look-mode" title="A new map's own look: HUD and PDA art, and the game's templates, models and textures copied for it">Look</button>
+    <button id="anims-mode" title="A character's animation table: which clip plays when, with a 3D preview">Animations</button>
+    <div class="rail-group">Project</div>
+    <button id="limits-mode" title="The game's limits for the open map: objects, traffic routes, textures, model sizes">Limits</button>
+  </nav>
   <div id="view"><div id="tip" hidden></div>
+    <details id="layers-box" open><summary>Show</summary>
+      <label class="check"><input id="show-objects" type="checkbox" checked> Objects</label>
+      <label class="check"><input id="show-paths" type="checkbox" checked> Paths</label>
+      <label class="check"><input id="show-zones" type="checkbox" checked> Zones</label>
+      <label class="check"><input id="show-water" type="checkbox" checked> Water</label>
+      <label class="check"><input id="show-squads" type="checkbox" checked> Squads</label>
+    </details>
     <div id="minimap" hidden><canvas id="minimap-canvas" width="512" height="512"
       title="The whole map (north up). Click to look there; M hides it."></canvas>
       <button id="minimap-hide" title="Hide the map (M)">&times;</button></div>

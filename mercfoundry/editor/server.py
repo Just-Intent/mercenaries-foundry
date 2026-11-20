@@ -28,6 +28,13 @@ POST /api/models/new           {"name", "base", "glb" (base64)}: a new object's 
 POST /api/sky/save             {"map", "doc", "lighting"?}: writes sky/<map>.json (and terrain/<map>.lighting.json; null removes it)
 POST /api/lighting/preview     {"map", "lighting", "base"?}: the ground lit from that sun, as /api/look/<map>.light
 GET  /api/animtables          animation tables, with the models of the characters using each
+GET  /api/mapkeys/<map>       a new map's HQ, medevac and HUD art keys (content.py)
+POST /api/mapkeys/save         {"map", "changes": {key: value | null}}, checked as the build does
+GET  /api/deck                 the mod's deck/*.json, each with the build's check and its portraits
+POST /api/deck/save            {"file", "doc"}; /api/deck/portrait {"suit", "card", "png" (base64)}
+POST /api/texture/upload       {"name", "png"}: textures/<name>.png
+GET  /api/modfile/<path>.png   one of the mod's own PNGs
+POST /api/switch               back to the mod list
 GET  /api/animtable/<name>    the game's table, the mod's version, its models, the flag meanings
 GET  /api/clips               every clip name
 GET  /api/clip/<model>/<clip>.glb  the model (no textures) carrying the clip, in place: the preview
@@ -89,7 +96,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from importlib import resources
 from urllib.parse import unquote, urlparse
 
-from . import anims, gitpanel
+from . import anims, content, gitpanel
 from .live import Live
 from .scene import Scene
 
@@ -159,6 +166,13 @@ def make_handler(scene: Scene, mod_name: str, live: Live = None):
                 if path == "/api/mods":
                     with objects_lock:
                         return self.send(200, scene.mods())
+                if path.startswith("/api/mapkeys/"):          # a new map's HQs, medevac, HUD art
+                    return self.send(200, content.map_keys(scene.mod, path.rsplit("/", 1)[1]))
+                if path == "/api/deck":
+                    return self.send(200, content.deck_files(scene.mod))
+                if path.startswith("/api/modfile/"):          # one of the mod's own PNGs
+                    data = content.mod_png(scene.mod, path[len("/api/modfile/"):])
+                    return self.send(200, data, "image/png") if data is not None else self.fail(404, "no such PNG")
                 if path == "/api/git":
                     with git_lock:
                         st = gitpanel.status(scene.mod)
@@ -311,6 +325,16 @@ def make_handler(scene: Scene, mod_name: str, live: Live = None):
                         return self.send(200, gitpanel.push(scene.mod))
                 if path == "/api/build":
                     return self.send(200, builds.start(scene.game_dir(), bool(doc.get("playtest"))))
+                if path == "/api/mapkeys/save":
+                    return self.send(200, content.save_map_keys(scene.mod, str(doc.get("map") or ""),
+                                                                doc.get("changes") or {}))
+                if path == "/api/deck/save":
+                    return self.send(200, content.save_deck(scene.mod, str(doc.get("file") or ""), doc.get("doc") or {}))
+                if path == "/api/deck/portrait":
+                    return self.send(200, content.save_portrait(scene.mod, str(doc.get("suit") or ""),
+                                                                str(doc.get("card") or ""), doc.get("png") or ""))
+                if path == "/api/texture/upload":
+                    return self.send(200, content.save_texture(scene.mod, str(doc.get("name") or ""), doc.get("png") or ""))
                 if path == "/api/switch":             # back to the mod list (serve's loop)
                     if not getattr(self.server, "can_switch", False):
                         return self.fail(400, "started for one mod: restart the editor without a mod to choose")

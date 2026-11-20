@@ -22,6 +22,11 @@ import {createFactions} from './factions.js';
 import {createMapSettings} from './mapset.js';
 import {createMods} from './mods.js';
 import {createChanges} from './changes.js';
+import {createHq} from './hq.js';
+import {createDeck} from './deck.js';
+import {createLook} from './look.js';
+import {createLimits} from './limits.js';
+import {exclusivePanels} from './panels.js';
 
 const $ = (id) => document.getElementById(id);
 const NEAR_RADIUS = 220;      // metres around the view centre that show real models
@@ -212,6 +217,7 @@ let onSaved = null, savedTimer = null;
 // ------------------------------------------------------------------ status
 function status(text, error = false) {
   $('status').textContent = text;
+  $('status').title = text;             // one line in the bar; all of it on hover
   $('status').classList.toggle('error', error);
 }
 // The Map list: the free-roam maps first, then the rest (a mod's new maps too).
@@ -221,6 +227,7 @@ async function fillMaps() {
   $('mod').title = `Everything you save goes into mods/${info.folder}: click to switch to another mod, make one, rename it or delete one`;
   modName = info.mod;
   pageMod = info.folder;
+  $('switch-mod').hidden = !info.can_switch;
   const maps = info.maps.filter((m) => ['swn', 'sw', 'nw'].includes(m)).concat(
     info.maps.filter((m) => !['swn', 'sw', 'nw'].includes(m)));
   $('map').innerHTML = maps.map((m) => `<option>${m}</option>`).join('');
@@ -1728,7 +1735,34 @@ const mapset = createMapSettings({
     await loadMap(name);
   },
 });
-// The minimap (water areas come from the layout module once it has loaded).
+// The panels for what used to be file-only: HQs & medevac, the Deck of 52, a
+// new map's look (HUD art), and the game's limits.
+const postJSON = async (url, body) => {
+  const r = await fetch(url, {method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(body)});
+  const doc = await r.json();
+  if (!r.ok) throw new Error(doc.error || r.statusText);
+  return doc;
+};
+const viewCentreGame = () => { const g = gamePos(controls.target); g[1] = round(heightAt(g[0], g[2])); return g; };
+const hqPanel = createHq({$, status, post: postJSON, viewCentre: viewCentreGame, lookAt: (p, d) => lookAt(p, d),
+                          mapName: () => state.map, remember: (...a) => remember(...a)});
+createDeck({$, status, post: postJSON, findObject: (name) => showByName(name)});
+const lookPanel = createLook({$, status, post: postJSON, mapName: () => state.map});
+createLimits({$, stats: () => ({map: state.map, objects: state.records.filter((r) => !r.removed && !r.context).length,
+                               placed: state.records.filter((r) => String(r.id || '').startsWith('placed:') && !r.removed).length,
+                               removed: state.records.filter((r) => r.removed).length})});
+exclusivePanels($);
+// Back to the game's list of mods (when the editor was started without one).
+$('switch-mod').onclick = async () => {
+  if (state.dirty && !confirm('Discard unsaved changes and go back to the list of mods?')) return;
+  try {
+    await postJSON('/api/switch', {});
+    status('Back to the list of mods...');
+    const wait = async () => { try { const r = await fetch('/'); if (r.ok) { location.href = '/'; return; } } catch (e) { /* restarting */ }
+                               setTimeout(wait, 400); };
+    setTimeout(wait, 600);
+  } catch (e) { status(e.message, true); }
+};// The minimap (water areas come from the layout module once it has loaded).
 let waterAreas = null;
 const minimap = createMinimap({$, heightAt, lookAt: (p, d) => lookAt(p, d)});
 const layout = createLayout({
