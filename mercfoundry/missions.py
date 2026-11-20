@@ -2350,7 +2350,30 @@ def layers_script(layers, pilots=(), arrive=False, welcome=(), deck=False):
             _lua(l["map"]), _lua(l["layer"]), _lua(l["check"]) if l.get("check") else "nil"))
     out += ["}",
             "if not g_foundry_layers then g_foundry_layers = {} end",
+            # A save made during a contract played on a new map: the game
+            # resumes the level SkipTo_Map names, the contract's arc map (sw),
+            # so the player woke there. Back to the new map, the contract
+            # started again from its beginning (as retail restarts a mission
+            # a save was made in).
+            "function foundry_ResumeNewMap()",
+            "local m = Utility_ReadStringFromScribbleMemory('foundry_play_map')",
+            "if not m then return false end",
+            "local f = Utility_ReadStringFromScribbleMemory('current_faction')",
+            "local n = f and Utility_ReadNumberFromScribbleMemory('current_' .. f .. '_mission')",
+            "if not n or not Utility_ReadNumberFromScribbleMemory('mission_accepted') then",
+            "Utility_EraseValueFromScribbleMemory('foundry_play_map')",
+            "Utility_EraseValueFromScribbleMemory('foundry_play_arc')",
+            "return false",
+            "end",
+            "Utility_WriteStringToScribbleMemory('SkipTo_Faction', f)",
+            "Utility_WriteNumberToScribbleMemory('SkipTo_MissionNumber', n)",
+            "Utility_EraseValueFromScribbleMemory('skipto_via_cheating')",
+            "Utility_WriteStringToScribbleMemory('foundry_map_start', 'resumed a saved contract on ' .. m)",
+            "Utility_ResetToBaseLayerOnly(m)",
+            "return true",
+            "end",
             "function foundry_LoadMapLayers()",
+            "if foundry_ResumeNewMap() then return end",
             "local map = Utility_ReadStringFromScribbleMemory('SkipTo_Map')",
             "for i, l in tFoundryLayers do",
             "if l.map == map then",

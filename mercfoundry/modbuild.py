@@ -1715,6 +1715,8 @@ def _apply_contracts(data, contracts, result, insertions=()):
     bouncers offer in their contract sequence ("hq"; see _apply_hq_sequence)."""
     from . import missions
     data.contract_maps = {c["map"] for c in contracts} | {c["play"] for c in contracts if c.get("play")}
+    # a contract played on a new map: its layer (named for the mission) loads there
+    data.play_layers = {c["id"].lower(): c["play"].lower() for c in contracts if c.get("play")}
     data.interior_contracts = [c for c in contracts if c.get("interior")]
     data.all_contracts = list(contracts)
     body = missions.contracts_script(contracts, insertions)
@@ -2000,6 +2002,127 @@ def _check_models_exist(data, result):
             f"{' and more' if len(missing) > 12 else ''}. An object or character given a model that doesn't exist "
             f"(GeometryFile, a ruin model) still spawns, and a character animated on the game's stand-in corrupts "
             f"memory once it wakes and crashes the game. Add the model (models/<name>.glb or .new.json) or fix the name")
+
+
+def _check_animation_tables(data, result):
+    """An object a mod places with an AnimationTable its level doesn't load
+    still spawns; when it wakes, the game animates it with no table (or a
+    stale one) and writes past what it has: Gaza's face-card men, copies of
+    template_c3_CARD with sw_china3's clubs_facecards, scribbled index pairs
+    (FFFF00xx) over the game's memory. Each new layer's objects: the table in
+    the layer's own list, its map's list or a layer that loads with the map,
+    or one every map loads. A warning: what a level loads in all can't be
+    known exactly here."""
+    from . import encounters
+    LIST = name_hash("list")
+    lists = {}
+    for a, r in data.records(LIST):
+        lists[r.key] = encounters.parse_list(data.current(a, r).decode("latin-1"))
+    for recs in data.add.values():
+        for key, kind, body in recs:
+            if kind == LIST:
+                lists[key] = encounters.parse_list(body.decode("latin-1"))
+
+    def tables(key):
+        return {n.lower() for n in (lists.get(key) or {}).get("animtable", [])}
+
+    shared = set()
+    for n in NEW_MAP_TEMPLATE_LAYERS + ("global", "shared"):
+        shared |= tables(name_hash(n))
+    by_map = {}
+    for m, ls in getattr(data, "new_map_layers", {}).items():
+        have = tables(name_hash(m))
+        for l in ls:
+            have |= tables(name_hash(l))
+        by_map[m.lower()] = have
+    missing = {}
+    pairs = {}                 # (animation table, model) -> layers
+    for recs in data.add.values():
+        for key, kind, body in recs:
+            if kind != WORLD:
+                continue
+            try:
+                doc = world.to_json(body)
+            except Exception:                      # noqa: BLE001 - not ours to judge here
+                continue
+            layer = doc.get("name") or data.label(key, WORLD).split(" ", 1)[-1]
+            tnam = ""
+            for c in doc["chunks"]:
+                if c.get("tag") == "TNAM" and c.get("hex"):
+                    tnam = bytes.fromhex(c["hex"]).split(b"\0")[0].decode("latin-1").lower()
+            # a contract played on a new map loads there, not on its arc's map
+            tnam = getattr(data, "play_layers", {}).get(str(layer).lower(), tnam)
+            have = tables(key) | shared | by_map.get(tnam, set()) | tables(name_hash(tnam))
+            for c in doc["chunks"]:
+                if c.get("tag") != "inst":
+                    continue
+                for k, v in c.get("properties") or []:
+                    if str(k).lower() != "animationtable" or not v:
+                        continue
+                    if str(v).lower() not in have:
+                        missing.setdefault((str(v), layer), []).append(c.get("template") or c.get("model") or "?")
+                    if c.get("model"):
+                        pairs.setdefault((str(v).lower(), str(c["model"]).lower()), set()).add(layer)
+    if missing:
+        listed = "; ".join(f"{t} for {', '.join(sorted(set(o))[:3])} in {lay}"
+                           for (t, lay), o in sorted(missing.items())[:10])
+        result.warnings.append(
+            f"{len(missing)} animation table(s) that their objects' layers and maps don't load: {listed}"
+            f"{' and more' if len(missing) > 10 else ''}. An object animated with a table its level hasn't "
+            f"loaded writes over memory when it wakes and crashes the game later. Copy the object from one "
+            f"whose table loads there, or set its AnimationTable to one that does")
+    # An animation table drives joints by their order in the skeleton it was
+    # made for: a model whose skeleton differs (another character's, even
+    # with the same joints in another order: nk_hum_clubqueencard and
+    # nk_hum_clubncard from joint 7) gets the wrong bones, and Gaza's
+    # face-card men (clubncard copies with clubs_facecards) were where its
+    # crashes were. Each table a mod pairs with a model: the model's
+    # skeleton should be one retail uses that table with.
+    if not pairs:
+        return
+    archives = [data.archive(n) for n in ARCHIVES if (data.dir / n).exists()]
+    skel_cache = {}
+
+    def joints(name):
+        if name not in skel_cache:
+            body = data.find_added(name_hash(name), model.MODEL)
+            if body is None:
+                try:
+                    body = model.find(archives, name)[0]
+                except (KeyError, ValueError):
+                    body = None
+            try:
+                skel_cache[name] = tuple(j.name.lower() for j in model.skeleton(body)) if body else None
+            except Exception:                      # noqa: BLE001 - an unreadable model isn't this check's business
+                skel_cache[name] = None
+        return skel_cache[name]
+
+    wanted = {t for t, _ in pairs}
+    retail = {}
+    for a, r in data.records(WORLD):
+        try:
+            doc = world.to_json(data.archive(a).read(r))
+        except Exception:                          # noqa: BLE001
+            continue
+        for c in doc["chunks"]:
+            if c.get("tag") != "inst" or not c.get("model"):
+                continue
+            for k, v in c.get("properties") or []:
+                if str(k).lower() == "animationtable" and str(v).lower() in wanted:
+                    retail.setdefault(str(v).lower(), set()).add(str(c["model"]).lower())
+    wrong = []
+    for (table, m), layers in sorted(pairs.items()):
+        mine = joints(m)
+        theirs = {joints(x) for x in retail.get(table, ())} - {None}
+        if mine and theirs and mine not in theirs:
+            wrong.append(f"{m} with {table} (made for {', '.join(sorted(retail[table])[:2])}; in "
+                         f"{', '.join(sorted(layers)[:3])})")
+    if wrong:
+        result.warnings.append(
+            f"{len(wrong)} model(s) animated with a table made for another skeleton: {'; '.join(wrong[:8])}"
+            f"{' and more' if len(wrong) > 8 else ''}. A table drives joints by their order in its own "
+            f"skeleton; on a different one it moves the wrong bones (and may write past them). Use the table "
+            f"the model's own characters use (its AnimationTable in the game's objects)")
 
 
 def _check_new_scripts(data, result):
@@ -4219,6 +4342,7 @@ def build(projects, data_dir, out_dir, name=None, description=None) -> Result:
     _check_map_paths(data, result)
     _check_model_sizes(data, result)
     _check_models_exist(data, result)
+    _check_animation_tables(data, result)
     from . import sounds
     data.project = "Foundry"
     sounds.finish(data, result)
