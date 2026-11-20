@@ -3194,10 +3194,12 @@ static int MERC_PLUGIN_CALL cmd_map_texture(void *ud, uint32_t L)
 /* every second while a map's texts are on: a key back on the game's text (its
  * strings rebuilt, as a mission's merge in) gets the map's again */
 static double maptext_timer;
+static void datapod_remap(void);
 static void maptext_poll(double dt)
 {
     if (!maptext_count || (maptext_timer += dt) < 1.0) return;
     maptext_timer = 0;
+    datapod_remap();                 /* a card list built before the map's texts were on */
     uint32_t table = string_table();
     unsigned again = 0;
     for (unsigned i = 0; table && i < maptext_count; i++) {
@@ -3222,6 +3224,71 @@ static void maptext_poll(double dt)
         snprintf(line, sizeof(line), "map text: %u strings were the game's again; the map's put back", again);
         host->log(host->context, line);
     }
+}
+
+/* The PDA's card list (DataPod_BuildCards 0xC9700): 52 entries of 0x28
+ * bytes from this+0xDB44 (the rank's word), holding the hashes of
+ * cards.<suit>.<n>.Name (+0x10), .charName (+0x14) and .bio (+0x18), which
+ * the Deck screen draws by hash. The string swap above changes what those
+ * keys hold, but cards whose text the screen had already laid out kept the
+ * game's (about half of a suit in the 0.225 playtest: the bios). Each entry
+ * whose key has map text is pointed at the map's own key instead, so the
+ * screen asks for a string it has never shown; put back on level load. */
+#define DATAPOD_CARDS 0xDB44u
+#define DATAPOD_CARD_SIZE 0x28u
+#define DATAPOD_CARD_COUNT 52u
+typedef struct { uint32_t addr, original, replaced; } DataPodSwap;
+static DataPodSwap dpswap[DATAPOD_CARD_COUNT * 3];
+static unsigned dpswap_count;
+static uint32_t datapod_vm;
+
+static void datapod_remap(void)
+{
+    if (!datapod_vm || !maptext_count) return;
+    unsigned n = 0;
+    for (uint32_t i = 0; i < DATAPOD_CARD_COUNT; i++) {
+        for (uint32_t off = 0x10; off <= 0x18; off += 4) {
+            uint32_t addr = datapod_vm + DATAPOD_CARDS + i * DATAPOD_CARD_SIZE + off, h = 0;
+            if (!host->read_guest(host->context, addr, &h, 4) || !h) continue;
+            for (unsigned j = 0; j < maptext_count; j++) {
+                if (maptext[j].key != h) continue;
+                uint32_t to = maptext[j].other;
+                if (!host->write_guest(host->context, addr, &to, 4)) break;
+                unsigned k;
+                for (k = 0; k < dpswap_count && dpswap[k].addr != addr; k++) {}
+                if (k == dpswap_count && dpswap_count < DATAPOD_CARD_COUNT * 3)
+                    dpswap[dpswap_count++] = (DataPodSwap){addr, h, to};
+                else if (k < dpswap_count)
+                    dpswap[k].replaced = to;
+                n++;
+                break;
+            }
+        }
+    }
+    (void)n;
+}
+
+static void datapod_restore(void)
+{
+    for (unsigned i = 0; i < dpswap_count; i++) {
+        uint32_t now = 0;
+        if (host->read_guest(host->context, dpswap[i].addr, &now, 4) && now == dpswap[i].replaced)
+            host->write_guest(host->context, dpswap[i].addr, &dpswap[i].original, 4);
+    }
+    dpswap_count = 0;
+    datapod_vm = 0;
+}
+
+static void MERC_PLUGIN_CALL datapod_cards_before(void *ud, MercHookContext *c)
+{
+    (void)ud;
+    datapod_vm = c->ecx;
+}
+
+static void MERC_PLUGIN_CALL datapod_cards_after(void *ud, MercHookContext *c)
+{
+    (void)ud; (void)c;
+    datapod_remap();
 }
 
 /* Retail's HQ briefing (Briefing_Init 0x175B10, Briefing_Deinit 0x1758D0)
@@ -3283,6 +3350,7 @@ static int MERC_PLUGIN_CALL cmd_hq_mode(void *ud, uint32_t L)
 static void MERC_PLUGIN_CALL level_load_before(void *ud, MercHookContext *c)
 {
     (void)ud; (void)c;
+    datapod_restore();
     maptext_restore();
     mapsprite_restore();
     maptexalias_restore();
@@ -3355,6 +3423,9 @@ MERC_PLUGIN_EXPORT int MERC_PLUGIN_CALL MercenariesPlugin_Init(
         !h->add_lua_command(h->context, "Foundry_HqMode", cmd_hq_mode, NULL))
         h->log(h->context, "script commands unavailable; Foundry_TrafficZone, Foundry_Range, Foundry_Sample, "
                            "Foundry_Label, Foundry_SetHandling and Foundry_MapText may not exist");
+    if (!h->hook_guest(h->context, MF_FN_DataPod_BuildCards, datapod_cards_before, datapod_cards_after, NULL))
+        h->log(h->context, "PDA card list hook unavailable (run port-hooks); cards the Deck screen showed before "
+                           "may keep the game's texts on a map with its own");
     if (!h->hook_guest(h->context, MF_FN_DataPod_DrawTexture, datapod_draw_before, NULL, NULL))
         h->log(h->context, "PDA draw hook unavailable (run port-hooks); a map's own card portraits show once the "
                            "game's have loaded (a moment of the game's first)");

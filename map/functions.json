@@ -1285,7 +1285,15 @@
   {
    "address": "0x000C9700",
    "file": "RsDataPodVM.cpp",
-   "file_evidence": "between"
+   "file_evidence": "between",
+   "names": [
+    "DataPod_BuildCards"
+   ],
+   "evidence": [
+    "retail code: for 4 suits x ranks 2-14 fills 0x28-byte entries at this+0xDB40 (suit, rank, then at the rank +0xC the status text hash, +0x10 cards.%s.%i.Name, +0x14 cards.%s.%i.charName, +0x18 cards.%s.%i.bio as HashName hashes; format strings 0x2E84FC and 0x2E84EC)"
+   ],
+   "signature": "void __thiscall DataPod_BuildCards(void *datapod_vm)",
+   "notes": "The PDA Deck screen draws these by hash. Foundry Console points them at a new map's own keys (<key>.foundry_map_<map>) so cached wrapped text doesn't keep the game's."
   },
   {
    "address": "0x000C98A0",
