@@ -1604,6 +1604,13 @@ def _apply_missions(data, folder, result, files=None):
             # the copied section has the faction's first mission's chapter
             overrides["Chapter"] = hqsequence.ini_chapter(insertion["chapter"])
         ini, section = missions.add_to_mission_ini(ini, asset_id, overrides)
+        listed = missions.mission_count(ini)
+        if listed > missions.MAX_MISSIONS:
+            raise ValueError(
+                f"mission {asset_id}: mission.ini would list {listed} contracts, and the game holds "
+                f"{missions.MAX_MISSIONS}: past that it hangs at start-up, before the main menu (its mission "
+                f"table, read at boot, asks for the same entry forever). Retail lists 52, so the mods turned "
+                f"on can add {missions.MAX_MISSIONS - 52} new contracts in all")
         data.files[path] = ini.encode("latin-1")
         done = missions.done_mail(asset_id, doc, probe_section.replace("_", ""))      # as text_plan keyed it
         for m in [x for x in (mail, done) if x]:

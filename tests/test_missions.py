@@ -75,6 +75,10 @@ class MissionTests(unittest.TestCase):
         self.assertLess(text.index("[SW_Allies2]"), text.index("[SW_Allies9]"))
         with self.assertRaises(ValueError):
             missions.add_to_mission_ini(text, "sw_allies9")
+        # the game's mission table holds 64 (it hangs at boot past that)
+        self.assertEqual(missions.mission_count(text), missions.mission_count(INI) + 1)
+        self.assertEqual(missions.mission_count("MissionName\tA\n  missionname B\n; MissionName C\nMissionNames D"), 2)
+        self.assertEqual(missions.MAX_MISSIONS, 64)
 
     def test_text_plan(self):
         doc = {"title": "Field Test", "description": "Clear a squad.",

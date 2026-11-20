@@ -38,6 +38,7 @@ ROOT_FILES = ("Mercenaries Recompiled.exe", "mercenaries_recomp.exe", "mercenari
               "Foundry Editor.cmd")
 ROOT_DIRS = ("compat", "tools", "licenses")
 SKIP_SUFFIXES = (".bak", ".preparing")
+DEV_MODS = ("Foundry Editor Test",)
 
 FREEZE = r"""@echo off
 rem Run this while the game is frozen (before closing it). It snapshots the
@@ -168,7 +169,9 @@ def main():
     import hashlib
 
     release = Path(args.release)
-    mods = args.mods or [m for m in enabled_mods(release) if m != BUILT_MOD]
+    # the toolkit's own scratch mod stays out unless asked for: its test
+    # contracts count against the game's 64 (0.217's package hung at boot)
+    mods = args.mods or [m for m in enabled_mods(release) if m != BUILT_MOD and m not in DEV_MODS]
     missing = [m for m in mods if not (release / "mods" / m).is_dir()]
     if missing:
         sys.exit(f"not in {release / 'mods'}: {', '.join(missing)}")

@@ -2993,6 +2993,19 @@ def _sections(text):
     return lines, out
 
 
+# The game reads mission.ini's MissionName list into a table of 64 at boot
+# (RsMissionDataManager, 0x15F650: 16 rows of 4 entries at 0x3C0900). Past 64
+# its loop stops advancing and asks Config_FindKey for the same MissionName
+# forever: the game hangs before the main menu (Gaza's 12 plus the Editor
+# Test's 3 on retail's 52, playtest 0.217).
+MAX_MISSIONS = 64
+
+
+def mission_count(text):
+    """How many contracts mission.ini lists (its MissionName lines)."""
+    return sum(1 for line in text.splitlines() if line.split()[:1] and line.split()[0].lower() == "missionname")
+
+
 def add_to_mission_ini(text, asset_id, overrides=None):
     """mission.ini text with a section for the mission and its MissionName.
     The section copies the faction's first mission on the map."""
