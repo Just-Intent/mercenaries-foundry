@@ -215,4 +215,4 @@ python -m unittest discover -s tests -t .
 - `mercfoundry/`: Python tools
 - `docs/`: formats and project rules
 - `tools/`: small native helpers (`hangsnap`, built on first use)
-- `external/`: local checkout of the port (ignored by git)
+- `external/Mercenaries-Recompiled`: the port, a submodule on [Just-Intent/Mercenaries-Recompiled](https://github.com/Just-Intent/Mercenaries-Recompiled) (a fork of the upstream port; branch `foundry-plugin-calls`). Clone with `git clone --recurse-submodules`, or run `git submodule update --init` afterwards. Taking upstream's changes: [port/UPSTREAM.md](port/UPSTREAM.md)

@@ -1,3 +1,39 @@
+# The port fork, and upstream
+
+## Where the port lives
+
+- `external/Mercenaries-Recompiled` is a submodule on
+  [Just-Intent/Mercenaries-Recompiled](https://github.com/Just-Intent/Mercenaries-Recompiled),
+  GitHub's fork of [KraftMacAndChee/Mercenaries-Recompiled](https://github.com/KraftMacAndChee/Mercenaries-Recompiled).
+- Our changes are on its branch `foundry-plugin-calls`. The fork's `master`
+  mirrors upstream.
+- In the checkout, the remote `origin` is the fork and `upstream` is
+  KraftMacAndChee's repository.
+- The toolkit repository records which port commit it was built and tested
+  with (the submodule's commit).
+
+## Taking upstream's changes
+
+In `external/Mercenaries-Recompiled`:
+
+1. `git fetch upstream`
+2. `git log --oneline foundry-plugin-calls..upstream/master` shows what is new.
+3. `git checkout foundry-plugin-calls`
+4. `git merge upstream/master`. Fix any conflicts. Ours are mostly in
+   `plugin_host.*`, `mercenaries_plugin.h`, `recomp_manual.c` and
+   `Patch-Generated.py`.
+5. Rebuild the port (the port's build script, or MSBuild on
+   `build/mercenaries/mercenaries_recomp.vcxproj`). Then run
+   `python -m mercfoundry port-hooks`, rebuild again, and test in game.
+6. `git push origin foundry-plugin-calls`. Optionally also update the fork's
+   `master`: `git push origin upstream/master:master` (or use "Sync fork" on
+   GitHub).
+7. In the toolkit repository, `git add external/Mercenaries-Recompiled` and
+   commit, to record the new port commit.
+
+`src/recomp/gen` is generated output: if upstream regenerates it, rerun
+`port-hooks` rather than merging hook wrappers by hand.
+
 # Offering the port patches upstream
 
 Mercenaries Foundry's mods and plugins need the seven patches in `patches/`. Until
@@ -29,7 +65,7 @@ this project.
 
 ## Steps when the owner decides to send them
 
-1. Fork Mercenaries Recompiled on GitHub.
+1. The fork exists (above).
 2. For each pull request, branch from upstream `master` and apply its patches:
    `git am port/patches/0001-*.patch port/patches/0003-*.patch ...`.
 3. Push the branch to the fork and open the pull request with the notes above,

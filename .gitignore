@@ -1,5 +1,7 @@
-# Upstream port checkout (kept separately)
-external/
+# The port: a submodule (Just-Intent/Mercenaries-Recompiled, a fork of
+# KraftMacAndChee/Mercenaries-Recompiled); anything else under external/ stays out
+external/*
+!external/Mercenaries-Recompiled
 
 # Game data and anything extracted from it: never commit
 *.iso

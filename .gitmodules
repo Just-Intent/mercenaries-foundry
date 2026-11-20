@@ -1,0 +1,4 @@
+[submodule "external/Mercenaries-Recompiled"]
+	path = external/Mercenaries-Recompiled
+	url = https://github.com/Just-Intent/Mercenaries-Recompiled.git
+	branch = foundry-plugin-calls
