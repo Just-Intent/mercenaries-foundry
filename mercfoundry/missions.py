@@ -467,6 +467,20 @@ def objectives_script(asset_id, doc, squad_members, layers=(), zone_centre=None)
                 row += f", blip = '{blip}'"
                 if alive_amount(o):
                     row += f", alive = {alive_amount(o)}"                    # paid for each one taken alive
+                if o.get("card") is not None:
+                    # a Deck of 52 card (a face card's contract): its state, the
+                    # verify screen and its bounty, as the deck's number cards
+                    from .deck import RANKS, SUITS
+                    rank = RANKS.get(str(o["card"]).upper())
+                    suit = str(o.get("suit") or "").lower()
+                    if rank is None or suit not in SUITS:
+                        raise ValueError(f"objective {i}: a card is \"card\": 2 to 10, J, Q, K or A, with "
+                                         f"\"suit\": one of {', '.join(SUITS)}")
+                    bounty = o.get("bounty", 0)
+                    if not isinstance(bounty, (int, float)) or bounty < 0:
+                        raise ValueError(f"objective {i}: the card's \"bounty\" is money (paid for a kill; "
+                                         "taken alive pays double)")
+                    row += f", suit = '{suit}', rank = {rank}, cardpay = {int(bounty)}"
             if kind == "escort":
                 # they follow the player; done when every survivor is in the zone
                 if not o.get("zone"):
@@ -1601,7 +1615,27 @@ function foundry_Verified(sActor, bKilled)
 local o = tFoundryVerify[sActor]
 if not o or o.done then return end
 if not bKilled and o.alive then iFoundryEarned = iFoundryEarned + o.alive end
+if o.rank then foundry_CardVerified(o, bKilled) end
 foundry_TargetDown(sActor, true, o.name)
+end
+-- A Deck card verified ("card"): its state where the PDA reads it, and the
+-- map's own when a mod's deck is shown (foundry_deck); the verify screen,
+-- then its bounty (taken alive pays double), as the deck's number cards.
+function foundry_CardVerified(o, bKilled)
+local state = 'captured'
+if bKilled then state = 'killed' end
+local key = o.suit .. o.rank .. 'status'
+Utility_WriteStringToScribbleMemory(key, state)
+local m = Utility_ReadStringFromScribbleMemory('foundry_deck_on')
+if m then Utility_WriteStringToScribbleMemory('foundry_deck_' .. m .. '_' .. key, state) end
+foundry_Note('card ' .. key .. ' ' .. state)
+iFoundryCardPay = o.cardpay
+if iFoundryCardPay and not bKilled then iFoundryCardPay = iFoundryCardPay * 2 end
+Desktop_BeginVerify('foundry_CardPay', o.suit, o.rank, state, FALSE)
+end
+function foundry_CardPay()
+if iFoundryCardPay and iFoundryCardPay > 0 then Player_AdjustMoney(iFoundryCardPay) end
+iFoundryCardPay = nil
 end
 
 function foundry_Arrived(playerActor, boundaryName)
@@ -2603,6 +2637,24 @@ def play_map(asset_id, doc):
     return m if m and m != parse_id(asset_id)[0] else None
 
 
+def _required_cards(spec):
+    """"requires_cards": {"suit": "clubs", "cards": ["J", "Q", "K"]} as the
+    PDA's keys (clubs11, ...)."""
+    if not spec:
+        return []
+    from .deck import RANKS, SUITS
+    if not isinstance(spec, dict) or str(spec.get("suit") or "").lower() not in SUITS \
+            or not isinstance(spec.get("cards"), list) or not spec["cards"]:
+        raise ValueError("\"requires_cards\" is {\"suit\": clubs/diamonds/hearts/spades, \"cards\": [\"J\", ...]}")
+    out = []
+    for c in spec["cards"]:
+        rank = RANKS.get(str(c).upper())
+        if rank is None:
+            raise ValueError(f"\"requires_cards\": {c!r} isn't a card (2 to 10, J, Q, K or A)")
+        out.append(f"{str(spec['suit']).lower()}{rank}")
+    return out
+
+
 def contract(asset_id, doc, title_key, description_key):
     """The contact that offers a mod mission at its faction's HQ, and the
     strings it needs ({key: text}; they go in the always-loaded actions and
@@ -2647,6 +2699,9 @@ def contract(asset_id, doc, title_key, description_key):
             "side": str(c.get("side") or "civ"),
             # Missions that must be done before this one is offered.
             "requires": [str(r).lower() for r in doc.get("requires") or []],
+            # Deck cards that must be verified first ("requires_cards": {suit,
+            # cards}): the contract's map's deck (a mod's own), else the game's.
+            "requires_cards": _required_cards(doc.get("requires_cards")),
             # A placed giver's rules: stays where it's put (Ai_CommandQueue
             # 'Wait'), can't be hurt (Actor_SetInvincible), and whether killing
             # it loses the contract for good.
@@ -2696,6 +2751,7 @@ def contracts_script(contracts, insertions=()):
                        (", px = %.2f, py = %.2f, pz = %.2f, heading = %.1f, side = %s" % (
                            *c["position"], c["heading"], _lua(c["side"])) if c["position"] else "")
                        + (", requires = { %s }" % ", ".join(_lua(r) for r in c["requires"]) if c["requires"] else "")
+        + (", cards = { %s }" % ", ".join(_lua(k) for k in c["requires_cards"]) if c.get("requires_cards") else "")
                        + "".join(f", {k} = true" for k in ("stay", "invincible", "lose") if c.get(k))
                        + (", play = %s, arc = %s" % (_lua(c["play"]), _lua(parse_id(c["id"])[0])) if c.get("play") else "")
                        + (", interior = %s, title = %s, descr = %s,\n  briefing = %s" % (
@@ -2764,9 +2820,20 @@ def contracts_script(contracts, insertions=()):
         "iFoundryWaits = iFoundryWaits or 0      -- seconds spent waiting for placed givers",
         "-- Offered only once the missions it requires are done.",
         "function foundry_Unlocked(c)",
-        "if not c.requires then return true end",
+        "if c.requires then",
         "for i, id in c.requires do",
         "if not Utility_ReadNumberFromScribbleMemory('foundry_done_' .. id) then return false end",
+        "end",
+        "end",
+        "if c.cards then        -- Deck cards verified first: the map's own deck's while it's shown elsewhere",
+        "local on = Utility_ReadStringFromScribbleMemory('foundry_deck_on')",
+        "for i, k in c.cards do",
+        "local s = Utility_ReadStringFromScribbleMemory(k .. 'status')",
+        "if on ~= c.map and c.map ~= 'sw' and c.map ~= 'nw' then",
+        "s = Utility_ReadStringFromScribbleMemory('foundry_deck_' .. c.map .. '_' .. k .. 'status')",
+        "end",
+        "if s ~= 'killed' and s ~= 'captured' then return false end",
+        "end",
         "end",
         "return true",
         "end",

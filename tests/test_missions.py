@@ -340,6 +340,36 @@ class MissionTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             missions.objectives_script("sw_allies11", {"objectives": [{"type": "use", "prompt": "x"}]}, lambda squad: [])
 
+    def test_verify_a_deck_card(self):
+        doc = {"objectives": [{"type": "verify", "text": "Verify the Jack", "targets": ["gaza_jack"], "blip": "clubs",
+                               "card": "J", "suit": "clubs", "bounty": 200000}]}
+        lua = missions.objectives_script("sw_mafia21", doc, lambda squad: [])
+        self.assertIn("suit = 'clubs', rank = 11, cardpay = 200000", lua)
+        self.assertIn("if o.rank then foundry_CardVerified(o, bKilled) end", lua)
+        self.assertIn("Desktop_BeginVerify('foundry_CardPay', o.suit, o.rank, state, FALSE)", lua)
+        self.assertIn("Utility_WriteStringToScribbleMemory('foundry_deck_' .. m .. '_' .. key, state)", lua)
+        from mercfoundry import luacheck
+        self.assertEqual(luacheck.check(lua), [])
+        for bad in ({"card": "Z", "suit": "clubs"}, {"card": "J"}, {"card": "J", "suit": "clubs", "bounty": "lots"}):
+            with self.assertRaises(ValueError):
+                missions.objectives_script("sw_mafia21", {"objectives": [dict(doc["objectives"][0], **bad)
+                                                                       if "suit" in bad else
+                                                                       {k: v for k, v in dict(doc["objectives"][0], **bad).items() if k != "suit"}]},
+                                           lambda squad: [])
+
+    def test_contract_requires_cards(self):
+        doc = {"title": "The Shadow", "map": "gaza", "contact": {"interior": "allies"},
+               "requires_cards": {"suit": "clubs", "cards": ["J", "Q", "K"]}}
+        c, _ = missions.contract("sw_allies22", doc, "t", "d")
+        self.assertEqual(c["requires_cards"], ["clubs11", "clubs12", "clubs13"])
+        lua = missions.contracts_script([c])
+        self.assertIn("cards = { 'clubs11', 'clubs12', 'clubs13' }", lua)
+        self.assertIn("s = Utility_ReadStringFromScribbleMemory('foundry_deck_' .. c.map .. '_' .. k .. 'status')", lua)
+        from mercfoundry import luacheck
+        self.assertEqual(luacheck.check(lua), [])
+        with self.assertRaises(ValueError):
+            missions.contract("sw_allies22", dict(doc, requires_cards={"suit": "clubs", "cards": ["X"]}), "t", "d")
+
     def test_verify_target(self):
         doc = {"ini": {"BonusFee": 1000},
                "objectives": [{"type": "verify", "text": "Verify the general", "squad": "Brass", "targets": ["nk_general"],
