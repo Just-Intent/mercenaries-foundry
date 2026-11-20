@@ -73,6 +73,12 @@ class DeckTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             deck.parse("deck/clubs.json", dict(DOC, others={"colour": "red"}), {"gaza"})
 
+    def test_medevac_and_hq_respawn_checked(self):
+        for medevac, hq in (({"position": [1, 2]}, None), (None, {"cups": {"position": [1, 2, 3]}}),
+                            (None, {"allies": {"heading": 3}}), (None, ["allies"])):
+            with self.assertRaises(ValueError):
+                modbuild._move_player_start(b"", medevac, "maps/gaza.json", hq)
+
     def test_map_and_free_roam_hooks(self):
         text = modbuild.map_script("gaza", {}, [], deck=True)
         self.assertIn("Utility_LoadUtilityScript('foundry_deck')\nfoundry_DeckEnter('gaza')\nfoundry_DeckArm('gaza')",

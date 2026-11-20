@@ -342,6 +342,10 @@ toolkit bundle run it the same way: `foundry\python\python.exe foundry\mercfound
   `PlayerStartLocationName` names, which retail's scripts set to`
   `loc_playerstart` (on SW the Allied MASH); the build moves the map's copy of
   its source's `loc_playerstart` (blank's is at about -73, 20, -70) there.
+  **HQ respawn points** (`"hq_respawn": {"<faction>": {"position", "heading"?}}`):
+  locations `loc_hq-<faction>-respawn` added to the map's world, where a
+  death during a contract from that faction puts the player (retail's scripts
+  set `PlayerStartLocationName` to it while a contract runs).
   **Welcome mail** (`"welcome_mail"` in `mod.json`): `{"sender", "subject",
   "body", "map"? ("sw" or "nw")}` posts a mail once per save, 5 seconds
   after free roam first starts on that map (after the game's own first-day

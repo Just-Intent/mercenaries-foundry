@@ -521,7 +521,7 @@ def _turn(rotation, degrees):
     return [[r[0] * c + r[2] * s, r[1], -r[0] * s + r[2] * c] for r in rotation]
 
 
-def _move_player_start(body, medevac, where):
+def _move_player_start(body, medevac, where, hq_respawn=None):
     """maps json "medevac": {"position", "heading"?}: where the player is put
     back on the map. The game respawns the player (a medevac from the pause
     menu, a contract given up after dying, free roam starting) at the
@@ -529,10 +529,29 @@ def _move_player_start(body, medevac, where):
     scripts set to 'loc_playerstart' (on SW the Allied MASH). A new map's
     copy of its source's world has the source's loc_playerstart (blank's at
     about -73, 20, -70); this moves it. heading: placed objects' yaw (0
-    along +z)."""
-    if not isinstance(medevac, dict) or not isinstance(medevac.get("position"), (list, tuple)) \
-            or len(medevac["position"]) != 3:
-        raise ValueError(f"{where}: \"medevac\" is {{\"position\": [x, y, z], \"heading\"?: degrees}}")
+    along +z).
+    hq_respawn ({faction: {"position", "heading"?}}): locations
+    loc_hq-<faction>-respawn, where a contract accepted from that faction
+    respawns the player after a death (retail's scripts set
+    PlayerStartLocationName to it while a contract runs). Copies of
+    loc_playerstart, added after the layer's other objects (saves know
+    objects by their place in the layer)."""
+    from . import missions
+
+    def checked(spot, what):
+        if not isinstance(spot, dict) or not isinstance(spot.get("position"), (list, tuple)) \
+                or len(spot["position"]) != 3:
+            raise ValueError(f"{where}: {what} is {{\"position\": [x, y, z], \"heading\"?: degrees}}")
+        return spot
+    if medevac:
+        checked(medevac, "\"medevac\"")
+    hq_respawn = hq_respawn or {}
+    if not isinstance(hq_respawn, dict):
+        raise ValueError(f"{where}: \"hq_respawn\" is {{faction: {{\"position\", \"heading\"?}}}}")
+    for f, spot in hq_respawn.items():
+        if f not in missions.HQ_FACTIONS:
+            raise ValueError(f"{where}: \"hq_respawn\": a faction is one of {', '.join(missions.HQ_FACTIONS)}")
+        checked(spot, f"\"hq_respawn\" {f}")
     doc = world.to_json(body)
     found = []
 
@@ -547,12 +566,28 @@ def _move_player_start(body, medevac, where):
                 walk(v)
     walk(doc)
     if not found:
-        raise ValueError(f"{where}: \"medevac\": the map's world has no loc_playerstart to move "
+        raise ValueError(f"{where}: \"medevac\"/\"hq_respawn\": the map's world has no loc_playerstart "
                          f"(its \"from\" map has none)")
-    a = math.radians(float(medevac.get("heading") or 0))
-    for inst in found:
-        inst["position"] = [float(v) for v in medevac["position"]]
+
+    def place(inst, spot):
+        a = math.radians(float(spot.get("heading") or 0))
+        inst["position"] = [float(v) for v in spot["position"]]
         inst["rotation"] = [[math.cos(a), 0.0, -math.sin(a)], [0.0, 1.0, 0.0], [math.sin(a), 0.0, math.cos(a)]]
+    template = copy.deepcopy(found[0])
+    if medevac:
+        for inst in found:
+            place(inst, medevac)
+    names = {str(c.get("template") or "").lower() for c in doc["chunks"] if c.get("tag") == "inst"}
+    last = max(i for i, c in enumerate(doc["chunks"]) if c.get("tag") == "inst")
+    for f, spot in hq_respawn.items():
+        name = f"loc_hq-{f}-respawn"
+        if name in names:
+            raise ValueError(f"{where}: \"hq_respawn\" {f}: the map already has {name}")
+        inst = copy.deepcopy(template)
+        inst["template"] = name
+        place(inst, spot)
+        last += 1
+        doc["chunks"].insert(last, inst)
     return world.from_json(doc)
 
 
@@ -2644,9 +2679,11 @@ def _apply_maps(data, folder, result):
                 body = text.encode("latin-1")
             else:
                 body = _renamed_record(body, name)
-            if kind == "world" and mdoc.get("medevac"):
-                body = _move_player_start(body, mdoc["medevac"], where)
-                made.append("its medevac point (loc_playerstart moved)")
+            if kind == "world" and (mdoc.get("medevac") or mdoc.get("hq_respawn")):
+                body = _move_player_start(body, mdoc.get("medevac"), where, mdoc.get("hq_respawn"))
+                made.append(", ".join((["its medevac point (loc_playerstart moved)"] if mdoc.get("medevac") else [])
+                                      + ([f"HQ respawn points for {', '.join(mdoc['hq_respawn'])}"]
+                                         if mdoc.get("hq_respawn") else [])))
             if kind == "lineregion" and own_bounds:
                 from . import aidata, encounters, modpack
                 doc = aidata.to_json(body, "lineregion")
