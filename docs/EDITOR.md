@@ -811,7 +811,7 @@ changing the game's anywhere else (these are files, not editor tools yet):
 
 ## A new map's own Deck of 52
 
-`deck/<suit>.json` (file only) gives a new map a suit of its own cards, played
+`deck/<suit>.json` (file only, one per suit: a map can have several) gives a new map a suit of its own cards, played
 as retail's deck. Shape:
 
 ```json

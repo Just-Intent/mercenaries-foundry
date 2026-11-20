@@ -289,11 +289,14 @@ def _apply_deck(data, folder, result):
         return
     mod_maps = {f.stem.lower() for f in (folder / "maps").glob("*.json")} if (folder / "maps").is_dir() else set()
     data.decks = getattr(data, "decks", [])
-    for f in files:
+    mine = []
+    for f in files:                     # several suits on a map: one file each
         where = f"deck/{f.name}"
         d = deckmod.parse(where, json.loads(f.read_text(encoding="utf-8")), mod_maps, folder)
-        if any(o["map"] == d["map"] for o in data.decks):
-            raise ValueError(f"{where}: {d['map']} already has a deck (one suit per map for now)")
+        if any(o["map"] == d["map"] and o["suit"] == d["suit"] for o in data.decks + [m for _, m in mine]):
+            raise ValueError(f"{where}: {d['map']} already has a {d['suit']} deck")
+        mine.append((where, d))
+    for where, d in mine:
         _map_strings(data, d["map"], deckmod.strings(d), where)
         faces = 0
         for c in d["cards"]:
@@ -312,19 +315,6 @@ def _apply_deck(data, folder, result):
             data.map_hud = getattr(data, "map_hud", {})
             data.map_hud.setdefault(d["map"], {})[f"{d['suit']}{c['rank']}_face"] = tname
             faces += 1
-        o = d.get("others")
-        if o and o["face"]:
-            path = folder / o["face"]
-            if not path.is_file():
-                raise ValueError(f"{where}: no {o['face']} (\"others\" \"face\")")
-            w, h, rgba = png.decode(path.read_bytes())
-            tname = deckmod.other_face_texture(d["map"])
-            data.new("streamed.dsk", name_hash(tname), texture.TEXTURE, texture.encode(texture.new(tname, w, h, rgba)))
-            data.map_hud = getattr(data, "map_hud", {})
-            for suit in deckmod.SUITS:
-                if suit != d["suit"]:
-                    for rank in range(2, 15):
-                        data.map_hud.setdefault(d["map"], {})[f"{suit}{rank}_face"] = tname
         data.decks.append(d)
         number = [c for c in d["cards"] if c["rank"] <= 10]
         placed = [c for c in number if c["actor"]]
@@ -335,6 +325,29 @@ def _apply_deck(data, folder, result):
             if not c["actor"]:
                 result.warnings.append(f"{where}: the {deckmod.RANK_NAMES[c['rank']].lower()} has no \"actor\" "
                                        "(its placed character): it can't be found or verified yet")
+    # "others" (one deck file per map gives it): the suits no deck on the map uses
+    for where, d in mine:
+        o = d.get("others")
+        if not o:
+            continue
+        used = {x["suit"] for x in data.decks if x["map"] == d["map"]}
+        _map_strings(data, d["map"], deckmod.others_strings(o, used), where)
+        if o["face"]:
+            path = folder / o["face"]
+            if not path.is_file():
+                raise ValueError(f"{where}: no {o['face']} (\"others\" \"face\")")
+            w, h, rgba = png.decode(path.read_bytes())
+            tname = deckmod.other_face_texture(d["map"])
+            if data.find_added(name_hash(tname), texture.TEXTURE) is None:
+                data.new("streamed.dsk", name_hash(tname), texture.TEXTURE,
+                         texture.encode(texture.new(tname, w, h, rgba)))
+            data.map_hud = getattr(data, "map_hud", {})
+            for suit in deckmod.SUITS:
+                if suit not in used:
+                    for rank in range(2, 15):
+                        data.map_hud.setdefault(d["map"], {})[f"{suit}{rank}_face"] = tname
+        result.changes.append(f"{where}: \"others\" for {', '.join(x for x in deckmod.SUITS if x not in used)} "
+                              f"on {d['map']}")
     key = name_hash(deckmod.SCRIPT)
     src = deckmod.script(data.decks)
     if data.find_added(key, SCRIPT) is not None:

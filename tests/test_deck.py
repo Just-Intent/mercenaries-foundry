@@ -52,12 +52,12 @@ class DeckTests(unittest.TestCase):
         lua = deck.script([d])
         self.assertEqual(luacheck.check(lua), [])
         # number cards placed only; the face card comes through a contract
-        self.assertIn("{ rank = 2, actor = 'gaza_card_clubs02', layer = 'gaza_card_clubs02', bounty = 40000 }", lua)
-        self.assertIn("{ rank = 3, actor = 'gaza_card_clubs03', layer = false, bounty = 12500 }", lua)
+        self.assertIn("{ suit = 'clubs', rank = 2, actor = 'gaza_card_clubs02', layer = 'gaza_card_clubs02', bounty = 40000 }", lua)
+        self.assertIn("{ suit = 'clubs', rank = 3, actor = 'gaza_card_clubs03', layer = false, bounty = 12500 }", lua)
         self.assertNotIn("rank = 12", lua)
         # retail's verify flow and the PDA's keys
         self.assertIn("mission_ObjectiveVerify{", lua)
-        self.assertIn("Desktop_BeginVerify('foundry_DeckPay', d.suit, c.rank, state, FALSE)", lua)
+        self.assertIn("Desktop_BeginVerify('foundry_DeckPay', c.suit, c.rank, state, FALSE)", lua)
         self.assertIn("suit .. rank .. 'status'", lua)
         self.assertIn("'iCurrentIntel' .. suit", lua)
         self.assertIn("iFoundryDeckPay = c.bounty * 2", lua)        # alive pays double
@@ -65,10 +65,11 @@ class DeckTests(unittest.TestCase):
     def test_others_stand_in(self):
         doc = dict(DOC, others={"name": "Unknown", "bio": "Not on this front.", "face": "deck/other.png"})
         d = deck.parse("deck/clubs.json", doc, {"gaza"})
-        s = deck.strings(d)
+        s = deck.others_strings(d["others"], {"clubs"})
         self.assertEqual(s["cards.spades.14.charName"], "Unknown")
+        self.assertNotIn("cards.spades.2.bio", deck.others_strings(d["others"], {"clubs", "spades"}))   # a deck of its own
         self.assertEqual(s["cards.diamonds.2.bio"], "Not on this front.")
-        self.assertNotIn("cards.clubs.4.charName", s)         # the deck's own suit: only its cards
+        self.assertNotIn("cards.clubs.4.charName", s)         # the deck's own suit isn't a stand-in
         self.assertEqual(deck.other_face_texture("Gaza"), "gaza_deck_other_face")
         with self.assertRaises(ValueError):
             deck.parse("deck/clubs.json", dict(DOC, others={"colour": "red"}), {"gaza"})
@@ -78,6 +79,16 @@ class DeckTests(unittest.TestCase):
                             (None, {"allies": {"heading": 3}}), (None, ["allies"])):
             with self.assertRaises(ValueError):
                 modbuild._move_player_start(b"", medevac, "maps/gaza.json", hq)
+
+    def test_two_suits_on_one_map(self):
+        clubs = deck.parse("deck/clubs.json", DOC, {"gaza"})
+        spades = deck.parse("deck/spades.json", dict(DOC, suit="spades"), {"gaza"})
+        lua = deck.script([clubs, spades])
+        self.assertEqual(luacheck.check(lua), [])
+        self.assertIn("gaza = { suits = { 'clubs', 'spades' }", lua)
+        self.assertIn("{ suit = 'spades', rank = 2, actor = 'gaza_card_clubs02'", lua)
+        self.assertIn("Utility_WriteNumberToScribbleMemory('foundry_deck_on_' .. suit, 1)", lua)
+        self.assertIn("ipairs({ 'clubs', 'diamonds', 'hearts', 'spades' })", lua)
 
     def test_map_and_free_roam_hooks(self):
         text = modbuild.map_script("gaza", {}, [], deck=True)
