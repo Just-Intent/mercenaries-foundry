@@ -34,6 +34,15 @@ Script commands it adds, for the Lua box or any script:
   a key isn't there. A mod's new map with texts of its own (`text/*.json` or
   `factions.json` with `"map"`) calls it from its master script, through the
   generated `foundry_maptext_<map>`. Compiled; not yet run in game.
+- `Foundry_HqMode(TRUE)` sets the player up as retail's HQ briefing does
+  (Briefing_Init 0x175B10): the weapon put away (0x5CA70(1) on the player as
+  a human, 0x8ED00), virtual +0x290(0), and the human's run permission
+  (+0x817, which the physics body's +0x65 follows) cleared, so the player
+  walks. `Foundry_HqMode(FALSE)` undoes them as Briefing_Deinit does (0x5C950(1)
+  takes out the last weapon, +0x290(1), +0x817 set). Returns true. The
+  control mode is the script's: `Player_EnableControl(13)` (move, look and
+  use only) is the one Briefing_Init sets, and `Player_DisableControl()`
+  returns the mode to put back. A new map's HQ interiors call both.
 - `Foundry_MapTexture('<texture>', '<other texture>')` makes every HUD and
   PDA sprite drawn from the texture draw from the other one (the same part
   of it) until the next level loads, and returns how many sprites. Sprites

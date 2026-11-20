@@ -242,7 +242,7 @@ class ModBuildTests(unittest.TestCase):
                       (self.out / "DATAxbox" / "TEST" / "island.ini").read_bytes().decode("latin-1"))
         source = script.decode(self.records("assets.dsk")[(name_hash("island"), SCRIPT)]).source
         self.assertIn("Utility_ReadLevelFile('isle_camp')\nActor_SetPosition('player0', 10.00, 5.00, -20.00)\n"
-                      "Actor_SetYaw('player0', 90.0)\nUi_PrintHudMessage('Welcome to the island')\nend\n", source)
+                      "Actor_SetYaw('player0', 270.0)\nUi_PrintHudMessage('Welcome to the island')\nend\n", source)
         self.assertIn("Utility_ReadLevelFile('\\\\TEMPLATE\\\\template_vehicles_ch2')", source)
         from mercfoundry import luacheck
         self.assertEqual(luacheck.check(source), [])
@@ -1135,6 +1135,43 @@ class MapScriptTests(unittest.TestCase):
             missions.contract("sw_allies12", {"contact": {"interior": "allies"}}, "t", "d")   # no "map"
         with self.assertRaises(ValueError):
             missions.interiors("maps/gaza.json", "gaza", {"interiors": {"allies": {"guard": {"position": [1, 2, 3]}}}})
+
+    def test_interiors_play_as_retail_hqs(self):
+        from mercfoundry import luacheck, missions
+        inside = self._interiors()
+        self.assertEqual(inside["allies"]["starter"], "idf_second")       # the second leader takes the contract
+        self.assertTrue(inside["allies"]["bribe"])
+        text = modbuild.map_script("gaza", {}, [], contacts=True, inside=inside)
+        self.assertEqual(luacheck.check(text), [])
+        # leaders stand and never fight: cinematic control, as retail's briefing boss
+        lead = text[text.index("function foundry_gaza_HqLeader(a)"):]
+        self.assertIn("Actor_EnableCinematicControl(a, TRUE)", lead[:lead.index("\nend\n")])
+        # retail's briefing controls inside, put back on leaving or taking the contract
+        hold = text[text.index("function foundry_gaza_HqHold()"):]
+        self.assertIn("Player_EnableControl(13)", hold)
+        self.assertIn("if Foundry_HqMode then Foundry_HqMode(TRUE) end", hold)
+        for fn in ("function foundry_gaza_HqOutside()", "function foundry_gaza_HqYes()"):
+            body = text[text.index(fn):]
+            self.assertIn("foundry_gaza_HqRelease()", body[:body.index("\nend\n")])
+        # the starter's ring and prompt, the door's after its delay
+        self.assertIn("Objective_SetTargetActor('foundry_gaza_obj_starter', h.starter, '', 'TARGET_TYPE_UNDEFINED'", text)
+        self.assertIn("Objective_SetTargetActor('foundry_gaza_obj_exit', h.door", text)
+        self.assertIn("exitdelay = 5.0", text)
+        self.assertIn("starter = 'idf_second', acceptprompt = 'Accept contract'", text)
+        # a hostile faction's guard offers retail's bribe
+        self.assertIn("Faction_GetAttitude(f, 'prokat') == 0", text)
+        self.assertIn("function foundry_gaza_HqBribe_allies() foundry_gaza_HqBribe('allies') end", text)
+        self.assertIn("Faction_SetRelation(foundry_gaza_HqBribing, 'prokat', util_GetPostBribeMood())", text)
+        doc = {"interiors": {"allies": {"guard": {"position": [1, 2, 3]}, "room": {"position": [4, 5, 6]},
+                                        "leaders": ["boss"], "bribe": {"cost": 5000}, "exit": {"delay": 0}}}}
+        one = missions.interiors("maps/gaza.json", "gaza", doc)["allies"]
+        self.assertEqual((one["starter"], one["bribe_cost"], one["exit_delay"]), ("", 5000, 0.0))
+        lua = missions.interiors_lua("p_", {"allies": one})
+        self.assertIn("starter = false", lua)
+        self.assertIn("bribecost = 5000", lua)
+        doc["interiors"]["allies"]["bribe"] = "lots"
+        with self.assertRaises(ValueError):
+            missions.interiors("maps/gaza.json", "gaza", doc)
 
     def test_welcome_mail(self):
         from mercfoundry import luacheck, missions

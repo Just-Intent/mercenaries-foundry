@@ -2399,7 +2399,7 @@ def map_script(name, doc, layers, pilots=(), contacts=False, extra=(), hqs=None,
     if start.get("position"):
         x, y, z = (float(v) for v in start["position"])
         lines.append(f"Actor_SetPosition('player0', {x:.2f}, {y:.2f}, {z:.2f})")
-        lines.append(f"Actor_SetYaw('player0', {float(start.get('heading', 0)):.1f})")
+        lines.append(f"Actor_SetYaw('player0', {__import__('mercfoundry.missions', fromlist=['player_yaw']).player_yaw(start.get('heading')):.1f})")
     if doc.get("message"):
         lines.append(f"Ui_PrintHudMessage({_lua_str(str(doc['message']))})")
     if doc.get("weather"):

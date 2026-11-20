@@ -3034,12 +3034,69 @@ static void maptext_poll(double dt)
     }
 }
 
+/* Retail's HQ briefing (Briefing_Init 0x175B10, Briefing_Deinit 0x1758D0)
+ * sets the player up with the player as a human (0x8ED00, vtable +0x2C of
+ * the object named player0): 0x5CA70(1) puts the weapon away (0x5BF30 with
+ * no weapon), virtual +0x290(0), and +0x817 (the human's run permission,
+ * which the physics body's +0x65 follows) cleared, so the player walks;
+ * then control mode 13 (0xA3F80: move, look and use only). Deinit undoes
+ * them: 0x5C950(1) takes out the last weapon (+0xA8C), +0x290(1), +0x817
+ * set. The control mode is the script's (Player_EnableControl). */
+#define FIND_HUMAN 0x8ED00u
+#define HUMAN_HOLSTER 0x5CA70u
+#define HUMAN_DRAW 0x5C950u
+#define HUMAN_VT_BRIEFING 0x290u
+#define HUMAN_CAN_RUN 0x817u
+static int hq_mode_on;
+
+static int hq_mode_set(int on)
+{
+    MercGuestCall c;
+    uint32_t hash = PLAYER0_HASH, human = 0, vt = 0, fn = 0, one = 1, flag = on ? 0u : 1u;
+    uint8_t run = on ? 0 : 1;
+    if (!guest(FIND_HUMAN, 0, 1, &hash, &c) || !(human = c.eax)) return 0;
+    if (!guest(on ? HUMAN_HOLSTER : HUMAN_DRAW, human, 1, &one, &c)) return 0;
+    if (host->read_guest(host->context, human, &vt, 4) && vt &&
+        host->read_guest(host->context, vt + HUMAN_VT_BRIEFING, &fn, 4) && fn)
+        guest(fn, human, 1, &flag, &c);
+    host->write_guest(host->context, human + HUMAN_CAN_RUN, &run, 1);
+    hq_mode_on = on;
+    return 1;
+}
+
+/* Foundry_HqMode(on): the player as in retail's HQs (weapon away, walking)
+ * with true, back to normal with false/nil. Returns true, or nil with no
+ * player. */
+static int MERC_PLUGIN_CALL cmd_hq_mode(void *ud, uint32_t L)
+{
+    char text[16];
+    uint32_t args[2] = {L, 1};
+    int on;
+    (void)ud;
+    if (lua_arg_text(L, 1, text, sizeof(text)))
+        on = !(!text[0] || !strcmp(text, "0") || !_stricmp(text, "false") || !_stricmp(text, "off"));
+    else
+        on = (int)lua_call(MF_FN_lua_gettop, 1, args) >= 1 && lua_call(MF_FN_Lua_ArgBool, 2, args) != 0;
+    if (on == hq_mode_on) {
+        lua_call(MF_FN_Lua_PushBool, 2, args);
+        return 1;
+    }
+    if (!hq_mode_set(on)) {
+        host->log(host->context, "hq mode: no player to set");
+        return 0;
+    }
+    host->log(host->context, on ? "hq mode: weapon away, walking (as retail's HQs)" : "hq mode: back to normal");
+    lua_call(MF_FN_Lua_PushBool, 2, args);
+    return 1;
+}
+
 static void MERC_PLUGIN_CALL level_load_before(void *ud, MercHookContext *c)
 {
     (void)ud; (void)c;
     maptext_restore();
     mapsprite_restore();
     maptex_pending_count = 0;
+    hq_mode_on = 0;               /* a new level has a new player */
 }
 
 /* Foundry_MapText(key, other): key shows other's text until the next level
@@ -3101,7 +3158,8 @@ MERC_PLUGIN_EXPORT int MERC_PLUGIN_CALL MercenariesPlugin_Init(
         !h->add_lua_command(h->context, "Foundry_Label", cmd_label, NULL) ||
         !h->add_lua_command(h->context, "Foundry_SetHandling", cmd_set_handling, NULL) ||
         !h->add_lua_command(h->context, "Foundry_MapText", cmd_map_text, NULL) ||
-        !h->add_lua_command(h->context, "Foundry_MapTexture", cmd_map_texture, NULL))
+        !h->add_lua_command(h->context, "Foundry_MapTexture", cmd_map_texture, NULL) ||
+        !h->add_lua_command(h->context, "Foundry_HqMode", cmd_hq_mode, NULL))
         h->log(h->context, "script commands unavailable; Foundry_TrafficZone, Foundry_Range, Foundry_Sample, "
                            "Foundry_Label, Foundry_SetHandling and Foundry_MapText may not exist");
     if (!h->hook_guest(h->context, MF_FN_Level_Load, level_load_before, NULL, NULL))

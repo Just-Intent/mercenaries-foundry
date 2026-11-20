@@ -110,7 +110,7 @@ class MissionTests(unittest.TestCase):
         started = missions.objectives_script("sw_allies11", {**doc, "start": {"position": [10, 20.5, -30], "heading": 90}},
                                              lambda squad: ["Nk1"])
         self.assertIn("Actor_SetPosition('player0', 10.00, 20.50, -30.00)", started)
-        self.assertIn("Actor_SetYaw('player0', 90.0)", started)
+        self.assertIn("Actor_SetYaw('player0', 270.0)   -- heading 90", started)   # the player turns the other way (missions.player_yaw)
         for bad in ([], [{"type": "fly"}], [{"type": "goto"}], [{"type": "destroy"}],
                     [{"type": "goto", "zone": "z", "bonus": 5000}]):        # only a bonus objective: nothing to complete
             with self.assertRaises(ValueError):
@@ -832,7 +832,7 @@ class TravelTests(unittest.TestCase):
         back = dict(pilot, map="isle", actor="foundry_return_isle", to="sw", arrive=[1, 2, 3])
         lua = missions.travel_lua("foundry_isle_Travel", [back], by_map=False)
         self.assertEqual(luacheck.check(lua), [])
-        self.assertIn("ax = 1.00, ay = 2.00, az = 3.00, ah = 0.0", lua)
+        self.assertIn("ax = 1.00, ay = 2.00, az = 3.00, ah = 180.0", lua)
         self.assertIn("Utility_ResetToBaseLayerOnly(t.to)", lua)
 
 

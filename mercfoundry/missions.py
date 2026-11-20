@@ -190,6 +190,16 @@ def objective_key(asset_id, i):
     return f"{map_}.{faction}{number}.obj.foundry{i}"
 
 
+def player_yaw(heading):
+    """Actor_SetYaw's degrees for a mod's heading. A heading (mission "start",
+    travel "arrive_heading", an interior's room) is the way the player faces,
+    0 along +z, as placed objects' yaw and the editor's markers. Actor_SetYaw
+    passes degrees * pi/180 to the actor's own SetYaw (vtable +0x68), which
+    for the player is the other way round: in the 0.199 playtest Actor_SetYaw
+    180 faced +z. So the player is turned to heading + 180."""
+    return (float(heading or 0) + 180.0) % 360.0
+
+
 def _lua_str(s):
     return "'" + str(s).replace("\\", "\\\\").replace("'", "\\'") + "'"
 
@@ -767,7 +777,7 @@ def objectives_script(asset_id, doc, squad_members, layers=(), zone_centre=None)
     if start.get("position"):     # where the player begins (on foot, as retail missions move the player)
         x, y, z = (float(v) for v in start["position"])
         loads += f"Actor_SetPosition('player0', {x:.2f}, {y:.2f}, {z:.2f})\n"
-        loads += f"Actor_SetYaw('player0', {float(start.get('heading', 0)):.1f})\n"
+        loads += f"Actor_SetYaw('player0', {player_yaw(start.get('heading')):.1f})   -- heading {float(start.get('heading') or 0):g}\n"
     return f"""-- {asset_id}: written by mercfoundry from missions/{asset_id}.json "objectives".
 tFoundryObjectives = {{    -- main objectives, in order
 {main_table}
@@ -1804,8 +1814,9 @@ def interior_guard(map_name, faction):
 def interiors(where, map_name, doc):
     """maps/<name>.json "interiors" checked: {faction: {guard: {template?,
     position, heading?, name?, prompt?, side?, marker?}, room: {position,
-    heading?}, leaders: [actor], exit: {object?, prompt?}, greeting: [line],
-    idle: [line]}}."""
+    heading?}, leaders: [actor], starter?: actor | false, accept_prompt?,
+    bribe?: true | false | {cost}, exit: {object?, prompt?, delay?},
+    greeting: [line], idle: [line]}}."""
     raw = doc.get("interiors") or {}
     if not isinstance(raw, dict):
         raise ValueError(f"{where}: \"interiors\" is {{faction: {{guard, room, leaders, ...}}}}")
@@ -1829,6 +1840,18 @@ def interiors(where, map_name, doc):
         marker = str(g.get("marker") or "hq")
         if marker not in ("hq", "none"):
             raise ValueError(f"{w}: the guard's \"marker\" is hq or none, not {marker!r}")
+        # the second in command (retail's "starter"): using them accepts the
+        # contract; the second leader unless set, none with false
+        starter = i.get("starter", leaders[1] if len(leaders) > 1 else None)
+        starter = str(starter) if starter else ""
+        bribe = i.get("bribe", True)
+        if bribe is not True and bribe is not False and not (isinstance(bribe, dict) and set(bribe) <= {"cost"}
+                                                             and isinstance(bribe.get("cost", 0), (int, float))):
+            raise ValueError(f"{w}: \"bribe\" is true, false or {{\"cost\": <money>}}")
+        bribe_cost = int(bribe["cost"]) if isinstance(bribe, dict) and "cost" in bribe else None
+        exit_delay = exit_.get("delay", 5)
+        if not isinstance(exit_delay, (int, float)) or exit_delay < 0:
+            raise ValueError(f"{w}: the exit's \"delay\" is seconds (5 unless set)")
         out[f] = {"guard": interior_guard(map_name, f),
                   "template": str(g.get("template") or f"template_{f}_bouncer"),
                   "gpos": [float(v) for v in g["position"]], "gheading": float(g.get("heading") or 0),
@@ -1837,6 +1860,9 @@ def interiors(where, map_name, doc):
                   "marker": marker,
                   "room": [float(v) for v in room["position"]], "rheading": float(room.get("heading") or 0),
                   "leaders": leaders, "door": door, "door_prompt": str(exit_.get("prompt") or "Leave"),
+                  "exit_delay": float(exit_delay),
+                  "starter": starter, "accept_prompt": str(i.get("accept_prompt") or "Accept contract"),
+                  "bribe": bribe is not False, "bribe_cost": bribe_cost,
                   "talk_prompt": str(i.get("talk_prompt") or "Talk"),
                   "greeting": _lines(f"{w} greeting", i.get("greeting")),
                   "idle": _lines(f"{w} idle", i.get("idle") or [{"text": "Nothing for you right now. Come back later."}])}
@@ -1844,32 +1870,60 @@ def interiors(where, map_name, doc):
 
 
 def interiors_lua(prefix, inside, flagged=()):
-    """Lua for a new map's HQ interiors: using the HQ guard fades to black,
-    puts the player in the room (where they stood is kept), and plays the
-    greeting; then the faction's next contract here ("contact": {"interior":
-    faction}, from foundry_contracts' table) has its briefing and the
-    contract's yes/no box, or, with none, the idle lines. Using the leader
-    (when the way out is a door) talks again; using the way out fades and
-    puts the player back where they stood by the guard. {prefix}HqArm()
-    arms the guards and keeps looking (each second for 15 s, then every
-    5 s, for as long as free roam lasts): a guard far from the player may
-    not exist yet, and one that comes back (dormant, reloaded) is a new
-    actor to arm again. Its rules are set again on each look. flagged:
-    factions with an HQ point flag ("hqs"): their guard gets a ring and
-    name in the world only, not a second HQ blip; others carry the HQ
-    flag themselves, as the bouncers do."""
+    """Lua for a new map's HQ interiors, made to play as retail's HQs
+    (bouncer.lua, briefing.lua, briefing_utilities.lua):
+
+    - Using the HQ guard fades to black and puts the player in the room
+      (where they stood is kept). A guard whose faction is hostile to the
+      player offers a bribe instead, as the bouncers do (util_GetBribeCost
+      for the chapter, or the interior's "bribe" cost; paid, the faction's
+      mood goes to util_GetPostBribeMood and the guard lets you in).
+    - Inside, the player has retail's briefing controls: control mode 13
+      (move, look and use; no firing or weapon switching; Briefing_Init
+      sets the same), and with Foundry Console the weapon put away and
+      walking pace (Foundry_HqMode, the rest of Briefing_Init's player
+      set-up). Both are put back on leaving or taking the contract.
+    - The leaders stand where they are and never fight: each is under
+      cinematic control (as retail's briefing boss and starter) and looks
+      at the player, set once per actor (one that comes back is a new
+      actor), with no hostile range and invincible.
+    - The greeting plays, then the faction's next contract here ("contact":
+      {"interior": faction}, from foundry_contracts' table) has its
+      briefing; then the second in command ("starter") gets a gold ring and
+      the accept prompt, as retail's starter_trigger; using them starts the
+      contract. With no starter, a yes/no box. With no contract, the idle
+      lines. Using the first leader (when it isn't the way out) plays the
+      briefing again.
+    - The way out gets its ring and prompt after the exit's delay (retail:
+      5 s); using it fades and puts the player back by the guard.
+
+    {prefix}HqArm() arms the guards and leaders and keeps looking (each
+    second for 15 s, then every 5 s, for as long as free roam lasts): a
+    guard far from the player may not exist yet, and one that comes back
+    (dormant, reloaded) is a new actor to arm again. A guard is armed
+    again too when its faction turns hostile or stops being hostile.
+    flagged: factions with an HQ point flag ("hqs"): their guard gets a
+    ring and name in the world only, not a second HQ blip; others carry
+    the HQ flag themselves, as the bouncers do."""
     P = prefix
     rows = []
     for f, i in inside.items():
         rows.append(
             "%s = { guard = %s, prompt = %s, name = %s, side = %s, marker = %s, ttype = %s, blip = %s, rx = %.2f, ry = %.2f, rz = %.2f, "
-            "rh = %.1f, leaders = { %s }, door = %s, doorprompt = %s, talkprompt = %s,\n greeting = %s,\n idle = %s },"
+            "rh = %.1f, leaders = { %s }, door = %s, doorprompt = %s, exitdelay = %.1f, talkprompt = %s,\n"
+            " starter = %s, acceptprompt = %s, bribe = %s, bribecost = %s,\n greeting = %s,\n idle = %s },"
             % (f, _lua(i["guard"]), _lua_str(i["prompt"]), _lua_str(i["name"]), _lua(i["side"]),
                ("'ring'" if f in flagged else "'hq'") if i["marker"] == "hq" else "false",
-               _lua(f"TARGET_TYPE_HQ_{f.upper()}"), _lua(f"hq{f}"), *i["room"], i["rheading"],
+               _lua(f"TARGET_TYPE_HQ_{f.upper()}"), _lua(f"hq{f}"), *i["room"], player_yaw(i["rheading"]),
                ", ".join(_lua(a) for a in i["leaders"]), _lua(i["door"]), _lua_str(i["door_prompt"]),
-               _lua_str(i["talk_prompt"]), i["greeting"], i["idle"]))
-    return f"""-- HQ interiors (Mercenaries Foundry: maps json "interiors")
+               i.get("exit_delay", 5.0), _lua_str(i["talk_prompt"]),
+               _lua(i["starter"]) if i.get("starter") else "false",
+               _lua_str(i.get("accept_prompt") or "Accept contract"),
+               "TRUE" if i.get("bribe", True) else "FALSE",
+               str(int(i["bribe_cost"])) if i.get("bribe_cost") is not None else "nil",
+               i["greeting"], i["idle"]))
+    return f"""-- HQ interiors (Mercenaries Foundry: maps json "interiors"), played as
+-- retail's HQs: bouncer, briefing and briefing_utilities
 -- util_objectives' helpers call util_misc's util_SetDefault; on SW global
 -- has loaded it, on a new map nothing else does
 Utility_LoadUtilityScript('util_misc')
@@ -1878,6 +1932,9 @@ Utility_LoadUtilityScript('util_objectives')
 {chr(10).join(rows)}
 }}
 if not {P}HqArmed then {P}HqArmed = {{}} end
+if not {P}HqLeadArmed then {P}HqLeadArmed = {{}} end
+if not {P}HqGuardMode then {P}HqGuardMode = {{}} end
+if not {P}HqUsed then {P}HqUsed = {{}} end
 {P}HqWaits = 0
 function {P}HqRules(name)
 Ai_SetHostileRange(name, 0.0)
@@ -1889,6 +1946,13 @@ function {P}HqArm()
 if {P}HqTimer then Event_CancelEvent({P}HqTimer) {P}HqTimer = nil end
 {P}HqWaits = 0
 {P}HqLook()
+end
+-- 'bribe' while the faction is hostile to the player (and the interior
+-- takes bribes), else 'enter'
+function {P}HqGuardWants(f)
+local h = {P}Hq[f]
+if h.bribe and Faction_GetAttitude(f, 'prokat') == 0 then return 'bribe' end
+return 'enter'
 end
 function {P}HqLook()
 -- the next look first, so an error in this one doesn't stop the looking
@@ -1903,24 +1967,55 @@ if Utility_DoesActorExist(h.guard) then
 local iActor = Utility_GetActorAsInt(h.guard)
 Ai_SetFaction(h.guard, h.side)   -- again each look: a side set while it slept doesn't hold
 {P}HqRules(h.guard)
+local sWants = {P}HqGuardWants(f)
 if {P}HqArmed[h.guard] ~= iActor then
 {P}HqArmed[h.guard] = iActor
+{P}HqGuardMode[f] = nil
 Ai_CommandQueue(h.guard, 'Wait', 'hiPri')
 if h.marker == 'hq' then
 util_SetupSingleTargetActorObjective(h.guard, h.name, '', 'OBJECTIVE_TYPE_PRIMARY', h.guard, h.name, h.ttype, TRUE, TRUE, TRUE, h.blip)   -- (the game's Lua has no string library)
 elseif h.marker == 'ring' then
 util_SetupSingleTargetActorObjective(h.guard, h.name, '', 'OBJECTIVE_TYPE_SECONDARY', h.guard, h.name, 'TARGET_TYPE_OBJECTIVE_SECONDARY', FALSE, FALSE, TRUE, 'blip')
 end
+end
+if {P}HqGuardMode[f] ~= sWants and {P}HqIn ~= f and {P}HqBribing ~= f then
+{P}HqGuardMode[f] = sWants
+if sWants == 'bribe' then
+{P}HqUse(h.guard, 'action.bribe.text', '{P}HqBribe_' .. f)
+else
 {P}HqUse(h.guard, h.prompt, '{P}HqEnter_' .. f)
 end
 end
 end
+for i, a in h.leaders do
+{P}HqLeader(a)
 end
+end
+end
+-- A leader stands and never fights: cinematic control (retail's briefing
+-- boss and starter), once per actor; the rules each look.
+function {P}HqLeader(a)
+if not Utility_DoesActorExist(a) then return end
+local iActor = Utility_GetActorAsInt(a)
+{P}HqRules(a)
+if {P}HqLeadArmed[a] ~= iActor then
+{P}HqLeadArmed[a] = iActor
+Ai_CommandQueue(a, 'Wait', 'hiPri')
+Actor_EnableCinematicControl(a, TRUE)
+Actor_LookAtActor(a, 'player0')
+end
+end
+-- Using an actor: one event at a time per actor (the one waiting is cancelled).
 function {P}HqUse(name, prompt, cb)
 if Utility_DoesActorExist(name) then
+if {P}HqUsed[name] then Event_CancelEvent({P}HqUsed[name]) end
 Actor_EnableScriptedUse(name, TRUE, prompt)
-Event_ActorUsed(cb, 'b', name)
+{P}HqUsed[name] = Event_ActorUsed(cb, 'b', name)
 end
+end
+function {P}HqUnuse(name)
+if {P}HqUsed[name] then Event_CancelEvent({P}HqUsed[name]) {P}HqUsed[name] = nil end
+if Utility_DoesActorExist(name) then Actor_EnableScriptedUse(name, FALSE, '') end
 end
 -- The faction's next contract inside: in foundry_contracts' table, on this
 -- map, not done (or repeatable), unlocked and not lost.
@@ -1934,9 +2029,58 @@ end
 end
 return nil
 end
+-- A hostile faction's guard: a bribe, as retail's bouncers (BouncerBribeRequested).
+function {P}HqBribe(f)
+local h = {P}Hq[f]
+{P}HqBribing = f
+{P}HqUnuse(h.guard)
+{P}HqGuardMode[f] = nil
+{P}HqBribeCost = h.bribecost or util_GetBribeCost(Utility_ReadNumberFromScribbleMemory('chapter')) or 25000
+local sDialog = Utility_GetStringById('interface.factionbribeq1.dialog') .. '[n][n]'
+.. Utility_GetStringById('interface.factionbribeq2.dialog') .. ': ' .. Utility_FormatCurrency({P}HqBribeCost)
+local sYes = '{P}HqBribeShort'
+if Player_GetMoney() >= {P}HqBribeCost then sYes = '{P}HqBribeYes' end
+Utility_QuestionBox(Utility_GetStringById('interface.factionbribeq.name'), sDialog, true, sYes, '{P}HqBribeDone')
+end
+function {P}HqBribeYes()
+Utility_MessageBox(Utility_GetStringById('interface.factionbribeyea.name'),
+Utility_GetStringById('interface.factionbribeyea.dialog'), true, '{P}HqBribePaid')
+end
+function {P}HqBribePaid()
+Faction_SetRelation({P}HqBribing, 'prokat', util_GetPostBribeMood())
+Player_AdjustMoney(-{P}HqBribeCost, 'interface.economyevent.bribe')
+{P}HqBribeDone()
+end
+function {P}HqBribeShort()
+Utility_MessageBox(Utility_GetStringById('interface.factionbribenay.name'),
+Utility_GetStringById('interface.factionbribenay.dialog'), true, '{P}HqBribeDone')
+end
+-- the guard again: 'enter' if the bribe was paid, else the bribe
+function {P}HqBribeDone()
+{P}HqBribing = nil
+{P}HqArm()
+end
+-- Retail's briefing controls (Briefing_Init): control mode 13, and with
+-- Foundry Console the weapon put away and walking pace; put back by
+-- {P}HqRelease.
+function {P}HqHold()
+if {P}HqHeld then return end
+{P}HqHeld = 1
+{P}HqControl = Player_DisableControl()
+Player_EnableControl(13)
+if Foundry_HqMode then Foundry_HqMode(TRUE) end
+end
+function {P}HqRelease()
+if not {P}HqHeld then return end
+{P}HqHeld = nil
+if Foundry_HqMode then Foundry_HqMode(FALSE) end
+Player_EnableControl({P}HqControl or 0)
+{P}HqControl = nil
+end
 function {P}HqEnter(f)
 local h = {P}Hq[f]
 {P}HqIn = f
+{P}HqUnuse(h.guard)
 {P}HqBack = {{ Actor_GetPosition('player0') }}
 Cinematic_FadeOut(0.5)
 Event_RelativeTimer('{P}HqInside', 'b', 0.6)
@@ -1946,17 +2090,29 @@ local h = {P}Hq[{P}HqIn]
 Actor_SetPosition('player0', h.rx, h.ry, h.rz)
 Actor_SetYaw('player0', h.rh)
 for i, a in h.leaders do
-if Utility_DoesActorExist(a) then {P}HqRules(a) Ai_CommandQueue(a, 'Wait', 'hiPri') end
+{P}HqLeader(a)
+if Utility_DoesActorExist(a) then Actor_LookAtActor(a, 'player0') end
 end
+{P}HqHold()
 Event_RelativeTimer('{P}HqLit', 'b', 0.5)
 end
 function {P}HqLit()
 local h = {P}Hq[{P}HqIn]
 Cinematic_FadeIn(0.5)
-{P}HqUse(h.door, h.doorprompt, '{P}HqLeave')
+{P}HqDoorTimer = Event_RelativeTimer('{P}HqDoor', 'b', h.exitdelay)
 {P}HqSay(h.greeting, {P}HqOffer)
 end
--- Using the leader (when the way out is something else): talk again.
+-- The way out: its ring and prompt (retail's EnableExit).
+function {P}HqDoor()
+{P}HqDoorTimer = nil
+local h = {P}HqIn and {P}Hq[{P}HqIn]
+if not h then return end
+{P}HqUse(h.door, h.doorprompt, '{P}HqLeave')
+if Utility_DoesActorExist(h.door) then
+Objective_SetTargetActor('{P}obj_exit', h.door, '', 'TARGET_TYPE_UNDEFINED', 'blip', TRUE, TRUE, TRUE, 0.5)
+end
+end
+-- Using the first leader (when the way out is something else): the briefing again.
 function {P}HqTalk()
 {P}HqOffer()
 end
@@ -1972,38 +2128,63 @@ else
 {P}HqSay(h.idle, {P}HqTalkArm)
 end
 end
+-- After the briefing: the second in command takes the contract (retail's
+-- starter_trigger: a ring and the accept prompt), or a yes/no box.
 function {P}HqAsk()
 local c = {P}HqOffered
 if not c or not {P}HqIn then return end
+local h = {P}Hq[{P}HqIn]
+{P}HqTalkArm()
+if h.starter and Utility_DoesActorExist(h.starter) then
+if not {P}HqStarterOn then
+{P}HqStarterOn = 1
+{P}HqUse(h.starter, h.acceptprompt, '{P}HqYes')
+Objective_SetTargetActor('{P}obj_starter', h.starter, '', 'TARGET_TYPE_UNDEFINED', 'blip', TRUE, TRUE, TRUE, 0.5)
+end
+else
 Utility_QuestionBox(Utility_GetStringById(c.title), Utility_GetStringById(c.descr), true, '{P}HqYes', '{P}HqTalkArm')
+end
 end
 function {P}HqYes()
 local c = {P}HqOffered
+local h = {P}HqIn and {P}Hq[{P}HqIn]
+if not c or not h then return end
+{P}HqTidy(h)
 {P}HqIn = nil
 {P}HqOffered = nil
+{P}HqRelease()
 foundry_Start(c)
 end
 function {P}HqTalkArm()
 local h = {P}HqIn and {P}Hq[{P}HqIn]
-if h and h.leaders[1] and h.leaders[1] ~= h.door then {P}HqUse(h.leaders[1], h.talkprompt, '{P}HqTalk') end
+if h and h.leaders[1] and h.leaders[1] ~= h.door and h.leaders[1] ~= h.starter then {P}HqUse(h.leaders[1], h.talkprompt, '{P}HqTalk') end
+end
+-- Inside's prompts, rings and lines taken away.
+function {P}HqTidy(h)
+Ui_MessageBoxClear()
+{P}HqLines = nil
+if {P}HqDoorTimer then Event_CancelEvent({P}HqDoorTimer) {P}HqDoorTimer = nil end
+Objective_Remove('{P}obj_exit')
+Objective_Remove('{P}obj_starter')
+{P}HqStarterOn = nil
+for i, a in h.leaders do {P}HqUnuse(a) end
+if h.starter then {P}HqUnuse(h.starter) end
+{P}HqUnuse(h.door)
 end
 function {P}HqLeave()
 if not {P}HqIn then return end
-Ui_MessageBoxClear()
-{P}HqLines = nil
+{P}HqTidy({P}Hq[{P}HqIn])
+{P}HqOffered = nil
 Cinematic_FadeOut(0.5)
 Event_RelativeTimer('{P}HqOutside', 'b', 0.6)
 end
 function {P}HqOutside()
 local f = {P}HqIn
 local h = {P}Hq[f]
-{P}HqIn = nil
 local b = {P}HqBack
 if b and b[1] then Actor_SetPosition('player0', b[1], b[2], b[3]) end
-for i, a in h.leaders do
-if Utility_DoesActorExist(a) then Actor_EnableScriptedUse(a, FALSE, '') end
-end
-if Utility_DoesActorExist(h.door) then Actor_EnableScriptedUse(h.door, FALSE, '') end
+{P}HqRelease()
+{P}HqIn = nil
 Cinematic_FadeIn(0.5)
 {P}HqArmed[h.guard] = nil
 {P}HqArm()
@@ -2030,7 +2211,8 @@ Ui_MessageBoxPrint(l.text)
 if l.sound then Audio_PlayVoiceover(l.sound) end
 Event_RelativeTimer('{P}HqNext', 'b', l.seconds)
 end
-""" + "".join(f"function {P}HqEnter_{f}() {P}HqEnter({_lua(f)}) end\n" for f in inside)
+""" + "".join(f"function {P}HqEnter_{f}() {P}HqEnter({_lua(f)}) end\n"
+              f"function {P}HqBribe_{f}() {P}HqBribe({_lua(f)}) end\n" for f in inside)
 
 
 def layers_script(layers, pilots=(), arrive=False, welcome=()):
@@ -2095,7 +2277,7 @@ def travel_lua(prefix, pilots, by_map=True):
             _lua(t["map"]), _lua(t["actor"]), _lua(t["to"]), _lua(t["prompt"]), _lua(t["title"]),
             _lua(t["question"]),
             ", ax = %.2f, ay = %.2f, az = %.2f, ah = %.1f" % (*(float(v) for v in arrive),
-                                                              float(t.get("arrive_heading") or 0))
+                                                              player_yaw(t.get("arrive_heading")))
             if arrive else ""))
     out = [f"{P}List = {{"] + rows + ["}",
            f"if not {P}Armed then {P}Armed = {{}} end",

@@ -289,8 +289,10 @@ toolkit bundle run it the same way: `foundry\python\python.exe foundry\mercfound
   `{"allies": {"guard": {"position", "heading", "name", "template"?,
   "prompt"? ("Enter HQ"), "side"? ("civ"), "marker"? ("hq" or "none")},
   "room": {"position", "heading"}, "leaders": ["<actor>", ...],
-  "exit": {"object": "<name>", "prompt"? ("Leave")}, "talk_prompt"? ("Talk"),
-  "greeting": [line], "idle": [line]}}`. A line is `{"speaker", "text",
+  "starter"? ("<actor>", or false), "accept_prompt"? ("Accept contract"),
+  "bribe"? (true, false or {"cost": <money>}),
+  "exit": {"object": "<name>", "prompt"? ("Leave"), "delay"? (5)},
+  "talk_prompt"? ("Talk"), "greeting": [line], "idle": [line]}}`. A line is `{"speaker", "text",
   "seconds", "sound"? (<bank>.<cue>)}` or just text; seconds default to the
   text's length. The guard (a layer the map loads; `template_<faction>_bouncer`
   unless set) is marked as the bouncers are, with the faction's HQ flag,
@@ -298,14 +300,33 @@ toolkit bundle run it the same way: `foundry\python\python.exe foundry\mercfound
   (always there, even before the guard is) and the guard a ring and name
   in the world. The guards are looked for every second at first, then
   every 5 s while free roam lasts, so one far from where you arrive is
-  armed once it's there. Using it fades to black and puts the player
-  at the room's position; the greeting plays, then the faction's next
-  contract here: its briefing lines and its yes/no box (yes starts it as a
-  giver does). With no contract, the idle lines. The leaders (actors placed
-  in a map layer, by name) are made unhurtable and not hostile; the first
-  one offers Talk (the offer again) when the way out is something else.
-  Using the exit object (the first leader if none is given) fades and puts
-  the player back where they stood by the guard. A mission is offered there
+  armed once it's there. The interior plays as retail's HQs (`bouncer`,
+  `briefing` and `briefing_utilities`):
+  - While the faction is hostile to the player, the guard offers a bribe
+    instead, as the bouncers do: the cost is `util_GetBribeCost` for the
+    chapter (25,000 to 1,000,000) unless `"bribe"` gives one, in retail's
+    bribe boxes; paid, the faction's mood goes to -40 and the guard lets you
+    in. `"bribe": false` turns that off.
+  - Using the guard fades to black and puts the player at the room's position.
+  - Inside, the player has retail's briefing controls: no firing or weapon
+    switching (control mode 13, which `Briefing_Init` sets), and, with
+    Foundry Console, the weapon put away and walking pace (`Foundry_HqMode`).
+    Both are put back on leaving or taking the contract.
+  - The leaders (actors placed in a map layer, by name) stand where they are
+    and never fight, even when the faction is hostile. Each is under
+    cinematic control, as retail's briefing boss and starter, looks at the
+    player, can't be hurt and has no hostile range. Nothing in their
+    template needs setting.
+  - The greeting plays, then the faction's next contract here has its
+    briefing lines. Then the second in command (`"starter"`, the second
+    leader unless set) gets a gold ring and the accept prompt, as retail's
+    starter; using them starts the contract as a giver does. With no starter
+    (`false`, or one leader), a yes/no box. With no contract, the idle lines.
+    The first leader offers Talk (the briefing again) when it isn't the way
+    out or the starter.
+  - After the exit's delay the exit object (the first leader if none is
+    given) gets a ring and its prompt, as retail's exit after 5 s. Using it
+    fades and puts the player back where they stood by the guard. A mission is offered there
   with `"map": "<new map>"` and `"contact": {"interior": "<faction>",
   "briefing": [line]}` (no position: the guard is its way in).
   **Welcome mail** (`"welcome_mail"` in `mod.json`): `{"sender", "subject",

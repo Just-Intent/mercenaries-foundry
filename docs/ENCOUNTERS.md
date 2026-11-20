@@ -202,7 +202,7 @@ A mission file with `"objectives"` and no `scripts/<id>.lua` gets its script fro
 - `destroy` takes a squad, as `"encounter:squad"` (or a squad's name when it is unique), or `"targets"`, a list of actor names. It uses `mission_ObjectiveDestroy`, which marks each target in the world and on the minimap, with a counter.
 - `goto` takes a zone (a boundary), done when the player enters it (`Event_ActorInBoundary`). The zone's centre gets a marker on the minimap and GPS, as `sw_sk2` marks its spots (`Objective_SetTargetVector` with `'location'`, not drawn in the world). `"marker": false` leaves it unmarked.
 - Squads and zones can sit in the mission's own layer or in the mod's map layers (`"load": "map"`). Map layers load only in free roam, so the script loads the ones its objectives use (`Utility_ReadLevelFile`).
-- `"start"` moves the player there at the start of the mission and turns them to `heading` (degrees; 0 faces +z), as retail missions do (`Actor_SetPosition`, `Actor_SetYaw`).
+- `"start"` moves the player there at the start of the mission and turns them to `heading` (degrees; 0 faces +z, as placed objects' yaw and the editor's markers: the generated `Actor_SetYaw` gets heading + 180, since the player turns the other way to it), as retail missions do (`Actor_SetPosition`, `Actor_SetYaw`).
 - The objective texts become strings in the mission's text record (`<map>.<faction><n>.obj.foundry<k>`).
 - `mission.ini`'s section is copied from the faction's first mission on the map, and that one's `BonusFee` (10000 for `SW_China1`) is meant for retail optional objectives: scripts zero it when they're missed. A mission with objectives gets no copied bonus: its flat bonus is the `"ini"` `BonusFee` (the editor's Flat bonus), else 0.
 
