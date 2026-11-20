@@ -98,3 +98,57 @@ class TextAndMailTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class GeneratorTests(unittest.TestCase):
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.mod = Path(self.tmp.name)
+        (self.mod / "terrain").mkdir()
+        # a straight east-west road through the middle, and a crossing one
+        (self.mod / "terrain" / "isle.decals.json").write_text(json.dumps({"roads": [
+            {"span": 16, "points": [[-300, 0], [300, 0]]}, {"span": 16, "points": [[0, -300], [0, 300]]}]}))
+
+    def tearDown(self):
+        self.tmp.cleanup()
+
+    def test_kits(self):
+        content.save_kit(self.mod, "checkpoint", {"objects": [{"from": "template_x", "offset": [1, 0, 2], "yaw": 90}],
+                                                  "half": [3, 4]})
+        self.assertEqual(content.kits(self.mod)[0]["objects"][0]["yaw"], 90.0)
+        with self.assertRaises(ValueError):
+            content.save_kit(self.mod, "bad name!", {"objects": [{"from": "x", "offset": [0, 0, 0]}]})
+        with self.assertRaises(ValueError):
+            content.save_kit(self.mod, "empty", {"objects": []})
+
+    def test_traffic_from_roads(self):
+        flat = lambda x, z: 10.0                                                     # noqa: E731
+        r = content.traffic_from_roads(self.mod, "isle", "cars", {"centre": [0, 0], "radius": 250}, [], flat,
+                                       "isle_traffic", "isle-town-cars", spawn=["template_civ_80civic"])
+        self.assertGreater(r["paths"], 4)
+        doc = json.loads((self.mod / "encounters" / "isle_traffic.json").read_text())
+        self.assertEqual(doc["traffic"]["isle-town-cars"]["spawn"], ["template_civ_80civic"])
+        first = doc["paths"]["t_isle-town-cars_01"]
+        self.assertEqual(first["points"][0][1], 10.3)                                # on the ground
+        self.assertLessEqual(len(first["points"]), 9)
+        self.assertTrue(all(abs(p[2]) > 0.5 or abs(p[0]) > 0.5 for p in first["points"]))   # off the road's middle
+        # walkers next to it, a building blocking part of the east road's kerb
+        w = content.traffic_from_roads(self.mod, "isle", "walkers", {"centre": [0, 0], "radius": 250},
+                                       [[100, 6, 0, 20, 2]], flat, "isle_traffic", "isle-town-walkers")
+        doc = json.loads((self.mod / "encounters" / "isle_traffic.json").read_text())
+        self.assertEqual(set(doc["traffic"]), {"isle-town-cars", "isle-town-walkers"})
+        walk = [p for k, v in doc["paths"].items() if k.startswith("p_") for p in v["points"]]
+        self.assertFalse([p for p in walk if 78 <= p[0] <= 122 and 2 <= p[2] <= 10])    # not through the building
+        # again: the zone's paths replaced, not added to
+        again = content.traffic_from_roads(self.mod, "isle", "walkers", {"centre": [0, 0], "radius": 250},
+                                           [], flat, "isle_traffic", "isle-town-walkers", max_paths=3)
+        doc = json.loads((self.mod / "encounters" / "isle_traffic.json").read_text())
+        self.assertEqual(sum(1 for k in doc["paths"] if k.startswith("p_")), again["paths"])
+        counts = content.route_counts(self.mod)["isle"]
+        self.assertEqual(counts["routes"], len(doc["paths"]))
+        with self.assertRaises(ValueError):
+            content.traffic_from_roads(self.mod, "nowhere", "cars", {"centre": [0, 0]}, [], flat, "l", "z")
+
+
+if __name__ == "__main__":
+    unittest.main()

@@ -27,6 +27,7 @@ import {createDeck} from './deck.js';
 import {createLook} from './look.js';
 import {createLimits} from './limits.js';
 import {createText} from './text.js';
+import {createGenerators} from './gen.js';
 import {exclusivePanels} from './panels.js';
 
 const $ = (id) => document.getElementById(id);
@@ -1753,7 +1754,23 @@ createLimits({$, stats: () => ({map: state.map, objects: state.records.filter((r
                                placed: state.records.filter((r) => String(r.id || '').startsWith('placed:') && !r.removed).length,
                                removed: state.records.filter((r) => r.removed).length})});
 createText({$, status, post: postJSON});
-exclusivePanels($);
+// Generators: kits stamped on free ground, zones filled, traffic laid on roads.
+function placeMany(items, label) {
+  const added = items.map((it) => addPlaced(it.from, freshPlacedName(it.from), state.layerFile, it.position, it.rotation, false, it.set));
+  for (const rec of added) ensureNode(rec);
+  setDirty(true);
+  refreshChanges();
+  const entries = added.map((rec) => state.copies.find((x) => x.rec === rec));
+  remember(label, () => { for (const rec of added) removeCopy(rec); },
+           () => { added.forEach((rec, i) => reviveCopy(rec, entries[i])); });
+  return added;
+}
+createGenerators({$, status, post: postJSON, records: () => state.records, boundsOf: (g) => bounds[g],
+  heightAt: (x, z) => heightAt(x, z), viewCentre: viewCentreGame, selection: () => selectionRecs(),
+  entryOf: (rec) => state.copies.find((x) => x.rec === rec), placeMany, mapName: () => state.map,
+  layerFile: () => state.layerFile, lookAt: (p, d) => lookAt(p, d),
+  findZone: (name) => { const it = name && layout.find(name.toLowerCase()); return it && it.points && it.points.length > 2 ? it : null; },
+  reloadMap: async () => { if (state.dirty && !confirm('Reload the map? Unsaved changes are lost.')) return; setDirty(false); await loadMap(state.map); }});exclusivePanels($);
 // Back to the game's list of mods (when the editor was started without one).
 $('switch-mod').onclick = async () => {
   if (state.dirty && !confirm('Discard unsaved changes and go back to the list of mods?')) return;
@@ -1790,7 +1807,7 @@ const encs = createEncounters({
     .map((r) => (r.copyName || r.name || '').toLowerCase()).filter(Boolean)),
   remember: (...a) => remember(...a),
 });
-Object.assign(window.foundryEditor, {layout, encs, missions});     // (debugging)
+Object.assign(window.foundryEditor, {layout, encs, missions, state, setSelection});     // (debugging)
 // A line of Lua to the running game (its reply shows under Game replies).
 $('live-lua').addEventListener('keydown', (e) => {
   if (e.key !== 'Enter') return;

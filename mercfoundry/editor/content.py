@@ -4,6 +4,7 @@ of 52. Each reads and writes the mod's own files, checked by the build's own
 code so the editor never saves what the build would refuse."""
 import base64
 import json
+import math
 import re
 from pathlib import Path
 
@@ -247,3 +248,226 @@ def save_welcome_mail(mod, mail):
         meta.pop("welcome_mail", None)
     _write(p, meta)
     return {"file": "mod.json"}
+
+
+# ---------------------------------------------------------------- world generators
+
+def kits(mod):
+    """The mod's prop kits (kits/<name>.json: {"objects": [{from, offset, yaw, set?}], "half": [x, z]})."""
+    folder = Path(mod) / "kits"
+    out = []
+    for f in sorted(folder.glob("*.json")) if folder.is_dir() else []:
+        try:
+            doc = json.loads(f.read_text(encoding="utf-8"))
+        except ValueError:
+            continue
+        out.append({"name": f.stem, **doc})
+    return out
+
+
+def save_kit(mod, name, doc):
+    """A kit from the editor's selection: its objects relative to its middle."""
+    if not re.fullmatch(r"[A-Za-z0-9_\-]+", name or ""):
+        raise ValueError("a kit's name is letters, digits, _ and -")
+    objs = doc.get("objects") or []
+    if not objs or not all(isinstance(o.get("from"), str) and o["from"] and len(o.get("offset") or []) == 3 for o in objs):
+        raise ValueError("a kit is objects, each {from, offset: [x, y, z], yaw}")
+    half = doc.get("half") or [2, 2]
+    clean = {"objects": [{"from": o["from"], "offset": [round(float(v), 2) for v in o["offset"]],
+                          "yaw": round(float(o.get("yaw") or 0), 1), **({"set": o["set"]} if o.get("set") else {})}
+                         for o in objs],
+             "half": [round(float(half[0]), 2), round(float(half[1]), 2)]}
+    _write(Path(mod) / "kits" / f"{name}.json", clean)
+    return {"file": f"kits/{name}.json", "objects": len(clean["objects"])}
+
+
+def road_lines(mod, map_name):
+    """The map's roads as drawn ([{span, points: [[x, z]...]}]): terrain/<map>.decals.json "roads"."""
+    doc = _read(Path(mod) / "terrain" / f"{map_name.lower()}.decals.json") or {}
+    return [{"span": float(r.get("span") or 8), "points": [[float(p[0]), float(p[1])] for p in r["points"]]}
+            for r in doc.get("roads") or [] if len(r.get("points") or []) >= 2]
+
+
+# traffic as Gaza's tools lay it (tools/make_traffic.py, make_peds.py): cars one
+# lane each way on the right, walkers just inside each kerb
+TRAFFIC_KINDS = {
+    "cars": {"step": 40.0, "per_path": 9, "join": 22.0, "width": 6, "prefix": "t",
+             "settings": {"density": 250, "urgency": 10, "civ_density": 0}},
+    "walkers": {"step": 25.0, "per_path": 9, "join": 14.0, "width": 2, "prefix": "p",
+                "settings": {"density": 240, "urgency": 10, "civ_density": 40}},
+}
+ASPHALT = 0.44      # a road decal's tarmac, as a share of its span (the rest is its see-through edge)
+
+
+def _resample(pts, step):
+    out = [tuple(pts[0])]
+    carry = 0.0
+    for (x0, z0), (x1, z1) in zip(pts, pts[1:]):
+        seg = math.hypot(x1 - x0, z1 - z0)
+        if seg <= 0:
+            continue
+        t = step - carry
+        while t <= seg:
+            out.append((x0 + (x1 - x0) * t / seg, z0 + (z1 - z0) * t / seg))
+            t += step
+        carry = seg - (t - step)
+    if math.dist(out[-1], pts[-1]) > step * 0.3:
+        out.append(tuple(pts[-1]))
+    return out
+
+
+def _offset(pts, d):
+    """The line moved d metres to its left (negative: right), point by point."""
+    out = []
+    for k, (x, z) in enumerate(pts):
+        a = pts[max(0, k - 1)]
+        b = pts[min(len(pts) - 1, k + 1)]
+        dx, dz = b[0] - a[0], b[1] - a[1]
+        n = math.hypot(dx, dz) or 1.0
+        out.append((x - dz / n * d, z + dx / n * d))
+    return out
+
+
+class _Footprints:
+    """Whether a point is inside (or within margin of) one of the given
+    footprints [x, z, yaw degrees, half x, half z] (the editor's objects)."""
+    def __init__(self, items, margin=1.5):
+        self.margin = margin
+        self.cell = {}
+        for x, z, yaw, hx, hz in items:
+            ob = (x, z, math.radians(yaw), hx, hz)
+            r = max(hx, hz) + margin
+            for cx in range(int((x - r) // 50), int((x + r) // 50) + 1):
+                for cz in range(int((z - r) // 50), int((z + r) // 50) + 1):
+                    self.cell.setdefault((cx, cz), []).append(ob)
+
+    def __call__(self, p):
+        for x, z, yaw, hx, hz in self.cell.get((int(p[0] // 50), int(p[1] // 50)), ()):
+            dx, dz = p[0] - x, p[1] - z
+            lx = dx * math.cos(yaw) - dz * math.sin(yaw)
+            lz = dx * math.sin(yaw) + dz * math.cos(yaw)
+            if abs(lx) <= hx + self.margin and abs(lz) <= hz + self.margin:
+                return True
+        return False
+
+
+def traffic_from_roads(mod, map_name, kind, area, footprints, heights, layer, zone, spawn=None, density=None,
+                       max_paths=28):
+    """A traffic zone laid on the map's drawn roads inside area ({centre: [x, z],
+    radius}), its paths kept clear of the footprints, written into
+    encounters/<layer>.json (the zone's old paths replaced). heights(x, z):
+    the ground. Returns the counts."""
+    if kind not in TRAFFIC_KINDS:
+        raise ValueError(f"kind is {' or '.join(TRAFFIC_KINDS)}")
+    if not re.fullmatch(r"[A-Za-z0-9_\-]+", layer or "") or not re.fullmatch(r"[A-Za-z0-9_\-]+", zone or ""):
+        raise ValueError("the layer's and zone's names are letters, digits, _ and -")
+    spec = TRAFFIC_KINDS[kind]
+    roads = road_lines(mod, map_name)
+    if not roads:
+        raise ValueError(f"{map_name} has no drawn roads (terrain/{map_name.lower()}.decals.json \"roads\")")
+    cx, cz = (float(v) for v in area["centre"])
+    radius = float(area.get("radius") or 300)
+    inside = lambda p: math.hypot(p[0] - cx, p[1] - cz) <= radius        # noqa: E731
+    blocked = _Footprints(footprints or [])
+    runs = []
+    for r in roads:
+        line = _resample(r["points"], spec["step"])
+        tarmac = r["span"] * ASPHALT
+        if kind == "cars":
+            sides = [_offset(line, -tarmac / 4), _offset(line[::-1], -tarmac / 4)]   # each way, on its right
+        else:
+            sides = [_offset(line, tarmac / 2 + 1.0), _offset(line, -(tarmac / 2 + 1.0))]  # each kerb
+        for side in sides:
+            run = []
+            for p in side + [None]:
+                ok = p is not None and inside(p) and not blocked(p)
+                if ok and run:
+                    q = run[-1]
+                    n = int(math.dist(q, p) // 4)
+                    ok = not any(blocked((q[0] + (p[0] - q[0]) * k / (n + 1), q[1] + (p[1] - q[1]) * k / (n + 1)))
+                                 for k in range(1, n + 1))
+                if ok:
+                    run.append(p)
+                    continue
+                if len(run) >= 2:
+                    runs.append(run)
+                run = [p] if p is not None and inside(p) and not blocked(p) else []
+    paths = []
+    per = spec["per_path"]
+    for run in runs:
+        k = 0
+        while k < len(run) - 1:
+            paths.append(run[k:k + per])
+            k += per - 1
+    paths.sort(key=lambda pts: math.dist(pts[0], (cx, cz)))
+    paths = paths[:int(max_paths)]
+    names = [f"{spec['prefix']}_{zone}_{i + 1:02d}" for i in range(len(paths))]
+    out = {}
+    for i, (name, pts) in enumerate(zip(names, paths)):
+        links = []
+        for j, other in enumerate(paths):
+            if j == i:
+                continue
+            if kind == "cars":            # lanes going on from this one's end
+                if math.dist(other[0], pts[-1]) <= spec["join"]:
+                    links.append({"path": names[j], "their_point": 0})
+            else:                          # walkers: any point of another path near this one's end
+                near = min(range(len(other)), key=lambda k: math.dist(other[k], pts[-1]))
+                if math.dist(other[near], pts[-1]) <= spec["join"]:
+                    links.append({"path": names[j], "their_point": near})
+        out[name] = {"points": [[round(x, 2), round(heights(x, z) + 0.3, 2), round(z, 2)] for x, z in pts],
+                     "properties": {"width": spec["width"]}, "links": links[:4]}
+    p = Path(mod) / "encounters" / f"{layer}.json"
+    doc = _read(p) or {"map": map_name.lower(), "load": "map"}
+    prefix = f"{spec['prefix']}_{zone}_"
+    doc["paths"] = {k: v for k, v in (doc.get("paths") or {}).items() if not k.startswith(prefix)}
+    doc["paths"].update(out)
+    settings = dict(spec["settings"])
+    if density is not None:
+        settings["density"] = int(density)
+    if spawn:
+        settings["spawn"] = spawn
+    doc.setdefault("traffic", {})[zone] = settings
+    if not out:
+        doc["traffic"].pop(zone, None)
+    _write(p, doc)
+    km = sum(math.dist(a, b) for pts in paths for a, b in zip(pts, pts[1:])) / 1000
+    return {"file": f"encounters/{layer}.json", "zone": zone, "paths": len(out), "km": round(km, 1),
+            "linked": sum(1 for v in out.values() if v["links"])}
+
+
+def route_counts(mod):
+    """The game's limits for traffic: routes (paths in traffic layers) and
+    names (every path and zone the mod's layers name), over the mod's
+    encounters/*.json."""
+    routes = names = 0
+    by_map = {}
+    folder = Path(mod) / "encounters"
+    for f in sorted(folder.glob("*.json")) if folder.is_dir() else []:
+        doc = _read(f) or {}
+        paths = doc.get("paths") or {}
+        zones = doc.get("zones") or {}
+        m = str(doc.get("map") or "").lower()
+        e = by_map.setdefault(m, {"routes": 0, "names": 0})
+        if doc.get("traffic"):
+            e["routes"] += len(paths)
+        e["names"] += len(paths) + len(zones)
+    return by_map
+
+
+def height_fn(meta, data):
+    """The ground's height at (x, z) from the editor's terrain grid (scene.terrain)."""
+    import struct
+    size, sp = meta["size"], meta["spacing"]
+    x0, z0 = meta["x0"], meta["z0"]
+    h = struct.unpack(f"<{size * size}f", data)
+
+    def at(x, z):
+        fx = min(max((x - x0) / sp, 0), size - 1.001)
+        fz = min(max((z - z0) / sp, 0), size - 1.001)
+        ix, iz = int(fx), int(fz)
+        tx, tz = fx - ix, fz - iz
+        a = h[iz * size + ix] * (1 - tx) + h[iz * size + ix + 1] * tx
+        b = h[(iz + 1) * size + ix] * (1 - tx) + h[(iz + 1) * size + ix + 1] * tx
+        return a * (1 - tz) + b * tz
+    return at

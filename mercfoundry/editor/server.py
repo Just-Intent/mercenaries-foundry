@@ -170,6 +170,12 @@ def make_handler(scene: Scene, mod_name: str, live: Live = None):
                     return self.send(200, content.map_keys(scene.mod, path.rsplit("/", 1)[1]))
                 if path == "/api/deck":
                     return self.send(200, content.deck_files(scene.mod))
+                if path == "/api/kits":
+                    return self.send(200, content.kits(scene.mod))
+                if path.startswith("/api/gen/roads/"):
+                    return self.send(200, content.road_lines(scene.mod, path.rsplit("/", 1)[1]))
+                if path == "/api/gen/counts":
+                    return self.send(200, content.route_counts(scene.mod))
                 if path == "/api/text":
                     return self.send(200, {"files": content.text_files(scene.mod),
                                            "maps": [m for m in scene.maps() if (scene.mod / "maps" / f"{m}.json").exists()],
@@ -341,6 +347,16 @@ def make_handler(scene: Scene, mod_name: str, live: Live = None):
                 if path == "/api/deck/portrait":
                     return self.send(200, content.save_portrait(scene.mod, str(doc.get("suit") or ""),
                                                                 str(doc.get("card") or ""), doc.get("png") or ""))
+                if path == "/api/kits/save":
+                    return self.send(200, content.save_kit(scene.mod, str(doc.get("name") or ""), doc.get("doc") or {}))
+                if path == "/api/gen/traffic":
+                    m = str(doc.get("map") or "")
+                    with terrain_lock:
+                        meta, hdata = scene.terrain(m)
+                    return self.send(200, content.traffic_from_roads(
+                        scene.mod, m, str(doc.get("kind") or ""), doc.get("area") or {}, doc.get("footprints") or [],
+                        content.height_fn(meta, hdata), str(doc.get("layer") or ""), str(doc.get("zone") or ""),
+                        doc.get("spawn"), doc.get("density"), doc.get("max_paths") or 28))
                 if path == "/api/text/save":
                     return self.send(200, content.save_text(scene.mod, str(doc.get("file") or ""), doc.get("map"),
                                                             doc.get("strings") or {}))

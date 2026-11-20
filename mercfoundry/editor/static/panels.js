@@ -16,6 +16,7 @@ const TOOLS = [
   ['look-mode', 'look', 'look-close'],
   ['limits-mode', 'limits', 'limits-close'],
   ['text-mode', 'text', 'text-close'],
+  ['gen-mode', 'gen', 'gen-close'],
 ];
 
 export function exclusivePanels($) {

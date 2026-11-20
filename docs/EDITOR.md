@@ -57,6 +57,20 @@ The HUD and PDA art drawn instead of the game's while the map is loaded (`hud_te
 sheet and yours, takes a PNG (saved as `textures/<name>.png`), and **Add a sheet** lists the ones worth repainting
 (radar markers, flags, faction icons, the Deck screen, PDA frames and buttons).
 
+### Generators
+What Gaza's tools did by script, in the editor (World > Generators):
+- **Kits:** select objects (Shift+click, or Shift+drag a box) and **Save the selection as a kit** (`kits/<name>.json`:
+  each object's offset from the group's middle, its height above the ground and its heading). **Stamp near the
+  view's centre** puts the kit on the nearest free ground: no object or drawn road under it, the ground no steeper
+  than **Steepest** (rise over run) and, if given, above **Ground above** (keep it off the beach), turned to
+  **Heading**. **Fill a zone** stamps it on a grid (**Spacing**, at most **most**) wherever the zone's ground is
+  free. Stamped objects are placed objects like any other: one Undo takes a whole stamp or fill back, and Save
+  keeps them.
+- **Traffic from roads** (a new map with drawn roads, `terrain/<map>.decals.json`): **Walkers** along both kerbs, or
+  **Cars** one lane each way on the right, on the roads within **Around** metres of the view's centre, clear of the
+  map's buildings and props, in paths of up to 9 points linked at junctions: a traffic zone (its density and who
+  spawns) written into an encounters layer (the zone's old paths replaced), and the map reloads to show it.
+- **Budgets:** the map's traffic routes (1,024 at most) and names (2,048 at most), counted over the mod's layers.
 ### Limits
 The open map's object count against the game's 16,384, and the other limits that freeze or hang the game rather than
 fail the build (traffic routes, the name table, texture sizes and memory, model sizes, objectives at once).
