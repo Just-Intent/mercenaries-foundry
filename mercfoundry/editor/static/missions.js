@@ -60,8 +60,15 @@ export function createMissions(ctx) {
   function drawGiver() {
     const g = st.giver;
     $('ms-giver-mode').value = g.mode;
-    $('ms-giver-who').hidden = g.mode === 'none';
+    $('ms-giver-who').hidden = g.mode === 'none' || g.mode === 'interior';
     $('ms-giver-placed').hidden = g.mode !== 'placed';
+    $('ms-giver-interior').hidden = g.mode !== 'interior';
+    $('ms-giver-int-faction').value = g.interior || 'allies';
+    $('ms-giver-briefing').value = g.briefing || '';
+    $('ms-req-suit').value = (st.requiresCards && st.requiresCards.suit) || 'clubs';
+    $('ms-req-cards').querySelectorAll('[data-card]').forEach((b) => {
+      b.checked = !!(st.requiresCards && (st.requiresCards.cards || []).map(String).includes(b.dataset.card));
+    });
     $('ms-giver-template').value = g.template || '';
     $('ms-giver-side').value = g.side || 'civ';
     $('ms-giver-marker').value = g.marker || 'gold';
@@ -162,6 +169,10 @@ export function createMissions(ctx) {
     }
     if (contact === false) return {mode: 'none'};
     const c = contact && typeof contact === 'object' ? contact : {};
+    if (c.interior) {
+      return {mode: 'interior', interior: c.interior,
+              briefing: (c.briefing || []).map((l) => (typeof l === 'string' ? l : (l.speaker ? `${l.speaker}: ${l.text || ''}` : (l.text || '')))).join('\n')};
+    }
     return {mode: c.position ? 'placed' : 'hq', template: c.template || '', name: c.name || '', prompt: c.prompt || '',
             side: c.side || 'civ', marker: c.marker || 'gold',
             stay: !!c.stay, invincible: !!c.invincible, lose_if_killed: !!c.lose_if_killed,
@@ -226,6 +237,7 @@ export function createMissions(ctx) {
       st.start = null;
       st.giver = {mode: 'hq'};
       st.requires = [];
+      st.requiresCards = null;
     } else {
       $('ms-faction').value = m.faction;
       $('ms-number').textContent = m.id;
@@ -252,6 +264,7 @@ export function createMissions(ctx) {
       st.start = m.doc.start ? {...m.doc.start} : null;
       st.giver = giverFrom(m.doc.contact, m.doc.hq);
       st.requires = [...(m.doc.requires || [])];
+      st.requiresCards = m.doc.requires_cards ? {suit: m.doc.requires_cards.suit, cards: [...(m.doc.requires_cards.cards || [])]} : null;
     }
     $('ms-layer-tools').hidden = false;
     drawSupport();
@@ -335,12 +348,20 @@ export function createMissions(ctx) {
       const seconds = (o.type === 'hold' || o.type === 'fast' || o.type === 'defend')
         ? `<label>Seconds <input data-i="${i}" data-k="seconds" type="number" min="1" step="10" value="${+o.seconds || ''}"></label>` : '';
       const prompt = o.type === 'use'
-        ? `<input data-i="${i}" data-k="prompt" type="text" value="${esc(o.prompt)}" placeholder="Prompt on the object, e.g. Plant charge">` : '';
+        ? `<input data-i="${i}" data-k="prompt" type="text" value="${esc(o.prompt)}" placeholder="Prompt on the object, e.g. Plant charge">
+           <label title="Off: the targets can't be destroyed while the objective lasts. On: they can, and destroying one fails the contract (the game's own way)"><input data-i="${i}" data-k="breakable" type="checkbox" ${o.breakable ? 'checked' : ''}> Can be destroyed</label>` : '';
       const verify = o.type === 'verify'
         ? `<label title="The marker on the targets">Marker <select data-i="${i}" data-k="blip">${Object.entries(BLIPS).map(([v, n]) =>
             `<option value="${v}" ${(o.blip || 'human') === v ? 'selected' : ''}>${n}</option>`).join('')}</select></label>
            <label title="Paid on completion for each target captured alive">Alive $
-            <input data-i="${i}" data-k="alive" type="number" min="0" step="1000" value="${+o.alive > 0 ? +o.alive : ''}" placeholder="none"></label>` : '';
+            <input data-i="${i}" data-k="alive" type="number" min="0" step="1000" value="${+o.alive > 0 ? +o.alive : ''}" placeholder="none"></label>
+           <label title="A Deck of 52 card (a face card's contract): verified, it's marked in the PDA, the verify screen shows it and its bounty is paid (double alive)">Deck card
+            <select data-i="${i}" data-k="card"><option value="">none</option>${['2', '3', '4', '5', '6', '7', '8', '9', '10', 'J', 'Q', 'K', 'A'].map((c) =>
+              `<option ${String(o.card || '').toUpperCase() === c ? 'selected' : ''}>${c}</option>`).join('')}</select>
+            <select data-i="${i}" data-k="suit">${['clubs', 'diamonds', 'hearts', 'spades'].map((s) =>
+              `<option ${o.suit === s ? 'selected' : ''}>${s}</option>`).join('')}</select></label>
+           ${o.card ? `<label title="Paid when the card is verified (a kill; taken alive pays double)">Card bounty $
+            <input data-i="${i}" data-k="bounty" type="number" min="0" step="1000" value="${+o.bounty > 0 ? +o.bounty : ''}"></label>` : ''}` : '';
       const extract = o.type === 'subdue'
         ? `<label title="Done when they're flown out by the extraction chopper, not when knocked down"><input data-i="${i}" data-k="extract" type="checkbox" ${o.extract ? 'checked' : ''}> Extract them</label>` : '';
       const firstMain = st.objectives.findIndex((x) => !(+x.bonus > 0));
@@ -619,7 +640,16 @@ export function createMissions(ctx) {
     if (k === 'revealSquadMetres') { o.reveal = nearMetres(o.reveal, e.target.value); edited(); return; }
     if (k === 'revealSquad') { o.reveal = squadMoment(o.reveal, e.target.value); edited(); return; }
     const wasBonus = +o.bonus > 0;
-    if (k === 'extract' || k === 'together') {
+    if (k === 'card') {                                  // a Deck card: its suit too (clubs unless chosen)
+      if (e.target.value) { o.card = e.target.value; o.suit = o.suit || 'clubs'; } else { delete o.card; delete o.suit; delete o.bounty; }
+      drawObjectives(); edited(); return;
+    }
+    if (k === 'bounty') {
+      const n = Math.max(0, Math.round(+e.target.value || 0));
+      if (n) o.bounty = n; else delete o.bounty;
+      edited(); return;
+    }
+    if (k === 'extract' || k === 'together' || k === 'breakable') {
       if (e.target.checked) o[k] = true; else delete o[k];
       queueOutline(); edited(); return;
     }
@@ -1228,6 +1258,7 @@ export function createMissions(ctx) {
 
   $('ms-giver-mode').onchange = () => {
     st.giver.mode = $('ms-giver-mode').value;
+    if (st.giver.mode === 'interior' && !st.giver.interior) st.giver.interior = 'allies';
     drawGiver(); drawSequence(); edited();
   };
   for (const [id, k] of [['ms-giver-template', 'template'], ['ms-giver-name', 'name'], ['ms-giver-prompt', 'prompt']]) {
@@ -1238,6 +1269,17 @@ export function createMissions(ctx) {
   for (const [id, k] of [['ms-giver-stay', 'stay'], ['ms-giver-invincible', 'invincible'], ['ms-giver-lose', 'lose_if_killed']]) {
     $(id).onchange = () => { st.giver[k] = $(id).checked; edited(); };
   }
+  // inside a faction's HQ interior: which faction, and the contract's briefing lines
+  $('ms-giver-int-faction').onchange = () => { st.giver.interior = $('ms-giver-int-faction').value; edited(); };
+  $('ms-giver-briefing').onchange = () => { st.giver.briefing = $('ms-giver-briefing').value; edited(); };
+  // Deck cards that must be verified first ("requires_cards")
+  const readCards = () => {
+    const cards = [...$('ms-req-cards').querySelectorAll('[data-card]')].filter((b) => b.checked).map((b) => b.dataset.card);
+    st.requiresCards = cards.length ? {suit: $('ms-req-suit').value, cards} : null;
+    edited();
+  };
+  $('ms-req-suit').onchange = readCards;
+  $('ms-req-cards').addEventListener('change', readCards);
   $('ms-requires').addEventListener('change', (e) => {
     const id = e.target.dataset.req;
     if (!id) return;
@@ -1341,7 +1383,7 @@ export function createMissions(ctx) {
       faction, number, title: $('ms-title').value.trim(), description: $('ms-description').value.trim(),
       briefing: $('ms-briefing').value.trim(), fee: +$('ms-fee').value || 0, bonus: +$('ms-bonus').value || 0, debug: $('ms-debug').checked, keep_if_hostile: $('ms-keep-hostile').checked, test_from: st.testFrom || 0,
       mood: Object.fromEntries(MOOD_FACTIONS.map((f) => [f, Math.max(-100, Math.min(100, Math.round(+$(`ms-mood-${f}`).value || 0)))])), objectives: st.objectives,
-      start: st.start, giver: st.giver, requires: st.requires || [], fail: st.fails, radio: st.radio, music: st.music, weather: st.weather, orders: st.orders, waves: st.waves, support: st.support, unlocks: st.unlocks,
+      start: st.start, giver: st.giver, requires: st.requires || [], requires_cards: st.requiresCards || null, fail: st.fails, radio: st.radio, music: st.music, weather: st.weather, orders: st.orders, waves: st.waves, support: st.support, unlocks: st.unlocks,
       done_mail: {subject: $('ms-done-subject').value.trim(), body: $('ms-done-body').value.trim()},
     }};
   }

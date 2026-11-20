@@ -1894,6 +1894,13 @@ class Scene:
                 doc["requires"] = req
             else:
                 doc.pop("requires", None)
+        if "requires_cards" in mission:            # Deck cards verified first (missions.contract)
+            rc = mission.get("requires_cards")
+            if rc and rc.get("cards"):
+                ms._required_cards(rc)              # as the build checks it
+                doc["requires_cards"] = {"suit": str(rc.get("suit") or "clubs"), "cards": [str(c) for c in rc["cards"]]}
+            else:
+                doc.pop("requires_cards", None)
         giver = mission.get("giver")
         if giver:
             # Who offers it: the HQ contact (name and prompt optional), someone
@@ -1924,7 +1931,17 @@ class Scene:
             else:
                 old = doc.get("contact") if isinstance(doc.get("contact"), dict) else {}
                 c = {k: v for k, v in old.items() if k not in ("position", "heading", "template", "side", "marker",
-                                                               "stay", "invincible", "lose_if_killed")}
+                                                               "stay", "invincible", "lose_if_killed",
+                                                               "interior", "briefing")}
+                if mode == "interior":
+                    # offered inside a new map's HQ interior, after its briefing lines
+                    f = str(giver.get("interior") or "").lower()
+                    if f not in ms.HQ_FACTIONS:
+                        raise ValueError(f"an HQ interior is one of {', '.join(ms.HQ_FACTIONS)}")
+                    c["interior"] = f
+                    lines = [s.strip() for s in str(giver.get("briefing") or "").split("\n") if s.strip()]
+                    if lines:
+                        c["briefing"] = lines
                 for k in ("name", "prompt"):
                     if (giver.get(k) or "").strip():
                         c[k] = giver[k].strip()

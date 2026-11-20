@@ -231,15 +231,25 @@
         <option value="hq">A contact at the faction's HQ</option>
         <option value="placed">Someone placed on the map</option>
         <option value="sequence">In the faction's HQ contract sequence</option>
+        <option value="interior">Inside a faction's HQ (a new map's interior)</option>
         <option value="none">No one (start it with the Lua line)</option></select></label>
       <div id="ms-giver-seq" hidden>
         <label class="field">After which contract <select id="ms-giver-after"></select></label>
         <p class="hint" id="ms-giver-seq-hint">The faction's own HQ bouncer offers it at this point of its contracts on this map.</p>
         <label class="field"><input id="ms-giver-contact" type="checkbox"> Also a contact at the HQ (any time)</label>
       </div>
+      <div id="ms-giver-interior" hidden>
+        <label class="field">Whose HQ <select id="ms-giver-int-faction"><option value="allies">Allies' slot</option>
+          <option value="china">China's slot</option><option value="mafia">Mafia's slot</option><option value="sk">South Korea's slot</option></select></label>
+        <p class="hint">Offered inside that HQ (HQs &amp; medevac): after the greeting, these lines play; then the second in command takes the contract.</p>
+        <label class="field">Briefing (one line each; "Speaker: text")<textarea id="ms-giver-briefing" rows="4"></textarea></label>
+      </div>
       <div id="ms-giver-requires">
         <p class="hint">Available after (the giver appears once these are done):</p>
         <div id="ms-requires"></div>
+        <p class="hint">And once these Deck cards are verified (on a new map: its own deck):</p>
+        <div class="buttons"><select id="ms-req-suit"><option>clubs</option><option>diamonds</option><option>hearts</option><option>spades</option></select>
+          <span id="ms-req-cards"><label class="check"><input type="checkbox" data-card="2"> 2</label><label class="check"><input type="checkbox" data-card="3"> 3</label><label class="check"><input type="checkbox" data-card="4"> 4</label><label class="check"><input type="checkbox" data-card="5"> 5</label><label class="check"><input type="checkbox" data-card="6"> 6</label><label class="check"><input type="checkbox" data-card="7"> 7</label><label class="check"><input type="checkbox" data-card="8"> 8</label><label class="check"><input type="checkbox" data-card="9"> 9</label><label class="check"><input type="checkbox" data-card="10"> 10</label><label class="check"><input type="checkbox" data-card="J"> J</label><label class="check"><input type="checkbox" data-card="Q"> Q</label><label class="check"><input type="checkbox" data-card="K"> K</label><label class="check"><input type="checkbox" data-card="A"> A</label></span></div>
       </div>
       <div id="ms-giver-who">
         <label class="field">Name <input id="ms-giver-name" type="text" placeholder="the faction's contact"></label>
