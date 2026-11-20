@@ -477,6 +477,31 @@ class ModBuildTests(unittest.TestCase):
         self.write("objects/island.json", json.dumps([{"map": "island", "model": "sample", "move": [0, 1, 0]}]))
         with self.assertRaisesRegex(ValueError, "can't move, copy or remove"):
             modbuild.build(self.project, self.data, self.out)
+        (self.project / "objects" / "island.json").unlink()
+        # "template_overrides": a template the game spawns by name (support,
+        # the shop) spawns as the map's own there: a property set makes a copy
+        # (template_<map>_<rest>), a name uses that template; the master
+        # script tells Foundry Console
+        self.write("maps/island.json", json.dumps({"from": "blank", "loads_like": None, "template_overrides": {
+            "template_allies_driver": {"GeometryFile": "sample"},
+            "template_tank": "template_allies_driver"}}))
+        result = modbuild.build(self.project, self.data, self.out)
+        recs = self.records("assets.dsk")
+        objs = {o["name"]: dict(o["properties"]) for o in
+                world.iter_objects(recs[(name_hash("island_templates"), WORLD)])}
+        self.assertEqual(objs["template_island_allies_driver"]["GeometryFile"], "sample")
+        master = script.decode(recs[(name_hash("island"), SCRIPT)]).source
+        self.assertIn("Foundry_MapTemplate('template_allies_driver', 'template_island_allies_driver')", master)
+        self.assertIn("Foundry_MapTemplate('template_tank', 'template_allies_driver')", master)
+        self.assertLess(master.index("function ScriptInit()"), master.index("Foundry_MapTemplate("))
+        self.assertTrue(any("2 game templates spawn as the map's own there" in c for c in result.changes))
+        for bad, msg in (({"template_nothing": {"a": "1"}}, "no template 'template_nothing'"),
+                         ({"template_tank": "template_nothing"}, "no template 'template_nothing'"),
+                         ({"template_tank": {}}, "no properties"),
+                         ({"tank": {"a": "1"}}, "isn't a template name")):
+            self.write("maps/island.json", json.dumps({"from": "blank", "loads_like": None, "template_overrides": bad}))
+            with self.assertRaisesRegex(ValueError, msg):
+                modbuild.build(self.project, self.data, self.out)
 
     def test_map_text(self):
         # text/*.json with "map": the game's text stays; the new map's own

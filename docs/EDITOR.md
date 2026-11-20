@@ -882,6 +882,17 @@ changing the game's anywhere else (these are files, not editor tools yet):
   a different size works if everything scales with it. A texture drawn on a
   3D model (global_skflag, the SK flag) isn't HUD art: give the model a copy
   with its own texture instead.
+- **What the game spawns by name, as the map's own:** `maps/<name>.json`
+  `"template_overrides": {"template_allies_blackhawkextr": {"GeometryFile": "isle_heli", "geometryNameRuined": "isle_heli_ruin"}, "template_allies_chinook": "template_isle_ch53"}`.
+  The game's support code, scripts and shop spawn some templates by name
+  (the extraction helicopter, vehicle drops, airstrike and attack support,
+  deliveries), so a copy under another name can't stand in. A property set
+  makes the map a copy (`template_<map>_<rest>`, built as a `"templates"`
+  copy with `"set"`, its models loaded with the map); a template name uses
+  that one (one of the map's `"templates"` copies, or a game template).
+  While the map is loaded, Foundry Console (`Foundry_MapTemplate`) makes
+  each spawn of the game's template spawn the map's instead; the next level
+  load ends it. Without Foundry Console the game's spawn.
 - **Rules for one map:** an objects rule with `"map"` changes only that map:
   `"map": "<a mod's new map>"` changes (`"set"` only) the map's template
   copies it matches by `"template"` or `"model"` (a template every map loads

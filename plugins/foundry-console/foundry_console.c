@@ -3347,9 +3347,17 @@ static int MERC_PLUGIN_CALL cmd_hq_mode(void *ud, uint32_t L)
     return 1;
 }
 
+static unsigned maptemplate_count, maptemplate_used;    /* Foundry_MapTemplate's, below */
 static void MERC_PLUGIN_CALL level_load_before(void *ud, MercHookContext *c)
 {
     (void)ud; (void)c;
+    if (maptemplate_count) {
+        char line[96];
+        snprintf(line, sizeof(line), "map templates: %u swaps forgotten (%u spawns used one)", maptemplate_count,
+                 maptemplate_used);
+        host->log(host->context, line);
+    }
+    maptemplate_count = maptemplate_used = 0;
     datapod_restore();
     maptext_restore();
     mapsprite_restore();
@@ -3358,6 +3366,51 @@ static void MERC_PLUGIN_CALL level_load_before(void *ud, MercHookContext *c)
     texreq_release();
     maptex_pending_count = 0;
     hq_mode_on = 0;               /* a new level has a new player */
+}
+
+/* Foundry_MapTemplate(template, other): until the next level loads, the game
+ * spawning template (by name: its support code, scripts, the shop) spawns
+ * other instead: Spawner_SpawnTemplate's template hash (its first argument)
+ * swapped before it runs. For a new map's own versions of the extraction
+ * helicopter, support aircraft and deliveries (maps json
+ * "template_overrides"). Returns true. */
+#define MAPTEMPLATE_MAX 64
+typedef struct { uint32_t from, to; } MapTemplateSwap;
+static MapTemplateSwap maptemplate[MAPTEMPLATE_MAX];
+static unsigned maptemplate_count, maptemplate_used;
+
+static void MERC_PLUGIN_CALL spawn_before(void *ud, MercHookContext *c)
+{
+    (void)ud;
+    uint32_t hash = 0;
+    if (!maptemplate_count || !host->read_guest(host->context, c->esp + 4, &hash, 4)) return;
+    for (unsigned i = 0; i < maptemplate_count; i++)
+        if (maptemplate[i].from == hash) {
+            host->write_guest(host->context, c->esp + 4, &maptemplate[i].to, 4);
+            maptemplate_used++;
+            return;
+        }
+}
+
+static int MERC_PLUGIN_CALL cmd_map_template(void *ud, uint32_t L)
+{
+    char from[160], to[160];
+    (void)ud;
+    if (!lua_arg_text(L, 1, from, sizeof(from)) || !lua_arg_text(L, 2, to, sizeof(to))) return 0;
+    uint32_t f = hash_name(from), t = hash_name(to);
+    unsigned i;
+    for (i = 0; i < maptemplate_count && maptemplate[i].from != f; i++) {}
+    if (i == maptemplate_count) {
+        if (maptemplate_count == MAPTEMPLATE_MAX) return 0;
+        maptemplate_count++;
+    }
+    maptemplate[i] = (MapTemplateSwap){f, t};
+    char line[400];
+    snprintf(line, sizeof(line), "map templates: %s spawns as %s until the next level loads", from, to);
+    host->log(host->context, line);
+    uint32_t args[2] = {L, 1};
+    lua_call(MF_FN_Lua_PushBool, 2, args);
+    return 1;
 }
 
 /* Foundry_MapText(key, other): key shows other's text until the next level
@@ -3405,6 +3458,8 @@ MERC_PLUGIN_EXPORT int MERC_PLUGIN_CALL MercenariesPlugin_Init(
     InitializeCriticalSection(&lock);
     load_templates();
     load_names();
+    if (!h->hook_guest(h->context, MF_FN_Spawner_SpawnTemplate, spawn_before, NULL, NULL))
+        h->log(h->context, "spawn swap hook unavailable (run port-hooks); a map's template_overrides don't apply");
     if (!h->hook_guest(h->context, MF_FN_Spawner_SpawnTemplate, NULL, spawn_after, NULL))
         h->log(h->context, "spawn hook unavailable (run port-hooks); recent spawns won't show");
     if (!h->hook_guest(h->context, MF_FN_LuaScript_RegisterCommands, NULL, script_loaded, NULL))
@@ -3420,7 +3475,8 @@ MERC_PLUGIN_EXPORT int MERC_PLUGIN_CALL MercenariesPlugin_Init(
         !h->add_lua_command(h->context, "Foundry_SetHandling", cmd_set_handling, NULL) ||
         !h->add_lua_command(h->context, "Foundry_MapText", cmd_map_text, NULL) ||
         !h->add_lua_command(h->context, "Foundry_MapTexture", cmd_map_texture, NULL) ||
-        !h->add_lua_command(h->context, "Foundry_HqMode", cmd_hq_mode, NULL))
+        !h->add_lua_command(h->context, "Foundry_HqMode", cmd_hq_mode, NULL) ||
+        !h->add_lua_command(h->context, "Foundry_MapTemplate", cmd_map_template, NULL))
         h->log(h->context, "script commands unavailable; Foundry_TrafficZone, Foundry_Range, Foundry_Sample, "
                            "Foundry_Label, Foundry_SetHandling and Foundry_MapText may not exist");
     if (!h->hook_guest(h->context, MF_FN_DataPod_BuildCards, datapod_cards_before, datapod_cards_after, NULL))

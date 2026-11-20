@@ -430,7 +430,8 @@ def names(source):
 # Script commands Foundry Console adds (docs/OVERLAY.md): generated scripts
 # call them only after checking they exist (`if Foundry_MapText then`).
 PLUGIN_COMMANDS = frozenset({"Foundry_TrafficZone", "Foundry_SetHandling", "Foundry_Range", "Foundry_Sample",
-                             "Foundry_Label", "Foundry_MapText", "Foundry_MapTexture", "Foundry_HqMode"})
+                             "Foundry_Label", "Foundry_MapText", "Foundry_MapTexture", "Foundry_HqMode",
+                             "Foundry_MapTemplate"})
 
 
 def known_names(sources):

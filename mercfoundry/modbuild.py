@@ -424,6 +424,31 @@ def _write_map_text(data, result):
                               + f" of its own, shown there with Foundry Console ({name})")
 
 
+def _write_map_templates(data, result):
+    """After every step: a new map with "template_overrides" has its master
+    script's ScriptInit tell Foundry Console which templates spawn as which
+    while it's loaded (Foundry_MapTemplate; forgotten on the next level load;
+    without Foundry Console the game's spawn)."""
+    from . import missions
+    for m, swaps in sorted(getattr(data, "map_template_swaps", {}).items()):
+        master = data.find_added(name_hash(m), SCRIPT)
+        if master is None:
+            raise ValueError(f"maps/{m}.json: no master script for its \"template_overrides\"")
+        old = script.decode(master)
+        text = old.source
+        at = text.find("function ScriptInit()")
+        if at < 0:
+            raise ValueError(f"maps/{m}.json: its master script has no ScriptInit for \"template_overrides\"")
+        at = text.index("\n", at) + 1
+        nl = "\r\n" if "\r\n" in text else "\n"
+        call = (f"if Foundry_MapTemplate then{nl}"
+                + "".join(f"Foundry_MapTemplate({missions._lua(t)}, {missions._lua(to)}){nl}" for t, to in swaps)
+                + f"end{nl}")
+        data.replace_added(name_hash(m), SCRIPT, script.encode(script.with_source(old, text[:at] + call + text[at:])))
+        result.changes.append(f"maps/{m}.json: {len(swaps)} game templates spawn as the map's own there "
+                              f"({', '.join(f'{t} as {to}' for t, to in swaps)}), with Foundry Console")
+
+
 def _set_strings(data, edits):
     """Set text strings (key -> text) in english.dsk; new keys go into the
     registry record holding the key with the longest shared prefix.
@@ -2792,8 +2817,51 @@ def _apply_maps(data, folder, result):
             if any(k in r for k in ("move", "position", "turn", "copy", "remove")):
                 raise ValueError(f"objects/{fn}: a rule with \"map\": {name} changes properties (\"set\") of the "
                                  f"map's template copies; it can't move, copy or remove")
-        if mdoc.get("templates") or map_rules:
-            tlayer, tnames, tshared, trecs, unused = _map_templates(data, name, mdoc.get("templates") or [], where,
+        # "template_overrides": {<game template>: {<property>: value} or <template>}:
+        # what the game spawns by name (the extraction helicopter, support
+        # aircraft, the shop's deliveries) spawns as the map's own while it's
+        # loaded: a property set makes a copy of the map's own
+        # (template_<map>_<rest>), a name uses that template (the map's "as"
+        # copy or a game template); Foundry Console swaps it at the spawner
+        overrides = mdoc.get("template_overrides") or {}
+        if not isinstance(overrides, dict):
+            raise ValueError(f"{where}: \"template_overrides\" is {{<game template>: {{<property>: value}} or <template>}}")
+        templates_wanted = list(mdoc.get("templates") or [])
+        own_copies = {str(t.get("as")).lower() for t in templates_wanted if isinstance(t, dict) and t.get("as")}
+        swaps = []
+        for t, spec in overrides.items():
+            t = str(t)
+            if not re.fullmatch(r"template_[A-Za-z0-9_]+", t):
+                raise ValueError(f"{where}: \"template_overrides\": {t!r} isn't a template name")
+            if isinstance(spec, dict):
+                if not spec:
+                    raise ValueError(f"{where}: \"template_overrides\": {t}: no properties to change")
+                as_ = f"template_{name.lower()}_{t[len('template_'):]}"
+                if as_.lower() in own_copies:
+                    raise ValueError(f"{where}: \"template_overrides\": {t}: \"templates\" already has a copy named "
+                                     f"{as_}; give that one the properties, or name it in the override")
+                templates_wanted.append({"template": t, "as": as_, "set": spec})
+                own_copies.add(as_.lower())
+                swaps.append((t, as_))
+            elif isinstance(spec, str) and spec:
+                if not re.fullmatch(r"template_[A-Za-z0-9_]+", spec):
+                    raise ValueError(f"{where}: \"template_overrides\": {t}: {spec!r} isn't a template name")
+                swaps.append((t, spec))
+            else:
+                raise ValueError(f"{where}: \"template_overrides\": {t}: give {{<property>: value}} or a template's name")
+        if swaps:
+            by_name_, _ = _world_index(data, [data.archive(n) for n in ARCHIVES if (data.dir / n).exists()])
+            known_templates = {k for k in by_name_ if k.startswith("template_")}
+            for t, to in swaps:
+                if t.lower() not in known_templates:
+                    raise ValueError(f"{where}: \"template_overrides\": the game has no template {t!r}")
+                if to.lower() not in own_copies and to.lower() not in known_templates:
+                    raise ValueError(f"{where}: \"template_overrides\": {t}: no template {to!r} (a game template, "
+                                     f"or one of this map's \"templates\" copies)")
+            data.map_template_swaps = getattr(data, "map_template_swaps", {})
+            data.map_template_swaps[name.lower()] = swaps
+        if templates_wanted or map_rules:
+            tlayer, tnames, tshared, trecs, unused = _map_templates(data, name, templates_wanted, where,
                                                                      map_rules)
             for fn, r in unused:
                 what = r.get("template") or r.get("name") or r.get("model")
@@ -4145,6 +4213,7 @@ def build(projects, data_dir, out_dir, name=None, description=None) -> Result:
     # scripts it runs
     _load_copied_model_textures(data, result)
     _write_map_text(data, result)
+    _write_map_templates(data, result)
     _check_lua(data, result)
     _check_new_scripts(data, result)
     _check_map_paths(data, result)

@@ -55,6 +55,12 @@ Script commands it adds, for the Lua box or any script:
   own HUD textures (0x205D80(hash, 0)) and switches the sprites once it's
   loaded (logged). Used by a new map's `"hud_textures"`. Compiled; not yet
   run in game.
+- `Foundry_MapTemplate('<template>', '<other template>')`: until the next
+  level loads, anything spawning the template by name (the game's support
+  code, scripts, the shop) spawns the other: a "before" hook on
+  Spawner_SpawnTemplate (0x174480) swaps its template hash argument. Logged,
+  with how many spawns used a swap when the level unloads. Used by a new
+  map's `"template_overrides"`. Not yet run in game.
 - `Foundry_Range()` runs the [test range](ENCOUNTERS.md#test-range)'s
   `range.lua` in the calling script state. It looks for the file in
   `mods\Foundry Test Range` first, then in the launcher's runtime copy, where
