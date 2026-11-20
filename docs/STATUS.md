@@ -1,4 +1,4 @@
-﻿# Status (2026-11-14)
+# Status (2026-11-14)
 
 ## Done
 - Project set up: `mercfoundry/` Python tools, docs, MIT license, `.gitignore` that blocks game data.
