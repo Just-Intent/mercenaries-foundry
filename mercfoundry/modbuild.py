@@ -1410,6 +1410,13 @@ def _travel_pilots(data, folder, result):
         for fac, i in inside.items():
             out.append((i["guard"], name, {"from": i["template"], "name": i["guard"], "position": i["gpos"],
                                            "yaw": i["gheading"]}))
+            ch = i.get("chair")
+            if ch and ch.get("place"):
+                # no chair of the mod's: retail's of its style, in the player's
+                # frame (missions.chair_placement)
+                tpl, pos, yaw = missions.chair_placement(ch)
+                ch["object"] = f"foundry_hqchair_{name.lower()}_{fac}"
+                out.append((ch["object"], name, {"from": tpl, "name": ch["object"], "position": pos, "yaw": yaw}))
             if i.get("exit_position") and not i.get("door"):
                 # an exit point: retail's way out there, an invisible usable
                 # cube (template_hq-<faction>-useable, allieshq_cube) with a

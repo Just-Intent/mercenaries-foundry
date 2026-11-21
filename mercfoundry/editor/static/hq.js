@@ -123,11 +123,12 @@ export function createHq(ctx) {
       <label class="sky-row"><span>Talk prompt</span><input data-int-k="talk_prompt" value="${esc(i.talk_prompt || '')}" placeholder="Talk"></label>
       <h4>Chair</h4>
       <p class="hint">Retail seats the player for the briefing: a sit-down animation, seated with only "use" (a
-        "Stand up" prompt on the chair), then up again. Put the seat spot where the player's feet go, facing the way
-        they sit, and name the placed chair (its prompts go on it). The faction's HQ animations play; they load with
-        the map.</p>
+        "Stand up" prompt on the chair), then up again. Put the seat spot where the player stands before sitting,
+        facing the way retail's chair of that style faces them, and leave the chair object empty: the build places
+        retail's chair there (as its briefing does, in the player's frame; the allies' chair turns under the player).
+        Name an object only for a chair of your own.</p>
       ${spotRow('Seat', i.chair && i.chair.position ? i.chair : null, `chair:${f}`)}
-      <label class="sky-row"><span>Chair object</span><input data-int-k="chair.object" value="${esc((i.chair || {}).object || '')}" placeholder="the placed chair's name"></label>
+      <label class="sky-row"><span>Chair object</span><input data-int-k="chair.object" value="${esc((i.chair || {}).object || '')}" placeholder="empty: retail's chair of the style"></label>
       <label class="sky-row"><span>Animations</span><select data-int-k="chair.style">
         ${['', ...FACTIONS].map((s) => `<option value="${s}" ${((i.chair || {}).style || '') === s ? 'selected' : ''}>${s ? esc(name(s)) + "'s HQ" : `this faction's (${esc(name(f))})`}</option>`).join('')}
       </select></label>

@@ -2019,6 +2019,34 @@ CHAIR_STYLES = {
 }
 
 
+# Retail's chairs, placed by the build when an interior names none: its
+# briefing attaches the chair and the player to the same hardpoint
+# (Briefing_AddActor(chair, hp_player_chair), Actor_AttachToActor(player,
+# scene, hp_player_chair)), and the sit clip carries the player into the seat
+# (its bone_root ends 0.44-0.46 m behind the standing spot, where china's,
+# sk's and the centred mafia chair's seats are). The allies' chair is a rig:
+# its seat starts 0.94 m to the side and its own clips swing it under the
+# player. Mafia's is attached at its own hp_chair: the seat's centre is put
+# 0.44 m behind the spot.
+CHAIR_TEMPLATES = {"allies": "template_hq-allies-chair", "china": "template_hq-china-chair",
+                   "mafia": "template_hq-mafia-chair", "sk": "template_hq-sk-chair"}
+CHAIR_BEHIND = {"mafia": 0.44}
+CHAIR_RIG_CLIPS = {"allies": ("allies_interact_sitdown_chair_chair", "allies_interact_sitting_chair_chair",
+                              "allies_interact_standup_chair_chair")}
+
+
+def chair_placement(chair):
+    """(template, position, yaw) of the chair the build places for an
+    interior's "chair" with no "object": retail's chair of its style in the
+    player's frame (a prop's yaw 0 faces +z, the player's model faces its -z:
+    the chair's yaw is the heading + 180)."""
+    h = math.radians(chair["heading"])
+    back = CHAIR_BEHIND.get(chair["style"], 0.0)
+    x, y, z = chair["position"]
+    return (CHAIR_TEMPLATES[chair["style"]], [x - back * math.sin(h), y, z - back * math.cos(h)],
+            (chair["heading"] + 180.0) % 360.0)
+
+
 def _interior_chair(w, faction, c):
     """An interior's "chair": {"object": <placed chair>, "position": [x, y, z]
     (where the player sits: their feet at the seat's spot), "heading"? (the
@@ -2029,9 +2057,9 @@ def _interior_chair(w, faction, c):
         return None
     if not isinstance(c, dict):
         raise ValueError(f"{w}: \"chair\" is {{\"object\": <name>, \"position\": [x, y, z], \"heading\": <deg>}}")
-    obj = c.get("object")
-    if not obj:
-        raise ValueError(f"{w}: the chair needs its \"object\" (the placed chair: its prompts go on it)")
+    # "object": a chair the mod placed itself; none: the build places retail's
+    # (chair_placement), named foundry_hqchair_<map>_<faction> by the maps step
+    obj = c.get("object") or ""
     p = c.get("position")
     if not isinstance(p, (list, tuple)) or len(p) != 3:
         raise ValueError(f"{w}: the chair needs a \"position\" [x, y, z] (where the player sits)")
@@ -2039,8 +2067,11 @@ def _interior_chair(w, faction, c):
     if style not in CHAIR_STYLES:
         raise ValueError(f"{w}: the chair's \"style\" is one of {', '.join(CHAIR_STYLES)} (whose HQ animations)")
     sit, loop, stand, d1, d3 = CHAIR_STYLES[style]
-    return {"object": str(obj), "position": [float(v) for v in p], "heading": float(c.get("heading") or 0),
+    return {"object": str(obj), "place": not obj, "position": [float(v) for v in p],
+            "heading": float(c.get("heading") or 0),
             "style": style, "auto": bool(c.get("auto", True)), "clips": [sit, loop, stand], "durations": [d1, d3],
+            # the allies' rig turns under the player with clips of its own (only on retail's chair)
+            "rig": list(CHAIR_RIG_CLIPS.get(style, ())) if not obj else [],
             "sit_prompt": str(c.get("sit_prompt") or "actions.sitdown"),
             "stand_prompt": str(c.get("stand_prompt") or "actions.standup")}
 
@@ -2057,7 +2088,10 @@ def _interior_follow(w, cam, room):
         raise ValueError(f"{w}: the camera's \"mode\" is follow (behind the player, as retail's) or fixed")
     if mode == "fixed":
         return None
-    dist, height = cam.get("distance", 2.5), cam.get("height", 1.7)
+    # retail's follow camera stands about 4 m back and 0.8-1.9 m up, looking
+    # at the player's head; in a 12 x 10 m room 3 m back and 2.1 m up, looking
+    # at the chest (1.3 m), keeps them whole in view under a 3.5 m ceiling
+    dist, height = cam.get("distance", 3.0), cam.get("height", 2.1)
     if not isinstance(dist, (int, float)) or not 0.5 <= dist <= 8 or not isinstance(height, (int, float)) \
             or not 0 <= height <= 6:
         raise ValueError(f"{w}: the camera's \"distance\" is 0.5 to 8 m and \"height\" 0 to 6 m")
@@ -2075,7 +2109,10 @@ def _interior_follow(w, cam, room):
         if b[0] > b[2] or b[1] > b[3]:
             raise ValueError(f"{w}: the camera's \"bounds\" is too small a floor (under 0.6 m)")
     h = math.radians(float(room.get("heading") or 0))
-    return {"distance": float(dist), "height": float(height), "bounds": b,
+    look = cam.get("look", 1.3)
+    if not isinstance(look, (int, float)) or not 0 <= look <= 3:
+        raise ValueError(f"{w}: the camera's \"look\" is 0 to 3 m (the height on the player it looks at)")
+    return {"distance": float(dist), "height": float(height), "look": float(look), "bounds": b,
             "facing": [math.sin(h), math.cos(h)]}
 
 
@@ -2083,8 +2120,8 @@ def _follow_row(fw):
     if not fw:
         return "false"
     b = fw["bounds"]
-    return ("{ dist = %.2f, up = %.2f, fx = %.4f, fz = %.4f%s }"
-            % (fw["distance"], fw["height"], *fw["facing"],
+    return ("{ dist = %.2f, up = %.2f, look = %.2f, fx = %.4f, fz = %.4f%s }"
+            % (fw["distance"], fw["height"], fw.get("look", 1.3), *fw["facing"],
                ", x0 = %.2f, z0 = %.2f, x1 = %.2f, z1 = %.2f" % tuple(b) if b else ""))
 
 
@@ -2093,15 +2130,17 @@ def _chair_row(c):
         return "false"
     h = math.radians(c["heading"])
     return ("{ obj = %s, x = %.2f, y = %.2f, z = %.2f, yaw = %.1f, fx = %.4f, fz = %.4f, sit = %s, loop = %s, "
-            "stand = %s, dsit = %.3f, dstand = %.3f, auto = %s, sitprompt = %s, standprompt = %s }"
+            "stand = %s, dsit = %.3f, dstand = %.3f, auto = %s, sitprompt = %s, standprompt = %s%s }"
             % (_lua(c["object"]), *c["position"], player_yaw(c["heading"]), math.sin(h), math.cos(h),
                *(_lua(x) for x in c["clips"]), *c["durations"], "TRUE" if c["auto"] else "FALSE",
-               _lua_str(c["sit_prompt"]), _lua_str(c["stand_prompt"])))
+               _lua_str(c["sit_prompt"]), _lua_str(c["stand_prompt"]),
+               (", rig1 = %s, rig2 = %s, rig3 = %s" % tuple(_lua(x) for x in c["rig"])) if c.get("rig") else ""))
 
 
 def chair_clips(inside):
     """The animations a map's interiors' chairs play (for its load list)."""
-    return sorted({clip for i in inside.values() if i.get("chair") for clip in i["chair"]["clips"]})
+    return sorted({clip for i in inside.values() if i.get("chair")
+                   for clip in i["chair"]["clips"] + i["chair"].get("rig", [])})
 
 
 # Retail's bouncer banter (bouncer.lua BouncerUsed): <bank>.<cue prefix>, 1-5
@@ -2396,11 +2435,11 @@ function {P}HqFollowOn(h)
 if {P}HqFollowT then return end
 Camera_DetachFromActor()
 Camera_SetMode('RS_SCRIPT_VIEW')
-Camera_SetInterestActor('player0')
 {P}HqCamOn = 1
 {P}HqFx, {P}HqFz = h.follow.fx, h.follow.fz
 if {P}HqSeated and h.chair then {P}HqFx, {P}HqFz = h.chair.fx, h.chair.fz end
 {P}HqLastX = nil
+{P}HqCamAt, {P}HqLookAt = nil, nil
 {P}HqFollow()
 end
 function {P}HqLen(d2)
@@ -2431,7 +2470,20 @@ if fw.x0 then
 if cx < fw.x0 then cx = fw.x0 elseif cx > fw.x1 then cx = fw.x1 end
 if cz < fw.z0 then cz = fw.z0 elseif cz > fw.z1 then cz = fw.z1 end
 end
-Camera_SetPosition(cx, y + fw.up, cz)
+local cy, ly = y + fw.up, y + fw.look
+-- eased toward where it should be (a fifth of the way each 0.05 s), the
+-- camera and the point it looks at (the player's chest, not their feet)
+local c, l = {P}HqCamAt, {P}HqLookAt
+if not c then
+c = {{ cx, cy, cz }}
+l = {{ x, ly, z }}
+else
+c[1] = c[1] + (cx - c[1]) * 0.2   c[2] = c[2] + (cy - c[2]) * 0.2   c[3] = c[3] + (cz - c[3]) * 0.2
+l[1] = l[1] + (x - l[1]) * 0.3   l[2] = l[2] + (ly - l[2]) * 0.3   l[3] = l[3] + (z - l[3]) * 0.3
+end
+{P}HqCamAt, {P}HqLookAt = c, l
+Camera_SetPosition(c[1], c[2], c[3])
+Camera_SetInterestPosition(l[1], l[2], l[3])
 end
 {P}HqFollowT = Event_RelativeTimer('{P}HqFollow', 'b', 0.05)
 end
@@ -2463,6 +2515,7 @@ Actor_SetPosition('player0', c.x, c.y, c.z)
 Actor_SetYaw('player0', c.yaw)
 {P}HqFx, {P}HqFz = c.fx, c.fz          -- the follow camera behind the seat
 Actor_PlayHumanAnimation('player0', c.sit, RS_AFLG_NOHEAD)
+if c.rig1 then Actor_PlayAnimation(c.obj, c.rig1) end      -- retail's allies chair turns under the player
 {P}HqSitTimer = Event_RelativeTimer('{P}HqSitting', 'b', c.dsit)
 end
 function {P}HqSitting()
@@ -2471,6 +2524,7 @@ local h = {P}HqIn and {P}Hq[{P}HqIn]
 if not h or not {P}HqSeated then return end
 Player_EnableUseOnlyControl()
 Actor_PlayHumanAnimation('player0', h.chair.loop, RS_AFLG_LOOP + RS_AFLG_NOHEAD)
+if h.chair.rig2 then Actor_PlayAnimation(h.chair.obj, h.chair.rig2, RS_AFLG_LOOP) end
 {P}HqUse(h.chair.obj, h.chair.standprompt, '{P}HqStand')
 end
 function {P}HqStand()
@@ -2480,6 +2534,7 @@ if not h or not {P}HqSeated then return end
 {P}HqTrace('stand')
 Player_DisableControl()
 Actor_PlayHumanAnimation('player0', h.chair.stand, RS_AFLG_NOHEAD)
+if h.chair.rig3 then Actor_StopAnimation(h.chair.obj) Actor_PlayAnimation(h.chair.obj, h.chair.rig3) end
 {P}HqSitTimer = Event_RelativeTimer('{P}HqStood', 'b', h.chair.dstand)
 end
 function {P}HqStood()
@@ -2493,6 +2548,8 @@ function {P}HqUnseat()
 if {P}HqSitTimer then Event_CancelEvent({P}HqSitTimer) {P}HqSitTimer = nil end
 if not {P}HqSeated then return end
 {P}HqSeated = nil
+local h = {P}HqIn and {P}Hq[{P}HqIn]
+if h and h.chair and h.chair.rig1 and Utility_DoesActorExist(h.chair.obj) then Actor_StopAnimation(h.chair.obj) end
 Actor_StopAnimation('player0')
 Actor_EnableCinematicControl('player0', FALSE)
 Actor_EnableCollision('player0', TRUE)
