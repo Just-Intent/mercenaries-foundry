@@ -34,6 +34,33 @@ class DeckTests(unittest.TestCase):
         with self.assertRaises(ValueError):                              # two new maps: say which
             deck.parse("deck/x.json", {"suit": "clubs", "cards": [{"card": "2", "name": "a"}]}, {"gaza", "isle"})
 
+    def test_unlock_mail_as_retails_ace_mail(self):
+        mail = {"sender": "mail.senders.techgal", "subject": "The Shadow", "body": "His file is open.",
+                "vo": "fio.xfio085"}
+        d = deck.parse("deck/clubs.json", dict(DOC, unlock_mail=mail), {"gaza"})
+        self.assertEqual(d["unlock_mail"]["mark"], 80)                    # retail's iTargetIntel
+        m = deck.unlock_mail(d)
+        self.assertEqual(m[:4], ("foundry_deck_gaza_clubs_unlock", "mail.senders.techgal",
+                                 "MissionInfo.FoundryMail.DeckGazaClubs.Subject", "MissionInfo.FoundryMail.DeckGazaClubs.Body"))
+        self.assertEqual(m[4]["MissionInfo.FoundryMail.DeckGazaClubs.Body"], "His file is open.")
+        own = deck.unlock_mail(deck.parse("deck/clubs.json", dict(DOC, unlock_mail=dict(mail, sender="Shin Bet")), {"gaza"}))
+        self.assertEqual(own[1], "MissionInfo.FoundryMail.DeckGazaClubs.Sender")    # a name of the mod's own
+        self.assertIsNone(deck.unlock_mail(deck.parse("deck/clubs.json", DOC, {"gaza"})))
+        lua = deck.script([d], {("gaza", "clubs"): ("foundry_deck_gaza_clubs_unlock", 5)})
+        self.assertEqual(luacheck.check(lua), [])
+        self.assertIn("unlock = { clubs = { id = 'foundry_deck_gaza_clubs_unlock', posted = 7, mark = 80, vo = 'fio.xfio085' } }", lua)
+        # posted from the meter (a number card or a face card's contract) and on coming to the map
+        meter = lua[lua.index("function foundry_DeckMeter(suit)"):]
+        self.assertIn("foundry_DeckUnlock(m, suit, intel, TRUE)", meter[:meter.index("\nfunction foundry_DeckUnlock(")])
+        self.assertIn("if on == m then foundry_DeckMails(m) return end", lua)
+        unlock = lua[lua.index("function foundry_DeckUnlock("):]
+        self.assertIn("if not u or intel < u.mark then return end", unlock)
+        self.assertIn("Mail_Post(u.id)", unlock)
+        for bad in ({"subject": "a"}, {"subject": "a", "body": "b", "mark": 0}, {"subject": "a", "body": "b", "vo": "x"},
+                    {"subject": "a", "body": "b", "when": 1}):
+            with self.assertRaises(ValueError):
+                deck.parse("deck/clubs.json", dict(DOC, unlock_mail=bad), {"gaza"})
+
     def test_face_found_by_name(self):
         with tempfile.TemporaryDirectory() as t:
             mod = Path(t)

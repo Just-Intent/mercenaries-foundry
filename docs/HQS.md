@@ -112,7 +112,7 @@ interiors_lua, from maps json `"interiors"`).
 | HUD off | on; `"hide_hud"` hides it (for voiced lines only: ours are on-screen messages) (0.232) | by choice |
 | Room atmosphere, ambient light 80 | the map's own light | gap |
 | Music stopped, room ambience cue | music stopped; `"ambience"` cue (Briefing_SetAmbientSoundCue), off on leaving (0.232) | same |
-| Dateline shown | the offered contract's (`mail.<id>.dateline`, made from its title), once a visit (0.232) | same |
+| Dateline shown | none: shown in a room on the map (0.232) it stayed on screen, as retail's is the briefing scene's and cleared by the world's reload (0.236) | by design |
 | Greeting by faction mood (friendly, neutral, unfriendly) | `"greeting"` on the first visit, then `"greetings"` by mood every visit (0.232) | same |
 | Briefing as a cinematic sequence (VO, boss and starter animations) | subtitled lines with optional voice, leaders under cinematic control | partly |
 | Boss nags (3 times) | `"nags"`: one line each, after 4 s then every 8 s, until accepted or left (0.232) | same |
@@ -152,6 +152,9 @@ An interior's `"chair"`: `{"object": <the placed chair>, "position": [x, y, z],
 - The position is where the player's feet go, facing the way they sit.
   Retail puts the player on the briefing scene's `hp_player_chair` hardpoint
   instead.
+- The chair object is made usable as retail's chairs are (`objectType`
+  building, `isusable` TRUE; 0.236): a static prop never shows a use
+  prompt. Without the object, the player isn't seated.
 - On coming in, the player is put there and sits. With `"auto": false`,
   "Sit down" goes on the chair instead.
 - Seated, only "use" works, and the chair says "Stand up". Standing puts

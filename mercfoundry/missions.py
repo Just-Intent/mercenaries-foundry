@@ -2356,6 +2356,8 @@ function {P}HqSit()
 local h = {P}HqIn and {P}Hq[{P}HqIn]
 if not h or not h.chair or {P}HqSeated then return end
 local c = h.chair
+-- no chair, no seat: nothing would take the "Stand up" prompt
+if not Utility_DoesActorExist(c.obj) then {P}HqTrace('no chair ' .. c.obj) return end
 {P}HqUnuse(c.obj)
 {P}HqSeated = 1
 {P}HqTrace('sit')
@@ -2416,7 +2418,6 @@ function {P}HqEnter(f)
 local h = {P}Hq[f]
 {P}HqTrace('enter ' .. f)
 {P}HqIn = f
-{P}HqDated = nil
 {P}HqUnuse(h.guard)
 {P}HqBack = {{ Actor_GetPosition('player0') }}
 -- the guard's banter first, as retail's bouncer (BouncerUsed), then in
@@ -2536,8 +2537,8 @@ local c = {P}HqContract(f)
 if c then
 {P}HqTrace('briefing ' .. c.id)
 {P}HqOffered = c
--- the contract's dateline, once a visit (retail's SetupEvents)
-if not {P}HqDated then {P}HqDated = 1 Ui_DisplayDateline('mail.' .. c.id .. '.dateline') end
+-- (no dateline: retail shows it only in its briefing scene, which the
+-- world's reload clears; in a room on the map it stayed on screen)
 {P}HqSay(c.briefing or {{}}, {P}HqAsk)
 else
 {P}HqTrace('no contract: idle lines')

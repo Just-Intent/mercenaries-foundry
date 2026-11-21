@@ -1150,7 +1150,7 @@ class MapScriptTests(unittest.TestCase):
         # dateline; nags; the HQ respawn point on accepting; the guard's moods
         self.assertIn("Audio_StopMusic()", text)
         self.assertIn("function foundry_gaza_HqMoodGreeting()", text)
-        self.assertIn("Ui_DisplayDateline('mail.' .. c.id .. '.dateline')", text)
+        self.assertNotIn("Ui_DisplayDateline", text)                  # retail's is the briefing scene's: it stayed on screen
         self.assertIn("function foundry_gaza_HqNag()", text)
         self.assertIn("'PlayerStartLocationName', 'loc_hq-' .. foundry_gaza_HqIn .. '-respawn'", text)
         self.assertIn("Actor_PlayHumanAnimationByHandle(Utility_GetActor(h.guard), anim)", text)

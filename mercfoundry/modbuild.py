@@ -1650,7 +1650,8 @@ def _apply_missions(data, folder, result, files=None):
         # Titles and descriptions go in the always-loaded missioninfo text;
         # the mission's own strings (mail, objectives) in a text record named
         # after the mission, which its layer loads, as retail missions do.
-        shared = {k: v for k, v in strings.items() if k.lower().startswith("missioninfo.")}
+        shared = {k: v for k, v in strings.items() if k.lower().startswith("missioninfo.")
+                  or (k.lower().startswith("mail.") and k.lower().endswith(".dateline"))}    # with retail's, in "mail"
         own = {k: v for k, v in strings.items() if k not in shared}
         if shared:
             _set_strings(data, shared)
@@ -1774,19 +1775,30 @@ def _apply_welcome_mail(data, folder, pname, result):
     if not m:
         return
     mail = missions.welcome_mail(pname, m)
+    slot = _add_fixed_mail(data, mail[:4])
+    mail = mail + (slot,)
+    _set_strings(data, mail[4])
+    data.welcome = getattr(data, "welcome", []) + [mail]
+    result.changes.append(f"welcome mail {mail[0]}: posted once per save when free roam starts on {mail[5].upper()}")
+
+
+def _add_fixed_mail(data, mail):
+    """A mail (id, sender, subject key, body key) in emails.ini right after
+    the game's own and the mails added this way before it; returns its place.
+    A save keeps its inbox as positions in emails.ini (Mail_Post 0xCE860 ->
+    0xCE010 stores the mail's table index), so a mail that moves shows as
+    another one. These go ahead of mission mails (which come and go as a mod
+    grows), and their place goes in the "posted" flag: a save holding another
+    place posts it again."""
+    from . import missions
     mpath = "DATAxbox/DATAPOD/emails.ini"
     retail = (data.dir / "DATAPOD" / "emails.ini").read_bytes().decode("latin-1")
     mails = data.files[mpath].decode("latin-1") if mpath in data.files else retail
-    # A save keeps its inbox as positions in emails.ini (Mail_Post 0xCE860 ->
-    # 0xCE010 stores the mail's table index), so a mail that moves shows as
-    # another one. Welcome mails go right after the game's own, ahead of
-    # mission mails (which come and go as a mod grows), and their position
-    # goes in the "posted" flag: a save holding another position posts it again.
     at = getattr(data, "welcome_end", None)
     head = retail.rstrip("\r\n")
     if at is None:
         at = len(head) if mails.startswith(head) else len(mails.rstrip("\r\n"))
-    added = missions.add_mail(mails[:at], *mail[:4])
+    added = missions.add_mail(mails[:at], *mail)
     rest = mails[at:]
     nl = "\r\n" if "\r\n" in mails else "\n"
     slot = len(re.findall(r"^\[Mail\]", added, re.M)) - 1
@@ -1795,10 +1807,76 @@ def _apply_welcome_mail(data, folder, pname, result):
     data.files[mpath] = (added + (rest if rest.strip() else nl)).encode("latin-1")
     if re.search(r"^Id\s+%s\s*$" % re.escape(mail[0]), rest, re.M | re.I):
         raise ValueError(f"emails.ini already has a mail {mail[0]!r}")
-    mail = mail + (slot,)
-    _set_strings(data, mail[4])
-    data.welcome = getattr(data, "welcome", []) + [mail]
-    result.changes.append(f"welcome mail {mail[0]}: posted once per save when free roam starts on {mail[5].upper()}")
+    return slot
+
+
+def _usable_chairs(data, result):
+    """Each interior's chair (maps json "interiors" "chair" "object") made
+    usable as retail's HQ chairs are (template_hq-<faction>-chair:
+    objectType building, isusable TRUE): a static prop never shows a use
+    prompt, so a player seated in it could never stand up (Gaza's chairs,
+    copies of a static tent, did that)."""
+    want = {}
+    for m, inside in (getattr(data, "new_map_interiors", {}) or {}).items():
+        for f, i in inside.items():
+            if i.get("chair"):
+                want[i["chair"]["object"].lower()] = (m, f)
+    if not want:
+        return
+    found = set()
+    for arch, recs in data.add.items():
+        for n, (key, kind, body) in enumerate(recs):
+            if kind != WORLD:
+                continue
+            try:
+                doc = world.to_json(body)
+            except Exception:                      # noqa: BLE001 - not ours to judge here
+                continue
+            changed = False
+            for c in doc["chunks"]:
+                name = str(c.get("template") or "").lower()
+                if c.get("tag") != "inst" or name not in want:
+                    continue
+                found.add(name)
+                props = [list(p) for p in c.get("properties") or []]
+                for k, v in (("objectType", "building"), ("isusable", "TRUE")):
+                    hit = [p for p in props if str(p[0]).lower() == k.lower()]
+                    if hit and str(hit[0][1]).lower() == v.lower():
+                        continue
+                    if hit:
+                        hit[0][1] = v
+                    else:
+                        props.append([k, v])
+                    changed = True
+                c["properties"] = props
+            if changed:
+                recs[n] = (key, kind, world.from_json(doc))
+    for name in sorted(found):
+        result.changes.append(f"HQ chair {name}: usable, as retail's (objectType building, isusable TRUE)")
+    for name in sorted(set(want) - found):
+        m, f = want[name]
+        result.warnings.append(f"maps/{m}.json: {f}'s chair {name!r} isn't an object this mod places: the player "
+                               f"isn't seated (nothing would take the \"Stand up\" prompt)")
+
+
+def _apply_deck_mails(data, result):
+    """Each mod deck's "unlock_mail" (deck.py unlock_mail): in emails.ini
+    after the welcome mails, its strings, and foundry_deck written again to
+    post it when the suit's meter reaches its mark."""
+    from . import deck as deckmod
+    decks = getattr(data, "decks", None) or []
+    mails = {}
+    for d in decks:
+        mail = deckmod.unlock_mail(d)
+        if not mail:
+            continue
+        mails[(d["map"], d["suit"])] = (mail[0], _add_fixed_mail(data, mail[:4]))
+        _set_strings(data, mail[4])
+        result.changes.append(f"deck {d['suit']} on {d['map']}: unlock mail {mail[0]}, posted once per save when "
+                              f"its intel meter reaches {d['unlock_mail']['mark']}")
+    if mails:
+        key = name_hash(deckmod.SCRIPT)
+        data.replace_added(key, SCRIPT, script.encode(script.new(deckmod.SCRIPT, deckmod.script(decks, mails))))
 
 
 def _apply_map_layers(data, result):
@@ -4361,6 +4439,7 @@ def build(projects, data_dir, out_dir, name=None, description=None) -> Result:
                 _apply_hq_sequence(data, insertions, result)
             for project, pname in zip(projects, mod_names):
                 _apply_welcome_mail(data, project, pname, result)
+            _apply_deck_mails(data, result)
             if getattr(data, "map_layers", None) or getattr(data, "travel_arrive", False) \
                     or getattr(data, "welcome", None) or getattr(data, "decks", None):
                 _apply_map_layers(data, result)
@@ -4368,6 +4447,7 @@ def build(projects, data_dir, out_dir, name=None, description=None) -> Result:
     # scripts after the missions step), and a new map's step lists the
     # scripts it runs
     _load_copied_model_textures(data, result)
+    _usable_chairs(data, result)
     _write_map_text(data, result)
     _write_map_templates(data, result)
     _check_lua(data, result)
