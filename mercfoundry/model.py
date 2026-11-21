@@ -392,6 +392,33 @@ def renamed(model_record: bytes, name: str) -> bytes:
     return ucfb.wrap(b"modl", ucfb.pack_children(items, pad_last), pads)
 
 
+def with_joint_pose(model_record: bytes, joint: str, rotation, translation) -> bytes:
+    """The Model record with one joint's rest pose (its local rotation
+    quaternion x, y, z, w and translation) replaced: a rig drawn as a clip
+    leaves it (retail's allies HQ chair, seated)."""
+    body, pads = ucfb.unwrap(model_record, b"modl", with_pad=True)
+    items, pad_last = ucfb.split(body)
+    found = False
+    out = []
+    for t, b in items:
+        if t == b"SKEL":
+            skel_items, skel_pad = ucfb.split(b)
+            new = []
+            for st, sb in skel_items:
+                if st == b"JONT":
+                    end = sb.index(b"\0")
+                    if sb[:end].decode("latin-1").lower() == joint.lower():
+                        sb = (sb[:end + 1] + struct.pack("<4f", *rotation) + struct.pack("<3f", *translation)
+                              + sb[end + 29:])
+                        found = True
+                new.append((st, sb))
+            b = ucfb.pack_children(new, skel_pad)
+        out.append((t, b))
+    if not found:
+        raise ValueError(f"the model has no joint {joint!r}")
+    return ucfb.wrap(b"modl", ucfb.pack_children(out, pad_last), pads)
+
+
 def without_shadow(model_record: bytes) -> bytes:
     """The Model record without its shadow mesh (modl's shdw chunk). 98
     retail models carry one (vehicles: the game draws their shadow from it,

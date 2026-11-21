@@ -653,6 +653,27 @@ def _to_marker(inst):
                 properties=[["GeometryFile", "global_humanmarker"], ["objectType", "location"]])
 
 
+def _seated_allies_chair(data):
+    """missions.SEATED_ALLIES_CHAIR: retail's allieshq_chair with its seat
+    joint at the pose its sitting clip holds (added once)."""
+    from . import missions
+    key = name_hash(missions.SEATED_ALLIES_CHAIR)
+    if data.find_added(key, model.MODEL) is not None:
+        return
+    for a, r in data.records(model.MODEL):
+        if r.key == name_hash("allieshq_chair"):
+            seg = next((r2 for a2, r2 in data.records(model.SEGMENTS) if a2 == a and r2.key == r.key), None)
+            if seg is None:
+                continue
+            rot, pos = missions.SEATED_ALLIES_POSE
+            mr = model.with_joint_pose(model.renamed(data.current(a, r), missions.SEATED_ALLIES_CHAIR),
+                                       "k_chair", rot, pos)
+            data.new("streamed.dsk", key, model.MODEL, mr)
+            data.new("streamed.dsk", key, model.SEGMENTS, data.current(a, seg))
+            return
+    raise ValueError("the game data has no allieshq_chair (retail's allies HQ chair) to seat")
+
+
 def model_word_follows(inst):
     """Whether an object's model word follows a new GeometryFile: when it
     names the geometry it draws (or it has none). Otherwise the word is the
@@ -1416,7 +1437,11 @@ def _travel_pilots(data, folder, result):
                 # frame (missions.chair_placement)
                 tpl, pos, yaw = missions.chair_placement(ch)
                 ch["object"] = f"foundry_hqchair_{name.lower()}_{fac}"
-                out.append((ch["object"], name, {"from": tpl, "name": ch["object"], "position": pos, "yaw": yaw}))
+                spec = {"from": tpl, "name": ch["object"], "position": pos, "yaw": yaw}
+                if ch["style"] == "allies":
+                    _seated_allies_chair(data)
+                    spec["set"] = {"GeometryFile": missions.SEATED_ALLIES_CHAIR}
+                out.append((ch["object"], name, spec))
             if i.get("exit_position") and not i.get("door"):
                 # an exit point: retail's way out there, an invisible usable
                 # cube (template_hq-<faction>-useable, allieshq_cube) with a

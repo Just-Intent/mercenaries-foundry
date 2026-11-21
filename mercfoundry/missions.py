@@ -2040,6 +2040,11 @@ CHAIR_BEHIND = {"mafia": 0.44}
 ALLIES_SEAT_REST = (0.94, -0.42)
 ALLIES_HIPS = (-0.07, -0.64)
 CHAIR_RIG_CLIPS = {}
+# The allies' rig with its seat (k_chair) where allies_interact_sitting_chair_chair
+# holds it: a placed copy doesn't play the rig's clips (0.241), so the build
+# draws the chair as it is while the player sits.
+SEATED_ALLIES_CHAIR = "foundry_allieshq_chair_seated"
+SEATED_ALLIES_POSE = ((-0.002, -0.703, 0.001, 0.711), (-0.047, 0.72, -0.902))
 
 
 def _turn(yaw_deg, x, z):
@@ -2057,10 +2062,11 @@ def chair_placement(chair):
     x, y, z = chair["position"]
     frame = (chair["heading"] + 180.0) % 360.0
     if chair["style"] == "allies":
-        hx, hz = _turn(frame, *ALLIES_HIPS)
-        yaw = (chair["heading"] - 90.0) % 360.0          # the rig's +x along the way the player faces
-        sx, sz = _turn(yaw, *ALLIES_SEAT_REST)
-        return CHAIR_TEMPLATES["allies"], [x + hx - sx, y, z + hz - sz], yaw
+        # measured in retail's allies HQ briefing (0.244's hq dump): the chair
+        # and the player at one spot, with the same yaw (the player's
+        # Actor_SetYaw: heading + 180). Drawn by SEATED_ALLIES_CHAIR, the rig
+        # with its seat where its sitting clip holds it
+        return CHAIR_TEMPLATES["allies"], [x, y, z], frame
     h = math.radians(chair["heading"])
     back = CHAIR_BEHIND.get(chair["style"], 0.0)
     return (CHAIR_TEMPLATES[chair["style"]], [x - back * math.sin(h), y, z - back * math.cos(h)], frame)
@@ -2281,7 +2287,7 @@ if h.chair then
 s = s .. ' | chair ' .. at(h.chair.obj) .. ', seat spot (' .. r(h.chair.x) .. ', ' .. r(h.chair.y) .. ', ' .. r(h.chair.z)
 .. ') setyaw ' .. r(h.chair.yaw) .. ', seated ' .. tostring({P}HqSeated)
 end
-s = s .. ' | exit ' .. at(h.door) .. ', ring ' .. v3({P}HqRingAt)
+s = s .. ' | exit ' .. at(h.door) .. ', ringed ' .. at({P}HqDoorObj) .. ' at ' .. v3({P}HqRingAt)
 s = s .. ' | camera on ' .. tostring({P}HqCamOn) .. ', target ' .. v3({P}HqCamWant) .. ', look ' .. v3({P}HqLookAt)
 for i, a in h.leaders do s = s .. ' | ' .. at(a) end
 end
@@ -2721,22 +2727,26 @@ function {P}HqDoor()
 local h = {P}HqIn and {P}Hq[{P}HqIn]
 if not h then return end
 if h.door ~= '' and Utility_DoesActorExist(h.door) then
-{P}HqUse(h.door, h.doorprompt, '{P}HqLeave', h.doordist)
+-- Retail's exit is a cube its briefing spawns (Briefing_AddActor), ringed
+-- with Objective_SetTargetActor; the engine draws no world ring at a point
+-- (retail never asks it to), and none showed on our placed cube (0.240-
+-- 0.244). So the way out spawns a cube from the placed one, as retail
+-- spawns its objects (Mission_Spawn), and rings and uses that.
+local door = h.door
 if h.dx then
--- an exit point's ring on the floor the player stands on: at the point's
--- own height (the room spot's) it was under the room's floor and never
--- showed; a leader's ring is at their feet, which is why the starter's did
 local px, py, pz = Actor_GetPosition('player0')
 local ry = h.dy
-if py and py > ry then ry = py + 0.02 end
-Objective_SetTargetVector('{P}obj_exit', '{P}obj_exit', '', 'TARGET_TYPE_UNDEFINED', 'blip', h.dx, ry, h.dz, FALSE, FALSE, TRUE)
+if py and py > ry then ry = py end
+local spawned = h.door .. '_out'
+if not Utility_DoesActorExist(spawned) then Mission_Spawn(h.door, spawned, h.dx, ry, h.dz, 0) end
+if Utility_DoesActorExist(spawned) then door = spawned {P}HqDoorSpawned = spawned end
 {P}HqRingAt = {{ h.dx, ry, h.dz }}
-{P}HqTrace('door ' .. h.door .. ' armed, ring at y ' .. ry .. ' (exit y ' .. h.dy .. ')')
-{P}HqDump('exit armed')
-else
-Objective_SetTargetActor('{P}obj_exit', h.door, '', 'TARGET_TYPE_UNDEFINED', 'blip', TRUE, TRUE, TRUE, 0.5)
-{P}HqTrace('door ' .. h.door .. ' armed')
 end
+{P}HqDoorObj = door
+{P}HqUse(door, h.doorprompt, '{P}HqLeave', h.doordist)
+Objective_SetTargetActor('{P}obj_exit', door, '', 'TARGET_TYPE_UNDEFINED', 'blip', TRUE, TRUE, TRUE, 0.5)
+{P}HqTrace('door ' .. door .. ' armed')
+{P}HqDump('exit armed')
 elseif h.dx then
 -- a point ("exit" "position"): its ring, and coming near asks to leave
 local px, py, pz = Actor_GetPosition('player0')
@@ -2861,6 +2871,12 @@ for i, a in h.leaders do {P}HqUnuse(a) end
 if h.starter then {P}HqUnuse(h.starter) end
 if h.chair then {P}HqUnuse(h.chair.obj) end
 {P}HqUnuse(h.door)
+if {P}HqDoorSpawned then
+{P}HqUnuse({P}HqDoorSpawned)
+if Utility_DoesActorExist({P}HqDoorSpawned) then Actor_Remove({P}HqDoorSpawned) end
+{P}HqDoorSpawned = nil
+end
+{P}HqDoorObj = nil
 end
 function {P}HqLeave()
 {P}HqTrace('leave')

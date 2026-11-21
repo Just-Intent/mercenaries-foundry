@@ -1246,7 +1246,8 @@ class MapScriptTests(unittest.TestCase):
             self.assertIn("foundry_gaza_HqRelease()", body[:body.index("\nend\n")])
         # the starter's ring and prompt, the door's after its delay
         self.assertIn("Objective_SetTargetActor('foundry_gaza_obj_starter', h.starter, '', 'TARGET_TYPE_UNDEFINED'", text)
-        self.assertIn("Objective_SetTargetActor('foundry_gaza_obj_exit', h.door", text)
+        self.assertIn("Objective_SetTargetActor('foundry_gaza_obj_exit', door", text)
+        self.assertIn("Mission_Spawn(h.door, spawned, h.dx, ry, h.dz, 0)", text)     # a spawned cube, as retail's
         self.assertIn("exitdelay = 5.0", text)
         self.assertIn("doordist = 3.0", text)
         self.assertIn("Actor_EnableScriptedUse(name, TRUE, prompt, FALSE, dist)", text)
@@ -1310,17 +1311,13 @@ class MapScriptTests(unittest.TestCase):
         tpl, pos, yaw = missions.chair_placement(placed)
         self.assertEqual((tpl, yaw), ("template_hq-mafia-chair", 180.0))
         self.assertAlmostEqual(pos[2], 19.56)
-        # the allies' rig at rest, its seat (0.94, -0.42 in the rig, facing +x)
-        # under where the sit clip leaves the hips (-0.07, -0.64 in the player's
-        # frame), facing the way the player does (0.241 put it 1 m off)
+        # the allies' chair where retail's measured (0.244's hq dump in its
+        # briefing): at the player's spot with the player's yaw, drawn seated
         doc["interiors"]["sk"]["chair"] = {"position": [3700, 87.54, 3702.6], "heading": 180, "style": "allies"}
         rig = missions.interiors("maps/gaza.json", "gaza", doc)
         tpl, pos, yaw = missions.chair_placement(rig["sk"]["chair"])
-        sx, sz = missions._turn(yaw, *missions.ALLIES_SEAT_REST)
-        self.assertEqual((tpl, yaw), ("template_hq-allies-chair", 90.0))
-        self.assertAlmostEqual(pos[0] + sx, 3699.93, 2)
-        self.assertAlmostEqual(pos[2] + sz, 3701.96, 2)
-        self.assertEqual([round(v, 3) for v in missions._turn(yaw, 1, 0)], [0.0, -1.0])     # facing -z, as the player
+        self.assertEqual((tpl, pos, yaw), ("template_hq-allies-chair", [3700, 87.54, 3702.6], 0.0))
+        self.assertEqual(missions.SEATED_ALLIES_CHAIR, "foundry_allieshq_chair_seated")
         self.assertNotIn("allies_interact_sitdown_chair_chair", missions.chair_clips(rig))
         for bad in ({"object": "c"}, {"object": "c", "position": [1, 2, 3], "style": "idf"}):
             doc["interiors"]["sk"]["chair"] = bad
