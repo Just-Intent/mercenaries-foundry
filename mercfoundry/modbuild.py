@@ -2901,6 +2901,7 @@ def map_script(name, doc, layers, pilots=(), contacts=False, extra=(), hqs=None,
              "Debug_EnableCallStack(false)",
              "bDebugOutput = false",
              "bHudOutput = false",
+             "Ui_EnableHud(TRUE)   -- the HUD on (a visit to an HQ room, a load or a death left it off)",
              "Utility_ReadLevelFile('\\\\TEMPLATE\\\\template_vehicles_ch2')   -- vehicle templates, as blank's"]
     lines += [f"Utility_ReadLevelFile({_lua_str(l)})" for l in layers]
     start = doc.get("start") or {}

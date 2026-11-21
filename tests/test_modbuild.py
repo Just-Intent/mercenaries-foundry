@@ -697,6 +697,10 @@ class ModBuildTests(unittest.TestCase):
         # eased, looking at the chest (not the feet: it framed knees and boots)
         self.assertIn("Camera_SetInterestPosition(l[1], l[2], l[3])", text)
         self.assertIn("Camera_MoveToPosition(cx, cy, cz, 0.3, FALSE)", text)     # glides each frame (steps shook)
+        # the HUD back on every way out and on the map's start (0.241 lost it for good)
+        rel = text[text.index("function foundry_gaza_HqRelease()"):]
+        self.assertIn("Ui_EnableHud(TRUE)", rel[:rel.index("if not foundry_gaza_HqHeld then return end")])
+        self.assertIn("Ui_EnableHud(TRUE)", text[:text.index("\nend\n")])
         # "fixed": the 0.231 camera at its spot
         doc["interiors"]["allies"]["camera"] = {"mode": "fixed", "position": [12, 2, 12]}
         self.assertIsNone(missions.interiors("maps/gaza.json", "gaza", doc)["allies"]["follow"])

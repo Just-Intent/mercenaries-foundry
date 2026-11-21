@@ -2584,7 +2584,10 @@ function {P}HqRelease()
 {P}HqCamOff()
 {P}HqNagStop()
 if {P}HqAmbOn then Briefing_SetAmbientSoundCue('', 0, 0) {P}HqAmbOn = nil end
-if {P}HqHudOff then Ui_EnableHud(TRUE) {P}HqHudOff = nil end
+-- the HUD back whatever hid it, as retail's Briefing_Exit does (the 0.241
+-- playtest lost it for good after a visit)
+Ui_EnableHud(TRUE)
+{P}HqHudOff = nil
 if not {P}HqHeld then return end
 {P}HqHeld = nil
 if Foundry_HqMode then Foundry_HqMode(FALSE) end
