@@ -1972,6 +1972,7 @@ def interiors(where, map_name, doc):
         guard_moods = i.get("guard_moods", guard_template.lower().endswith("_bouncer"))
         respawn = f in (doc.get("hq_respawn") or {})
         chair = _interior_chair(w, f, i.get("chair"))
+        follow = _interior_follow(w, cam, room)
         exit_delay = exit_.get("delay", 5)
         exit_distance = exit_.get("distance", 3)
         if not isinstance(exit_distance, (int, float)) or exit_distance <= 0:
@@ -1998,7 +1999,7 @@ def interiors(where, map_name, doc):
                   "nags": _lines(f"{w} nags", i.get("nags")),
                   "ambience": str(ambience) if ambience else None, "hide_hud": bool(i.get("hide_hud")),
                   "banter": list(banter), "guard_moods": bool(guard_moods), "respawn": respawn,
-                  "chair": chair,
+                  "chair": chair, "follow": follow,
                   "idle": _lines(f"{w} idle", i.get("idle") or [{"text": "Nothing for you right now. Come back later."}])}
     return out
 
@@ -2044,14 +2045,58 @@ def _interior_chair(w, faction, c):
             "stand_prompt": str(c.get("stand_prompt") or "actions.standup")}
 
 
+def _interior_follow(w, cam, room):
+    """The camera inside, as retail's once the player stands (its follow
+    camera, which retail's rooms keep inside their walls): "camera"
+    {"mode": "follow" (unless "fixed"), "distance"? (2.5 m), "height"? (1.7 m
+    above the player's feet), "bounds"? [[x, z], [x, z]] (the floor's
+    corners: the camera stays 0.3 m inside them)}. None for "fixed" (the
+    0.231 camera at "position")."""
+    mode = str(cam.get("mode") or "follow")
+    if mode not in ("follow", "fixed"):
+        raise ValueError(f"{w}: the camera's \"mode\" is follow (behind the player, as retail's) or fixed")
+    if mode == "fixed":
+        return None
+    dist, height = cam.get("distance", 2.5), cam.get("height", 1.7)
+    if not isinstance(dist, (int, float)) or not 0.5 <= dist <= 8 or not isinstance(height, (int, float)) \
+            or not 0 <= height <= 6:
+        raise ValueError(f"{w}: the camera's \"distance\" is 0.5 to 8 m and \"height\" 0 to 6 m")
+    b = cam.get("bounds")
+    if isinstance(b, (list, tuple)) and any(p is None for p in b):
+        b = None                    # one corner set so far (the editor's): not kept in yet
+    if b is not None:
+        if not (isinstance(b, (list, tuple)) and len(b) == 2 and all(
+                isinstance(p, (list, tuple)) and len(p) in (2, 3) for p in b)):
+            raise ValueError(f"{w}: the camera's \"bounds\" is the floor's corners [[x, z], [x, z]]")
+        # [x, z] or [x, y, z] (the editor's points)
+        xs = sorted(float(p[0]) for p in b)
+        zs = sorted(float(p[-1]) for p in b)
+        b = [xs[0] + 0.3, zs[0] + 0.3, xs[1] - 0.3, zs[1] - 0.3]
+        if b[0] > b[2] or b[1] > b[3]:
+            raise ValueError(f"{w}: the camera's \"bounds\" is too small a floor (under 0.6 m)")
+    h = math.radians(float(room.get("heading") or 0))
+    return {"distance": float(dist), "height": float(height), "bounds": b,
+            "facing": [math.sin(h), math.cos(h)]}
+
+
+def _follow_row(fw):
+    if not fw:
+        return "false"
+    b = fw["bounds"]
+    return ("{ dist = %.2f, up = %.2f, fx = %.4f, fz = %.4f%s }"
+            % (fw["distance"], fw["height"], *fw["facing"],
+               ", x0 = %.2f, z0 = %.2f, x1 = %.2f, z1 = %.2f" % tuple(b) if b else ""))
+
+
 def _chair_row(c):
     if not c:
         return "false"
-    return ("{ obj = %s, x = %.2f, y = %.2f, z = %.2f, yaw = %.1f, sit = %s, loop = %s, stand = %s, "
-            "dsit = %.3f, dstand = %.3f, auto = %s, sitprompt = %s, standprompt = %s }"
-            % (_lua(c["object"]), *c["position"], player_yaw(c["heading"]), *(_lua(x) for x in c["clips"]),
-               *c["durations"], "TRUE" if c["auto"] else "FALSE", _lua_str(c["sit_prompt"]),
-               _lua_str(c["stand_prompt"])))
+    h = math.radians(c["heading"])
+    return ("{ obj = %s, x = %.2f, y = %.2f, z = %.2f, yaw = %.1f, fx = %.4f, fz = %.4f, sit = %s, loop = %s, "
+            "stand = %s, dsit = %.3f, dstand = %.3f, auto = %s, sitprompt = %s, standprompt = %s }"
+            % (_lua(c["object"]), *c["position"], player_yaw(c["heading"]), math.sin(h), math.cos(h),
+               *(_lua(x) for x in c["clips"]), *c["durations"], "TRUE" if c["auto"] else "FALSE",
+               _lua_str(c["sit_prompt"]), _lua_str(c["stand_prompt"])))
 
 
 def chair_clips(inside):
@@ -2108,7 +2153,7 @@ def interiors_lua(prefix, inside, flagged=()):
             "rh = %.1f, leaders = { %s }, door = %s, doorprompt = %s, doordist = %.1f, exitdelay = %.1f, talkprompt = %s,\n"
             " starter = %s, acceptprompt = %s, bribe = %s, bribecost = %s,%s cx = %.2f, cy = %.2f, cz = %.2f,\n"
             " amb = %s, hidehud = %s, banter = { %s }, moods = %s, respawn = %s,\n"
-            " chair = %s,\n"
+            " chair = %s,\n follow = %s,\n"
             " greeting = %s,\n gmood = { %s },\n nags = %s,\n idle = %s },"
             % (f, _lua(i["guard"]), _lua_str(i["prompt"]), _lua_str(i["name"]), _lua(i["side"]),
                ("'ring'" if f in flagged else "'hq'") if i["marker"] == "hq" else "false",
@@ -2126,7 +2171,7 @@ def interiors_lua(prefix, inside, flagged=()):
                ", ".join(_lua(b) for b in i.get("banter") or []),
                "TRUE" if i.get("guard_moods") else "FALSE",
                "TRUE" if i.get("respawn") else "FALSE",
-               _chair_row(i.get("chair")),
+               _chair_row(i.get("chair")), _follow_row(i.get("follow")),
                i["greeting"],
                ", ".join(f"{m} = {lines}" for m, lines in (i.get("greetings") or {}).items()),
                i.get("nags") or "{ }",
@@ -2332,6 +2377,7 @@ end
 function {P}HqCam(sLook)
 local h = {P}HqIn and {P}Hq[{P}HqIn]
 if not h then return end
+if h.follow then {P}HqFollowOn(h) return end
 if not {P}HqCamOn then
 Camera_DetachFromActor()
 Camera_SetMode('RS_SCRIPT_VIEW')
@@ -2341,7 +2387,56 @@ end
 if not sLook or not Utility_DoesActorExist(sLook) then sLook = 'player0' end
 Camera_SetInterestActor(sLook)
 end
+-- The follow camera inside (retail's, once the player stands; its rooms keep
+-- it inside their walls, ours mightn't): the scripted camera behind the way
+-- the player last walked (at first the way they face coming in, or seated),
+-- "distance" back and "height" up, kept inside the floor's "bounds", moved
+-- each 0.05 s. (No math library in the game's Lua: lengths by Newton's method.)
+function {P}HqFollowOn(h)
+if {P}HqFollowT then return end
+Camera_DetachFromActor()
+Camera_SetMode('RS_SCRIPT_VIEW')
+Camera_SetInterestActor('player0')
+{P}HqCamOn = 1
+{P}HqFx, {P}HqFz = h.follow.fx, h.follow.fz
+if {P}HqSeated and h.chair then {P}HqFx, {P}HqFz = h.chair.fx, h.chair.fz end
+{P}HqLastX = nil
+{P}HqFollow()
+end
+function {P}HqLen(d2)
+local l = d2
+if l < 1 then l = 1 end
+for i = 1, 8 do l = (l + d2 / l) * 0.5 end
+return l
+end
+function {P}HqFollow()
+{P}HqFollowT = nil
+local h = {P}HqIn and {P}Hq[{P}HqIn]
+if not h or not h.follow or not {P}HqCamOn then return end
+local fw = h.follow
+local x, y, z = Actor_GetPosition('player0')
+if x then
+if {P}HqLastX and not {P}HqSeated then
+local dx, dz = x - {P}HqLastX, z - {P}HqLastZ
+if dx * dx + dz * dz > 0.0004 then
+-- turned gradually toward the way walked
+local nx, nz = {P}HqFx * 0.85 + dx * 6, {P}HqFz * 0.85 + dz * 6
+local l = {P}HqLen(nx * nx + nz * nz)
+if l > 0.001 then {P}HqFx, {P}HqFz = nx / l, nz / l end
+end
+end
+{P}HqLastX, {P}HqLastZ = x, z
+local cx, cz = x - {P}HqFx * fw.dist, z - {P}HqFz * fw.dist
+if fw.x0 then
+if cx < fw.x0 then cx = fw.x0 elseif cx > fw.x1 then cx = fw.x1 end
+if cz < fw.z0 then cz = fw.z0 elseif cz > fw.z1 then cz = fw.z1 end
+end
+Camera_SetPosition(cx, y + fw.up, cz)
+end
+{P}HqFollowT = Event_RelativeTimer('{P}HqFollow', 'b', 0.05)
+end
 function {P}HqCamOff()
+if {P}HqFollowT then Event_CancelEvent({P}HqFollowT) {P}HqFollowT = nil end
 if not {P}HqCamOn then return end
 {P}HqCamOn = nil
 Camera_SetMode('RS_ACTOR_VIEW')
@@ -2366,6 +2461,7 @@ Actor_EnableCinematicControl('player0', TRUE)
 Actor_EnableCollision('player0', FALSE)
 Actor_SetPosition('player0', c.x, c.y, c.z)
 Actor_SetYaw('player0', c.yaw)
+{P}HqFx, {P}HqFz = c.fx, c.fz          -- the follow camera behind the seat
 Actor_PlayHumanAnimation('player0', c.sit, RS_AFLG_NOHEAD)
 {P}HqSitTimer = Event_RelativeTimer('{P}HqSitting', 'b', c.dsit)
 end

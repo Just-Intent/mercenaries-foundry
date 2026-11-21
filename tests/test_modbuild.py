@@ -658,14 +658,49 @@ class ModBuildTests(unittest.TestCase):
         modbuild.build(self.project, self.data, self.out)
 
     def test_rule_new_model(self):
-        # a rule giving an object another model (GeometryFile): its model word follows
+        # a rule giving an object another model (GeometryFile): the fixture's
+        # word (jeep_model) isn't its geometry's (jeep.msh), so it's the kind
+        # of thing the game knows it as and stays, as retail's soldier
+        # (allies_hum_soldier drawing allies_hum_mgsoldier)
         self.write("objects/o.json", json.dumps({"template": "jeep_template", "set": {"GeometryFile": "foundry_crate"}}))
         modbuild.build(self.project, self.data, self.out)
         arc = dsk.Archive(self.out / "assets.dsk")
         rec = next(arc.read(r) for r in arc.records if r.kind == WORLD)
         inst = next(world.iter_objects(rec))
-        self.assertEqual(inst["model"], "foundry_crate")
+        self.assertEqual(inst["model"], "jeep_model")
         self.assertIn(("GeometryFile", "foundry_crate"), [tuple(p) for p in inst["properties"]])
+
+    def test_model_word_follows_only_geometry(self):
+        crate = {"model": "barrel", "properties": [["GeometryFile", "barrel"]]}
+        modbuild._apply_rule(crate, {"set": {"GeometryFile": "foundry_crate"}})
+        self.assertEqual(crate["model"], "foundry_crate")                 # the word named its geometry
+        soldier = {"model": "allies_hum_soldier", "properties": [["GeometryFile", "allies_hum_mgsoldier"]]}
+        modbuild._apply_rule(soldier, {"set": {"GeometryFile": "gaza_allies_hum_mgsoldier"}})
+        self.assertEqual(soldier["model"], "allies_hum_soldier")          # the kind: kept (shots hit it)
+        self.assertTrue(modbuild.model_word_follows({"model": "x", "properties": []}))
+
+    def test_interior_follow_camera(self):
+        from mercfoundry import luacheck, missions
+        doc = {"interiors": {"allies": {"guard": {"position": [1, 2, 3]}, "room": {"position": [10, 0, 10], "heading": 90},
+                                        "leaders": ["boss"],
+                                        "camera": {"bounds": [[5, 0, 5], [15, 0, 13]], "distance": 2}}}}
+        one = missions.interiors("maps/gaza.json", "gaza", doc)["allies"]
+        fw = one["follow"]
+        self.assertEqual((fw["distance"], fw["height"], fw["bounds"]), (2.0, 1.7, [5.3, 5.3, 14.7, 12.7]))
+        self.assertAlmostEqual(fw["facing"][0], 1.0)                      # heading 90: facing +x
+        text = modbuild.map_script("gaza", {}, [], contacts=True, inside={"allies": one})
+        self.assertEqual(luacheck.check(text), [])
+        self.assertIn("follow = { dist = 2.00, up = 1.70, fx = 1.0000, fz = 0.0000, x0 = 5.30, z0 = 5.30, x1 = 14.70, z1 = 12.70 }", text)
+        self.assertIn("if h.follow then foundry_gaza_HqFollowOn(h) return end", text)
+        self.assertIn("Event_RelativeTimer('foundry_gaza_HqFollow', 'b', 0.05)", text)
+        self.assertNotIn("math.", text)                                  # the game's Lua has no math library
+        # "fixed": the 0.231 camera at its spot
+        doc["interiors"]["allies"]["camera"] = {"mode": "fixed", "position": [12, 2, 12]}
+        self.assertIsNone(missions.interiors("maps/gaza.json", "gaza", doc)["allies"]["follow"])
+        for bad in ({"mode": "orbit"}, {"distance": 20}, {"bounds": [[1, 1]]}, {"bounds": [[1, 1], [1.2, 1.2]]}):
+            doc["interiors"]["allies"]["camera"] = bad
+            with self.assertRaises(ValueError):
+                missions.interiors("maps/gaza.json", "gaza", doc)
 
     def test_sky(self):
         # sky/<map>.json: the base sky and atmosphere presets in the map's level config files

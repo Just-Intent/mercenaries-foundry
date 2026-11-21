@@ -254,14 +254,20 @@ def _apply_text(data, folder, result):
 MAP_TEXT_PREFIX = "foundry_map_"
 
 
-def _map_strings(data, map_name, edits, where):
+def _map_strings(data, map_name, edits, where, keep_set=False):
     """Texts a mod's new map shows instead of the game's (text/*.json or
     factions.json with "map"): each game key's text goes in beside it under
     <key>.foundry_map_<map> (the same string table), and the map's master
     script asks Foundry Console to show it for the key while the map is
     loaded (Foundry_MapText; put back on the next level load). A key the
-    game hasn't is simply added. Returns the count."""
+    game hasn't is simply added. keep_set: leave keys the map already has
+    text for (factions.json's renames of the game's texts run after the
+    deck: they put retail's bios back, renamed, over the deck's own).
+    Returns the count."""
     m = map_name.lower()
+    if keep_set:
+        done = {k for k, _ in (getattr(data, "map_text", {}).get(m) or {}).items()}
+        edits = {k: v for k, v in edits.items() if k.lower() not in done}
     if m not in getattr(data, "new_maps", set()):
         raise ValueError(f"{where}: \"map\": {map_name!r} isn't a mod's new map (maps/<name>.json); "
                          f"text only for a game map isn't possible yet")
@@ -647,15 +653,28 @@ def _to_marker(inst):
                 properties=[["GeometryFile", "global_humanmarker"], ["objectType", "location"]])
 
 
+def model_word_follows(inst):
+    """Whether an object's model word follows a new GeometryFile: when it
+    names the geometry it draws (or it has none). Otherwise the word is the
+    kind of thing the game knows it as: retail's soldier is
+    allies_hum_soldier drawing allies_hum_mgsoldier, its extraction
+    helicopter allies_veh_blackhawkextr drawing allies_veh_blackhawk. Gaza's
+    copies that moved the word to their new model couldn't be shot (the IDF
+    soldiers) or wouldn't land (the extraction Black Hawk; 0.237)."""
+    geo = next((str(v) for k, v in inst.get("properties") or [] if str(k).lower() == "geometryfile"), "")
+    return not geo or str(inst.get("model") or "").lower() == geo.lower()
+
+
 def _apply_rule(inst, rule):
     for prop, value in rule.get("set", {}).items():
+        follows = prop.lower() == "geometryfile" and value and model_word_follows(inst)
         for pair in inst["properties"]:
             if pair[0].lower() == prop.lower():
                 pair[1] = str(value)
                 break
         else:
             inst["properties"].append([prop, str(value)])
-        if prop.lower() == "geometryfile" and value:
+        if follows:
             inst["model"] = str(value)           # it draws the model it names (its model word follows)
     if any(k in rule for k in ("move", "position", "turn")) and "position" not in inst:
         raise ValueError(f"object {inst['template']!r} has no transform to change")
@@ -1316,6 +1335,7 @@ def _source_terrain_size(data, source):
 
 
 TRAVEL_PILOT = "template_allies_teleport_pilot"      # retail's quadrant pilot
+EXIT_TEMPLATE = "template_hq-allies-useable"     # retail's HQ exit and starter trigger: an invisible usable cube
 
 
 def default_arrive(pilot_position):
@@ -1387,6 +1407,14 @@ def _travel_pilots(data, folder, result):
         for fac, i in inside.items():
             out.append((i["guard"], name, {"from": i["template"], "name": i["guard"], "position": i["gpos"],
                                            "yaw": i["gheading"]}))
+            if i.get("exit_position") and not i.get("door"):
+                # an exit point: retail's way out there, an invisible usable
+                # cube (template_hq-<faction>-useable, allieshq_cube) with a
+                # gold ring, used to leave (briefing_utilities' EnableExit)
+                door = f"foundry_hqexit_{name.lower()}_{fac}"
+                out.append((door, name, {"from": EXIT_TEMPLATE, "name": door, "position": i["exit_position"],
+                                         "yaw": 0.0}))
+                i["door"] = door
             result.changes.append(f"HQ interior {fac} on {name}: guard {i['guard']} ({i['template']}), "
                                   f"{len(i['leaders'])} leaders, out by {i['door']}")
         if inside:
@@ -4251,7 +4279,7 @@ def _apply_factions(data, folder, result):
     edits = factions.plan(game_strings(data), factions._names_only(doc))
     if edits and doc.get("map"):
         # the new names on that map only (shown there with Foundry Console)
-        n = _map_strings(data, str(doc["map"]), edits, "factions.json")
+        n = _map_strings(data, str(doc["map"]), edits, "factions.json", keep_set=True)
         result.changes.append(f"factions: {n} strings renamed on {doc['map']} only")
     elif edits:
         changed, _ = _set_strings(data, edits)

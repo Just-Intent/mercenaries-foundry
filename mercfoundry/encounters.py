@@ -116,6 +116,11 @@ def _member(source, spec, extra=()):
     inst["template"] = spec["name"]
     sets = dict(extra)
     sets.update(spec.get("set", {}))
+    # the model word follows a new GeometryFile only when it named the old one
+    # (retail's extraction helicopter: word allies_veh_blackhawkextr, drawing
+    # allies_veh_blackhawk; the word is how the game knows it)
+    old_geo = next((str(v) for k, v in inst["properties"] if str(k).lower() == "geometryfile"), "")
+    word_follows = not old_geo or str(inst.get("model") or "").lower() == old_geo.lower()
     for key, value in sets.items():
         for pair in inst["properties"]:
             if pair[0].lower() == key.lower():
@@ -126,7 +131,7 @@ def _member(source, spec, extra=()):
     # A copy given another model (GeometryFile, as a new object's) draws it:
     # the object's own model word follows, as in 4632 of SW's 4748 objects.
     for key, value in sets.items():
-        if key.lower() == "geometryfile" and value:
+        if key.lower() == "geometryfile" and value and word_follows:
             inst["model"] = str(value)
     if spec.get("model"):
         inst["model"] = str(spec["model"])

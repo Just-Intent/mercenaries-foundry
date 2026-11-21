@@ -108,7 +108,7 @@ interiors_lua, from maps json `"interiors"`).
 | `mainkillbox` off while inside | not needed (the room is in the map) | - |
 | Control mode 13, weapon away, walking | the same (Foundry_HqMode) | same |
 | Seated in a chair, camera on the room's authored shot | **0.234: `"chair"`**: retail's three stages with the faction's HQ clips (sit down; seated with use-only control and "Stand up"; up again, mode 13), seated on coming in; the fixed camera (0.231) frames it | closer |
-| Follow camera once standing (rooms built for it) | fixed camera throughout | differs |
+| Follow camera once standing (rooms built for it) | **0.237:** a camera behind the way the player walks (`"camera"` mode follow, the default), kept inside the floor's corners (`"bounds"`); `"mode": "fixed"` keeps the 0.231 spot | closer |
 | HUD off | on; `"hide_hud"` hides it (for voiced lines only: ours are on-screen messages) (0.232) | by choice |
 | Room atmosphere, ambient light 80 | the map's own light | gap |
 | Music stopped, room ambience cue | music stopped; `"ambience"` cue (Briefing_SetAmbientSoundCue), off on leaving (0.232) | same |
@@ -118,7 +118,7 @@ interiors_lua, from maps json `"interiors"`).
 | Boss nags (3 times) | `"nags"`: one line each, after 4 s then every 8 s, until accepted or left (0.232) | same |
 | Voiced prop interactions | none | gap |
 | Starter: ring, 1.5 m, `mission_accepted`, `PlayerStartLocationName` | ring and accept prompt; `loc_hq-<faction>-respawn` when the map has that faction's `"hq_respawn"` (0.232) | same |
-| Exit after 5 s, ring, 0.5 m | after the exit's delay (5 s), ring, 3 m | same |
+| Exit after 5 s, ring, 0.5 m | an exit point gets retail's invisible usable cube (`template_hq-allies-useable`) with a gold ring: step in and use it (0.237) | same |
 | Out: back at `loc_hq-<faction>-respawn` | back where the player stood by the guard | differs |
 
 ### The camera (0.231)

@@ -74,6 +74,12 @@ export function createHq(ctx) {
       return [i.camera, 'position', 'point'];
     }
     if (kind === 'chair') return [k.interiors[f], 'chair', 'spot'];
+    if (kind === 'bounds0' || kind === 'bounds1') {
+      const i = k.interiors[f];
+      i.camera = i.camera || {};
+      i.camera.bounds = i.camera.bounds || [null, null];
+      return [i.camera.bounds, kind === 'bounds0' ? 0 : 1, 'point'];
+    }
     return [null];
   }
 
@@ -97,10 +103,20 @@ export function createHq(ctx) {
       <label class="sky-row"><span>Template</span><input data-int-k="guard.template" list="templates" value="${esc(g.template || '')}" placeholder="template_${f}_bouncer"></label>
       <label class="sky-row"><span>Prompt</span><input data-int-k="guard.prompt" value="${esc(g.prompt || '')}" placeholder="Enter HQ"></label>
       ${spotRow('Room', i.room, `room:${f}`)}
-      ${spotRow('Camera', i.camera && i.camera.position ? {position: i.camera.position} : null, `camera:${f}`, {noHeading: true})}
-      <p class="hint">Where the camera stands inside (a fixed spot, as retail's briefing shots; it looks at the boss while
-        lines play, else at the player). Put it high in a corner, clear of the walls; unset, it stands 1.2 m behind
-        and 1.8 m above the room spot.</p>
+      <label class="sky-row"><span>Camera</span><select data-int-k="camera.mode">
+        <option value="" ${(i.camera || {}).mode !== 'fixed' ? 'selected' : ''}>follows behind the player (as retail)</option>
+        <option value="fixed" ${(i.camera || {}).mode === 'fixed' ? 'selected' : ''}>a fixed spot</option></select></label>
+      ${(i.camera || {}).mode === 'fixed' ? `
+      ${spotRow('Camera spot', i.camera && i.camera.position ? {position: i.camera.position} : null, `camera:${f}`, {noHeading: true})}
+      <p class="hint">Where the camera stands inside: it looks at the boss while lines play, else at the player. Put it
+        high in a corner, clear of the walls; unset, it stands 1.2 m behind and 1.8 m above the room spot.</p>` : `
+      <label class="sky-row"><span>Back / up</span><span class="hq-trio">
+        <input type="number" step="0.1" data-int-k="camera.distance" value="${(i.camera || {}).distance ?? ''}" placeholder="2.5 m">
+        <input type="number" step="0.1" data-int-k="camera.height" value="${(i.camera || {}).height ?? ''}" placeholder="1.7 m"></span></label>
+      ${spotRow('Floor corner', ((i.camera || {}).bounds || [])[0] || null, `bounds0:${f}`, {noHeading: true})}
+      ${spotRow('Opposite corner', ((i.camera || {}).bounds || [])[1] || null, `bounds1:${f}`, {noHeading: true})}
+      <p class="hint">The camera follows behind the way the player walks, kept 0.3 m inside the floor's two opposite
+        corners (inside the walls). Set both, or it isn't kept in.</p>`}
       <label class="sky-row"><span>Leaders</span><input data-int-k="leaders" value="${esc((i.leaders || []).join(', '))}" placeholder="actor names, the boss first"></label>
       <label class="sky-row"><span>Second in command</span><input data-int-k="starter" value="${esc(i.starter === false ? '' : (i.starter || ''))}" placeholder="the second leader (accepts the contract)"></label>
       <label class="sky-row"><span>Accept prompt</span><input data-int-k="accept_prompt" value="${esc(i.accept_prompt || '')}" placeholder="Accept contract"></label>
@@ -236,7 +252,11 @@ export function createHq(ctx) {
       else if (path === 'bribe.cost') i.bribe = val ? {cost: Math.max(0, Math.round(+val))} : true;
       else if (path === 'hide_hud') { if (val) i.hide_hud = true; else delete i.hide_hud; }
       else if (path === 'guard_moods') i.guard_moods = !!val;
-      else if (path === 'chair.auto') { i.chair = i.chair || {}; if (val) delete i.chair.auto; else i.chair.auto = false; }
+      else if (path === 'camera.mode') {
+        i.camera = i.camera || {};
+        if (val) i.camera.mode = val; else delete i.camera.mode;
+        draw();
+      } else if (path === 'chair.auto') { i.chair = i.chair || {}; if (val) delete i.chair.auto; else i.chair.auto = false; }
       else if (path === 'banter.retail') {
         if (val) i.banter = true; else if (i.banter === true) delete i.banter;
         draw();
