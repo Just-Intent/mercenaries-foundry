@@ -2055,12 +2055,16 @@ def _turn(yaw_deg, x, z):
 
 def chair_placement(chair):
     """(template, position, yaw) of the chair the build places for an
-    interior's "chair" with no "object": retail's chair of its style in the
-    player's frame (a prop's yaw 0 faces +z, the player's model faces its -z:
-    the player's frame is a prop's at the heading + 180). The allies' rig is
-    placed at rest, its seat under where the sit clip leaves the hips."""
+    interior's "chair" with no "object": retail's chair of its style at the
+    player's spot reading the player's yaw (retail's, measured). The allies'
+    rig is drawn seated (SEATED_ALLIES_CHAIR); mafia's, attached at its own
+    hardpoint in retail, 0.44 m behind (not yet measured)."""
     x, y, z = chair["position"]
-    frame = (chair["heading"] + 180.0) % 360.0
+    # The player's frame, in a prop's yaw. Measured (0.242-0.245 hq dumps): a
+    # prop placed at yaw Y reads Actor_GetYaw 180 - Y (90 read 90, 0 read
+    # 180), and the player turned with Actor_SetYaw(heading + 180) reads
+    # heading + 180. Retail's chair reads the player's yaw: Y = -heading.
+    frame = (-chair["heading"]) % 360.0
     if chair["style"] == "allies":
         # measured in retail's allies HQ briefing (0.244's hq dump): the chair
         # and the player at one spot, with the same yaw (the player's
@@ -2301,7 +2305,7 @@ function {P}HqDumpSeated() if {P}HqSeated then {P}HqDump('seated +2 s') end end
 function {P}HqDumpWalk()
 {P}HqDumpN = ({P}HqDumpN or 0) + 1
 if not {P}HqIn or {P}HqDumpN > 5 then return end
-{P}HqDump('in the room +' .. ({P}HqDumpN * 2) .. ' s')
+{P}HqDump(({P}HqDumpTag or 'in the room') .. ' +' .. ({P}HqDumpN * 2) .. ' s')
 Event_RelativeTimer('{P}HqDumpWalk', 'b', 2.0)
 end
 function {P}HqRules(name)
@@ -2614,6 +2618,10 @@ local h = {P}HqIn and {P}Hq[{P}HqIn]
 {P}HqUnseat()
 if h and h.chair then {P}HqUse(h.chair.obj, h.chair.sitprompt, '{P}HqSit') end
 {P}HqDump('stood up')
+-- and every 2 s for 10 s after: the walking (the camera following)
+{P}HqDumpN = 0
+{P}HqDumpTag = 'after standing'
+Event_RelativeTimer('{P}HqDumpWalk', 'b', 2.0)
 end
 -- Out of the chair at once (leaving, or taking the contract while seated).
 function {P}HqUnseat()
@@ -2686,6 +2694,7 @@ local h = {P}Hq[{P}HqIn]
 Cinematic_FadeIn(0.5)
 {P}HqDump('entered')
 {P}HqDumpN = 0
+{P}HqDumpTag = nil
 Event_RelativeTimer('{P}HqDumpWalk', 'b', 2.0)
 {P}HqDoorTimer = Event_RelativeTimer('{P}HqDoor', 'b', h.exitdelay)
 if h.chair then

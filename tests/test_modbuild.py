@@ -1309,14 +1309,14 @@ class MapScriptTests(unittest.TestCase):
         placed = missions.interiors("maps/gaza.json", "gaza", doc)["sk"]["chair"]
         self.assertTrue(placed["place"])
         tpl, pos, yaw = missions.chair_placement(placed)
-        self.assertEqual((tpl, yaw), ("template_hq-mafia-chair", 180.0))
+        self.assertEqual((tpl, yaw), ("template_hq-mafia-chair", 0.0))      # a prop at Y reads Actor_GetYaw 180 - Y: -heading
         self.assertAlmostEqual(pos[2], 19.56)
         # the allies' chair where retail's measured (0.244's hq dump in its
         # briefing): at the player's spot with the player's yaw, drawn seated
         doc["interiors"]["sk"]["chair"] = {"position": [3700, 87.54, 3702.6], "heading": 180, "style": "allies"}
         rig = missions.interiors("maps/gaza.json", "gaza", doc)
         tpl, pos, yaw = missions.chair_placement(rig["sk"]["chair"])
-        self.assertEqual((tpl, pos, yaw), ("template_hq-allies-chair", [3700, 87.54, 3702.6], 0.0))
+        self.assertEqual((tpl, pos, yaw), ("template_hq-allies-chair", [3700, 87.54, 3702.6], 180.0))   # reads 0, as the player (measured)
         self.assertEqual(missions.SEATED_ALLIES_CHAIR, "foundry_allieshq_chair_seated")
         self.assertNotIn("allies_interact_sitdown_chair_chair", missions.chair_clips(rig))
         for bad in ({"object": "c"}, {"object": "c", "position": [1, 2, 3], "style": "idf"}):
