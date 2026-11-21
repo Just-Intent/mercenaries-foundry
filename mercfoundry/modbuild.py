@@ -1135,9 +1135,12 @@ def _apply_encounters(data, folder, result):
         if layer not in lists:
             hit = [(a, r) for a, r in data.records(name_hash("list")) if r.key == name_hash(layer)]
             lists[layer] = encounters.parse_list(data.current(*hit[0]).decode("latin-1")) if hit else {}
-        if name_hash(layer) in map_keys:
+        if name_hash(layer) in map_keys or str(layer).lower().startswith("template_hq-"):
             # a map's own layer (sw, nw): its list loads the whole map, terrain
-            # and all; take only what this object needs
+            # and all; and an HQ's briefing templates (template_hq-<faction>)
+            # load its whole room. Take only what this object needs (0.237's
+            # exit cubes brought the allies' whole HQ to Gaza, four times, and
+            # the game crashed drawing on arrival)
             return _object_loads(obj, lists[layer], archives)
         return lists[layer]
 
