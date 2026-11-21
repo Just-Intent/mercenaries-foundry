@@ -2171,8 +2171,12 @@ def _check_animation_tables(data, result):
                         continue
                     if str(v).lower() not in have:
                         missing.setdefault((str(v), layer), []).append(c.get("template") or c.get("model") or "?")
-                    if c.get("model"):
-                        pairs.setdefault((str(v).lower(), str(c["model"]).lower()), set()).add(layer)
+                    # the skeleton is the drawn model's: GeometryFile when set (the
+                    # model word can name a kind, as sk_hum_boss drawing another)
+                    geo = next((str(gv) for gk, gv in c.get("properties") or []
+                                if str(gk).lower() == "geometryfile" and gv), "") or str(c.get("model") or "")
+                    if geo:
+                        pairs.setdefault((str(v).lower(), geo.lower()), set()).add(layer)
     if missing:
         listed = "; ".join(f"{t} for {', '.join(sorted(set(o))[:3])} in {lay}"
                            for (t, lay), o in sorted(missing.items())[:10])
