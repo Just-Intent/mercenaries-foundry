@@ -60,6 +60,11 @@ class DeckTests(unittest.TestCase):
         self.assertIn("Desktop_BeginVerify('foundry_DeckPay', c.suit, c.rank, state, FALSE)", lua)
         self.assertIn("suit .. rank .. 'status'", lua)
         self.assertIn("'iCurrentIntel' .. suit", lua)
+        # the meter as retail's: 2-10 their rank, J/Q/K 30; shown and the map's own
+        meter = lua[lua.index("function foundry_DeckMeter(suit)"):]
+        self.assertIn("if rank <= 10 then intel = intel + rank else intel = intel + 30 end", meter)
+        self.assertIn("'foundry_deck_' .. m .. '_iCurrentIntel' .. suit, intel", meter)
+        self.assertIn("foundry_DeckMeter(c.suit)", lua[lua.index("function foundry_DeckVerified"):])
         self.assertIn("iFoundryDeckPay = c.bounty * 2", lua)        # alive pays double
 
     def test_others_stand_in(self):

@@ -352,6 +352,8 @@ class MissionTests(unittest.TestCase):
         self.assertIn("if o.rank then foundry_CardVerified(o, bKilled) end", lua)
         self.assertIn("Desktop_BeginVerify('foundry_CardPay', o.suit, o.rank, state, FALSE)", lua)
         self.assertIn("Utility_WriteStringToScribbleMemory('foundry_deck_' .. m .. '_' .. key, state)", lua)
+        # the suit's intel meter fills from face cards too, as retail's
+        self.assertIn("if foundry_DeckMeter then foundry_DeckMeter(o.suit) end", lua)
         from mercfoundry import luacheck
         self.assertEqual(luacheck.check(lua), [])
         for bad in ({"card": "Z", "suit": "clubs"}, {"card": "J"}, {"card": "J", "suit": "clubs", "bounty": "lots"}):
@@ -373,6 +375,30 @@ class MissionTests(unittest.TestCase):
         self.assertEqual(luacheck.check(lua), [])
         with self.assertRaises(ValueError):
             missions.contract("sw_allies22", dict(doc, requires_cards={"suit": "clubs", "cards": ["X"]}), "t", "d")
+
+    def test_contract_requires_intel_as_retail_aces(self):
+        from mercfoundry import luacheck
+        doc = {"title": "The Shadow", "map": "gaza", "contact": {"interior": "allies"}, "requires_intel": "clubs"}
+        c, _ = missions.contract("sw_allies22", doc, "t", "d")
+        self.assertEqual(c["requires_intel"], ("clubs", 80))              # retail's iTargetIntel
+        lua = missions.contracts_script([c])
+        self.assertEqual(luacheck.check(lua), [])
+        self.assertIn("intel = { suit = 'clubs', mark = 80 }", lua)
+        self.assertIn("if c.intel and foundry_Intel(c.intel.suit, c.map) < c.intel.mark then return false end", lua)
+        # counted as retail's gameflow_GetIntelTotal, from the map's own deck when it isn't shown
+        meter = lua[lua.index("function foundry_Intel(suit, m)"):]
+        self.assertIn("if rank <= 10 then total = total + rank elseif rank < 14 then total = total + 30 end", meter)
+        self.assertIn("pre = 'foundry_deck_' .. m .. '_'", meter)
+        c, _ = missions.contract("sw_allies24", dict(doc, requires_intel={"suit": "spades", "mark": 60}), "t", "d")
+        self.assertEqual(c["requires_intel"], ("spades", 60))
+        # a contract on a retail map puts the game's cards back first (no free roam on the way)
+        sw, _ = missions.contract("sw_allies22", {"title": "t", "contact": {"position": [1, 2, 3]}}, "t", "d")
+        start = missions.contracts_script([sw])
+        start = start[start.index("function foundry_Start_sw_allies22()"):]
+        self.assertLess(start.index("foundry_DeckLeave()"), start.index("DebugSkipToMission(f, 22)"))
+        for bad in ("cups", {"suit": "clubs", "mark": 0}, {"mark": 80}):
+            with self.assertRaises(ValueError):
+                missions.contract("sw_allies22", dict(doc, requires_intel=bad), "t", "d")
 
     def test_verify_target(self):
         doc = {"ini": {"BonusFee": 1000},

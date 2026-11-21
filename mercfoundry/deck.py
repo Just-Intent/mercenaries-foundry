@@ -221,6 +221,22 @@ end
 Utility_EraseValueFromScribbleMemory('foundry_deck_on')
 Utility_EraseValueFromScribbleMemory('foundry_deck_suit')
 end
+-- The suit's intel meter, as retail's gameflow_UpdatePDAIntelMeter: every
+-- verified card of the suit (killed or captured) worth its rank for 2-10,
+-- 30 for J, Q and K, 0 for the ace; where the PDA reads it, and the map's own.
+function foundry_DeckMeter(suit)
+local intel = 0
+for rank = 2, 13 do
+local s = Utility_ReadStringFromScribbleMemory(suit .. rank .. 'status')
+if s == 'killed' or s == 'captured' then
+if rank <= 10 then intel = intel + rank else intel = intel + 30 end
+end
+end
+Utility_WriteNumberToScribbleMemory('iCurrentIntel' .. suit, intel)
+local m = Utility_ReadStringFromScribbleMemory('foundry_deck_on')
+if m then Utility_WriteNumberToScribbleMemory('foundry_deck_' .. m .. '_iCurrentIntel' .. suit, intel) end
+return intel
+end
 -- A map's number cards: each at large has its layer loaded and, while it's
 -- awake, a verify objective, unmarked until identified (in view, or within
 -- 30 m), as retail's (gameflow_LoadLayers, gameflow_CardIsDormant): the
@@ -338,14 +354,7 @@ if c.hFocus then Event_CancelEvent(c.hFocus) c.hFocus = nil end
 if c.hNear then Event_CancelEvent(c.hNear) c.hNear = nil end
 Utility_WriteStringToScribbleMemory(c.suit .. c.rank .. 'status', state)
 Utility_WriteStringToScribbleMemory('foundry_deck_' .. sFoundryDeckMap .. '_' .. c.suit .. c.rank .. 'status', state)
-local intel = 0
-for rank = 2, 13 do
-local s = Utility_ReadStringFromScribbleMemory(c.suit .. rank .. 'status')
-if s == 'killed' or s == 'captured' then
-if rank <= 10 then intel = intel + rank else intel = intel + 30 end
-end
-end
-Utility_WriteNumberToScribbleMemory('iCurrentIntel' .. c.suit, intel)
+foundry_DeckMeter(c.suit)
 iFoundryDeckPay = c.bounty
 if not bDead then iFoundryDeckPay = c.bounty * 2 end
 Desktop_BeginVerify('foundry_DeckPay', c.suit, c.rank, state, FALSE)

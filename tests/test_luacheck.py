@@ -115,7 +115,9 @@ local function f(x) x() end
         self.assertEqual(luacheck.check(lua), [])
         defined, called, callbacks = luacheck.names(lua)
         own = [n for n, _ in called + callbacks if n.startswith("foundry_")]
-        self.assertEqual([n for n in own if n not in defined], [])
+        # foundry_deck's meter: the script loads foundry_deck for it (on a deck's map only)
+        loaded = {"foundry_DeckMeter"} if "Utility_LoadUtilityScript('foundry_deck')" in lua else set()
+        self.assertEqual([n for n in own if n not in defined and n not in loaded], [])
         self.assertEqual(luacheck.choices(lua), [])          # every order and word is one the game has
         self.assertEqual(luacheck.check(missions.contracts_script([])), [])
         self.assertEqual(luacheck.check(missions.layers_script([{"map": "sw", "layer": "layer_a"}])), [])

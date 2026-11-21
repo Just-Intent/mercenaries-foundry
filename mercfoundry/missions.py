@@ -1631,7 +1631,13 @@ if bKilled then state = 'killed' end
 local key = o.suit .. o.rank .. 'status'
 Utility_WriteStringToScribbleMemory(key, state)
 local m = Utility_ReadStringFromScribbleMemory('foundry_deck_on')
-if m then Utility_WriteStringToScribbleMemory('foundry_deck_' .. m .. '_' .. key, state) end
+if m then
+Utility_WriteStringToScribbleMemory('foundry_deck_' .. m .. '_' .. key, state)
+-- the suit's intel meter fills from face cards too, as retail's
+-- (gameflow_DeckCardVerified from mission_FaceCardVerified)
+Utility_LoadUtilityScript('foundry_deck')
+if foundry_DeckMeter then foundry_DeckMeter(o.suit) end
+end
 foundry_Note('card ' .. key .. ' ' .. state)
 iFoundryCardPay = o.cardpay
 if iFoundryCardPay and not bKilled then iFoundryCardPay = iFoundryCardPay * 2 end
@@ -3016,6 +3022,28 @@ def _required_cards(spec):
     return out
 
 
+# Retail's intel meter (gameflow.lua): a verified card of the suit (killed or
+# captured) is worth its rank for 2-10, iFaceIntel (30) for J, Q and K and
+# iAceIntel (0) for the ace; the ace's contract unlocks at iTargetIntel (80).
+INTEL_MARK = 80
+
+
+def _required_intel(spec):
+    """"requires_intel": "clubs" or {"suit": "clubs", "mark": 80} as
+    (suit, mark), or None."""
+    if not spec:
+        return None
+    from .deck import SUITS
+    if isinstance(spec, str):
+        spec = {"suit": spec}
+    suit = str(spec.get("suit") or "").lower() if isinstance(spec, dict) else ""
+    mark = spec.get("mark", INTEL_MARK) if isinstance(spec, dict) else None
+    if suit not in SUITS or not isinstance(mark, (int, float)) or not 0 < mark <= 144:
+        raise ValueError("\"requires_intel\" is a suit (clubs/diamonds/hearts/spades) or {\"suit\", \"mark\": "
+                         "1 to 144 (retail's: 80)}")
+    return (suit, int(mark))
+
+
 def contract(asset_id, doc, title_key, description_key):
     """The contact that offers a mod mission at its faction's HQ, and the
     strings it needs ({key: text}; they go in the always-loaded actions and
@@ -3063,6 +3091,9 @@ def contract(asset_id, doc, title_key, description_key):
             # Deck cards that must be verified first ("requires_cards": {suit,
             # cards}): the contract's map's deck (a mod's own), else the game's.
             "requires_cards": _required_cards(doc.get("requires_cards")),
+            # Retail's ace unlock ("requires_intel": a suit, or {suit, mark}):
+            # offered once the suit's intel meter reaches the mark (80).
+            "requires_intel": _required_intel(doc.get("requires_intel")),
             # A placed giver's rules: stays where it's put (Ai_CommandQueue
             # 'Wait'), can't be hurt (Actor_SetInvincible), and whether killing
             # it loses the contract for good.
@@ -3113,6 +3144,8 @@ def contracts_script(contracts, insertions=()):
                            *c["position"], c["heading"], _lua(c["side"])) if c["position"] else "")
                        + (", requires = { %s }" % ", ".join(_lua(r) for r in c["requires"]) if c["requires"] else "")
         + (", cards = { %s }" % ", ".join(_lua(k) for k in c["requires_cards"]) if c.get("requires_cards") else "")
+        + (", intel = { suit = %s, mark = %d }" % (_lua(c["requires_intel"][0]), c["requires_intel"][1])
+           if c.get("requires_intel") else "")
                        + "".join(f", {k} = true" for k in ("stay", "invincible", "lose") if c.get(k))
                        + (", play = %s, arc = %s" % (_lua(c["play"]), _lua(parse_id(c["id"])[0])) if c.get("play") else "")
                        + (", interior = %s, title = %s, descr = %s,\n  briefing = %s" % (
@@ -3196,7 +3229,23 @@ def contracts_script(contracts, insertions=()):
         "if s ~= 'killed' and s ~= 'captured' then return false end",
         "end",
         "end",
+        "if c.intel and foundry_Intel(c.intel.suit, c.map) < c.intel.mark then return false end",
         "return true",
+        "end",
+        "-- A suit's intel meter as retail's gameflow_GetIntelTotal: 2-10 their rank,",
+        "-- J, Q, K 30, the ace 0; the map's own deck's while it's shown elsewhere.",
+        "function foundry_Intel(suit, m)",
+        "local on = Utility_ReadStringFromScribbleMemory('foundry_deck_on')",
+        "local pre = ''",
+        "if m and on ~= m and m ~= 'sw' and m ~= 'nw' then pre = 'foundry_deck_' .. m .. '_' end",
+        "local total = 0",
+        "for rank = 2, 14 do",
+        "local s = Utility_ReadStringFromScribbleMemory(pre .. suit .. rank .. 'status')",
+        "if s == 'killed' or s == 'captured' then",
+        "if rank <= 10 then total = total + rank elseif rank < 14 then total = total + 30 end",
+        "end",
+        "end",
+        "return total",
         "end",
         "function foundry_ContactName(c) return 'foundry_contact_' .. c.id end",
         "function foundry_IsDone(c) return Utility_ReadNumberFromScribbleMemory('foundry_done_' .. c.id) end",
@@ -3335,7 +3384,14 @@ def contracts_script(contracts, insertions=()):
                 f"Utility_ResetToBaseLayerOnly({_lua(c['play'])})",
                 "end"]
         else:
-            out += [f"DebugSkipToMission(f, {c['number']})", "end"]
+            # on a retail map: the game's cards back first (a mod's deck is
+            # shown on its map; free roam on SW/NW puts it back, a contract
+            # there starts without free roam)
+            out += ["if Utility_ReadStringFromScribbleMemory('foundry_deck_on') then",
+                    "Utility_LoadUtilityScript('foundry_deck')",
+                    "if foundry_DeckLeave then foundry_DeckLeave() end",
+                    "end",
+                    f"DebugSkipToMission(f, {c['number']})", "end"]
     # foundry_Start(c): start a contract from its row (an HQ interior's)
     out.append("tFoundryStart = { " + ", ".join(f"[{_lua(c['id'])}] = foundry_Start_{c['id']}" for c in contracts) + " }")
     out.append("function foundry_Start(c) tFoundryStart[c.id]() end")
