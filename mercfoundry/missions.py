@@ -1965,6 +1965,7 @@ def interiors(where, map_name, doc):
         guard_template = str(g.get("template") or f"template_{f}_bouncer")
         guard_moods = i.get("guard_moods", guard_template.lower().endswith("_bouncer"))
         respawn = f in (doc.get("hq_respawn") or {})
+        chair = _interior_chair(w, f, i.get("chair"))
         exit_delay = exit_.get("delay", 5)
         exit_distance = exit_.get("distance", 3)
         if not isinstance(exit_distance, (int, float)) or exit_distance <= 0:
@@ -1991,8 +1992,65 @@ def interiors(where, map_name, doc):
                   "nags": _lines(f"{w} nags", i.get("nags")),
                   "ambience": str(ambience) if ambience else None, "hide_hud": bool(i.get("hide_hud")),
                   "banter": list(banter), "guard_moods": bool(guard_moods), "respawn": respawn,
+                  "chair": chair,
                   "idle": _lines(f"{w} idle", i.get("idle") or [{"text": "Nothing for you right now. Come back later."}])}
     return out
+
+
+# Retail's HQ chairs (briefing_interactions.lua, INTERACTIONTYPE_THREESTAGE):
+# the player's sit-down, seated loop and stand-up clips and the first and
+# last clips' lengths, by faction. They load with the briefing's layers
+# (<faction>_briefing's [animation]); a map with a chair loads them itself.
+CHAIR_STYLES = {
+    "allies": ("allies_interact_sitdown_chair_player", "allies_interact_sitting_chair_player",
+               "allies_interact_standup_chair_player", 2.533, 1.833),
+    "china": ("china_interact_sitdown_chair_player", "china_interact_sitting_chair_player",
+              "china_interact_standup_chair_player", 2.667, 2.0),
+    "mafia": ("mafia_sitdownchair_player", "mafia_sittingchair_player", "mafia_getupchair_player", 2.667, 2.333),
+    "sk": ("sk_interact_sitdown_chair_player", "sk_interact_sitting_chair_player",
+           "sk_interact_getup_chair_player", 3.0, 1.667),
+}
+
+
+def _interior_chair(w, faction, c):
+    """An interior's "chair": {"object": <placed chair>, "position": [x, y, z]
+    (where the player sits: their feet at the seat's spot), "heading"? (the
+    way they face, seated), "style"? (whose HQ animations: allies, china,
+    mafia, sk; the interior's faction), "auto"? (seated on coming in, as
+    retail; true), "sit_prompt"?, "stand_prompt"?}, or None."""
+    if c is None or c is False:
+        return None
+    if not isinstance(c, dict):
+        raise ValueError(f"{w}: \"chair\" is {{\"object\": <name>, \"position\": [x, y, z], \"heading\": <deg>}}")
+    obj = c.get("object")
+    if not obj:
+        raise ValueError(f"{w}: the chair needs its \"object\" (the placed chair: its prompts go on it)")
+    p = c.get("position")
+    if not isinstance(p, (list, tuple)) or len(p) != 3:
+        raise ValueError(f"{w}: the chair needs a \"position\" [x, y, z] (where the player sits)")
+    style = str(c.get("style") or faction)
+    if style not in CHAIR_STYLES:
+        raise ValueError(f"{w}: the chair's \"style\" is one of {', '.join(CHAIR_STYLES)} (whose HQ animations)")
+    sit, loop, stand, d1, d3 = CHAIR_STYLES[style]
+    return {"object": str(obj), "position": [float(v) for v in p], "heading": float(c.get("heading") or 0),
+            "style": style, "auto": bool(c.get("auto", True)), "clips": [sit, loop, stand], "durations": [d1, d3],
+            "sit_prompt": str(c.get("sit_prompt") or "actions.sitdown"),
+            "stand_prompt": str(c.get("stand_prompt") or "actions.standup")}
+
+
+def _chair_row(c):
+    if not c:
+        return "false"
+    return ("{ obj = %s, x = %.2f, y = %.2f, z = %.2f, yaw = %.1f, sit = %s, loop = %s, stand = %s, "
+            "dsit = %.3f, dstand = %.3f, auto = %s, sitprompt = %s, standprompt = %s }"
+            % (_lua(c["object"]), *c["position"], player_yaw(c["heading"]), *(_lua(x) for x in c["clips"]),
+               *c["durations"], "TRUE" if c["auto"] else "FALSE", _lua_str(c["sit_prompt"]),
+               _lua_str(c["stand_prompt"])))
+
+
+def chair_clips(inside):
+    """The animations a map's interiors' chairs play (for its load list)."""
+    return sorted({clip for i in inside.values() if i.get("chair") for clip in i["chair"]["clips"]})
 
 
 # Retail's bouncer banter (bouncer.lua BouncerUsed): <bank>.<cue prefix>, 1-5
@@ -2044,6 +2102,7 @@ def interiors_lua(prefix, inside, flagged=()):
             "rh = %.1f, leaders = { %s }, door = %s, doorprompt = %s, doordist = %.1f, exitdelay = %.1f, talkprompt = %s,\n"
             " starter = %s, acceptprompt = %s, bribe = %s, bribecost = %s,%s cx = %.2f, cy = %.2f, cz = %.2f,\n"
             " amb = %s, hidehud = %s, banter = { %s }, moods = %s, respawn = %s,\n"
+            " chair = %s,\n"
             " greeting = %s,\n gmood = { %s },\n nags = %s,\n idle = %s },"
             % (f, _lua(i["guard"]), _lua_str(i["prompt"]), _lua_str(i["name"]), _lua(i["side"]),
                ("'ring'" if f in flagged else "'hq'") if i["marker"] == "hq" else "false",
@@ -2061,6 +2120,7 @@ def interiors_lua(prefix, inside, flagged=()):
                ", ".join(_lua(b) for b in i.get("banter") or []),
                "TRUE" if i.get("guard_moods") else "FALSE",
                "TRUE" if i.get("respawn") else "FALSE",
+               _chair_row(i.get("chair")),
                i["greeting"],
                ", ".join(f"{m} = {lines}" for m, lines in (i.get("greetings") or {}).items()),
                i.get("nags") or "{ }",
@@ -2280,7 +2340,62 @@ if not {P}HqCamOn then return end
 {P}HqCamOn = nil
 Camera_SetMode('RS_ACTOR_VIEW')
 end
+-- The chair (retail's three-stage chair interaction, TrivialInteraction):
+-- the sit-down clip, then the seated loop with use-only control and the
+-- chair's "Stand up" prompt, then the stand-up clip and control mode 13
+-- again, with "Sit down" on the chair. The player is put on the seat's spot
+-- (retail attaches them to the briefing scene's hp_player_chair); the camera
+-- stays the room's fixed one.
+function {P}HqSit()
+local h = {P}HqIn and {P}Hq[{P}HqIn]
+if not h or not h.chair or {P}HqSeated then return end
+local c = h.chair
+{P}HqUnuse(c.obj)
+{P}HqSeated = 1
+{P}HqTrace('sit')
+Player_DisableControl()
+Actor_EnableCinematicControl('player0', TRUE)
+Actor_EnableCollision('player0', FALSE)
+Actor_SetPosition('player0', c.x, c.y, c.z)
+Actor_SetYaw('player0', c.yaw)
+Actor_PlayHumanAnimation('player0', c.sit, RS_AFLG_NOHEAD)
+{P}HqSitTimer = Event_RelativeTimer('{P}HqSitting', 'b', c.dsit)
+end
+function {P}HqSitting()
+{P}HqSitTimer = nil
+local h = {P}HqIn and {P}Hq[{P}HqIn]
+if not h or not {P}HqSeated then return end
+Player_EnableUseOnlyControl()
+Actor_PlayHumanAnimation('player0', h.chair.loop, RS_AFLG_LOOP + RS_AFLG_NOHEAD)
+{P}HqUse(h.chair.obj, h.chair.standprompt, '{P}HqStand')
+end
+function {P}HqStand()
+local h = {P}HqIn and {P}Hq[{P}HqIn]
+if not h or not {P}HqSeated then return end
+{P}HqUnuse(h.chair.obj)
+{P}HqTrace('stand')
+Player_DisableControl()
+Actor_PlayHumanAnimation('player0', h.chair.stand, RS_AFLG_NOHEAD)
+{P}HqSitTimer = Event_RelativeTimer('{P}HqStood', 'b', h.chair.dstand)
+end
+function {P}HqStood()
+{P}HqSitTimer = nil
+local h = {P}HqIn and {P}Hq[{P}HqIn]
+{P}HqUnseat()
+if h and h.chair then {P}HqUse(h.chair.obj, h.chair.sitprompt, '{P}HqSit') end
+end
+-- Out of the chair at once (leaving, or taking the contract while seated).
+function {P}HqUnseat()
+if {P}HqSitTimer then Event_CancelEvent({P}HqSitTimer) {P}HqSitTimer = nil end
+if not {P}HqSeated then return end
+{P}HqSeated = nil
+Actor_StopAnimation('player0')
+Actor_EnableCinematicControl('player0', FALSE)
+Actor_EnableCollision('player0', TRUE)
+Player_EnableControl(13)
+end
 function {P}HqRelease()
+{P}HqUnseat()
 {P}HqCamOff()
 {P}HqNagStop()
 if {P}HqAmbOn then Briefing_SetAmbientSoundCue('', 0, 0) {P}HqAmbOn = nil end
@@ -2315,8 +2430,14 @@ end
 function {P}HqInside()
 local h = {P}Hq[{P}HqIn]
 {P}HqTrace('inside')
+if h.chair and h.chair.auto then
+-- by the chair, to be seated at once (retail's AutoInteractWithChair)
+Actor_SetPosition('player0', h.chair.x, h.chair.y, h.chair.z)
+Actor_SetYaw('player0', h.chair.yaw)
+else
 Actor_SetPosition('player0', h.rx, h.ry, h.rz)
 Actor_SetYaw('player0', h.rh)
+end
 for i, a in h.leaders do
 {P}HqLeader(a)
 if Utility_DoesActorExist(a) then Actor_LookAtActor(a, 'player0') end
@@ -2329,6 +2450,9 @@ function {P}HqLit()
 local h = {P}Hq[{P}HqIn]
 Cinematic_FadeIn(0.5)
 {P}HqDoorTimer = Event_RelativeTimer('{P}HqDoor', 'b', h.exitdelay)
+if h.chair then
+if h.chair.auto then {P}HqSit() else {P}HqUse(h.chair.obj, h.chair.sitprompt, '{P}HqSit') end
+end
 -- the greeting on the first visit (per save, as retail's); later visits go
 -- straight to the next briefing, or the idle lines
 local sKey = 'foundry_hq_greeted_' .. {P}HqIn
@@ -2485,6 +2609,7 @@ Objective_Remove('{P}obj_starter')
 {P}HqStarterOn = nil
 for i, a in h.leaders do {P}HqUnuse(a) end
 if h.starter then {P}HqUnuse(h.starter) end
+if h.chair then {P}HqUnuse(h.chair.obj) end
 {P}HqUnuse(h.door)
 end
 function {P}HqLeave()

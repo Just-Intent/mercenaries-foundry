@@ -107,7 +107,7 @@ interiors_lua, from maps json `"interiors"`).
 | Separate briefing scene, world reloaded after | a room on the map; fade and move, fade and move back | by design |
 | `mainkillbox` off while inside | not needed (the room is in the map) | - |
 | Control mode 13, weapon away, walking | the same (Foundry_HqMode) | same |
-| Seated in a chair, camera on the room's authored shot | **0.231: a fixed camera in the room** (`"camera"`), on the boss while lines play, on the player otherwise; the follow camera again on leaving. No chair or seating | closer |
+| Seated in a chair, camera on the room's authored shot | **0.234: `"chair"`**: retail's three stages with the faction's HQ clips (sit down; seated with use-only control and "Stand up"; up again, mode 13), seated on coming in; the fixed camera (0.231) frames it | closer |
 | Follow camera once standing (rooms built for it) | fixed camera throughout | differs |
 | HUD off | on; `"hide_hud"` hides it (for voiced lines only: ours are on-screen messages) (0.232) | by choice |
 | Room atmosphere, ambient light 80 | the map's own light | gap |
@@ -136,12 +136,31 @@ above the room spot. Put it high in a corner, clear of the walls.
 
 ### Still different
 
-- Seating: retail's chair (sit, a seated loop, stand up) uses animations and
-  hardpoints that only load with its briefing scene; the fixed camera does
-  the chair's job of framing the briefing.
+- The chair's camera: retail plays a camera animation authored with its
+  room (`allieshq_sitting_bosschair_camera`, relative to the briefing scene);
+  a room on a map keeps its fixed camera. The chair itself doesn't animate
+  (retail's allies chair has clips of its own, made for its model).
 - Props with voiced interactions.
 - The way out puts the player back by the guard, not at the respawn point
   (the world doesn't reload).
 
-All of these are set in the editor's HQs panel (an interior's Lines,
+### The chair (0.234)
+
+An interior's `"chair"`: `{"object": <the placed chair>, "position": [x, y, z],
+"heading": <deg>, "style"?: allies | china | mafia | sk, "auto"?: true}`.
+
+- The position is where the player's feet go, facing the way they sit.
+  Retail puts the player on the briefing scene's `hp_player_chair` hardpoint
+  instead.
+- On coming in, the player is put there and sits. With `"auto": false`,
+  "Sit down" goes on the chair instead.
+- Seated, only "use" works, and the chair says "Stand up". Standing puts
+  "Sit down" back on the chair.
+- Leaving the room or taking the contract while seated stands the player up
+  at once.
+- The clips are the style's retail ones (the interior's faction unless
+  set). The build adds them to the map's load list under `[animation]`, as
+  `<faction>_briefing` lists them.
+
+All of these are set in the editor's HQs panel (an interior's Chair, Lines,
 Atmosphere and The guard sections).

@@ -1228,6 +1228,43 @@ class MapScriptTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             missions.interiors("maps/gaza.json", "gaza", doc)
 
+    def test_interior_chair_seats_as_retail(self):
+        from mercfoundry import luacheck, missions
+        inside = self._interiors()
+        self.assertIsNone(inside["allies"]["chair"])
+        self.assertIn("chair = false", missions.interiors_lua("p_", inside))
+        self.assertEqual(missions.chair_clips(inside), [])
+        doc = {"interiors": {"sk": {"guard": {"position": [1, 2, 3]}, "room": {"position": [4, 5, 6]},
+                                    "leaders": ["boss"], "chair": {"object": "sk_chair", "position": [7, 8, 9],
+                                                                    "heading": 90}}}}
+        inside = missions.interiors("maps/gaza.json", "gaza", doc)
+        c = inside["sk"]["chair"]
+        self.assertEqual((c["style"], c["auto"], c["durations"]), ("sk", True, [3.0, 1.667]))
+        self.assertEqual(missions.chair_clips(inside), ["sk_interact_getup_chair_player", "sk_interact_sitdown_chair_player",
+                                                        "sk_interact_sitting_chair_player"])
+        text = modbuild.map_script("gaza", {}, [], contacts=True, inside=inside)
+        self.assertEqual(luacheck.check(text), [])
+        self.assertIn("chair = { obj = 'sk_chair', x = 7.00, y = 8.00, z = 9.00, yaw = ", text)
+        self.assertIn("sit = 'sk_interact_sitdown_chair_player', loop = 'sk_interact_sitting_chair_player', "
+                      "stand = 'sk_interact_getup_chair_player', dsit = 3.000, dstand = 1.667, auto = TRUE, "
+                      "sitprompt = 'actions.sitdown', standprompt = 'actions.standup' }", text)
+        # retail's three stages: sit down, the seated loop with use-only control
+        # and "Stand up", then up again with control mode 13
+        sitting = text[text.index("function foundry_gaza_HqSitting()"):]
+        self.assertIn("Player_EnableUseOnlyControl()", sitting[:sitting.index("\nend\n")])
+        self.assertIn("RS_AFLG_LOOP + RS_AFLG_NOHEAD", sitting[:sitting.index("\nend\n")])
+        self.assertIn("if h.chair.auto then foundry_gaza_HqSit() else", text)
+        rel = text[text.index("function foundry_gaza_HqRelease()"):]
+        self.assertIn("foundry_gaza_HqUnseat()", rel[:rel.index("\nend\n")])     # out of it on leaving or accepting
+        # another faction's style, and the errors
+        doc["interiors"]["sk"]["chair"]["style"] = "mafia"
+        self.assertEqual(missions.interiors("maps/gaza.json", "gaza", doc)["sk"]["chair"]["clips"][2],
+                         "mafia_getupchair_player")
+        for bad in ({"position": [1, 2, 3]}, {"object": "c"}, {"object": "c", "position": [1, 2, 3], "style": "idf"}):
+            doc["interiors"]["sk"]["chair"] = bad
+            with self.assertRaises(ValueError):
+                missions.interiors("maps/gaza.json", "gaza", doc)
+
     def test_welcome_mail(self):
         from mercfoundry import luacheck, missions
         mail = missions.welcome_mail("Gaza Expansion", {"sender": "Broker", "subject": "Hi", "body": "Go."})

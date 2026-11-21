@@ -73,6 +73,7 @@ export function createHq(ctx) {
       i.camera = i.camera || {};
       return [i.camera, 'position', 'point'];
     }
+    if (kind === 'chair') return [k.interiors[f], 'chair', 'spot'];
     return [null];
   }
 
@@ -104,6 +105,17 @@ export function createHq(ctx) {
       <label class="sky-row"><span>Second in command</span><input data-int-k="starter" value="${esc(i.starter === false ? '' : (i.starter || ''))}" placeholder="the second leader (accepts the contract)"></label>
       <label class="sky-row"><span>Accept prompt</span><input data-int-k="accept_prompt" value="${esc(i.accept_prompt || '')}" placeholder="Accept contract"></label>
       <label class="sky-row"><span>Talk prompt</span><input data-int-k="talk_prompt" value="${esc(i.talk_prompt || '')}" placeholder="Talk"></label>
+      <h4>Chair</h4>
+      <p class="hint">Retail seats the player for the briefing: a sit-down animation, seated with only "use" (a
+        "Stand up" prompt on the chair), then up again. Put the seat spot where the player's feet go, facing the way
+        they sit, and name the placed chair (its prompts go on it). The faction's HQ animations play; they load with
+        the map.</p>
+      ${spotRow('Seat', i.chair && i.chair.position ? i.chair : null, `chair:${f}`)}
+      <label class="sky-row"><span>Chair object</span><input data-int-k="chair.object" value="${esc((i.chair || {}).object || '')}" placeholder="the placed chair's name"></label>
+      <label class="sky-row"><span>Animations</span><select data-int-k="chair.style">
+        ${['', ...FACTIONS].map((s) => `<option value="${s}" ${((i.chair || {}).style || '') === s ? 'selected' : ''}>${s ? esc(name(s)) + "'s HQ" : `this faction's (${esc(name(f))})`}</option>`).join('')}
+      </select></label>
+      <label class="check"><input type="checkbox" data-int-k="chair.auto" ${(i.chair || {}).auto === false ? '' : 'checked'}> Seated on coming in (as retail); else "Sit down" on the chair</label>
       <h4>Way out</h4>
       <label class="sky-row"><span>Exit object</span><input data-int-k="exit.object" value="${esc(ex.object || '')}" placeholder="an actor, or set a point below"></label>
       ${spotRow('Exit point', ex.position ? {position: ex.position} : null, `exit:${f}`, {noHeading: true})}
@@ -224,6 +236,7 @@ export function createHq(ctx) {
       else if (path === 'bribe.cost') i.bribe = val ? {cost: Math.max(0, Math.round(+val))} : true;
       else if (path === 'hide_hud') { if (val) i.hide_hud = true; else delete i.hide_hud; }
       else if (path === 'guard_moods') i.guard_moods = !!val;
+      else if (path === 'chair.auto') { i.chair = i.chair || {}; if (val) delete i.chair.auto; else i.chair.auto = false; }
       else if (path === 'banter.retail') {
         if (val) i.banter = true; else if (i.banter === true) delete i.banter;
         draw();

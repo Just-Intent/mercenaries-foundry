@@ -3033,6 +3033,19 @@ def _apply_maps(data, folder, result):
             data.map_text = getattr(data, "map_text", {})
             data.map_text.setdefault(name.lower(), {})
         inside = getattr(data, "new_map_interiors", {}).get(name.lower())
+        clips = missions.chair_clips(inside or {})
+        if clips:
+            # retail's chair animations load with the briefing's layers; here
+            # the map's own list loads them ([animation], as <faction>_briefing)
+            lkey = name_hash(name)
+            body = data.find_added(lkey, name_hash("list"))
+            if body is None:
+                raise ValueError(f"{where}: no load list for the chairs' animations")
+            ltext = body.decode("latin-1")
+            for clip in clips:
+                ltext = missions.add_to_list(ltext, "animation", clip)
+            data.replace_added(lkey, name_hash("list"), ltext.encode("latin-1"))
+            result.changes.append(f"{name}: the HQ chairs' animations load with the map ({', '.join(clips)})")
         for c in getattr(data, "interior_contracts", []):
             if c["map"] == name.lower() and c["interior"] not in (inside or {}):
                 raise ValueError(f"missions/{c['id']}.json: \"contact\" \"interior\": {c['interior']}, but "
