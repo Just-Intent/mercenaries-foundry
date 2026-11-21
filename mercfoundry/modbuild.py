@@ -1360,6 +1360,8 @@ def _source_terrain_size(data, source):
 
 TRAVEL_PILOT = "template_allies_teleport_pilot"      # retail's quadrant pilot
 EXIT_TEMPLATE = "template_hq-allies-useable"     # retail's HQ exit and starter trigger: an invisible usable cube
+EXIT_MODEL = "global_invisible"       # an invisible box with bounds (no collision): rings show on it
+EXIT_RAISE = 0.74                     # its half height: the box stands on the floor
 
 
 def default_arrive(pilot_position):
@@ -1447,8 +1449,13 @@ def _travel_pilots(data, folder, result):
                 # cube (template_hq-<faction>-useable, allieshq_cube) with a
                 # gold ring, used to leave (briefing_utilities' EnableExit)
                 door = f"foundry_hqexit_{name.lower()}_{fac}"
-                out.append((door, name, {"from": EXIT_TEMPLATE, "name": door, "position": i["exit_position"],
-                                         "yaw": 0.0}))
+                # drawn as global_invisible (no collision, a 2 m box): the
+                # ring is sized from the target's bounds, and retail's cube
+                # (allieshq_cube) has none, so none showed (0.240-0.245);
+                # raised so the box's bottom is on the floor, as a person's feet
+                ex, ey, ez = i["exit_position"]
+                out.append((door, name, {"from": EXIT_TEMPLATE, "name": door, "position": [ex, ey + EXIT_RAISE, ez],
+                                         "yaw": 0.0, "set": {"GeometryFile": EXIT_MODEL}}))
                 i["door"] = door
             result.changes.append(f"HQ interior {fac} on {name}: guard {i['guard']} ({i['template']}), "
                                   f"{len(i['leaders'])} leaders, out by {i['door']}")

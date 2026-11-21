@@ -696,7 +696,8 @@ class ModBuildTests(unittest.TestCase):
         self.assertNotIn("math.", text)                                  # the game's Lua has no math library
         # eased, looking at the chest (not the feet: it framed knees and boots)
         self.assertIn("Camera_SetInterestPosition(l[1], l[2], l[3])", text)
-        self.assertIn("Camera_MoveToPosition(cx, cy, cz, 0.3, FALSE)", text)     # glides each frame (steps shook)
+        self.assertIn("Camera_MoveToPosition(cx, cy, cz, 0.5, FALSE)", text)     # a glide finishes before the next (restarted each tick, it stuttered)
+        self.assertIn("if a[4] >= 0.5 or dx * dx + dy * dy + dz * dz > 0.1225 then", text)
         # the HUD back on every way out and on the map's start (0.241 lost it for good)
         rel = text[text.index("function foundry_gaza_HqRelease()"):]
         self.assertIn("Ui_EnableHud(TRUE)", rel[:rel.index("if not foundry_gaza_HqHeld then return end")])
@@ -1247,7 +1248,7 @@ class MapScriptTests(unittest.TestCase):
         # the starter's ring and prompt, the door's after its delay
         self.assertIn("Objective_SetTargetActor('foundry_gaza_obj_starter', h.starter, '', 'TARGET_TYPE_UNDEFINED'", text)
         self.assertIn("Objective_SetTargetActor('foundry_gaza_obj_exit', door", text)
-        self.assertIn("Mission_Spawn(h.door, spawned, h.dx, ry, h.dz, 0)", text)     # a spawned cube, as retail's
+        self.assertIn("Mission_Spawn(h.door, spawned, h.dx, ry + 0.74, h.dz, 0)", text)     # a spawned cube, as retail's
         self.assertIn("exitdelay = 5.0", text)
         self.assertIn("doordist = 3.0", text)
         self.assertIn("Actor_EnableScriptedUse(name, TRUE, prompt, FALSE, dist)", text)

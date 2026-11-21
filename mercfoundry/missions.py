@@ -2549,12 +2549,20 @@ local cy, ly = y + fw.up, y + fw.look
 -- the point it looks at (the player's chest, not their feet) eases after
 local l = {P}HqLookAt
 if not {P}HqCamAt then
-{P}HqCamAt = 1
+{P}HqCamAt = {{ cx, cy, cz, 0 }}
 l = {{ x, ly, z }}
 Camera_SetPosition(cx, cy, cz)
 else
-l[1] = l[1] + (x - l[1]) * 0.25   l[2] = l[2] + (ly - l[2]) * 0.25   l[3] = l[3] + (z - l[3]) * 0.25
-Camera_MoveToPosition(cx, cy, cz, 0.3, FALSE)
+l[1] = l[1] + (x - l[1]) * 0.2   l[2] = l[2] + (ly - l[2]) * 0.2   l[3] = l[3] + (z - l[3]) * 0.2
+-- a new glide only once the last has had its time or the target moved
+-- 0.35 m: one restarted every 0.033 s never finished, and stuttered
+local a = {P}HqCamAt
+a[4] = a[4] + 0.033
+local dx, dy, dz = cx - a[1], cy - a[2], cz - a[3]
+if a[4] >= 0.5 or dx * dx + dy * dy + dz * dz > 0.1225 then
+Camera_MoveToPosition(cx, cy, cz, 0.5, FALSE)
+a[1], a[2], a[3], a[4] = cx, cy, cz, 0
+end
 end
 {P}HqLookAt = l
 Camera_SetInterestPosition(l[1], l[2], l[3])
@@ -2747,7 +2755,8 @@ local px, py, pz = Actor_GetPosition('player0')
 local ry = h.dy
 if py and py > ry then ry = py end
 local spawned = h.door .. '_out'
-if not Utility_DoesActorExist(spawned) then Mission_Spawn(h.door, spawned, h.dx, ry, h.dz, 0) end
+-- (the placed one draws an invisible 2 m box, raised 0.74 m to stand on the floor)
+if not Utility_DoesActorExist(spawned) then Mission_Spawn(h.door, spawned, h.dx, ry + 0.74, h.dz, 0) end
 if Utility_DoesActorExist(spawned) then door = spawned {P}HqDoorSpawned = spawned end
 {P}HqRingAt = {{ h.dx, ry, h.dz }}
 end
