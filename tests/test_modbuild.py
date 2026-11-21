@@ -692,11 +692,11 @@ class ModBuildTests(unittest.TestCase):
         self.assertEqual(luacheck.check(text), [])
         self.assertIn("follow = { dist = 2.00, up = 2.10, look = 1.30, fx = 1.0000, fz = 0.0000, x0 = 5.30, z0 = 5.30, x1 = 14.70, z1 = 12.70 }", text)
         self.assertIn("if h.follow then foundry_gaza_HqFollowOn(h) return end", text)
-        self.assertIn("Event_RelativeTimer('foundry_gaza_HqFollow', 'b', 0.05)", text)
+        self.assertIn("Event_RelativeTimer('foundry_gaza_HqFollow', 'b', 0.033)", text)
         self.assertNotIn("math.", text)                                  # the game's Lua has no math library
         # eased, looking at the chest (not the feet: it framed knees and boots)
         self.assertIn("Camera_SetInterestPosition(l[1], l[2], l[3])", text)
-        self.assertIn("c[1] = c[1] + (cx - c[1]) * 0.2", text)
+        self.assertIn("Camera_MoveToPosition(cx, cy, cz, 0.3, FALSE)", text)     # glides each frame (steps shook)
         # "fixed": the 0.231 camera at its spot
         doc["interiors"]["allies"]["camera"] = {"mode": "fixed", "position": [12, 2, 12]}
         self.assertIsNone(missions.interiors("maps/gaza.json", "gaza", doc)["allies"]["follow"])
@@ -1306,14 +1306,18 @@ class MapScriptTests(unittest.TestCase):
         tpl, pos, yaw = missions.chair_placement(placed)
         self.assertEqual((tpl, yaw), ("template_hq-mafia-chair", 180.0))
         self.assertAlmostEqual(pos[2], 19.56)
-        doc["interiors"]["sk"]["chair"] = {"position": [10, 0, 20], "heading": 90, "style": "allies"}
+        # the allies' rig at rest, its seat (0.94, -0.42 in the rig, facing +x)
+        # under where the sit clip leaves the hips (-0.07, -0.64 in the player's
+        # frame), facing the way the player does (0.241 put it 1 m off)
+        doc["interiors"]["sk"]["chair"] = {"position": [3700, 87.54, 3702.6], "heading": 180, "style": "allies"}
         rig = missions.interiors("maps/gaza.json", "gaza", doc)
-        self.assertEqual(missions.chair_placement(rig["sk"]["chair"])[1:], ([10.0, 0.0, 20.0], 270.0))
-        self.assertIn("allies_interact_sitdown_chair_chair", missions.chair_clips(rig))     # the allies rig's own clips
-        rig["sk"]["chair"]["object"] = "foundry_hqchair_gaza_sk"
-        lua = missions.interiors_lua("p_", rig)
-        self.assertIn("rig1 = 'allies_interact_sitdown_chair_chair'", lua)
-        self.assertIn("if c.rig1 then Actor_PlayAnimation(c.obj, c.rig1) end", lua)
+        tpl, pos, yaw = missions.chair_placement(rig["sk"]["chair"])
+        sx, sz = missions._turn(yaw, *missions.ALLIES_SEAT_REST)
+        self.assertEqual((tpl, yaw), ("template_hq-allies-chair", 90.0))
+        self.assertAlmostEqual(pos[0] + sx, 3699.93, 2)
+        self.assertAlmostEqual(pos[2] + sz, 3701.96, 2)
+        self.assertEqual([round(v, 3) for v in missions._turn(yaw, 1, 0)], [0.0, -1.0])     # facing -z, as the player
+        self.assertNotIn("allies_interact_sitdown_chair_chair", missions.chair_clips(rig))
         for bad in ({"object": "c"}, {"object": "c", "position": [1, 2, 3], "style": "idf"}):
             doc["interiors"]["sk"]["chair"] = bad
             with self.assertRaises(ValueError):

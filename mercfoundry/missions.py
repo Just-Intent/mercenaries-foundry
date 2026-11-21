@@ -2031,20 +2031,39 @@ CHAIR_STYLES = {
 CHAIR_TEMPLATES = {"allies": "template_hq-allies-chair", "china": "template_hq-china-chair",
                    "mafia": "template_hq-mafia-chair", "sk": "template_hq-sk-chair"}
 CHAIR_BEHIND = {"mafia": 0.44}
-CHAIR_RIG_CLIPS = {"allies": ("allies_interact_sitdown_chair_chair", "allies_interact_sitting_chair_chair",
-                              "allies_interact_standup_chair_chair")}
+# The allies' rig, left at rest (its own clips swing the seat under the
+# player in retail's scene; on a map they left it 1 m off in the 0.241
+# playtest): the seat's centre at rest, in the rig's frame (x, z), facing the
+# rig's +x; and where allies_interact_sitdown_chair_player leaves the hips
+# (bone_root), in the player's frame. The chair is turned to face the way the
+# player does and moved so its seat is under the hips.
+ALLIES_SEAT_REST = (0.94, -0.42)
+ALLIES_HIPS = (-0.07, -0.64)
+CHAIR_RIG_CLIPS = {}
+
+
+def _turn(yaw_deg, x, z):
+    """A prop's frame turned to yaw (0 faces +z): its (x, z) in the world."""
+    a = math.radians(yaw_deg)
+    return (x * math.cos(a) + z * math.sin(a), -x * math.sin(a) + z * math.cos(a))
 
 
 def chair_placement(chair):
     """(template, position, yaw) of the chair the build places for an
     interior's "chair" with no "object": retail's chair of its style in the
     player's frame (a prop's yaw 0 faces +z, the player's model faces its -z:
-    the chair's yaw is the heading + 180)."""
+    the player's frame is a prop's at the heading + 180). The allies' rig is
+    placed at rest, its seat under where the sit clip leaves the hips."""
+    x, y, z = chair["position"]
+    frame = (chair["heading"] + 180.0) % 360.0
+    if chair["style"] == "allies":
+        hx, hz = _turn(frame, *ALLIES_HIPS)
+        yaw = (chair["heading"] - 90.0) % 360.0          # the rig's +x along the way the player faces
+        sx, sz = _turn(yaw, *ALLIES_SEAT_REST)
+        return CHAIR_TEMPLATES["allies"], [x + hx - sx, y, z + hz - sz], yaw
     h = math.radians(chair["heading"])
     back = CHAIR_BEHIND.get(chair["style"], 0.0)
-    x, y, z = chair["position"]
-    return (CHAIR_TEMPLATES[chair["style"]], [x - back * math.sin(h), y, z - back * math.cos(h)],
-            (chair["heading"] + 180.0) % 360.0)
+    return (CHAIR_TEMPLATES[chair["style"]], [x - back * math.sin(h), y, z - back * math.cos(h)], frame)
 
 
 def _interior_chair(w, faction, c):
@@ -2455,37 +2474,42 @@ if not h or not h.follow or not {P}HqCamOn then return end
 local fw = h.follow
 local x, y, z = Actor_GetPosition('player0')
 if x then
+local moved = not {P}HqLastX
 if {P}HqLastX and not {P}HqSeated then
 local dx, dz = x - {P}HqLastX, z - {P}HqLastZ
-if dx * dx + dz * dz > 0.0004 then
--- turned gradually toward the way walked
-local nx, nz = {P}HqFx * 0.85 + dx * 6, {P}HqFz * 0.85 + dz * 6
-local l = {P}HqLen(nx * nx + nz * nz)
+local d2 = dx * dx + dz * dz
+if d2 > 0.0025 then
+-- turned gently toward the way walked (a step of 5 cm or more)
+local l = {P}HqLen(d2)
+local nx, nz = {P}HqFx * 0.9 + dx / l * 0.1, {P}HqFz * 0.9 + dz / l * 0.1
+l = {P}HqLen(nx * nx + nz * nz)
 if l > 0.001 then {P}HqFx, {P}HqFz = nx / l, nz / l end
+moved = true
 end
 end
-{P}HqLastX, {P}HqLastZ = x, z
+if moved then {P}HqLastX, {P}HqLastZ = x, z end
 local cx, cz = x - {P}HqFx * fw.dist, z - {P}HqFz * fw.dist
 if fw.x0 then
 if cx < fw.x0 then cx = fw.x0 elseif cx > fw.x1 then cx = fw.x1 end
 if cz < fw.z0 then cz = fw.z0 elseif cz > fw.z1 then cz = fw.z1 end
 end
 local cy, ly = y + fw.up, y + fw.look
--- eased toward where it should be (a fifth of the way each 0.05 s), the
--- camera and the point it looks at (the player's chest, not their feet)
-local c, l = {P}HqCamAt, {P}HqLookAt
-if not c then
-c = {{ cx, cy, cz }}
+-- the camera glides there (Camera_MoveToPosition moves it each frame, as
+-- retail's scripted shots do; set each 0.033 s it showed as steps), and
+-- the point it looks at (the player's chest, not their feet) eases after
+local l = {P}HqLookAt
+if not {P}HqCamAt then
+{P}HqCamAt = 1
 l = {{ x, ly, z }}
+Camera_SetPosition(cx, cy, cz)
 else
-c[1] = c[1] + (cx - c[1]) * 0.2   c[2] = c[2] + (cy - c[2]) * 0.2   c[3] = c[3] + (cz - c[3]) * 0.2
-l[1] = l[1] + (x - l[1]) * 0.3   l[2] = l[2] + (ly - l[2]) * 0.3   l[3] = l[3] + (z - l[3]) * 0.3
+l[1] = l[1] + (x - l[1]) * 0.25   l[2] = l[2] + (ly - l[2]) * 0.25   l[3] = l[3] + (z - l[3]) * 0.25
+Camera_MoveToPosition(cx, cy, cz, 0.3, FALSE)
 end
-{P}HqCamAt, {P}HqLookAt = c, l
-Camera_SetPosition(c[1], c[2], c[3])
+{P}HqLookAt = l
 Camera_SetInterestPosition(l[1], l[2], l[3])
 end
-{P}HqFollowT = Event_RelativeTimer('{P}HqFollow', 'b', 0.05)
+{P}HqFollowT = Event_RelativeTimer('{P}HqFollow', 'b', 0.033)
 end
 function {P}HqCamOff()
 if {P}HqFollowT then Event_CancelEvent({P}HqFollowT) {P}HqFollowT = nil end
@@ -2650,13 +2674,27 @@ local h = {P}HqIn and {P}Hq[{P}HqIn]
 if not h then return end
 if h.door ~= '' and Utility_DoesActorExist(h.door) then
 {P}HqUse(h.door, h.doorprompt, '{P}HqLeave', h.doordist)
+if h.dx then
+-- an exit point's ring on the floor the player stands on: at the point's
+-- own height (the room spot's) it was under the room's floor and never
+-- showed; a leader's ring is at their feet, which is why the starter's did
+local px, py, pz = Actor_GetPosition('player0')
+local ry = h.dy
+if py and py > ry then ry = py + 0.02 end
+Objective_SetTargetVector('{P}obj_exit', '{P}obj_exit', '', 'TARGET_TYPE_UNDEFINED', 'blip', h.dx, ry, h.dz, FALSE, FALSE, TRUE)
+{P}HqTrace('door ' .. h.door .. ' armed, ring at y ' .. ry .. ' (exit y ' .. h.dy .. ')')
+else
 Objective_SetTargetActor('{P}obj_exit', h.door, '', 'TARGET_TYPE_UNDEFINED', 'blip', TRUE, TRUE, TRUE, 0.5)
 {P}HqTrace('door ' .. h.door .. ' armed')
+end
 elseif h.dx then
 -- a point ("exit" "position"): its ring, and coming near asks to leave
-Objective_SetTargetVector('{P}obj_exit', '{P}obj_exit', h.doorprompt, 'TARGET_TYPE_UNDEFINED', 'blip', h.dx, h.dy, h.dz, FALSE, FALSE, TRUE)
+local px, py, pz = Actor_GetPosition('player0')
+local ry = h.dy
+if py and py > ry then ry = py + 0.02 end
+Objective_SetTargetVector('{P}obj_exit', '{P}obj_exit', h.doorprompt, 'TARGET_TYPE_UNDEFINED', 'blip', h.dx, ry, h.dz, FALSE, FALSE, TRUE)
 {P}HqDoorNear()
-{P}HqTrace('door point armed')
+{P}HqTrace('door point armed (no ' .. h.door .. '), ring at y ' .. ry)
 else
 {P}HqTrace('door ' .. h.door .. ' not found (give "exit" a "position")')
 end
