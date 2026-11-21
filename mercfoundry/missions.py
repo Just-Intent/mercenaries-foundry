@@ -2259,6 +2259,45 @@ end
 function {P}HqLog()
 return Utility_ReadStringFromScribbleMemory('{P}hq_log') or 'no HQ steps yet'
 end
+-- Measured numbers for the room, to plugins.log (Foundry Console's
+-- Foundry_Log) and returned: the player's and objects' positions and yaws as
+-- the game has them, the seat spot and yaw the chair was asked for, where the
+-- exit's ring is drawn, the follow camera's target and look-at, the ground's
+-- height. On entering, 2 s into the seated loop, after standing, when the way
+-- out is armed and every 2 s for the first 10 s; foundry_HqDump() any time.
+function {P}HqDump(tag)
+local h = {P}HqIn and {P}Hq[{P}HqIn]
+local function r(v) if not v then return 'nil' end return Utility_MathFloor(v * 100 + 0.5) / 100 end
+local function v3(t) if not t then return 'none' end return '(' .. r(t[1]) .. ', ' .. r(t[2]) .. ', ' .. r(t[3]) .. ')' end
+local function at(n)
+if not n or n == '' or not Utility_DoesActorExist(n) then return tostring(n) .. '=none' end
+local x, y, z = Actor_GetPosition(n)
+return n .. '=(' .. r(x) .. ', ' .. r(y) .. ', ' .. r(z) .. ') yaw ' .. r(Actor_GetYaw(n))
+end
+local s = 'hq dump ' .. (tag or '') .. ' [' .. tostring({P}HqIn) .. '] ' .. at('player0')
+if h then
+s = s .. ' | room spot (' .. r(h.rx) .. ', ' .. r(h.ry) .. ', ' .. r(h.rz) .. ') setyaw ' .. r(h.rh)
+if h.chair then
+s = s .. ' | chair ' .. at(h.chair.obj) .. ', seat spot (' .. r(h.chair.x) .. ', ' .. r(h.chair.y) .. ', ' .. r(h.chair.z)
+.. ') setyaw ' .. r(h.chair.yaw) .. ', seated ' .. tostring({P}HqSeated)
+end
+s = s .. ' | exit ' .. at(h.door) .. ', ring ' .. v3({P}HqRingAt)
+s = s .. ' | camera on ' .. tostring({P}HqCamOn) .. ', target ' .. v3({P}HqCamWant) .. ', look ' .. v3({P}HqLookAt)
+for i, a in h.leaders do s = s .. ' | ' .. at(a) end
+end
+local x, y, z = Actor_GetPosition('player0')
+if x and Utility_GetTerrainHeightAtXZ then s = s .. ' | ground ' .. r(Utility_GetTerrainHeightAtXZ(x, z)) end
+if Foundry_Log then Foundry_Log(s) end
+return s
+end
+function foundry_HqDump() return {P}HqDump('asked') end
+function {P}HqDumpSeated() if {P}HqSeated then {P}HqDump('seated +2 s') end end
+function {P}HqDumpWalk()
+{P}HqDumpN = ({P}HqDumpN or 0) + 1
+if not {P}HqIn or {P}HqDumpN > 5 then return end
+{P}HqDump('in the room +' .. ({P}HqDumpN * 2) .. ' s')
+Event_RelativeTimer('{P}HqDumpWalk', 'b', 2.0)
+end
 function {P}HqRules(name)
 Ai_SetHostileRange(name, 0.0)
 Actor_SetVerifiable(name, FALSE)
@@ -2494,6 +2533,7 @@ if cx < fw.x0 then cx = fw.x0 elseif cx > fw.x1 then cx = fw.x1 end
 if cz < fw.z0 then cz = fw.z0 elseif cz > fw.z1 then cz = fw.z1 end
 end
 local cy, ly = y + fw.up, y + fw.look
+{P}HqCamWant = {{ cx, cy, cz }}
 -- the camera glides there (Camera_MoveToPosition moves it each frame, as
 -- retail's scripted shots do; set each 0.033 s it showed as steps), and
 -- the point it looks at (the player's chest, not their feet) eases after
@@ -2550,6 +2590,7 @@ Player_EnableUseOnlyControl()
 Actor_PlayHumanAnimation('player0', h.chair.loop, RS_AFLG_LOOP + RS_AFLG_NOHEAD)
 if h.chair.rig2 then Actor_PlayAnimation(h.chair.obj, h.chair.rig2, RS_AFLG_LOOP) end
 {P}HqUse(h.chair.obj, h.chair.standprompt, '{P}HqStand')
+Event_RelativeTimer('{P}HqDumpSeated', 'b', 2.0)
 end
 function {P}HqStand()
 local h = {P}HqIn and {P}Hq[{P}HqIn]
@@ -2566,6 +2607,7 @@ function {P}HqStood()
 local h = {P}HqIn and {P}Hq[{P}HqIn]
 {P}HqUnseat()
 if h and h.chair then {P}HqUse(h.chair.obj, h.chair.sitprompt, '{P}HqSit') end
+{P}HqDump('stood up')
 end
 -- Out of the chair at once (leaving, or taking the contract while seated).
 function {P}HqUnseat()
@@ -2636,6 +2678,9 @@ end
 function {P}HqLit()
 local h = {P}Hq[{P}HqIn]
 Cinematic_FadeIn(0.5)
+{P}HqDump('entered')
+{P}HqDumpN = 0
+Event_RelativeTimer('{P}HqDumpWalk', 'b', 2.0)
 {P}HqDoorTimer = Event_RelativeTimer('{P}HqDoor', 'b', h.exitdelay)
 if h.chair then
 if h.chair.auto then {P}HqSit() else {P}HqUse(h.chair.obj, h.chair.sitprompt, '{P}HqSit') end
@@ -2685,7 +2730,9 @@ local px, py, pz = Actor_GetPosition('player0')
 local ry = h.dy
 if py and py > ry then ry = py + 0.02 end
 Objective_SetTargetVector('{P}obj_exit', '{P}obj_exit', '', 'TARGET_TYPE_UNDEFINED', 'blip', h.dx, ry, h.dz, FALSE, FALSE, TRUE)
+{P}HqRingAt = {{ h.dx, ry, h.dz }}
 {P}HqTrace('door ' .. h.door .. ' armed, ring at y ' .. ry .. ' (exit y ' .. h.dy .. ')')
+{P}HqDump('exit armed')
 else
 Objective_SetTargetActor('{P}obj_exit', h.door, '', 'TARGET_TYPE_UNDEFINED', 'blip', TRUE, TRUE, TRUE, 0.5)
 {P}HqTrace('door ' .. h.door .. ' armed')
@@ -2696,6 +2743,8 @@ local px, py, pz = Actor_GetPosition('player0')
 local ry = h.dy
 if py and py > ry then ry = py + 0.02 end
 Objective_SetTargetVector('{P}obj_exit', '{P}obj_exit', h.doorprompt, 'TARGET_TYPE_UNDEFINED', 'blip', h.dx, ry, h.dz, FALSE, FALSE, TRUE)
+{P}HqRingAt = {{ h.dx, ry, h.dz }}
+{P}HqDump('exit armed (point)')
 {P}HqDoorNear()
 {P}HqTrace('door point armed (no ' .. h.door .. '), ring at y ' .. ry)
 else

@@ -102,6 +102,7 @@ static void sampler_init(void);
 static void sampler_shutdown(void);
 static void maptex_poll(double dt);
 static void maptext_poll(double dt);
+static void hq_dump_poll(double dt);
 static int MERC_PLUGIN_CALL cmd_sample(void *ud, uint32_t L);
 static int MERC_PLUGIN_CALL cmd_label(void *ud, uint32_t L);
 static CRITICAL_SECTION lock;
@@ -1221,6 +1222,7 @@ static int MERC_PLUGIN_CALL on_update(void *ud, const MercPluginUpdate *u)
     live_update(u->wall_delta_seconds);
     maptex_poll(u->wall_delta_seconds);
     maptext_poll(u->wall_delta_seconds);
+    hq_dump_poll(u->wall_delta_seconds);
     /* F7 toggles the window while this game (or the console) has focus. */
     DWORD pid = 0;
     GetWindowThreadProcessId(GetForegroundWindow(), &pid);
@@ -2784,6 +2786,78 @@ static int MERC_PLUGIN_CALL cmd_label(void *ud, uint32_t L)
     return 1;
 }
 
+/* ---- HQ dumps: measured numbers for HQ rooms ----
+ * Foundry_Log(text) writes a script's line to plugins.log (a new map's
+ * interiors log their dumps with it: foundry_<map>_HqDump). Retail's HQ
+ * briefing is measured from here: from Briefing_Init, every 2 s for 30 s and
+ * once at Briefing_Deinit, a line of Lua in the newest script (the
+ * briefing's) gives the player's, the chair's, the exit's and the scene's
+ * positions and yaws (both are attached to the scene's hp_player_chair, so
+ * these are retail's real player-to-chair numbers). */
+static int MERC_PLUGIN_CALL cmd_log(void *ud, uint32_t L)
+{
+    (void)ud;
+    char text[900];
+    lua_arg_text(L, 1, text, sizeof(text));
+    host->log(host->context, text);
+    push_text(L, "logged");
+    return 1;
+}
+
+#define RETAIL_HQ_DUMP \
+    "(function() local function r(v) if not v then return 'nil' end return Utility_MathFloor(v * 100 + 0.5) / 100 end " \
+    "local function at(n) if not Utility_DoesActorExist(n) then return n .. '=none  ' end " \
+    "local x, y, z = Actor_GetPosition(n) return n .. '=(' .. r(x) .. ', ' .. r(y) .. ', ' .. r(z) .. ') yaw ' .. r(Actor_GetYaw(n)) .. '  ' end " \
+    "local s = at('player0') .. at('chair') .. at('starter_trigger') .. at('exit') .. at('boss') .. at('starter') " \
+    "local sc = Briefing_GetSceneActor and Briefing_GetSceneActor() " \
+    "if sc then local x, y, z = Actor_GetPosition(sc) s = s .. 'scene=(' .. r(x) .. ', ' .. r(y) .. ', ' .. r(z) .. ') yaw ' .. r(Actor_GetYaw(sc)) .. '  ' end " \
+    "local x, y, z = Actor_GetPosition('player0') " \
+    "if x and Utility_GetTerrainHeightAtXZ then s = s .. 'terrain ' .. r(Utility_GetTerrainHeightAtXZ(x, z)) end " \
+    "return s end)()"
+
+static double brief_dump_t = -1.0, brief_dump_next;
+static int brief_dump_final;
+
+static void retail_hq_dump(const char *when)
+{
+    char result[1024], line[1200];
+    int expression = 0;
+    int st = lua_line(0, RETAIL_HQ_DUMP, result, sizeof(result), &expression);
+    snprintf(line, sizeof(line), "hq dump retail %s: %s%s", when, st ? "(couldn't run) " : "", result);
+    host->log(host->context, line);
+}
+
+static void MERC_PLUGIN_CALL briefing_init_after(void *ud, MercHookContext *c)
+{
+    (void)ud; (void)c;
+    brief_dump_t = 0.0;
+    brief_dump_next = 1.0;
+    host->log(host->context, "hq dump retail: briefing started");
+}
+
+static void MERC_PLUGIN_CALL briefing_deinit_before(void *ud, MercHookContext *c)
+{
+    (void)ud; (void)c;
+    if (brief_dump_t >= 0.0) brief_dump_final = 1;   /* dumped from the next update, outside the hook */
+    brief_dump_t = -1.0;
+}
+
+static void hq_dump_poll(double dt)
+{
+    char when[32];
+    if (brief_dump_final) {
+        brief_dump_final = 0;
+        retail_hq_dump("leaving");
+    }
+    if (brief_dump_t < 0.0) return;
+    brief_dump_t += dt;
+    if (brief_dump_t >= brief_dump_next && brief_dump_next <= 30.0) {
+        snprintf(when, sizeof(when), "%.0f s", brief_dump_next);
+        retail_hq_dump(when);
+        brief_dump_next += 2.0;
+    }
+}
+
 static void sampler_init(void)
 {
     wchar_t dir[MAX_PATH * 2], path[MAX_PATH * 2];
@@ -3497,12 +3571,16 @@ MERC_PLUGIN_EXPORT int MERC_PLUGIN_CALL MercenariesPlugin_Init(
         !h->add_lua_command(h->context, "Foundry_MapText", cmd_map_text, NULL) ||
         !h->add_lua_command(h->context, "Foundry_MapTexture", cmd_map_texture, NULL) ||
         !h->add_lua_command(h->context, "Foundry_HqMode", cmd_hq_mode, NULL) ||
-        !h->add_lua_command(h->context, "Foundry_MapTemplate", cmd_map_template, NULL))
+        !h->add_lua_command(h->context, "Foundry_MapTemplate", cmd_map_template, NULL) ||
+        !h->add_lua_command(h->context, "Foundry_Log", cmd_log, NULL))
         h->log(h->context, "script commands unavailable; Foundry_TrafficZone, Foundry_Range, Foundry_Sample, "
                            "Foundry_Label, Foundry_SetHandling and Foundry_MapText may not exist");
     if (!h->hook_guest(h->context, MF_FN_DataPod_BuildCards, datapod_cards_before, datapod_cards_after, NULL))
         h->log(h->context, "PDA card list hook unavailable (run port-hooks); cards the Deck screen showed before "
                            "may keep the game's texts on a map with its own");
+    if (!h->hook_guest(h->context, MF_FN_Briefing_Init, NULL, briefing_init_after, NULL) ||
+        !h->hook_guest(h->context, MF_FN_Briefing_Deinit, briefing_deinit_before, NULL, NULL))
+        h->log(h->context, "briefing hooks unavailable (run port-hooks); retail HQ briefings aren't measured");
     if (!h->hook_guest(h->context, MF_FN_FrontEnd_BuildPauseMenu, pause_menu_before, NULL, NULL))
         h->log(h->context, "pause menu hook unavailable (run port-hooks); its contract check isn't logged");
     if (!h->hook_guest(h->context, MF_FN_DataPod_DrawTexture, datapod_draw_before, NULL, NULL))

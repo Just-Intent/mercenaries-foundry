@@ -61,6 +61,14 @@ Script commands it adds, for the Lua box or any script:
   Spawner_SpawnTemplate (0x174480) swaps its template hash argument. Logged,
   with how many spawns used a swap when the level unloads. Used by a new
   map's `"template_overrides"`. Not yet run in game.
+- `Foundry_Log('<text>')`: writes a script's line to plugins.log. A new
+  map's HQ interiors log their measurements with it (`hq dump ...` lines:
+  `foundry_<map>_HqDump`, `foundry_HqDump()` in the Lua box). Retail's HQ
+  briefings are measured by the plugin itself: from `Briefing_Init`, every
+  2 s for 30 s and once at `Briefing_Deinit`, `hq dump retail` lines give the
+  player's, chair's, exit's, starter's, boss's and the scene's positions and
+  yaws (the player and chair are attached to the scene's `hp_player_chair`).
+  Compiled; not yet run in game.
 - `Foundry_Range()` runs the [test range](ENCOUNTERS.md#test-range)'s
   `range.lua` in the calling script state. It looks for the file in
   `mods\Foundry Test Range` first, then in the launcher's runtime copy, where
