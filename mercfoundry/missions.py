@@ -2523,48 +2523,38 @@ if not h or not h.follow or not {P}HqCamOn then return end
 local fw = h.follow
 local x, y, z = Actor_GetPosition('player0')
 if x then
-local moved = not {P}HqLastX
-if {P}HqLastX and not {P}HqSeated then
-local dx, dz = x - {P}HqLastX, z - {P}HqLastZ
-local d2 = dx * dx + dz * dz
-if d2 > 0.0025 then
--- turned gently toward the way walked (a step of 5 cm or more)
-local l = {P}HqLen(d2)
-local nx, nz = {P}HqFx * 0.9 + dx / l * 0.1, {P}HqFz * 0.9 + dz / l * 0.1
-l = {P}HqLen(nx * nx + nz * nz)
-if l > 0.001 then {P}HqFx, {P}HqFz = nx / l, nz / l end
-moved = true
-end
-end
-if moved then {P}HqLastX, {P}HqLastZ = x, z end
-local cx, cz = x - {P}HqFx * fw.dist, z - {P}HqFz * fw.dist
-if fw.x0 then
-if cx < fw.x0 then cx = fw.x0 elseif cx > fw.x1 then cx = fw.x1 end
-if cz < fw.z0 then cz = fw.z0 elseif cz > fw.z1 then cz = fw.z1 end
-end
+-- A trailing camera (0.248): it keeps its own side of the player and is
+-- only pulled in or out to "distance", so turning on the spot doesn't swing
+-- it round the room (following his facing or walking direction did: the
+-- 0.247 dumps had his yaw swing 180 degrees in 2 s). Seated, and at first,
+-- it goes behind the way he faces. Eased a little each tick and set
+-- directly: restarted glides (0.245-0.247) stuttered.
+local c = {P}HqCamAt
 local cy, ly = y + fw.up, y + fw.look
-{P}HqCamWant = {{ cx, cy, cz }}
--- the camera glides there (Camera_MoveToPosition moves it each frame, as
--- retail's scripted shots do; set each 0.033 s it showed as steps), and
--- the point it looks at (the player's chest, not their feet) eases after
-local l = {P}HqLookAt
-if not {P}HqCamAt then
-{P}HqCamAt = {{ cx, cy, cz, 0 }}
-l = {{ x, ly, z }}
-Camera_SetPosition(cx, cy, cz)
+local tx, tz
+if not c or {P}HqSeated then
+tx, tz = x - {P}HqFx * fw.dist, z - {P}HqFz * fw.dist
 else
-l[1] = l[1] + (x - l[1]) * 0.2   l[2] = l[2] + (ly - l[2]) * 0.2   l[3] = l[3] + (z - l[3]) * 0.2
--- a new glide only once the last has had its time or the target moved
--- 0.35 m: one restarted every 0.033 s never finished, and stuttered
-local a = {P}HqCamAt
-a[4] = a[4] + 0.033
-local dx, dy, dz = cx - a[1], cy - a[2], cz - a[3]
-if a[4] >= 0.5 or dx * dx + dy * dy + dz * dz > 0.1225 then
-Camera_MoveToPosition(cx, cy, cz, 0.5, FALSE)
-a[1], a[2], a[3], a[4] = cx, cy, cz, 0
+local dx, dz = c[1] - x, c[3] - z
+local l = {P}HqLen(dx * dx + dz * dz)
+if l < 0.05 then dx, dz, l = -{P}HqFx, -{P}HqFz, 1 end
+tx, tz = x + dx / l * fw.dist, z + dz / l * fw.dist
 end
+if fw.x0 then
+if tx < fw.x0 then tx = fw.x0 elseif tx > fw.x1 then tx = fw.x1 end
+if tz < fw.z0 then tz = fw.z0 elseif tz > fw.z1 then tz = fw.z1 end
 end
-{P}HqLookAt = l
+{P}HqCamWant = {{ tx, cy, tz }}
+local l = {P}HqLookAt
+if not c then
+c = {{ tx, cy, tz }}
+l = {{ x, ly, z }}
+else
+c[1] = c[1] + (tx - c[1]) * 0.15   c[2] = c[2] + (cy - c[2]) * 0.15   c[3] = c[3] + (tz - c[3]) * 0.15
+l[1] = l[1] + (x - l[1]) * 0.25   l[2] = l[2] + (ly - l[2]) * 0.25   l[3] = l[3] + (z - l[3]) * 0.25
+end
+{P}HqCamAt, {P}HqLookAt = c, l
+Camera_SetPosition(c[1], c[2], c[3])
 Camera_SetInterestPosition(l[1], l[2], l[3])
 end
 {P}HqFollowT = Event_RelativeTimer('{P}HqFollow', 'b', 0.033)
@@ -2624,7 +2614,9 @@ function {P}HqStood()
 {P}HqSitTimer = nil
 local h = {P}HqIn and {P}Hq[{P}HqIn]
 {P}HqUnseat()
-if h and h.chair then {P}HqUse(h.chair.obj, h.chair.sitprompt, '{P}HqSit') end
+-- "Sit down" again, within 1 m only: at the default reach it took E from
+-- the way out by the door (0.247 playtest: sat down again trying to leave)
+if h and h.chair then {P}HqUse(h.chair.obj, h.chair.sitprompt, '{P}HqSit', 1.0) end
 {P}HqDump('stood up')
 -- and every 2 s for 10 s after: the walking (the camera following)
 {P}HqDumpN = 0
@@ -2755,8 +2747,7 @@ local px, py, pz = Actor_GetPosition('player0')
 local ry = h.dy
 if py and py > ry then ry = py end
 local spawned = h.door .. '_out'
--- (the placed one draws an invisible 2 m box, raised 0.74 m to stand on the floor)
-if not Utility_DoesActorExist(spawned) then Mission_Spawn(h.door, spawned, h.dx, ry + 0.74, h.dz, 0) end
+if not Utility_DoesActorExist(spawned) then Mission_Spawn(h.door, spawned, h.dx, ry, h.dz, 0) end
 if Utility_DoesActorExist(spawned) then door = spawned {P}HqDoorSpawned = spawned end
 {P}HqRingAt = {{ h.dx, ry, h.dz }}
 end
