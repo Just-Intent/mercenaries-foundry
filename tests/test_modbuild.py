@@ -1247,8 +1247,8 @@ class MapScriptTests(unittest.TestCase):
             body = text[text.index(fn):]
             self.assertIn("foundry_gaza_HqRelease()", body[:body.index("\nend\n")])
         # the starter's ring and prompt, the door's after its delay
-        self.assertIn("Objective_SetTargetActor('foundry_gaza_obj_starter', h.starter, '', 'TARGET_TYPE_UNDEFINED'", text)
-        self.assertIn("Objective_SetTargetActor('foundry_gaza_obj_exit', door", text)
+        self.assertIn("Objective_SetTargetActor('foundry_gaza_obj_starter', h.starter, '', h.ttype", text)
+        self.assertIn("Objective_SetTargetActor('foundry_gaza_obj_exit', door, '', h.ttype", text)
         self.assertIn("Mission_Spawn(h.door, spawned, h.dx, ry, h.dz, 0)", text)     # a spawned cube, as retail's
         self.assertIn("exitdelay = 5.0", text)
         self.assertIn("doordist = 3.0", text)

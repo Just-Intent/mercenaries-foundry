@@ -2753,7 +2753,9 @@ if Utility_DoesActorExist(spawned) then door = spawned {P}HqDoorSpawned = spawne
 end
 {P}HqDoorObj = door
 {P}HqUse(door, h.doorprompt, '{P}HqLeave', h.doordist)
-Objective_SetTargetActor('{P}obj_exit', door, '', 'TARGET_TYPE_UNDEFINED', 'blip', TRUE, TRUE, TRUE, 0.5)
+-- the faction's HQ ring type (the guards' and givers' gold rings draw;
+-- retail's briefing-scene TARGET_TYPE_UNDEFINED drew none on a map)
+Objective_SetTargetActor('{P}obj_exit', door, '', h.ttype, 'blip', TRUE, TRUE, TRUE, 0.5)
 {P}HqTrace('door ' .. door .. ' armed')
 {P}HqDump('exit armed')
 elseif h.dx then
@@ -2761,7 +2763,7 @@ elseif h.dx then
 local px, py, pz = Actor_GetPosition('player0')
 local ry = h.dy
 if py and py > ry then ry = py + 0.02 end
-Objective_SetTargetVector('{P}obj_exit', '{P}obj_exit', h.doorprompt, 'TARGET_TYPE_UNDEFINED', 'blip', h.dx, ry, h.dz, FALSE, FALSE, TRUE)
+Objective_SetTargetVector('{P}obj_exit', '{P}obj_exit', h.doorprompt, h.ttype, 'blip', h.dx, ry, h.dz, FALSE, FALSE, TRUE)
 {P}HqRingAt = {{ h.dx, ry, h.dz }}
 {P}HqDump('exit armed (point)')
 {P}HqDoorNear()
@@ -2820,7 +2822,7 @@ if not {P}HqStarterOn then
 {P}HqStarterOn = 1
 {P}HqUse(h.starter, h.acceptprompt, '{P}HqYes', 1.5)
 {P}HqTrace('starter ' .. h.starter .. ' armed')
-Objective_SetTargetActor('{P}obj_starter', h.starter, '', 'TARGET_TYPE_UNDEFINED', 'blip', TRUE, TRUE, TRUE, 0.5)
+Objective_SetTargetActor('{P}obj_starter', h.starter, '', h.ttype, 'blip', TRUE, TRUE, TRUE, 0.5)
 end
 else
 Utility_QuestionBox(Utility_GetStringById(c.title), Utility_GetStringById(c.descr), true, '{P}HqYes', '{P}HqTalkArm')
