@@ -890,9 +890,11 @@ changing the game's anywhere else (these are files, not editor tools yet):
   makes the map a copy (`template_<map>_<rest>`, built as a `"templates"`
   copy with `"set"`, its models loaded with the map); a template name uses
   that one (one of the map's `"templates"` copies, or a game template).
-  While the map is loaded, Foundry Console (`Foundry_MapTemplate`) makes
-  each spawn of the game's template spawn the map's instead; the next level
-  load ends it. Without Foundry Console the game's spawn.
+  While the map is loaded, Foundry Console (`Foundry_MapTemplate`) gives the
+  game's template the map's properties in place: it still spawns under its
+  own name, which the game's support code goes by (spawned under the copy's
+  name, the extraction Black Hawk hovered instead of landing). The next
+  level load puts the game's back. Without Foundry Console the game's spawn.
 - **Rules for one map:** an objects rule with `"map"` changes only that map:
   `"map": "<a mod's new map>"` changes (`"set"` only) the map's template
   copies it matches by `"template"` or `"model"` (a template every map loads

@@ -436,8 +436,8 @@ def _write_map_text(data, result):
 
 def _write_map_templates(data, result):
     """After every step: a new map with "template_overrides" has its master
-    script's ScriptInit tell Foundry Console which templates spawn as which
-    while it's loaded (Foundry_MapTemplate; forgotten on the next level load;
+    script's ScriptInit tell Foundry Console which templates spawn with which
+    one's properties while it's loaded (Foundry_MapTemplate; forgotten on the next level load;
     without Foundry Console the game's spawn)."""
     from . import missions
     for m, swaps in sorted(getattr(data, "map_template_swaps", {}).items()):
@@ -455,8 +455,8 @@ def _write_map_templates(data, result):
                 + "".join(f"Foundry_MapTemplate({missions._lua(t)}, {missions._lua(to)}){nl}" for t, to in swaps)
                 + f"end{nl}")
         data.replace_added(name_hash(m), SCRIPT, script.encode(script.with_source(old, text[:at] + call + text[at:])))
-        result.changes.append(f"maps/{m}.json: {len(swaps)} game templates spawn as the map's own there "
-                              f"({', '.join(f'{t} as {to}' for t, to in swaps)}), with Foundry Console")
+        result.changes.append(f"maps/{m}.json: {len(swaps)} game templates spawn with the map's own properties there "
+                              f"({', '.join(f'{t} as {to}' for t, to in swaps)}), in place with Foundry Console")
 
 
 def _set_strings(data, edits):
@@ -3106,7 +3106,9 @@ def _apply_maps(data, folder, result):
         # aircraft, the shop's deliveries) spawns as the map's own while it's
         # loaded: a property set makes a copy of the map's own
         # (template_<map>_<rest>), a name uses that template (the map's "as"
-        # copy or a game template); Foundry Console swaps it at the spawner
+        # copy or a game template); Foundry Console gives the game's template
+        # that one's properties in place (it keeps its name, which the
+        # support code goes by)
         overrides = mdoc.get("template_overrides") or {}
         if not isinstance(overrides, dict):
             raise ValueError(f"{where}: \"template_overrides\" is {{<game template>: {{<property>: value}} or <template>}}")

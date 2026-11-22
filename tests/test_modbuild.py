@@ -494,7 +494,7 @@ class ModBuildTests(unittest.TestCase):
         self.assertIn("Foundry_MapTemplate('template_allies_driver', 'template_island_allies_driver')", master)
         self.assertIn("Foundry_MapTemplate('template_tank', 'template_allies_driver')", master)
         self.assertLess(master.index("function ScriptInit()"), master.index("Foundry_MapTemplate("))
-        self.assertTrue(any("2 game templates spawn as the map's own there" in c for c in result.changes))
+        self.assertTrue(any("2 game templates spawn with the map's own properties there" in c for c in result.changes))
         for bad, msg in (({"template_nothing": {"a": "1"}}, "no template 'template_nothing'"),
                          ({"template_tank": "template_nothing"}, "no template 'template_nothing'"),
                          ({"template_tank": {}}, "no properties"),

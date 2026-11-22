@@ -57,10 +57,16 @@ Script commands it adds, for the Lua box or any script:
   run in game.
 - `Foundry_MapTemplate('<template>', '<other template>')`: until the next
   level loads, anything spawning the template by name (the game's support
-  code, scripts, the shop) spawns the other: a "before" hook on
-  Spawner_SpawnTemplate (0x174480) swaps its template hash argument. Logged,
-  with how many spawns used a swap when the level unloads. Used by a new
-  map's `"template_overrides"`. Not yet run in game.
+  code, scripts, the shop) spawns it with the other's properties. In place:
+  the template's entry in g_TemplateTable (0x4D0068: +8 property blocks,
+  +0x4008 their hashes) points at the other's block, so the spawn keeps the
+  template's name and hash (the extraction support code goes by them: with
+  the spawner's hash swapped instead, until 0.251, the Black Hawk hovered
+  5 m up). Placed once the other's layer has loaded (checked each second
+  and at each spawn of the template, a "before" hook on
+  Spawner_SpawnTemplate 0x174480), put back before the next level loads;
+  when the other isn't in the table, the spawn's hash is swapped as before.
+  Logged. Used by a new map's `"template_overrides"`.
 - `Foundry_Log('<text>')`: writes a script's line to plugins.log. A new
   map's HQ interiors log their measurements with it (`hq dump ...` lines:
   `foundry_<map>_HqDump`, `foundry_HqDump()` in the Lua box). Retail's HQ

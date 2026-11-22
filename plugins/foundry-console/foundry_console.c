@@ -104,6 +104,7 @@ static void maptex_poll(double dt);
 static void maptext_poll(double dt);
 static void hq_dump_poll(double dt);
 static void ground_probe_poll(double dt);
+static void maptemplate_poll(double dt);
 static int MERC_PLUGIN_CALL cmd_sample(void *ud, uint32_t L);
 static int MERC_PLUGIN_CALL cmd_label(void *ud, uint32_t L);
 static CRITICAL_SECTION lock;
@@ -3287,6 +3288,7 @@ static void maptexalias_poll(double dt)
 static void maptex_poll(double dt)
 {
     maptexalias_poll(dt);
+    maptemplate_poll(dt);
     if (!maptex_pending_count) return;
     maptex_poll_timer += dt;
     if (maptex_poll_timer < 0.5) return;
@@ -3537,6 +3539,7 @@ static int MERC_PLUGIN_CALL cmd_hq_mode(void *ud, uint32_t L)
 }
 
 static unsigned maptemplate_count, maptemplate_used;    /* Foundry_MapTemplate's, below */
+static void maptemplate_restore(void);
 static void MERC_PLUGIN_CALL level_load_before(void *ud, MercHookContext *c)
 {
     (void)ud; (void)c;
@@ -3546,6 +3549,7 @@ static void MERC_PLUGIN_CALL level_load_before(void *ud, MercHookContext *c)
                  maptemplate_used);
         host->log(host->context, line);
     }
+    maptemplate_restore();
     maptemplate_count = maptemplate_used = 0;
     datapod_restore();
     maptext_restore();
@@ -3559,14 +3563,85 @@ static void MERC_PLUGIN_CALL level_load_before(void *ud, MercHookContext *c)
 
 /* Foundry_MapTemplate(template, other): until the next level loads, the game
  * spawning template (by name: its support code, scripts, the shop) spawns
- * other instead: Spawner_SpawnTemplate's template hash (its first argument)
- * swapped before it runs. For a new map's own versions of the extraction
+ * it with other's properties. For a new map's own versions of the extraction
  * helicopter, support aircraft and deliveries (maps json
- * "template_overrides"). Returns true. */
+ * "template_overrides"). Returns true.
+ * In place: template's entry in g_TemplateTable (its property block) points
+ * at other's block, so the spawn keeps template's name and hash. Swapping the
+ * spawn's hash for other's instead (until 0.251) spawned the copy under its
+ * own name, and the extraction Black Hawk spawned that way hovered 5 m up
+ * instead of landing (the game's support code knows it by its template).
+ * The block is swapped at the first spawn of template once other's layer has
+ * loaded (the map's script loads it after ScriptInit's call), and put back
+ * before the next level loads. When other isn't in the table, the spawn's
+ * hash is swapped as before. */
 #define MAPTEMPLATE_MAX 64
-typedef struct { uint32_t from, to; } MapTemplateSwap;
+typedef struct { uint32_t from, to, slot, original, mine; int placed; } MapTemplateSwap;
 static MapTemplateSwap maptemplate[MAPTEMPLATE_MAX];
 static unsigned maptemplate_count, maptemplate_used;
+
+/* g_TemplateTable: +8 0x1000 property block pointers, +0x4008 their hashes
+ * (linear probing from hash & 0xFFF, 0 = empty, as HashTable_Find). The
+ * slot of hash's first entry (what HashTable_Find finds), or -1. */
+static int template_slot(uint32_t hash)
+{
+    uint32_t k = 0;
+    if (!hash) return -1;
+    for (uint32_t n = 0, i = hash & 0xFFF; n < 0x1000; n++, i = (i + 1) & 0xFFF) {
+        if (!host->read_guest(host->context, MF_VAR_g_TemplateTable + 0x4008 + 4 * i, &k, 4) || !k) return -1;
+        if (k == hash) return (int)i;
+    }
+    return -1;
+}
+
+/* 1 when swap's template now spawns with other's block */
+static int maptemplate_place(MapTemplateSwap *s)
+{
+    if (s->placed) {
+        uint32_t now = 0;
+        if (host->read_guest(host->context, MF_VAR_g_TemplateTable + 8 + 4 * s->slot, &now, 4) && now == s->mine)
+            return 1;
+        s->placed = 0;                       /* the table changed under us: look again */
+    }
+    int at = template_slot(s->from), from = template_slot(s->to);
+    uint32_t original = 0, mine = 0;
+    if (at < 0 || from < 0 || at == from ||
+        !host->read_guest(host->context, MF_VAR_g_TemplateTable + 8 + 4 * (uint32_t)at, &original, 4) ||
+        !host->read_guest(host->context, MF_VAR_g_TemplateTable + 8 + 4 * (uint32_t)from, &mine, 4) || !mine)
+        return 0;
+    if (original != mine) host->write_guest(host->context, MF_VAR_g_TemplateTable + 8 + 4 * (uint32_t)at, &mine, 4);
+    s->slot = (uint32_t)at;
+    s->original = original;
+    s->mine = mine;
+    s->placed = 1;
+    char line[96];
+    snprintf(line, sizeof(line), "map templates: %08x spawns with %08x's properties, in place", s->from, s->to);
+    host->log(host->context, line);
+    return 1;
+}
+
+/* each second: swaps not placed yet (the copy's layer not loaded at the
+ * call), so whatever reads the table, not only the spawner, gets the copy */
+static double maptemplate_timer;
+static void maptemplate_poll(double dt)
+{
+    if (!maptemplate_count || (maptemplate_timer += dt) < 1.0) return;
+    maptemplate_timer = 0;
+    for (unsigned i = 0; i < maptemplate_count; i++)
+        if (!maptemplate[i].placed) maptemplate_place(&maptemplate[i]);
+}
+
+static void maptemplate_restore(void)
+{
+    for (unsigned i = maptemplate_count; i-- > 0;) {
+        MapTemplateSwap *s = &maptemplate[i];
+        uint32_t now = 0;
+        if (s->placed && host->read_guest(host->context, MF_VAR_g_TemplateTable + 8 + 4 * s->slot, &now, 4) &&
+            now == s->mine)
+            host->write_guest(host->context, MF_VAR_g_TemplateTable + 8 + 4 * s->slot, &s->original, 4);
+        s->placed = 0;
+    }
+}
 
 static void MERC_PLUGIN_CALL spawn_before(void *ud, MercHookContext *c)
 {
@@ -3575,7 +3650,8 @@ static void MERC_PLUGIN_CALL spawn_before(void *ud, MercHookContext *c)
     if (!maptemplate_count || !host->read_guest(host->context, c->esp + 4, &hash, 4)) return;
     for (unsigned i = 0; i < maptemplate_count; i++)
         if (maptemplate[i].from == hash) {
-            host->write_guest(host->context, c->esp + 4, &maptemplate[i].to, 4);
+            if (!maptemplate_place(&maptemplate[i]))
+                host->write_guest(host->context, c->esp + 4, &maptemplate[i].to, 4);
             maptemplate_used++;
             return;
         }
@@ -3593,9 +3669,17 @@ static int MERC_PLUGIN_CALL cmd_map_template(void *ud, uint32_t L)
         if (maptemplate_count == MAPTEMPLATE_MAX) return 0;
         maptemplate_count++;
     }
-    maptemplate[i] = (MapTemplateSwap){f, t};
+    if (maptemplate[i].placed && i < maptemplate_count) {
+        /* asked again: the first original goes back before the new swap */
+        MapTemplateSwap *s = &maptemplate[i];
+        uint32_t now = 0;
+        if (host->read_guest(host->context, MF_VAR_g_TemplateTable + 8 + 4 * s->slot, &now, 4) && now == s->mine)
+            host->write_guest(host->context, MF_VAR_g_TemplateTable + 8 + 4 * s->slot, &s->original, 4);
+    }
+    maptemplate[i] = (MapTemplateSwap){f, t, 0, 0, 0, 0};
+    maptemplate_place(&maptemplate[i]);       /* now, when other's layer has loaded already */
     char line[400];
-    snprintf(line, sizeof(line), "map templates: %s spawns as %s until the next level loads", from, to);
+    snprintf(line, sizeof(line), "map templates: %s spawns with %s's properties until the next level loads", from, to);
     host->log(host->context, line);
     uint32_t args[2] = {L, 1};
     lua_call(MF_FN_Lua_PushBool, 2, args);
