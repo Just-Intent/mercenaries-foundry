@@ -103,6 +103,7 @@ static void sampler_shutdown(void);
 static void maptex_poll(double dt);
 static void maptext_poll(double dt);
 static void hq_dump_poll(double dt);
+static void ground_probe_poll(double dt);
 static int MERC_PLUGIN_CALL cmd_sample(void *ud, uint32_t L);
 static int MERC_PLUGIN_CALL cmd_label(void *ud, uint32_t L);
 static CRITICAL_SECTION lock;
@@ -1223,6 +1224,7 @@ static int MERC_PLUGIN_CALL on_update(void *ud, const MercPluginUpdate *u)
     maptex_poll(u->wall_delta_seconds);
     maptext_poll(u->wall_delta_seconds);
     hq_dump_poll(u->wall_delta_seconds);
+    if (host->in_gameplay(host->context)) ground_probe_poll(u->wall_delta_seconds);
     /* F7 toggles the window while this game (or the console) has focus. */
     DWORD pid = 0;
     GetWindowThreadProcessId(GetForegroundWindow(), &pid);
@@ -2840,6 +2842,98 @@ static void MERC_PLUGIN_CALL briefing_deinit_before(void *ud, MercHookContext *c
     (void)ud; (void)c;
     if (brief_dump_t >= 0.0) brief_dump_final = 1;   /* dumped from the next update, outside the hook */
     brief_dump_t = -1.0;
+}
+
+/* ---- Ground probe: helicopters against the ground (Gaza's extraction
+ * Black Hawk settled about 2 m up at every landing zone) ----
+ * Every 2 s in gameplay, each helicopter within 100 m (a nearby object whose
+ * name or model says blackhawk, chinook, apache, heli, hind or hip): its
+ * position, the terrain's height under it (Utility_GetTerrainHeightAtXZ, the
+ * engine's own sampler), the gap, and the objects within 10 m of it across
+ * (what it might be standing on), to plugins.log. The player's gap once per
+ * probe as the reference. A helicopter is logged while it moves and once
+ * more when it has settled. */
+static double ground_probe_t;
+typedef struct { uint32_t handle; float y; int settled; } ProbeSeen;
+static ProbeSeen probe_seen[16];
+
+static int is_helicopter(const Nearby *e)
+{
+    static const char *keys[] = {"blackhawk", "chinook", "apache", "heli", "hind", "_hip", "littlebird"};
+    char low[100];
+    snprintf(low, sizeof(low), "%s %s", e->name, e->model);
+    for (char *p = low; *p; p++) *p = (char)tolower((unsigned char)*p);
+    for (unsigned i = 0; i < sizeof(keys) / sizeof(keys[0]); i++)
+        if (strstr(low, keys[i])) return 1;
+    return 0;
+}
+
+static int terrain_height_at(float x, float z, float *out)
+{
+    char line[96], result[128];
+    int expression = 0;
+    snprintf(line, sizeof(line), "Utility_GetTerrainHeightAtXZ(%.3f, %.3f)", x, z);
+    if (lua_line(0, line, result, sizeof(result), &expression) != 0) return 0;
+    char *end = NULL;
+    double v = strtod(result, &end);
+    if (end == result) return 0;
+    *out = (float)v;
+    return 1;
+}
+
+static void ground_probe_poll(double dt)
+{
+    if ((ground_probe_t += dt) < 2.0) return;
+    ground_probe_t = 0;
+    scan_nearby();
+    static Nearby list[MAX_NEARBY];
+    unsigned n;
+    EnterCriticalSection(&lock);
+    n = nearby_count;
+    memcpy(list, nearby, n * sizeof(Nearby));
+    LeaveCriticalSection(&lock);
+    for (unsigned i = 0; i < n; i++) {
+        const Nearby *e = &list[i];
+        if (!is_helicopter(e)) continue;
+        ProbeSeen *s = NULL;
+        for (unsigned k = 0; k < 16 && !s; k++) if (probe_seen[k].handle == e->handle) s = &probe_seen[k];
+        if (!s) {
+            for (unsigned k = 0; k < 16 && !s; k++) if (!probe_seen[k].handle) s = &probe_seen[k];
+            if (!s) { s = &probe_seen[0]; }
+            s->handle = e->handle; s->y = -99999.0f; s->settled = 0;
+        }
+        int still = fabsf(e->pos[1] - s->y) < 0.05f;
+        if (still && s->settled) continue;           /* logged once settled */
+        s->settled = still;
+        s->y = e->pos[1];
+        float g = 0;
+        char line[900];
+        int len = terrain_height_at(e->pos[0], e->pos[2], &g)
+            ? snprintf(line, sizeof(line), "ground probe: %s%s (%.2f, %.2f, %.2f)%s: terrain %.2f, %.2f above it",
+                       e->name[0] ? e->name : e->model, "", e->pos[0], e->pos[1], e->pos[2],
+                       still ? " settled" : "", g, e->pos[1] - g)
+            : snprintf(line, sizeof(line), "ground probe: %s (%.2f, %.2f, %.2f): terrain unknown",
+                       e->name[0] ? e->name : e->model, e->pos[0], e->pos[1], e->pos[2]);
+        /* what's within 10 m across of it */
+        for (unsigned j = 0; j < n && len < (int)sizeof(line) - 80; j++) {
+            const Nearby *o = &list[j];
+            if (o == e) continue;
+            float dx = o->pos[0] - e->pos[0], dz = o->pos[2] - e->pos[2];
+            if (dx * dx + dz * dz > 100.0f) continue;
+            len += snprintf(line + len, sizeof(line) - (size_t)len, " | %s y %.2f", o->name[0] ? o->name : o->model,
+                            o->pos[1]);
+        }
+        host->log(host->context, line);
+        float pg = 0;
+        uint32_t player = find_player();
+        float m[16];
+        if (player && host->read_guest(host->context, player + MF_OFF_Actor_transform, m, sizeof(m)) &&
+            terrain_height_at(m[12], m[14], &pg)) {
+            snprintf(line, sizeof(line), "ground probe: player (%.2f, %.2f, %.2f): terrain %.2f, %.2f above it",
+                     m[12], m[13], m[14], pg, m[13] - pg);
+            host->log(host->context, line);
+        }
+    }
 }
 
 static void hq_dump_poll(double dt)
