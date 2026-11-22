@@ -376,6 +376,35 @@ class MissionTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             missions.contract("sw_allies22", dict(doc, requires_cards={"suit": "clubs", "cards": ["X"]}), "t", "d")
 
+    def test_card_man_appears_with_his_objective(self):
+        from mercfoundry import luacheck
+        doc = {"objectives": [{"type": "goto", "text": "Go", "zone": "z1"},
+                              {"type": "verify", "text": "Verify the Jack", "targets": ["gaza_card_clubs11"],
+                               "card": "J", "suit": "clubs"}],
+               "waves": [{"when": "starts:2", "objects": ["gaza_card_clubs11"]},
+                         {"when": "starts:2", "squad": "enc:Runner"}],
+               "fail": [{"type": "escapes", "squad": "enc:Runner", "zone": "away"}]}
+        lua = missions.objectives_script("sw_mafia21", doc, lambda squad: ["runner1"])
+        self.assertEqual(luacheck.check(lua), [])
+        self.assertIn("tFoundryWaveOf = { ['gaza_card_clubs11'] = 'sw_mafia21_w1', ['runner1'] = 'sw_mafia21_w2' }", lua)
+        # the verify objective and the escape fail wait for their wave, then arm
+        start = lua[lua.index("function foundry_Start(o)"):]
+        self.assertLess(start.index("local sWave = o.targets and foundry_WaitsFor(o.targets)"),
+                        start.index("foundry_Waves('starts', o.name)"))
+        self.assertIn("if sWave then f.waitFor = sWave", lua)
+        up = lua[lua.index("function foundry_WavesUp()"):]
+        self.assertIn("foundry_Arm(o)", up[:up.index("\nfunction ")])
+        self.assertIn("f.waitFor = nil foundry_ArmFail(f)", up[:up.index("\nfunction ")])
+        # the object moves out of the mission's layer into the wave's
+        layer = {"map": "gaza", "objects": [{"name": "gaza_card_clubs11", "from": "deck_clubs03"},
+                                            {"name": "crate", "from": "x"}],
+                 "encounters": [{"name": "enc", "squads": [{"name": "Runner", "members": []}]}]}
+        rest, waves = missions.split_waves("sw_mafia21", doc, layer)
+        self.assertEqual([o["name"] for o in rest["objects"]], ["crate"])
+        self.assertEqual(waves[0], ("sw_mafia21_w1", {"map": "gaza", "objects": [layer["objects"][0]]}))
+        with self.assertRaises(ValueError):
+            missions.split_waves("sw_mafia21", {"waves": [{"when": "start", "objects": ["nobody"]}]}, layer)
+
     def test_contract_requires_intel_as_retail_aces(self):
         from mercfoundry import luacheck
         doc = {"title": "The Shadow", "map": "gaza", "contact": {"interior": "allies"}, "requires_intel": "clubs"}

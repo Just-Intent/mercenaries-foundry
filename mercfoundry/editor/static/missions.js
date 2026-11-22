@@ -573,7 +573,7 @@ export function createMissions(ctx) {
       if (c.until) add(c.until, `No longer fails if ${failWords(c)}`);
     });
     const later = (x) => (+x.delay > 0 ? ` (${x.delay} s later)` : '');
-    st.waves.forEach((w) => add(w.when, `Squad ${w.squad || '(none picked)'} arrives${later(w)}`));
+    st.waves.forEach((w) => add(w.when, (w.objects && w.objects.length ? `${w.objects.join(', ')} appear${w.objects.length > 1 ? '' : 's'}` : `Squad ${w.squad || '(none picked)'} arrives`) + later(w)));
     st.orders.forEach((o) => add(o.when, `${o.squad || '(no squad)'}: ${(ORDER_NAMES[o.do] || o.do || '').toLowerCase()}${o.to ? ` (${o.to})` : ''}${later(o)}`));
     st.weather.forEach((x) => add(x.when, `Weather: ${x.preset === 'normal' ? 'back to normal' : x.preset}${later(x)}`));
     st.music.forEach((x) => add(x.when, `Music: ${x.play === 'normal' ? 'back to normal' : String(x.play || '').replace(/^music\./, '')}${later(x)}`));

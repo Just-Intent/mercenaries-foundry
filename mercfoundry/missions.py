@@ -697,12 +697,24 @@ def objectives_script(asset_id, doc, squad_members, layers=(), zone_centre=None)
         weather.append(f"{{ {row} }}")
     weather_table = ",\n".join("  " + r for r in weather)
     # Squads that appear later: their own layers, loaded at "when".
-    waves, wave_of = [], {}
+    waves, wave_of, arrives = [], {}, {}
     for k, w in enumerate(doc.get("waves") or [], 1):
         what = f"wave {k}"
-        enc, _, sq = str(w.get("squad") or "").rpartition(":")
-        if not enc or not sq:
-            raise ValueError(f"{what}: \"squad\" is \"encounter:squad\"")
+        if w.get("objects") is not None:
+            # placed objects that appear later ("objects": [names]): a face
+            # card's man only once his objective is up, as retail's card
+            # missions bring theirs in
+            names = [str(n) for n in w["objects"] or []]
+            if not names or w.get("squad"):
+                raise ValueError(f"{what}: give \"squad\" (\"encounter:squad\") or \"objects\" ([names]), not both")
+            enc = sq = ""
+        else:
+            enc, _, sq = str(w.get("squad") or "").rpartition(":")
+            if not enc or not sq:
+                raise ValueError(f"{what}: \"squad\" is \"encounter:squad\" (or \"objects\": [names])")
+            names = list(squad_members(w["squad"]) or [])
+        for n in names:
+            arrives[n] = wave_layer(asset_id, k)
         when = when_of(w.get("when"), len(objs), what)
         row = f"when = '{when[0]}'"
         if when[0] in ("starts", "done"):
@@ -716,8 +728,12 @@ def objectives_script(asset_id, doc, squad_members, layers=(), zone_centre=None)
         row += f", layer = {_lua_str(wave_layer(asset_id, k))}"
         row += delay_of(w, what, "tFoundryWaves", "foundry_Wave", k, "W")
         waves.append(f"{{ {row} }}")
-        wave_of[(enc.lower(), sq.lower())] = (wave_encounter(enc, k), wave_layer(asset_id, k))
+        if sq:
+            wave_of[(enc.lower(), sq.lower())] = (wave_encounter(enc, k), wave_layer(asset_id, k))
     wave_table = ",\n".join("  " + r for r in waves)
+    # who arrives with which later layer: objectives and fail conditions on
+    # them wait until it's up (foundry_WaitsFor)
+    arrive_table = ", ".join(f"[{_lua_str(n)}] = {_lua_str(l)}" for n, l in sorted(arrives.items()))
     orders = []
     for k, o in enumerate(doc.get("orders") or [], 1):
         what = f"squad order {k}"
@@ -824,6 +840,7 @@ tFoundryWeather = {{       -- weather: one of the map's atmosphere presets, forc
 tFoundryWaves = {{         -- squads that appear later: their layers, loaded when their moment comes
 {wave_table}
 }}
+tFoundryWaveOf = {{ {arrive_table} }}   -- who arrives with which of those layers
 tFoundryWaveUp = {{}}       -- a wave's layer -> its squad is there
 tFoundryOrders = {{        -- squad orders, given when their moment comes
 {order_table}
@@ -1110,6 +1127,16 @@ end
 for i, o in ipairs(tFoundryOrders) do
 if o.pending and tFoundryWaveUp[o.wave] then o.pending = nil foundry_Order(o) end
 end
+-- objectives and fail conditions waiting on who just arrived
+for sName, o in pairs(tFoundryActive) do
+if o.waitFor and not o.done and tFoundryWaveUp[o.waitFor] then
+foundry_Note(o.name .. ': its targets are here')
+foundry_Arm(o)
+end
+end
+for i, f in ipairs(tFoundryFail) do
+if f.waitFor and tFoundryWaveUp[f.waitFor] then f.waitFor = nil foundry_ArmFail(f) end
+end
 end
 function foundry_Order(o)
 if o.delay and not o.due then
@@ -1170,6 +1197,9 @@ end
 end
 function foundry_ArmFail(f)
 if f.armed or f.off or bFoundryOver then return end
+-- on someone who arrives later ("waves"): armed once they're there
+local sWave = f.targets and foundry_WaitsFor(f.targets)
+if sWave then f.waitFor = sWave foundry_Note('fail condition ' .. f.kind .. ' waits for ' .. sWave) return end
 f.armed = true
 foundry_Note('fail condition on: ' .. f.kind)
 if f.kind == 'dies' then
@@ -1361,6 +1391,34 @@ o.text = Utility_GetStringById(o.key)
 o.down = 0
 tFoundryActive[o.name] = o
 foundry_Note((o.bonus and 'bonus ' or '') .. o.name .. ' (' .. o.kind .. ') starts')
+-- its targets arrive with a later layer (a "waves" entry, loaded at this
+-- very moment, perhaps): wired up once they're there (foundry_WavesUp)
+local sWave = o.targets and foundry_WaitsFor(o.targets)
+if sWave then
+o.waitFor = sWave
+foundry_Note(o.name .. ' waits for ' .. sWave)
+else
+foundry_Arm(o)
+end
+foundry_Reveal('starts', o.name)
+foundry_Waves('starts', o.name)
+foundry_FailsFrom('starts', o.name)
+foundry_Radio('starts', o.name)
+foundry_Musics('starts', o.name)
+foundry_Weathers('starts', o.name)
+foundry_Orders('starts', o.name)
+end
+-- A later layer not yet up that one of these arrives with, or nil.
+function foundry_WaitsFor(targets)
+for j, a in ipairs(targets) do
+local sLayer = tFoundryWaveOf[a]
+if sLayer and not tFoundryWaveUp[sLayer] then return sLayer end
+end
+return nil
+end
+-- An objective's own set-up: its markers, events and message.
+function foundry_Arm(o)
+o.waitFor = nil
 local sMsg, iIdx, sObjType, sTargetType = foundry_Kind(o)
 if o.kind == 'fast' then
 -- done if the contract completes before its clock runs out (foundry_Finish)
@@ -1475,13 +1533,6 @@ Objective_SetTargetVector(o.name, o.zone, o.text, sTargetType, 'location',
 end
 Event_ActorInBoundary('foundry_Arrived', 'b', 'player0', o.zone, true)
 end
-foundry_Reveal('starts', o.name)
-foundry_Waves('starts', o.name)
-foundry_FailsFrom('starts', o.name)
-foundry_Radio('starts', o.name)
-foundry_Musics('starts', o.name)
-foundry_Weathers('starts', o.name)
-foundry_Orders('starts', o.name)
 end
 
 -- A marker on one thing an objective is about (GPS, map and in the world).
@@ -3248,6 +3299,22 @@ def split_waves(asset_id, mission_doc, layer_doc):
     doc = copy.deepcopy(layer_doc)
     out = []
     for k, w in enumerate(waves, 1):
+        if w.get("objects") is not None:
+            # placed objects that appear later: moved to the wave's own layer
+            want = {str(n).lower() for n in w["objects"] or []}
+            objs = doc.get("objects") or []
+            moved = [o for o in objs if str(o.get("name") or "").lower() in want]
+            missing = want - {str(o.get("name") or "").lower() for o in moved}
+            if missing:
+                raise ValueError(f"missions/{asset_id}.json: wave {k}: no object named {', '.join(sorted(missing))} in "
+                                 f"the mission's own layer (encounters/{asset_id}.json \"objects\")")
+            doc["objects"] = [o for o in objs if o not in moved]
+            wdoc = {"map": doc.get("map"), "objects": moved}
+            for key in ("copy_loads",):
+                if key in doc:
+                    wdoc[key] = doc[key]
+            out.append((wave_layer(asset_id, k), wdoc))
+            continue
         enc, _, sq = str(w.get("squad") or "").rpartition(":")
         e = next((e for e in doc.get("encounters", []) if e.get("name", "").lower() == enc.lower()), None)
         s = next((s for s in (e or {}).get("squads", []) if s.get("name", "").lower() == sq.lower()), None)

@@ -1186,8 +1186,9 @@ def _apply_encounters(data, folder, result):
                     raise ValueError(f"the game already has a layer named {wl!r} (for a squad that appears later)")
                 for kind, body in encounters.build(wl, wdoc, find_source, source_loads).items():
                     data.new("assets.dsk", name_hash(wl), kind, body)
-                result.changes.append(f"layer {wl}: {wdoc['encounters'][0]['squads'][0]['name']}, which appears later "
-                                      f"in mission {layer}")
+                who = (wdoc["encounters"][0]["squads"][0]["name"] if wdoc.get("encounters")
+                       else ", ".join(str(o.get("name")) for o in wdoc.get("objects") or []))
+                result.changes.append(f"layer {wl}: {who}, which appears later in mission {layer}")
         records = encounters.build(layer, doc, find_source, source_loads)
         for kind, body in records.items():
             data.new("assets.dsk", name_hash(layer), kind, body)
@@ -1500,7 +1501,7 @@ def mission_drafts(doc):
               or (o.get("type") in ("hold", "fast") and not o.get("seconds"))
               or (o.get("type") == "deliver" and not o.get("vehicle"))
               or str(o.get("reveal") or "") in ("zone:", "dead:")]
-    drafts += [f"wave {k}" for k, w in enumerate(doc.get("waves") or [], 1) if not w.get("squad")]
+    drafts += [f"wave {k}" for k, w in enumerate(doc.get("waves") or [], 1) if not w.get("squad") and not w.get("objects")]
     drafts += [f"fail condition {k}" for k, c in enumerate(doc.get("fail") or [], 1)
                if (c.get("type") in ("dies", "hostile") and not (c.get("squad") or c.get("targets")))
                or (c.get("type") == "alarm" and not c.get("targets"))
