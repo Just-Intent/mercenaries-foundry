@@ -363,7 +363,10 @@ export function createMissions(ctx) {
            ${o.card ? `<label title="Paid when the card is verified (a kill; taken alive pays double)">Card bounty $
             <input data-i="${i}" data-k="bounty" type="number" min="0" step="1000" value="${+o.bounty > 0 ? +o.bounty : ''}"></label>` : ''}` : '';
       const extract = o.type === 'subdue'
-        ? `<label title="Done when they're flown out by the extraction chopper, not when knocked down"><input data-i="${i}" data-k="extract" type="checkbox" ${o.extract ? 'checked' : ''}> Extract them</label>` : '';
+        ? `<label title="Done when they're flown out by the extraction chopper, not when knocked down"><input data-i="${i}" data-k="extract" type="checkbox" ${o.extract ? 'checked' : ''}> Extract them</label>`
+          + `<label title="Or done when brought alive into this zone: carried, in a vehicle or dropped there (with Extract them, either way counts)">Bring to `
+          + `<select data-i="${i}" data-k="deliver"><option value="">(no zone)</option>${zones.map((z) =>
+              `<option ${o.deliver === z ? 'selected' : ''}>${esc(z)}</option>`).join('')}</select></label>` : '';
       const firstMain = st.objectives.findIndex((x) => !(+x.bonus > 0));
       const together = !(+o.bonus > 0) && firstMain >= 0 && i > firstMain
         ? `<label title="Starts with the main objective before it, in any order; the next one waits until both are done">`
@@ -651,6 +654,10 @@ export function createMissions(ctx) {
     }
     if (k === 'extract' || k === 'together' || k === 'breakable') {
       if (e.target.checked) o[k] = true; else delete o[k];
+      queueOutline(); edited(); return;
+    }
+    if (k === 'deliver') {
+      if (e.target.value) o.deliver = e.target.value; else delete o.deliver;
       queueOutline(); edited(); return;
     }
     if (k === 'need') {

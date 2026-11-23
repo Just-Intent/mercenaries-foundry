@@ -556,7 +556,9 @@ fail the build (traffic routes, the name table, texture sizes and memory, model 
     **Deliver vehicle** (a vehicle selected on the map, to a
     zone; failed if it's destroyed), **Capture alive** (subdue a squad or
     objects; killing one fails it; tick **Extract them** to need them flown
-    out by the extraction chopper), **Hold zone** (stay in a zone for a
+    out by the extraction chopper; **Bring to** a zone to need them brought
+    there alive instead, carried, in a vehicle or dropped, either way with
+    both; the mission's `"deliver": "<zone>"`), **Hold zone** (stay in a zone for a
     number of seconds; leaving starts the clock again), **Use object** (walk
     up to objects and use them, with your own prompt; failed if one is
     destroyed) and **Verify target** (kill and photograph the body, or

@@ -89,6 +89,8 @@ local function f(x) x() end
                 {"type": "deliver", "text": "Deliver", "vehicle": "car1", "zone": "z2"},
                 {"type": "subdue", "text": "Take", "targets": ["gen"], "extract": True},
                 {"type": "subdue", "text": "Take2", "targets": ["gen2"]},
+                {"type": "subdue", "text": "Take3", "targets": ["gen3"], "deliver": "z2", "extract": True},
+                {"type": "subdue", "text": "Take4", "targets": ["gen4"], "deliver": "z3"},
                 {"type": "hold", "text": "Hold", "zone": "z3", "seconds": 60},
                 {"type": "use", "text": "Use", "targets": ["box"], "prompt": "Plant"},
                 {"type": "verify", "text": "Verify", "targets": ["ace"], "blip": "spades", "alive": 5000},

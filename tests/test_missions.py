@@ -225,7 +225,7 @@ class MissionTests(unittest.TestCase):
                               {"type": "subdue", "text": "And his aide", "targets": ["aide"], "bonus": 5000}]}
         lua = missions.objectives_script("sw_allies11", doc, lambda squad: [], (), lambda z: [1, 2, 3])
         self.assertIn("targets = { 'nk_general' }, lost = 'sw.allies11.obj.foundry1.lost' }", lua)
-        self.assertIn("mission_ObjectiveSubdue{ callbackFunc = foundry_TargetDown, killCallbackFunc = foundry_TargetKilled,", lua)
+        self.assertIn("mission_ObjectiveSubdue{ callbackFunc = fDown, killCallbackFunc = foundry_TargetKilled,", lua)
         self.assertIn("{ kind = 'hold', name = 'foundry2', key = 'sw.allies11.obj.foundry2', zone = 'bridge', "
                       "x = 1.00, y = 2.00, z = 3.00, seconds = 90 }", lua)
         self.assertIn("Event_ActorInBoundary('foundry_HoldOut', 'b', 'player0', o.zone, false)", lua)
@@ -495,6 +495,19 @@ class MissionTests(unittest.TestCase):
         for bad in ({"type": "alarm"}, {"type": "spotted", "faction": "nk"}, {"type": "hostile"}):
             with self.assertRaises(ValueError):
                 missions.objectives_script("sw_allies11", {"objectives": doc["objectives"], "fail": [bad]}, lambda squad: [])
+
+    def test_subdue_deliver(self):
+        doc = {"objectives": [{"type": "subdue", "text": "Take him", "targets": ["officer"], "extract": True,
+                               "deliver": "home", "bonus": 30000},
+                              {"type": "subdue", "text": "Bring her", "targets": ["clerk"], "deliver": "home"}]}
+        lua = missions.objectives_script("sw_sk20", doc, lambda squad: [])
+        self.assertIn("extract = true, dzone = 'home' }", lua)
+        self.assertIn("if o.dzone then fDown = foundry_CaptiveTaken end", lua)
+        self.assertIn("and (Actor_IsSubdued(a) or Ai_IsPassenger(a)) and foundry_InZone(a, o.dzone) then", lua)
+        self.assertIn("if o.got[sActor] then return end", lua)
+        with self.assertRaises(ValueError):
+            missions.objectives_script("sw_sk20", {"objectives": [
+                {"type": "subdue", "text": "x", "targets": ["a"], "deliver": ["home"]}]}, lambda squad: [])
 
     def test_fail_from(self):
         doc = {"objectives": [{"type": "goto", "text": "A", "zone": "a"}, {"type": "goto", "text": "B", "zone": "b"}],

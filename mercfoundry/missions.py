@@ -460,6 +460,14 @@ def objectives_script(asset_id, doc, squad_members, layers=(), zone_centre=None)
                 row += f", lost = {_lua_str(escort_lost_key(asset_id, i))}"     # killed / destroyed instead
             if kind == "subdue" and o.get("extract"):
                 row += ", extract = true"                                       # done when flown out
+            if kind == "subdue" and o.get("deliver"):
+                # or brought into a zone alive (carried, in a vehicle or dropped there)
+                zone = o["deliver"]
+                if not isinstance(zone, str) or not re.fullmatch(r"[A-Za-z0-9_\-]+", zone):
+                    raise ValueError(f"objective {i}: \"deliver\" names the zone to bring the captive into")
+                if zone_centre:
+                    zone_centre(zone)                    # checks the zone (its layer loads with the script)
+                row += f", dzone = {_lua_str(zone)}"
             if kind == "use":
                 row += f", act = {_lua_str(use_prompt_key(asset_id, i))}"      # the prompt on the object
                 if not o.get("breakable"):
@@ -1451,13 +1459,18 @@ mission_ObjectiveExtract{{ callbackFunc = foundry_TargetDown, killCallbackFunc =
                           objectiveType = sObjType, targetType = sTargetType, blipType = 'human' }}
 util_ObjMsgPrint{{ sMsg = o.text, sType = sMsg .. 'ADD', vIdx = iIdx,
                   tCounter = {{ vCurr = 0, vLim = table.getn(o.targets) }}, sObjective = o.name }}
+if o.dzone then foundry_DeliverArm(o) end
 elseif o.kind == 'subdue' then
--- capture alive (retail's subdue verb); killing them fails it
-mission_ObjectiveSubdue{{ callbackFunc = foundry_TargetDown, killCallbackFunc = foundry_TargetKilled,
+-- capture alive (retail's subdue verb); killing them fails it. With "deliver"
+-- subduing isn't enough: the captive must be brought into the zone
+local fDown = foundry_TargetDown
+if o.dzone then fDown = foundry_CaptiveTaken end
+mission_ObjectiveSubdue{{ callbackFunc = fDown, killCallbackFunc = foundry_TargetKilled,
                          objectiveName = o.name, objectiveDesc = o.text, actorName = o.targets,
                          objectiveType = sObjType, targetType = sTargetType }}
 util_ObjMsgPrint{{ sMsg = o.text, sType = sMsg .. 'ADD', vIdx = iIdx,
                   tCounter = {{ vCurr = 0, vLim = table.getn(o.targets) }}, sObjective = o.name }}
+if o.dzone then foundry_DeliverArm(o) end
 elseif o.kind == 'hold' then
 util_ObjMsgPrint{{ sMsg = o.text, sType = sMsg .. 'ADD', vIdx = iIdx, sObjective = o.name }}
 if o.x then
@@ -1596,6 +1609,47 @@ end
 end
 end
 
+-- Subdue with "deliver": a captive alive and subdued (or riding as a
+-- passenger) inside the zone counts, carried, in a vehicle or dropped
+-- there; looked at each second while such an objective is on.
+function foundry_DeliverArm(o)
+o.got = {{}}
+if not bFoundryDeliverTick then
+bFoundryDeliverTick = true
+Event_RelativeTimer('foundry_DeliverTick', 'b', 1.0)
+end
+end
+function foundry_CaptiveTaken(sActor, bComplete, sObjName)
+foundry_Note(sObjName .. ': ' .. sActor .. ' subdued; bring them into the zone')
+end
+function foundry_InZone(sActor, sZone)
+local t = Boundary_GetEnclosingBoundaries(sActor)
+if not t then return false end
+for i, b in ipairs(t) do
+if b == sZone then return true end
+end
+return false
+end
+function foundry_DeliverTick()
+bFoundryDeliverTick = false
+local waiting = false
+for k, o in pairs(tFoundryActive) do
+if o.dzone and o.got and not o.done then
+waiting = true
+for j, a in ipairs(o.targets) do
+if not o.got[a] and Utility_DoesActorExist(a) and Actor_IsAlive(a)
+and (Actor_IsSubdued(a) or Ai_IsPassenger(a)) and foundry_InZone(a, o.dzone) then
+foundry_Note(o.name .. ': ' .. a .. ' brought into ' .. o.dzone)
+foundry_TargetDown(a, true, o.name)
+end
+end
+end
+end
+if waiting and not bFoundryOver then
+bFoundryDeliverTick = true
+Event_RelativeTimer('foundry_DeliverTick', 'b', 1.0)
+end
+end
 -- Collect: picked up (gone from the world) counts; done after "need" (all).
 function foundry_CollectTick()
 local waiting = false
@@ -1652,6 +1706,11 @@ end
 function foundry_TargetDown(sActor, bComplete, sObjName)
 local o = tFoundryActive[sObjName]
 if not o or o.done then return end
+if o.dzone then
+-- "deliver": a captive counts once, flown out or brought into the zone
+if o.got[sActor] then return end
+o.got[sActor] = true
+end
 local iAll = o.need or table.getn(o.targets)        -- "need": done after that many
 o.down = o.down + 1
 foundry_Note(o.name .. ': ' .. o.down .. ' of ' .. iAll .. ' down')
