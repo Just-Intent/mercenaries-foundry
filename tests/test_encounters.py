@@ -34,6 +34,18 @@ class EncounterTests(unittest.TestCase):
         # its ruin, wheels and break-up pieces load too (a node name isn't a model)
         self.assertEqual(models, ["foundry_crate", "foundry_crate_ruin", "foundry_wheel", "foundry_tail"])
 
+    def test_squad_members_models_load(self):
+        # a squad member drawn as a model of the mod's own (a card man in a
+        # squad wave) loads it with the layer, as an object's does
+        doc = {"map": "swn", "encounters": [{"name": "E", "points": {"A": [[0, 0, 0]]}, "squads": [
+            {"name": "Runner", "points": ["A"], "members": [
+                {"from": "RoadblockRunner", "name": "Card", "position": [0, 0, 0],
+                 "set": {"GeometryFile": "gaza_card_clubs11"}}]}]}],
+               "game_squads": [{"encounter": "x", "name": "y", "members": [
+                   {"from": "RoadblockRunner", "name": "G1", "position": [1, 0, 0], "set": {"GeometryFile": "own_guard"}}]}]}
+        models = encounters.parse_list(self.build(doc)[encounters.LIST].decode("latin-1"))["model"]
+        self.assertEqual(models, ["gaza_card_clubs11", "own_guard"])
+
     def test_copied_object_leaves_its_encounter(self):
         # a copy of an encounter's actor (a Deck card: encounter clubs3, squad
         # Squad1) outside any squad says "none" for both, as retail's loose

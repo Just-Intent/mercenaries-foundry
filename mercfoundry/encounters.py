@@ -460,9 +460,14 @@ def build(layer, doc, find_source, source_loads=None):
                 if kind.lower() not in LAYER_KINDS:
                     extra.append((kind, names_))
     extra += list((doc.get("loads") or {}).items())
-    # models a copy is given (a new object's GeometryFile, its ruin) load with the layer
+    # models a copy is given (a new object's GeometryFile, its ruin) load with
+    # the layer: objects' and squad members' alike (a squad wave's card man,
+    # drawn as a model of the mod's own, spawned with nothing loading it and
+    # crashed the game: sw_sk21_w1's Runner, gaza_card_clubs11)
     given = []
-    for o in doc.get("objects") or []:
+    members = [m for enc in doc.get("encounters", []) for sq in enc.get("squads", []) for m in sq.get("members", [])]
+    members += [m for sq in doc.get("game_squads", []) for m in sq.get("members", [])]
+    for o in list(doc.get("objects") or []) + members:
         for key, value in (o.get("set") or {}).items():
             if key.lower() in MODEL_PROPERTIES and value:
                 given.append(str(value))

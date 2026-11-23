@@ -1632,6 +1632,16 @@ return false
 end
 function foundry_DeliverTick()
 bFoundryDeliverTick = false
+local waiting = foundry_DeliverSweep()
+if waiting and not bFoundryOver then
+bFoundryDeliverTick = true
+Event_RelativeTimer('foundry_DeliverTick', 'b', 1.0)
+end
+end
+-- Each "deliver" captive in its zone now counts; true while any such
+-- objective is still open. Also run as the contract finishes, so a captive
+-- riding in with the player as the last objective ends it isn't missed.
+function foundry_DeliverSweep()
 local waiting = false
 for k, o in pairs(tFoundryActive) do
 if o.dzone and o.got and not o.done then
@@ -1645,10 +1655,7 @@ end
 end
 end
 end
-if waiting and not bFoundryOver then
-bFoundryDeliverTick = true
-Event_RelativeTimer('foundry_DeliverTick', 'b', 1.0)
-end
+return waiting
 end
 -- Collect: picked up (gone from the world) counts; done after "need" (all).
 function foundry_CollectTick()
@@ -1804,6 +1811,7 @@ end
 
 function foundry_Finish()
 if bFoundryOver then return end
+foundry_DeliverSweep()       -- a captive brought in with the player, before the bonuses settle
 if not bFoundryEndSaid then bFoundryEndSaid = true foundry_Radio('end') foundry_Musics('end') foundry_Weathers('end') end   -- the lines for the end
 if iFoundryRadioPending > 0 then bFoundryFinishing = true return end   -- after the last radio line
 local o = tFoundryFast

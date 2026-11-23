@@ -505,6 +505,7 @@ class MissionTests(unittest.TestCase):
         self.assertIn("if o.dzone then fDown = foundry_CaptiveTaken end", lua)
         self.assertIn("and (Actor_IsSubdued(a) or Ai_IsPassenger(a)) and foundry_InZone(a, o.dzone) then", lua)
         self.assertIn("if o.got[sActor] then return end", lua)
+        self.assertIn("if bFoundryOver then return end\nfoundry_DeliverSweep()", lua)
         with self.assertRaises(ValueError):
             missions.objectives_script("sw_sk20", {"objectives": [
                 {"type": "subdue", "text": "x", "targets": ["a"], "deliver": ["home"]}]}, lambda squad: [])
