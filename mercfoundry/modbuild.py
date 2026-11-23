@@ -42,6 +42,9 @@ Project layout (every part optional):
                           <name>.decals.json replaces decals or lays roads
     animtables/<name>.json   replaces a character's animation table (from
                           the `animtable` command): point handles at clips
+    animtables/<name>.new.json  a new table: {"base": <game table>,
+                          "fallback": <table>, "add": {<table>: [handles]}}
+                          (loads wherever the base does)
     layout/<layer>.<kind>.json  replaces a layer's path, lineregion, region
                           or encounter data (from `layout` or `extract
                           --decode`); layout/<layer>.list.txt replaces its
@@ -2854,6 +2857,129 @@ def _apply_bone_moves(data, folder, result):
     bones.apply(data, moved, result)
 
 
+def _new_animtables(data, folder, result):
+    """animtables/<name>.new.json {"base": <game table>, "fallback": <table>,
+    "add": {<table>: [<handle or pattern>, ...]}}: an animation table under a
+    new name, for a mod's own characters to name (AnimationTable), without
+    changing the game's table for everyone else. It starts as a copy of the
+    base; "fallback" (optional) names the table the game consults for
+    handles it lacks (as retail's press and un_worker fall back on
+    nk_civilian); "add" copies the entries of another table whose handles
+    match (fnmatch patterns: "fb_carry_passenger_*"), each into the set of
+    the same name, replacing the same handle. It loads wherever the base
+    does (the load lists that load the base load it too), so a template
+    naming it finds it on any map; the clips the added entries name must be
+    loaded there too (a warning lists those no load list beside the base's
+    loads)."""
+    import fnmatch
+    from . import animtable, encounters
+    from . import missions
+    d = folder / "animtables"
+    specs = sorted(d.glob("*.new.json")) if d.is_dir() else []
+    if not specs:
+        return
+    tables = {r.key: (a, r) for a, r in data.records(animtable.ANIMTABLE)}
+    LIST = name_hash("list")
+    for f in specs:
+        name = f.name[:-len(".new.json")]
+        where = f"animtables/{f.name}"
+        if not re.fullmatch(r"[A-Za-z0-9_]+", name):
+            raise ValueError(f"{where}: a table name is letters, digits and _")
+        key = name_hash(name)
+        if key in tables or any(k == key and kind == animtable.ANIMTABLE for k, kind, _ in data.added()):
+            raise ValueError(f"{where}: the game already has an animation table named {name!r} "
+                             f"(change it with animtables/{name}.json or .changes.json)")
+        spec = json.loads(f.read_text(encoding="utf-8"))
+        if not isinstance(spec, dict):
+            raise ValueError(f"{where}: give {{\"base\": <table>, \"fallback\": <table>, \"add\": {{<table>: [handles]}}}}")
+        unknown = set(spec) - {"base", "fallback", "add"}
+        if unknown:
+            raise ValueError(f"{where}: unknown keys {', '.join(sorted(unknown))} (base, fallback, add)")
+
+        def table(n, what):
+            hit = tables.get(name_hash(str(n)))
+            if not hit:
+                raise ValueError(f"{where}: {what}: no animation table named {n!r}")
+            return animtable.to_json(data.current(*hit))
+        base = str(spec.get("base") or "")
+        if not base:
+            raise ValueError(f"{where}: \"base\" names the game table it starts from")
+        doc = table(base, "\"base\"")
+        doc["name"] = name
+        fallback = spec.get("fallback")
+        if fallback:
+            table(fallback, "\"fallback\"")
+            if name_hash(str(fallback)) == key:
+                raise ValueError(f"{where}: a table can't fall back on itself")
+            doc["fallback"] = str(fallback)
+        added = 0
+        clips_added = set()
+        add = spec.get("add") or {}
+        if not isinstance(add, dict):
+            raise ValueError(f"{where}: \"add\" is {{<table>: [<handle or pattern>, ...]}}")
+        for src_name, patterns in add.items():
+            if isinstance(patterns, str):
+                patterns = [patterns]
+            if not isinstance(patterns, list) or not patterns:
+                raise ValueError(f"{where}: \"add\": {src_name}: give a list of handles or patterns")
+            src = table(src_name, f"\"add\" {src_name}")
+            hits = 0
+            for st in src["sets"]:
+                mine = next((s for s in doc["sets"] if s["name"].lower() == st["name"].lower()), None)
+                for e in st["entries"]:
+                    if not any(fnmatch.fnmatch(e["handle"].lower(), str(p).lower()) for p in patterns):
+                        continue
+                    e = {k: v for k, v in e.items() if k != "meaning"}
+                    if "variants" in e:
+                        # the source's variant clips, appended to this table's list
+                        v = e["variants"]
+                        clips_ = src["variants"][v["start"]:v["start"] + v["count"]]
+                        e["variants"] = {"start": len(doc["variants"]), "count": len(clips_)}
+                        doc["variants"].extend(clips_)
+                        clips_added.update(clips_)
+                    if "anim" in e:
+                        clips_added.add(e["anim"])
+                    if mine is None:
+                        mine = {"name": st["name"], "entries": []}
+                        doc["sets"].append(mine)
+                    mine["entries"] = [x for x in mine["entries"] if x["handle"].lower() != e["handle"].lower()]
+                    mine["entries"].append(e)
+                    hits += 1
+            if not hits:
+                raise ValueError(f"{where}: \"add\": {src_name} has no handles matching {', '.join(map(str, patterns))}")
+            added += hits
+        data.new("assets.dsk", key, animtable.ANIMTABLE, animtable.from_json(doc))
+        # loaded wherever the base is
+        lists = 0
+        loaded_clips = set()
+        for a, r in data.records(LIST):
+            text = data.current(a, r).decode("latin-1")
+            sections = encounters.parse_list(text)
+            if base.lower() in {t.lower() for t in sections.get("animtable", [])}:
+                data.set(a, r, missions.add_to_list(text, "animtable", name).encode("latin-1"))
+                loaded_clips |= {c.lower() for c in sections.get("animation", [])}
+                lists += 1
+        for k, kind, _ in list(data.added()):
+            if kind == LIST:
+                text = data.find_added(k, LIST).decode("latin-1")
+                sections = encounters.parse_list(text)
+                if base.lower() in {t.lower() for t in sections.get("animtable", [])}:
+                    data.replace_added(k, LIST, missions.add_to_list(text, "animtable", name).encode("latin-1"))
+                    loaded_clips |= {c.lower() for c in sections.get("animation", [])}
+                    lists += 1
+        result.changes.append(f"animtable {name}: new, a copy of {base}"
+                              + (f" falling back on {fallback}" if fallback else "")
+                              + (f", {added} entries added from {', '.join(add)}" if added else "")
+                              + f"; loads where {base} does ({lists} load lists)")
+        if not lists:
+            result.warnings.append(f"{where}: no load list loads {base}, so nothing loads {name}")
+        unloaded = sorted(c for c in clips_added if c.lower() not in loaded_clips)
+        if unloaded and lists:
+            result.warnings.append(f"{where}: clips the added entries name that no list loading {base} loads "
+                                   f"(they play only where something else loads them): {', '.join(unloaded[:6])}"
+                                   + (" ..." if len(unloaded) > 6 else ""))
+
+
 def _apply_animtables(data, folder, result):
     from . import animtable
     from . import modpack
@@ -2868,7 +2994,9 @@ def _apply_animtables(data, folder, result):
             doc = modpack.apply_animtable_changes(animtable.to_json(data.current(a, r)), changes)
             data.set(a, r, animtable.from_json(doc))
         result.changes.append(f"animtable {name}: {len(changes.get('entries', []))} entries changed by {f.name}")
-    for f in sorted(p for p in (folder / "animtables").glob("*.json") if not p.name.endswith(".changes.json")):
+    _new_animtables(data, folder, result)
+    for f in sorted(p for p in (folder / "animtables").glob("*.json")
+                    if not p.name.endswith((".changes.json", ".new.json"))):
         doc = json.loads(f.read_text(encoding="utf-8"))
         name = doc.get("name") or f.stem
         key = name_hash(name)

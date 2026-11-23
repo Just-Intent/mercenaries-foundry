@@ -512,6 +512,16 @@ fail the build (traffic routes, the name table, texture sizes and memory, model 
   differ; none left removes it), or the whole table when the mod already
   replaces it (`animtables/<table>.json`). It changes every character with
   that table.
+  **A table of the mod's own** (by file for now, not in the panel):
+  `animtables/<name>.new.json`
+  `{"base": "nk_civilian", "add": {"nk_soldier_ehuman": ["fb_carry_passenger_*"]}}`
+  makes `<name>` a copy of the base with the matching entries of another
+  table added (each into its set of the same name; `fnmatch` patterns),
+  and optionally `"fallback": <table>` for handles it lacks. Give the mod's
+  own characters it (`"AnimationTable": "<name>"` in their template copy's
+  `"set"`); the game's table stays as it is for everyone else. It loads
+  wherever the base does; the build warns about added clips not loaded
+  there.
   **Update rates by distance** (folded under the entries) shows `xbox.ini`'s
   four tables of how often a playing clip is updated by the character's
   distance (Low, Medium, High, Lender; a line each: max distance, every N

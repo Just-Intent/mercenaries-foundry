@@ -92,6 +92,40 @@ class NewClipModTests(unittest.TestCase):
             got = animtable.to_json(arecs[name_hash("guy_table")])
             self.assertEqual(got["sets"][0]["entries"][0]["anim"], "my_new_run")
 
+    def test_new_table_from_base_with_added_entries(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            d = Path(tmp)
+            (d / "data").mkdir()
+            civ = chunk(b"ucfb", chunk(b"atbl", chunk(b"NAME", b"civ\0") + chunk(b"SIZE", struct.pack("<2I", 0, 1))
+                                       + chunk(b"aset", chunk(b"NAME", b"default\0") + chunk(b"SIZE", struct.pack("<I", 1))
+                                               + entry("fb_subdued", "civ_subdued"))))
+            load_list = b"\n[animtable]\n\nload civ\nload guy_table\n\n[animation]\n\nload test_anim\n"
+            build_dsk(d / "data" / "assets.dsk", [(name_hash("guy_table"), animtable.ANIMTABLE, table()),
+                                                  (name_hash("civ"), animtable.ANIMTABLE, civ),
+                                                  (name_hash("humans"), aidata.LIST, load_list),
+                                                  (name_hash("other"), aidata.LIST, b"\n[animtable]\n\nload guy_table\n")])
+            modbuild.new_project(d / "proj")
+            (d / "proj" / "animtables" / "my_civ.new.json").write_text(json.dumps(
+                {"base": "civ", "fallback": "guy_table", "add": {"guy_table": ["fb_fid*", "lb_run"]}}))
+            result = modbuild.build(d / "proj", d / "data", d / "out")
+            assets = dsk.Archive(d / "out" / "assets.dsk")
+            arecs = {r.key: assets.read(r) for r in assets.records}
+            got = animtable.to_json(arecs[name_hash("my_civ")])
+            self.assertEqual((got["name"], got["fallback"]), ("my_civ", "guy_table"))
+            handles = [e["handle"] for e in got["sets"][0]["entries"]]
+            self.assertEqual(handles, ["fb_subdued", "lb_run", "fb_fidget"])
+            self.assertEqual(got["variants"], ["fidget_a", "fidget_b"])
+            self.assertEqual(got["sets"][0]["entries"][2]["variants"], {"start": 0, "count": 2})
+            self.assertEqual(arecs[name_hash("civ")], civ)                        # the game's table untouched
+            self.assertIn(b"load civ\nload guy_table\nload my_civ", arecs[name_hash("humans")])
+            self.assertNotIn(b"my_civ", arecs.get(name_hash("other"), b"\n[animtable]\n\nload guy_table\n"))
+            # the variant clips aren't loaded beside civ
+            self.assertTrue(any("fidget_a" in w for w in result.warnings), result.warnings)
+            (d / "proj" / "animtables" / "my_civ.new.json").write_text(json.dumps(
+                {"base": "civ", "add": {"guy_table": ["fb_nothing_*"]}}))
+            with self.assertRaises(ValueError):
+                modbuild.build(d / "proj", d / "data", d / "out2")
+
     def test_new_name_clash_is_an_error(self):
         with tempfile.TemporaryDirectory() as tmp:
             d = Path(tmp)
