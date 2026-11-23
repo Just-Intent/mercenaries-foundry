@@ -3188,6 +3188,9 @@ def travel_lua(prefix, pilots, by_map=True):
                 "Utility_WriteNumberToScribbleMemory('foundry_arrive_z', t.az)",
                 "Utility_WriteNumberToScribbleMemory('foundry_arrive_h', t.ah)",
                 "end",
+                "-- travel is free roam: no contract to start where it lands",
+                "Utility_EraseValueFromScribbleMemory('SkipTo_Faction')",
+                "Utility_EraseValueFromScribbleMemory('SkipTo_MissionNumber')",
                 "if t.to == 'sw' or t.to == 'nw' then Utility_WriteStringToScribbleMemory('SkipTo_Map', t.to) end",
                 "Utility_ResetToBaseLayerOnly(t.to)",
                 "end"]
@@ -3204,11 +3207,30 @@ def map_mission_lua(map_name, free_roam=()):
     more calls FreeRoam makes (the HQ flags and interiors). Returns
     (start lines for ScriptInit, functions)."""
     P = f"foundry_{map_name}_"
+    # Free roam here: a contract SkipTo_* left behind (a failed contract's
+    # Retry pair, the contract not restarted) is cleared, or the next map
+    # loaded (SW, by the pilot back) started that contract there instead of
+    # free roam, and the player landed off SW's map at the contract's start
     start = [f"sFoundryOnMap = {_lua(map_name)}",
-             f"if not {P}Mission() then {P}FreeRoam() end"]
+             f"if not {P}Mission() then",
+             "Utility_EraseValueFromScribbleMemory('SkipTo_Faction')",
+             "Utility_EraseValueFromScribbleMemory('SkipTo_MissionNumber')",
+             f"{P}FreeRoam()",
+             "end"]
     funcs = f"""-- Missions played on {map_name} (Mercenaries Foundry)
 function {P}Mission()
-if Utility_ReadStringFromScribbleMemory('foundry_play_map') ~= {_lua(map_name)} then return false end
+local pm = Utility_ReadStringFromScribbleMemory('foundry_play_map')
+if not pm and Utility_ReadStringFromScribbleMemory('foundry_retry_map') == {_lua(map_name)}
+and Utility_ReadStringFromScribbleMemory('SkipTo_Faction') and Utility_ReadNumberFromScribbleMemory('SkipTo_MissionNumber') then
+-- a retry: mission.lua's Retry(true) writes SkipTo_* from the contract and
+-- loads this level again, but the failed contract's close (FreeRoam, below)
+-- had cleared foundry_play_map, and the retry put the player in free roam
+pm = {_lua(map_name)}
+Utility_WriteStringToScribbleMemory('foundry_play_map', pm)
+Utility_WriteStringToScribbleMemory('foundry_play_arc', Utility_ReadStringFromScribbleMemory('foundry_retry_arc'))
+Utility_WriteStringToScribbleMemory('foundry_map_start', 'retrying the contract on ' .. pm)
+end
+if pm ~= {_lua(map_name)} then return false end
 local f = Utility_ReadStringFromScribbleMemory('SkipTo_Faction')
 local n = Utility_ReadNumberFromScribbleMemory('SkipTo_MissionNumber')
 if not f or not n then return false end
@@ -3785,6 +3807,9 @@ def contracts_script(contracts, insertions=()):
                 f"Utility_WriteStringToScribbleMemory('SkipTo_Map', {_lua(parse_id(c['id'])[0])})",
                 f"Utility_WriteStringToScribbleMemory('foundry_play_map', {_lua(c['play'])})",
                 f"Utility_WriteStringToScribbleMemory('foundry_play_arc', {_lua(parse_id(c['id'])[0])})",
+                # kept past the contract's close, for a Retry (map_mission_lua)
+                f"Utility_WriteStringToScribbleMemory('foundry_retry_map', {_lua(c['play'])})",
+                f"Utility_WriteStringToScribbleMemory('foundry_retry_arc', {_lua(parse_id(c['id'])[0])})",
                 f"Utility_WriteStringToScribbleMemory('foundry_map_start', {_lua('accepted ' + c['id'] + ', loading ' + c['play'])})",
                 f"Utility_ResetToBaseLayerOnly({_lua(c['play'])})",
                 "end"]

@@ -962,6 +962,8 @@ class NewMapMissionTests(unittest.TestCase):
         start = lua[lua.index("function foundry_Start_sw_china12()"):]
         self.assertIn("Utility_WriteStringToScribbleMemory('foundry_play_map', 'isle')\n"
                       "Utility_WriteStringToScribbleMemory('foundry_play_arc', 'sw')\n"
+                      "Utility_WriteStringToScribbleMemory('foundry_retry_map', 'isle')\n"
+                      "Utility_WriteStringToScribbleMemory('foundry_retry_arc', 'sw')\n"
                       "Utility_WriteStringToScribbleMemory('foundry_map_start', 'accepted sw_china12, loading isle')\n"
                       "Utility_ResetToBaseLayerOnly('isle')", start)
         self.assertNotIn("DebugSkipToMission", start[:start.index("\ntFoundryStart")])
@@ -984,7 +986,16 @@ class NewMapMissionTests(unittest.TestCase):
     def test_the_new_maps_script_runs_it(self):
         from mercfoundry import luacheck
         start, funcs = missions.map_mission_lua("isle")
-        self.assertEqual(start, ["sFoundryOnMap = 'isle'", "if not foundry_isle_Mission() then foundry_isle_FreeRoam() end"])
+        # free roam clears a contract's SkipTo_* left behind (a Retry's, the
+        # contract not restarted), which started it on SW after the pilot back
+        self.assertEqual(start, ["sFoundryOnMap = 'isle'", "if not foundry_isle_Mission() then",
+                                 "Utility_EraseValueFromScribbleMemory('SkipTo_Faction')",
+                                 "Utility_EraseValueFromScribbleMemory('SkipTo_MissionNumber')",
+                                 "foundry_isle_FreeRoam()", "end"])
+        # a Retry (SkipTo_* from the contract, the level again) restarts it here
+        self.assertIn("if not pm and Utility_ReadStringFromScribbleMemory('foundry_retry_map') == 'isle'", funcs)
+        self.assertIn("Utility_WriteStringToScribbleMemory('foundry_play_arc', "
+                      "Utility_ReadStringFromScribbleMemory('foundry_retry_arc'))", funcs)
         self.assertEqual(luacheck.check(funcs), [])
         self.assertIn("local a = n and util_MissionSeqNumToMissionAssetNum(q, f, n)", funcs)
         self.assertIn("local ok = Utility_RunLuaScript('foundry_isle_FreeRoam', q .. '_' .. f .. a)", funcs)
