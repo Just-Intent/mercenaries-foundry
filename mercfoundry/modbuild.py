@@ -460,6 +460,20 @@ def _write_map_templates(data, result):
         data.replace_added(name_hash(m), SCRIPT, script.encode(script.with_source(old, text[:at] + call + text[at:])))
         result.changes.append(f"maps/{m}.json: {len(swaps)} game templates spawn with the map's own properties there "
                               f"({', '.join(f'{t} as {to}' for t, to in swaps)}), in place with Foundry Console")
+    for m in sorted(getattr(data, "map_any_captive", ())):
+        master = data.find_added(name_hash(m), SCRIPT)
+        if master is None:
+            raise ValueError(f"maps/{m}.json: no master script for its \"any_captive\"")
+        old = script.decode(master)
+        text = old.source
+        at = text.find("function ScriptInit()")
+        if at < 0:
+            raise ValueError(f"maps/{m}.json: its master script has no ScriptInit for \"any_captive\"")
+        at = text.index("\n", at) + 1
+        nl = "\r\n" if "\r\n" in text else "\n"
+        call = f"if Foundry_MapCaptives then{nl}Foundry_MapCaptives(TRUE){nl}end{nl}"
+        data.replace_added(name_hash(m), SCRIPT, script.encode(script.with_source(old, text[:at] + call + text[at:])))
+        result.changes.append(f"maps/{m}.json: any subdued human counts as a captive there, with Foundry Console")
 
 
 def _set_strings(data, edits):
@@ -2880,6 +2894,8 @@ def _new_animtables(data, folder, result):
         return
     tables = {r.key: (a, r) for a, r in data.records(animtable.ANIMTABLE)}
     LIST = name_hash("list")
+    # a fallback may be another of the mod's new tables (gaza_press -> gaza_civilian)
+    own = {name_hash(p.name[:-len(".new.json")]) for p in specs}
     for f in specs:
         name = f.name[:-len(".new.json")]
         where = f"animtables/{f.name}"
@@ -2908,7 +2924,8 @@ def _new_animtables(data, folder, result):
         doc["name"] = name
         fallback = spec.get("fallback")
         if fallback:
-            table(fallback, "\"fallback\"")
+            if name_hash(str(fallback)) not in own:
+                table(fallback, "\"fallback\"")
             if name_hash(str(fallback)) == key:
                 raise ValueError(f"{where}: a table can't fall back on itself")
             doc["fallback"] = str(fallback)
@@ -3237,6 +3254,15 @@ def _apply_maps(data, folder, result):
         # copy or a game template); Foundry Console gives the game's template
         # that one's properties in place (it keeps its name, which the
         # support code goes by)
+        # "any_captive": true: while the map is loaded, every subdued human
+        # counts as a captive (Foundry_MapCaptives: the game's own switch,
+        # 0x32079C, read beside each human's IsVerifiable)
+        any_captive = mdoc.get("any_captive", False)
+        if any_captive not in (True, False):
+            raise ValueError(f"{where}: \"any_captive\" is true or false")
+        if any_captive:
+            data.map_any_captive = getattr(data, "map_any_captive", set())
+            data.map_any_captive.add(name.lower())
         overrides = mdoc.get("template_overrides") or {}
         if not isinstance(overrides, dict):
             raise ValueError(f"{where}: \"template_overrides\" is {{<game template>: {{<property>: value}} or <template>}}")
@@ -3391,7 +3417,7 @@ def _apply_maps(data, folder, result):
                 data.replace_added(key, name_hash("list"), text.encode("latin-1"))
         if not any(r.key == key for _, r in data.records(SCRIPT)) and data.find_added(key, SCRIPT) is None:
             if mdoc.get("start") or mdoc.get("message") or mdoc.get("weather") or layers or pilots or contacts or extra \
-                    or hqs or inside or deck:
+                    or hqs or inside or deck or mdoc.get("any_captive"):
                 source = map_script(name, mdoc, layers, pilots, contacts, extra, hqs, inside, deck=deck)
                 made.append("script (" + ", ".join(
                     (["where you arrive"] if (mdoc.get("start") or {}).get("position") else [])

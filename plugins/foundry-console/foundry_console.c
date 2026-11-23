@@ -3540,6 +3540,8 @@ static int MERC_PLUGIN_CALL cmd_hq_mode(void *ud, uint32_t L)
 
 static unsigned maptemplate_count, maptemplate_used;    /* Foundry_MapTemplate's, below */
 static void maptemplate_restore(void);
+static int any_captive_on;
+static void any_captive_set(int on);
 static void MERC_PLUGIN_CALL level_load_before(void *ud, MercHookContext *c)
 {
     (void)ud; (void)c;
@@ -3550,6 +3552,7 @@ static void MERC_PLUGIN_CALL level_load_before(void *ud, MercHookContext *c)
         host->log(host->context, line);
     }
     maptemplate_restore();
+    if (any_captive_on) any_captive_set(0);
     maptemplate_count = maptemplate_used = 0;
     datapod_restore();
     maptext_restore();
@@ -3657,6 +3660,33 @@ static void MERC_PLUGIN_CALL spawn_before(void *ud, MercHookContext *c)
         }
 }
 
+/* Foundry_MapCaptives(on): until the next level loads, every subdued human
+ * counts as a captive the way a verifiable target does. The game has a
+ * switch for it: the byte at 0x32079C, read beside each human's
+ * IsVerifiable (+0x808) at 15 places (0x3EC60 is IsVerifiable || it, the
+ * carry, drop and seat checks among them) and written nowhere: a debug
+ * setting with no menu left. Cleared before the next level loads. Returns
+ * true. For a new map's "any_captive". */
+#define ANY_CAPTIVE_SWITCH 0x32079Cu
+static void any_captive_set(int on)
+{
+    uint8_t b = on ? 1 : 0;
+    host->write_guest(host->context, ANY_CAPTIVE_SWITCH, &b, 1);
+    any_captive_on = on;
+}
+
+static int MERC_PLUGIN_CALL cmd_map_captives(void *ud, uint32_t L)
+{
+    (void)ud;
+    uint32_t args[2] = {L, 1};
+    int on = (int)lua_call(MF_FN_lua_gettop, 1, args) < 1 || lua_call(MF_FN_Lua_ArgBool, 2, args) != 0;
+    any_captive_set(on);
+    host->log(host->context, on ? "map captives: any subdued human counts as a captive until the next level loads"
+                                : "map captives: back to the game's (verifiable targets only)");
+    lua_call(MF_FN_Lua_PushBool, 2, args);
+    return 1;
+}
+
 static int MERC_PLUGIN_CALL cmd_map_template(void *ud, uint32_t L)
 {
     char from[160], to[160];
@@ -3750,6 +3780,7 @@ MERC_PLUGIN_EXPORT int MERC_PLUGIN_CALL MercenariesPlugin_Init(
         !h->add_lua_command(h->context, "Foundry_MapTexture", cmd_map_texture, NULL) ||
         !h->add_lua_command(h->context, "Foundry_HqMode", cmd_hq_mode, NULL) ||
         !h->add_lua_command(h->context, "Foundry_MapTemplate", cmd_map_template, NULL) ||
+        !h->add_lua_command(h->context, "Foundry_MapCaptives", cmd_map_captives, NULL) ||
         !h->add_lua_command(h->context, "Foundry_Log", cmd_log, NULL))
         h->log(h->context, "script commands unavailable; Foundry_TrafficZone, Foundry_Range, Foundry_Sample, "
                            "Foundry_Label, Foundry_SetHandling and Foundry_MapText may not exist");

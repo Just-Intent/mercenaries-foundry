@@ -121,6 +121,15 @@ class NewClipModTests(unittest.TestCase):
             self.assertNotIn(b"my_civ", arecs.get(name_hash("other"), b"\n[animtable]\n\nload guy_table\n"))
             # the variant clips aren't loaded beside civ
             self.assertTrue(any("fidget_a" in w for w in result.warnings), result.warnings)
+            # a fallback on another new table
+            (d / "proj" / "animtables" / "my_press.new.json").write_text(json.dumps(
+                {"base": "civ", "fallback": "my_civ"}))
+            modbuild.build(d / "proj", d / "data", d / "out3")
+            arecs = {r.key: dsk.Archive(d / "out3" / "assets.dsk").read(r)
+                     for r in dsk.Archive(d / "out3" / "assets.dsk").records}
+            self.assertEqual(animtable.to_json(arecs[name_hash("my_press")])["fallback"], "my_civ")
+            self.assertIn(b"load my_civ\nload my_press", arecs[name_hash("humans")])
+            (d / "proj" / "animtables" / "my_press.new.json").unlink()
             (d / "proj" / "animtables" / "my_civ.new.json").write_text(json.dumps(
                 {"base": "civ", "add": {"guy_table": ["fb_nothing_*"]}}))
             with self.assertRaises(ValueError):

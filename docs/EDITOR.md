@@ -517,7 +517,7 @@ fail the build (traffic routes, the name table, texture sizes and memory, model 
   `{"base": "nk_civilian", "add": {"nk_soldier_ehuman": ["fb_carry_passenger_*"]}}`
   makes `<name>` a copy of the base with the matching entries of another
   table added (each into its set of the same name; `fnmatch` patterns),
-  and optionally `"fallback": <table>` for handles it lacks. Give the mod's
+  and optionally `"fallback": <table>` for handles it lacks (a game table or another of the mod's new ones). Give the mod's
   own characters it (`"AnimationTable": "<name>"` in their template copy's
   `"set"`); the game's table stays as it is for everyone else. It loads
   wherever the base does; the build warns about added clips not loaded
@@ -905,6 +905,11 @@ changing the game's anywhere else (these are files, not editor tools yet):
   own name, which the game's support code goes by (spawned under the copy's
   name, the extraction Black Hawk hovered instead of landing). The next
   level load puts the game's back. Without Foundry Console the game's spawn.
+- **Any captive:** `maps/<name>.json` `"any_captive": true`: on that map
+  every subdued human can be picked up, carried and seated as a captive,
+  as only verifiable targets (the Deck's cards) can elsewhere. Foundry
+  Console turns the game's own switch for it on while the map is loaded
+  (`Foundry_MapCaptives`); other maps stay as the game has them.
 - **Rules for one map:** an objects rule with `"map"` changes only that map:
   `"map": "<a mod's new map>"` changes (`"set"` only) the map's template
   copies it matches by `"template"` or `"model"` (a template every map loads

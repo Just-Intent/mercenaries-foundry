@@ -67,6 +67,15 @@ Script commands it adds, for the Lua box or any script:
   Spawner_SpawnTemplate 0x174480), put back before the next level loads;
   when the other isn't in the table, the spawn's hash is swapped as before.
   Logged. Used by a new map's `"template_overrides"`.
+- `Foundry_MapCaptives(true)`: until the next level loads, every subdued
+  human counts as a captive the way a verifiable target (IsVerifiable) does.
+  It sets the game's own switch for that, the byte at 0x32079C: the game
+  reads it beside each human's IsVerifiable (+0x808) at 15 places (0x3EC60
+  is "IsVerifiable or the switch"; the rider code's seat checks at 0x166B90
+  and 0x1676E0 among them) and never writes it (a debug setting whose menu
+  is gone). Cleared before the next level loads. Used by a new map's
+  `"any_captive"`. Not yet run in game: what verifying such a captive does
+  (the PDA, pay) is to be seen.
 - `Foundry_Log('<text>')`: writes a script's line to plugins.log. A new
   map's HQ interiors log their measurements with it (`hq dump ...` lines:
   `foundry_<map>_HqDump`, `foundry_HqDump()` in the Lua box). Retail's HQ

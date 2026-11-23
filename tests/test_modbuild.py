@@ -502,6 +502,15 @@ class ModBuildTests(unittest.TestCase):
             self.write("maps/island.json", json.dumps({"from": "blank", "loads_like": None, "template_overrides": bad}))
             with self.assertRaisesRegex(ValueError, msg):
                 modbuild.build(self.project, self.data, self.out)
+        # "any_captive": the master script turns the game's switch on there
+        self.write("maps/island.json", json.dumps({"from": "blank", "loads_like": None, "any_captive": True}))
+        result = modbuild.build(self.project, self.data, self.out)
+        master = script.decode(self.records("assets.dsk")[(name_hash("island"), SCRIPT)]).source
+        self.assertLess(master.index("function ScriptInit()"), master.index("Foundry_MapCaptives(TRUE)"))
+        self.assertTrue(any("any subdued human counts as a captive" in c for c in result.changes))
+        self.write("maps/island.json", json.dumps({"from": "blank", "loads_like": None, "any_captive": "yes"}))
+        with self.assertRaisesRegex(ValueError, "true or false"):
+            modbuild.build(self.project, self.data, self.out)
 
     def test_map_text(self):
         # text/*.json with "map": the game's text stays; the new map's own
