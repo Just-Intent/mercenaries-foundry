@@ -135,6 +135,24 @@ class NewClipModTests(unittest.TestCase):
             with self.assertRaises(ValueError):
                 modbuild.build(d / "proj", d / "data", d / "out2")
 
+    def test_new_table_loads_once_with_the_level_templates(self):
+        # the base in template_humans (every level loads it): only there
+        with tempfile.TemporaryDirectory() as tmp:
+            d = Path(tmp)
+            (d / "data").mkdir()
+            both = b"\n[animtable]\n\nload guy_table\n"
+            build_dsk(d / "data" / "assets.dsk", [(name_hash("guy_table"), animtable.ANIMTABLE, table()),
+                                                  (name_hash("template_humans"), aidata.LIST, both),
+                                                  (name_hash("some_layer"), aidata.LIST, both)])
+            modbuild.new_project(d / "proj")
+            (d / "proj" / "animtables" / "my_guy.new.json").write_text(json.dumps({"base": "guy_table"}))
+            result = modbuild.build(d / "proj", d / "data", d / "out")
+            arecs = {r.key: dsk.Archive(d / "out" / "assets.dsk").read(r)
+                     for r in dsk.Archive(d / "out" / "assets.dsk").records}
+            self.assertIn(b"load my_guy", arecs[name_hash("template_humans")])
+            self.assertNotIn(b"my_guy", arecs.get(name_hash("some_layer"), both))
+            self.assertTrue(any("loads with template_humans on every level" in c for c in result.changes))
+
     def test_new_name_clash_is_an_error(self):
         with tempfile.TemporaryDirectory() as tmp:
             d = Path(tmp)

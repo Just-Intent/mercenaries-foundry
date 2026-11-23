@@ -2880,9 +2880,10 @@ def _new_animtables(data, folder, result):
     handles it lacks (as retail's press and un_worker fall back on
     nk_civilian); "add" copies the entries of another table whose handles
     match (fnmatch patterns: "fb_carry_passenger_*"), each into the set of
-    the same name, replacing the same handle. It loads wherever the base
-    does (the load lists that load the base load it too), so a template
-    naming it finds it on any map; the clips the added entries name must be
+    the same name, replacing the same handle. It loads where the base does:
+    with the template layer every level loads (template_humans) when the
+    base is there, else in each load list that loads the base; so a
+    template naming it finds it on any map; the clips the added entries name must be
     loaded there too (a warning lists those no load list beside the base's
     loads)."""
     import fnmatch
@@ -2966,17 +2967,25 @@ def _new_animtables(data, folder, result):
                 raise ValueError(f"{where}: \"add\": {src_name} has no handles matching {', '.join(map(str, patterns))}")
             added += hits
         data.new("assets.dsk", key, animtable.ANIMTABLE, animtable.from_json(doc))
-        # loaded wherever the base is
+        # loaded where the base is: in the template layer every level loads
+        # (LEVEL_TEMPLATE_LAYERS: template_humans has the people's tables)
+        # when the base is there, only there; otherwise in each list that
+        # loads the base. 0.253-0.254 added it to all 79 of Gaza's lists
+        # loading nk_civilian (and Gaza crashed drawing its first frame)
         lists = 0
         loaded_clips = set()
-        for a, r in data.records(LIST):
+        always = {name_hash(n) for n in LEVEL_TEMPLATE_LAYERS}
+
+        def loads_base(text):
+            return base.lower() in {t.lower() for t in encounters.parse_list(text).get("animtable", [])}
+        game_lists = [(a, r) for a, r in data.records(LIST) if loads_base(data.current(a, r).decode("latin-1"))]
+        level = [(a, r) for a, r in game_lists if r.key in always][:1]
+        for a, r in level or game_lists:
             text = data.current(a, r).decode("latin-1")
-            sections = encounters.parse_list(text)
-            if base.lower() in {t.lower() for t in sections.get("animtable", [])}:
-                data.set(a, r, missions.add_to_list(text, "animtable", name).encode("latin-1"))
-                loaded_clips |= {c.lower() for c in sections.get("animation", [])}
-                lists += 1
-        for k, kind, _ in list(data.added()):
+            data.set(a, r, missions.add_to_list(text, "animtable", name).encode("latin-1"))
+            loaded_clips |= {c.lower() for c in encounters.parse_list(text).get("animation", [])}
+            lists += 1
+        for k, kind, _ in ([] if level else list(data.added())):
             if kind == LIST:
                 text = data.find_added(k, LIST).decode("latin-1")
                 sections = encounters.parse_list(text)
@@ -2987,7 +2996,7 @@ def _new_animtables(data, folder, result):
         result.changes.append(f"animtable {name}: new, a copy of {base}"
                               + (f" falling back on {fallback}" if fallback else "")
                               + (f", {added} entries added from {', '.join(add)}" if added else "")
-                              + f"; loads where {base} does ({lists} load lists)")
+                              + (f"; loads with {next(n for n in LEVEL_TEMPLATE_LAYERS if name_hash(n) == level[0][1].key)} on every level" if level else f"; loads where {base} does ({lists} load lists)"))
         if not lists:
             result.warnings.append(f"{where}: no load list loads {base}, so nothing loads {name}")
         unloaded = sorted(c for c in clips_added if c.lower() not in loaded_clips)

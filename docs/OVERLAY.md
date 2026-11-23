@@ -73,7 +73,9 @@ Script commands it adds, for the Lua box or any script:
   reads it beside each human's IsVerifiable (+0x808) at 15 places (0x3EC60
   is "IsVerifiable or the switch"; the rider code's seat checks at 0x166B90
   and 0x1676E0 among them) and never writes it (a debug setting whose menu
-  is gone). Cleared before the next level loads. Used by a new map's
+  is gone). Turned on 15 s after the call, not during the load (logged
+  "map captives: on now"); `Foundry_MapCaptives(true, 0)` at once.
+  Cleared before the next level loads. Used by a new map's
   `"any_captive"`. Not yet run in game: what verifying such a captive does
   (the PDA, pay) is to be seen.
 - `Foundry_Log('<text>')`: writes a script's line to plugins.log. A new

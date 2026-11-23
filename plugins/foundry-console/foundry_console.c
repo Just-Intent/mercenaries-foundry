@@ -105,6 +105,7 @@ static void maptext_poll(double dt);
 static void hq_dump_poll(double dt);
 static void ground_probe_poll(double dt);
 static void maptemplate_poll(double dt);
+static void any_captive_poll(double dt);
 static int MERC_PLUGIN_CALL cmd_sample(void *ud, uint32_t L);
 static int MERC_PLUGIN_CALL cmd_label(void *ud, uint32_t L);
 static CRITICAL_SECTION lock;
@@ -3289,6 +3290,7 @@ static void maptex_poll(double dt)
 {
     maptexalias_poll(dt);
     maptemplate_poll(dt);
+    any_captive_poll(dt);
     if (!maptex_pending_count) return;
     maptex_poll_timer += dt;
     if (maptex_poll_timer < 0.5) return;
@@ -3542,6 +3544,7 @@ static unsigned maptemplate_count, maptemplate_used;    /* Foundry_MapTemplate's
 static void maptemplate_restore(void);
 static int any_captive_on;
 static void any_captive_set(int on);
+static double any_captive_wait;
 static void MERC_PLUGIN_CALL level_load_before(void *ud, MercHookContext *c)
 {
     (void)ud; (void)c;
@@ -3552,7 +3555,7 @@ static void MERC_PLUGIN_CALL level_load_before(void *ud, MercHookContext *c)
         host->log(host->context, line);
     }
     maptemplate_restore();
-    if (any_captive_on) any_captive_set(0);
+    if (any_captive_on || any_captive_wait >= 0) any_captive_set(0);
     maptemplate_count = maptemplate_used = 0;
     datapod_restore();
     maptext_restore();
@@ -3666,13 +3669,28 @@ static void MERC_PLUGIN_CALL spawn_before(void *ud, MercHookContext *c)
  * IsVerifiable (+0x808) at 15 places (0x3EC60 is IsVerifiable || it, the
  * carry, drop and seat checks among them) and written nowhere: a debug
  * setting with no menu left. Cleared before the next level loads. Returns
- * true. For a new map's "any_captive". */
+ * true. For a new map's "any_captive".
+ * Turned on 15 s after the call (Foundry_MapCaptives(true, 0) at once), not
+ * during the load: 0.254 set it in ScriptInit and Gaza crashed drawing its
+ * first frame (0x28B180), and the log line when it goes on tells whether a
+ * crash follows it. */
 #define ANY_CAPTIVE_SWITCH 0x32079Cu
+#define ANY_CAPTIVE_DELAY 15.0
+static double any_captive_wait = -1;     /* seconds until it goes on; < 0 none pending */
 static void any_captive_set(int on)
 {
     uint8_t b = on ? 1 : 0;
     host->write_guest(host->context, ANY_CAPTIVE_SWITCH, &b, 1);
     any_captive_on = on;
+    if (!on) any_captive_wait = -1;
+}
+
+static void any_captive_poll(double dt)
+{
+    if (any_captive_wait < 0 || (any_captive_wait -= dt) > 0) return;
+    any_captive_wait = -1;
+    any_captive_set(1);
+    host->log(host->context, "map captives: on now (any subdued human counts as a captive until the next level loads)");
 }
 
 static int MERC_PLUGIN_CALL cmd_map_captives(void *ud, uint32_t L)
@@ -3680,9 +3698,24 @@ static int MERC_PLUGIN_CALL cmd_map_captives(void *ud, uint32_t L)
     (void)ud;
     uint32_t args[2] = {L, 1};
     int on = (int)lua_call(MF_FN_lua_gettop, 1, args) < 1 || lua_call(MF_FN_Lua_ArgBool, 2, args) != 0;
-    any_captive_set(on);
-    host->log(host->context, on ? "map captives: any subdued human counts as a captive until the next level loads"
-                                : "map captives: back to the game's (verifiable targets only)");
+    double delay = ANY_CAPTIVE_DELAY;
+    if ((int)lua_call(MF_FN_lua_gettop, 1, args) >= 2) {
+        uint32_t a2[2] = {L, 2};
+        MercGuestCall c;
+        if (guest(MF_FN_Lua_ArgNumber, 0, 2, a2, &c)) delay = c.st0 < 0 ? 0 : c.st0;
+    }
+    if (!on) {
+        any_captive_set(0);
+        host->log(host->context, "map captives: back to the game's (verifiable targets only)");
+    } else if (delay <= 0) {
+        any_captive_set(1);
+        host->log(host->context, "map captives: on now (any subdued human counts as a captive until the next level loads)");
+    } else {
+        any_captive_wait = delay;
+        char line[120];
+        snprintf(line, sizeof(line), "map captives: any subdued human counts as a captive in %.0f s", delay);
+        host->log(host->context, line);
+    }
     lua_call(MF_FN_Lua_PushBool, 2, args);
     return 1;
 }
