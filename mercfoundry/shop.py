@@ -264,7 +264,11 @@ def lua(prefix, map_name, shop_items, open_here=False):
             f"function {prefix}Shop()\n"
             f"if Foundry_MapShop then Foundry_MapShop({names}) end\n"
             + (f"if Foundry_MapShopOpen then Foundry_MapShopOpen() end\n" if open_here else "") +
-            f"{prefix}ShopUnlocks()\n"
+            # first look 2 s in: run now, before the save's list is read back,
+            # every item looked locked, and each Shop_UnlockItem queued the
+            # game's "new shop item" notice (0xC8560, up to 8), all shown with
+            # the next real unlock (0.294)
+            f"Event_RelativeTimer('{prefix}ShopUnlocks', 'b', 2.0)\n"
             f"end\n"
             f"function {prefix}ShopUnlocks()\n"
             f"{checks}"

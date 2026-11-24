@@ -580,7 +580,8 @@ maps/<name>.json `"shop"` (mercfoundry/shop.py has the full format):
   (a texture named there must be the game's or the mod's own textures/<name>.png).
 - Unlocks (`"unlock"`): `start`, `after <contract id>` (scribble `foundry_done_<id>`),
   `intel <suit> <n>` (the map's deck meter, `foundry_deck_<map>_iCurrentIntel<suit>`). Looked at
-  as the map loads and every 5 s after; each unlocked once per save (`foundry_shop_<template>`),
+  2 s after the map loads (once the save's list is back: looked at sooner, every item seemed locked and
+  each unlock queued a "new item" notice, shown all at once with the next real one) and every 5 s after; each unlocked once per save (`foundry_shop_<template>`),
   with the game's "new item" notice.
 - Foundry Console `Foundry_MapShop(template, ...)`: on the map only its items show. The game's and
   other maps' unlocked items are taken out of the PDA's list while it's loaded. On every other
