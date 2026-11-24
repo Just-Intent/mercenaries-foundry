@@ -3739,6 +3739,28 @@ def play_map(asset_id, doc):
     return m if m and m != parse_id(asset_id)[0] else None
 
 
+def return_to(spec):
+    """A mission's "return_to": an HQ's faction (outside it: the map's
+    hq_respawn point, loc_hq-<faction>-respawn) or {"position": [x, y, z],
+    "heading": h}. Returns ("hq", faction) or ("spot", x, y, z, heading), or
+    None when unset."""
+    if not spec:
+        return None
+    if isinstance(spec, str):
+        f = spec.lower()
+        if f not in HQ_FACTIONS:
+            raise ValueError(f"\"return_to\" is an HQ's faction ({', '.join(HQ_FACTIONS)}) or "
+                             f"{{\"position\": [x, y, z], \"heading\": h}}, not {spec!r}")
+        return ("hq", f)
+    if isinstance(spec, dict) and isinstance(spec.get("position"), list) and len(spec["position"]) == 3:
+        try:
+            x, y, z = (float(v) for v in spec["position"])
+            return ("spot", x, y, z, float(spec.get("heading") or 0))
+        except (TypeError, ValueError):
+            pass
+    raise ValueError("\"return_to\" is an HQ's faction or {\"position\": [x, y, z], \"heading\": h}")
+
+
 def _closes_after(spec):
     if not spec:
         return []
@@ -3838,6 +3860,9 @@ def contract(asset_id, doc, title_key, description_key):
             # ace ends the act's unfinished contracts): no longer offered, its HQ
             # and giver treat it as gone; one already under way runs to its end.
             "closes_after": _closes_after(doc.get("closes_after")),
+            # Where the player goes once it's done ("return_to"): outside an
+            # HQ, or a spot; after the success screen, with a fade.
+            "return_to": return_to(doc.get("return_to")),
             # Deck cards that must be verified first ("requires_cards": {suit,
             # cards}): the contract's map's deck (a mod's own), else the game's.
             "requires_cards": _required_cards(doc.get("requires_cards")),
@@ -3894,6 +3919,9 @@ def contracts_script(contracts, insertions=()):
                            *c["position"], c["heading"], _lua(c["side"])) if c["position"] else "")
                        + (", requires = { %s }" % ", ".join(_lua(r) for r in c["requires"]) if c["requires"] else "")
         + (", closes = { %s }" % ", ".join(_lua(r) for r in c["closes_after"]) if c.get("closes_after") else "")
+        + ((", back = %s" % _lua("loc_hq-%s-respawn" % c["return_to"][1]) if c["return_to"][0] == "hq" else
+            ", back = { %.2f, %.2f, %.2f, %.1f }" % (*c["return_to"][1:4], player_yaw(c["return_to"][4])))
+           if c.get("return_to") else "")
         + (", cards = { %s }" % ", ".join(_lua(k) for k in c["requires_cards"]) if c.get("requires_cards") else "")
         + (", intel = { suit = %s, mark = %d }" % (_lua(c["requires_intel"][0]), c["requires_intel"][1])
            if c.get("requires_intel") else "")
@@ -4005,6 +4033,28 @@ def contracts_script(contracts, insertions=()):
         "end",
         "return total",
         "end",
+        "-- \"return_to\": faded out, moved, faded in. An HQ: retail's own respawn there",
+        "-- (Mission_SetupPlayerRespawn names the location, Mission_PlayerRespawn puts",
+        "-- the player at it, on foot, a vehicle left where it was); a spot: the player",
+        "-- moved (on foot).",
+        "function foundry_BackOut()",
+        "if not tFoundryBack then return end",
+        "Cinematic_FadeOut(0.5)",
+        "Event_RelativeTimer('foundry_BackMove', 'b', 0.6)",
+        "end",
+        "function foundry_BackMove()",
+        "local b = tFoundryBack",
+        "tFoundryBack = nil",
+        "if type(b) == 'string' then",
+        "Mission_SetupPlayerRespawn(b)",
+        "Mission_PlayerRespawn()",
+        "elseif b then",
+        "Actor_SetPosition('player0', b[1], b[2], b[3])",
+        "Actor_SetYaw('player0', b[4])",
+        "end",
+        "Event_RelativeTimer('foundry_BackIn', 'b', 0.5)",
+        "end",
+        "function foundry_BackIn() Cinematic_FadeIn(0.5) end",
         "function foundry_ContactName(c) return 'foundry_contact_' .. c.id end",
         "function foundry_IsDone(c) return Utility_ReadNumberFromScribbleMemory('foundry_done_' .. c.id) end",
         "-- First thing in LoadNoMissionState: a side contract just ended (done,",
@@ -4029,6 +4079,12 @@ def contracts_script(contracts, insertions=()):
         "Utility_EraseValueFromScribbleMemory('foundry_kept_' .. key)",
         "end",
         "if done then Utility_WriteNumberToScribbleMemory('foundry_done_' .. id, 1) end",
+        "-- \"return_to\": where the player goes once it's done (after the success screen)",
+        "if done then",
+        "for i, c in tFoundryContracts do",
+        "if c.id == id and c.back then tFoundryBack = c.back Event_RelativeTimer('foundry_BackOut', 'b', 5.0) end",
+        "end",
+        "end",
         "if Utility_ReadStringFromScribbleMemory('JustCompletedStandardMission') == id then",
         "Utility_EraseValueFromScribbleMemory('JustCompletedStandardMission')",
         "end",

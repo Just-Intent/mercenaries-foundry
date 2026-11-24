@@ -376,6 +376,24 @@ class MissionTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             missions.contract("sw_allies22", dict(doc, requires_cards={"suit": "clubs", "cards": ["X"]}), "t", "d")
 
+    def test_return_to(self):
+        from mercfoundry import luacheck
+        doc = {"title": "The Shadow", "map": "gaza", "contact": {"interior": "allies", "briefing": ["Go."]},
+               "return_to": "allies"}
+        c, _ = missions.contract("sw_allies21", doc, "t", "d")
+        spot, _ = missions.contract("sw_allies23", dict(doc, return_to={"position": [1, 2, 3], "heading": 90}), "t", "d")
+        lua = missions.contracts_script([c, spot])
+        self.assertEqual(luacheck.check(lua), [])
+        self.assertIn("back = 'loc_hq-allies-respawn'", lua)
+        self.assertIn("back = { 1.00, 2.00, 3.00, 270.0 }", lua)      # the player's yaw for heading 90
+        ret = lua[lua.index("function foundry_ReturnFromContract()"):]
+        self.assertIn("Event_RelativeTimer('foundry_BackOut', 'b', 5.0)", ret)
+        self.assertIn("Mission_SetupPlayerRespawn(b)", lua)
+        for bad in ("nk", {"position": [1, 2]}, 5):
+            with self.assertRaises(ValueError):
+                missions.contract("sw_allies21", dict(doc, return_to=bad), "t", "d")
+        self.assertIsNone(missions.contract("sw_allies21", dict(doc, return_to=None), "t", "d")[0]["return_to"])
+
     def test_closes_after(self):
         from mercfoundry import luacheck
         doc = {"title": "Clubs one", "map": "gaza", "contact": {"interior": "allies", "briefing": ["Go."]},

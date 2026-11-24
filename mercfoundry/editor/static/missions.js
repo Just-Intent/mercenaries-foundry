@@ -57,6 +57,18 @@ export function createMissions(ctx) {
     $('ms-start-at').textContent = s ? describe(s) : 'Not set: the player begins where the contract leaves them (the HQ).';
     if (s) $('ms-start-heading').value = +s.heading || 0;
   }
+  function drawReturn() {
+    const r = st.returnTo;
+    const mode = !r ? 'stay' : typeof r === 'string' ? 'hq' : 'spot';
+    $('ms-return-mode').value = mode;
+    $('ms-return-hq').hidden = mode !== 'hq';
+    $('ms-return-spot').hidden = mode !== 'spot';
+    if (mode === 'hq') $('ms-return-hq').value = r;
+    if (mode === 'spot') {
+      $('ms-return-heading').value = +r.heading || 0;
+      $('ms-return-at').textContent = r.position ? r.position.map((v) => (+v).toFixed(1)).join(', ') : '';
+    }
+  }
   function drawGiver() {
     const g = st.giver;
     $('ms-giver-mode').value = g.mode;
@@ -221,6 +233,7 @@ export function createMissions(ctx) {
       $('ms-bonus').value = 0;
       $('ms-debug').checked = false;
       $('ms-keep-hostile').checked = false;
+      st.returnTo = null;
       st.testFrom = 0;
       for (const f of MOOD_FACTIONS) $(`ms-mood-${f}`).value = f === $('ms-faction').value ? 20 : '';
       st.objectives = [];
@@ -248,6 +261,7 @@ export function createMissions(ctx) {
       $('ms-bonus').value = (m.doc.ini || {}).BonusFee ?? 0;
       $('ms-debug').checked = !!m.doc.debug;
       $('ms-keep-hostile').checked = !!m.doc.keep_if_hostile;
+      st.returnTo = m.doc.return_to ?? null;
       st.testFrom = +m.doc.test_from || 0;
       for (const f of MOOD_FACTIONS) $(`ms-mood-${f}`).value = (m.doc.mood || {})[f] || '';
       st.objectives = (m.doc.objectives || []).map((o) => ({...o}));
@@ -271,6 +285,7 @@ export function createMissions(ctx) {
     drawUnlocks();
     drawStart();
     drawGiver();
+    drawReturn();
     drawSequence();
     $('ms-script-note').hidden = !(m && m.script);
     drawObjectives();
@@ -480,7 +495,8 @@ export function createMissions(ctx) {
                            checks: UNDO_CHECKS.map((id) => $(id).checked), testFrom: st.testFrom || 0,
                            objectives: st.objectives, fails: st.fails, radio: st.radio, music: st.music,
                            weather: st.weather, orders: st.orders, waves: st.waves, support: st.support,
-                           unlocks: st.unlocks, start: st.start, giver: st.giver, requires: st.requires});
+                           unlocks: st.unlocks, start: st.start, giver: st.giver, requires: st.requires,
+                           returnTo: st.returnTo ?? null});
   }
   function putPanelState(json) {
     const s = JSON.parse(json);
@@ -489,7 +505,8 @@ export function createMissions(ctx) {
     UNDO_CHECKS.forEach((id, i) => { $(id).checked = s.checks[i]; });
     Object.assign(st, {testFrom: s.testFrom, objectives: s.objectives, fails: s.fails, radio: s.radio, music: s.music,
                        weather: s.weather, orders: s.orders, waves: s.waves, support: s.support, unlocks: s.unlocks,
-                       start: s.start, giver: s.giver, requires: s.requires});
+                       start: s.start, giver: s.giver, requires: s.requires, returnTo: s.returnTo ?? null});
+    drawReturn();
     drawSupport(); drawUnlocks(); drawStart(); drawGiver(); drawSequence();
     drawObjectives(); drawFails(); drawRadio(); drawMusic(); drawWeather(); drawOrders(); drawWaves(); drawOutline();
     st.dirty = true;
@@ -1301,6 +1318,24 @@ export function createMissions(ctx) {
     grab('giver');
   };
   $('ms-giver-grab').onclick = () => grab('giver');
+  // After the contract: stay, back outside an HQ ("return_to": faction) or a spot ({position, heading}).
+  $('ms-return-mode').addEventListener('change', () => {
+    const mode = $('ms-return-mode').value;
+    if (mode === 'stay') st.returnTo = null;
+    else if (mode === 'hq') st.returnTo = $('ms-return-hq').value;
+    else st.returnTo = {position: ctx.viewCentre(), heading: +$('ms-return-heading').value || 0};
+    drawReturn(); edited();
+  });
+  $('ms-return-hq').addEventListener('change', () => { st.returnTo = $('ms-return-hq').value; drawReturn(); edited(); });
+  $('ms-return-set').onclick = () => {
+    st.returnTo = {position: ctx.viewCentre(), heading: +$('ms-return-heading').value || 0};
+    drawReturn(); edited();
+  };
+  $('ms-return-heading').addEventListener('input', () => {
+    if (!st.returnTo || typeof st.returnTo !== 'object') return;
+    st.returnTo.heading = +$('ms-return-heading').value || 0;
+    edited();
+  });
   $('ms-giver-heading').addEventListener('input', () => {
     if (!st.giver.position) return;
     st.giver.heading = +$('ms-giver-heading').value || 0;
@@ -1390,6 +1425,7 @@ export function createMissions(ctx) {
       faction, number, title: $('ms-title').value.trim(), description: $('ms-description').value.trim(),
       briefing: $('ms-briefing').value.trim(), fee: +$('ms-fee').value || 0, bonus: +$('ms-bonus').value || 0, debug: $('ms-debug').checked, keep_if_hostile: $('ms-keep-hostile').checked, test_from: st.testFrom || 0,
       mood: Object.fromEntries(MOOD_FACTIONS.map((f) => [f, Math.max(-100, Math.min(100, Math.round(+$(`ms-mood-${f}`).value || 0)))])), objectives: st.objectives,
+      return_to: st.returnTo ?? null,
       start: st.start, giver: st.giver, requires: st.requires || [], requires_cards: st.requiresCards || null, fail: st.fails, radio: st.radio, music: st.music, weather: st.weather, orders: st.orders, waves: st.waves, support: st.support, unlocks: st.unlocks,
       done_mail: {subject: $('ms-done-subject').value.trim(), body: $('ms-done-body').value.trim()},
     }};

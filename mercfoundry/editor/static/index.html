@@ -263,6 +263,14 @@
         <label>SK <input id="ms-mood-sk" type="number" min="-100" max="100" step="5" placeholder="0"></label></div></div>
       <label class="field" title="Normally the game cancels a contract when its own faction turns hostile to you (killing their people or civilians in their area drops their mood). With this, the contract goes on; the faction stays hostile.">
         <input id="ms-keep-hostile" type="checkbox"> Keep the contract if its faction turns hostile</label>
+      <div class="field" title="Where the player is once the contract is done (after its success screen), with a fade: outside a faction's HQ (its HQ respawn point, the map's hq_respawn) or a spot of your own. Off: they stay where they finished.">
+        After it's done: <select id="ms-return-mode"><option value="stay">stay where they finished</option>
+          <option value="hq">back outside an HQ</option><option value="spot">go to a spot</option></select>
+        <select id="ms-return-hq"><option value="allies">Allies</option><option value="china">China</option>
+          <option value="mafia">Mafia</option><option value="sk">SK</option></select>
+        <span id="ms-return-spot"><button id="ms-return-set" title="The point in the middle of the view">Set here</button>
+          heading <input id="ms-return-heading" type="number" step="5" style="width:5em">
+          <span id="ms-return-at" class="hint"></span></span></div>
       </div>
       <div class="ms-tab" data-tab="giver" hidden>
       <h3>Mission giver</h3>

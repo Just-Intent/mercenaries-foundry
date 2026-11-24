@@ -1858,6 +1858,15 @@ class Scene:
                 doc["keep_if_hostile"] = True
             else:
                 doc.pop("keep_if_hostile", None)
+        if "return_to" in mission:
+            # where the player goes once it's done: an HQ's faction or a spot
+            from .. import missions as _missions
+            r = mission.get("return_to")
+            if r:
+                _missions.return_to(r)            # refused if it isn't one
+                doc["return_to"] = r
+            else:
+                doc.pop("return_to", None)
         if "test_from" in mission:
             if mission.get("test_from"):
                 doc["test_from"] = int(mission["test_from"])
