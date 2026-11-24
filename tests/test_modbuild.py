@@ -1272,7 +1272,8 @@ class MapScriptTests(unittest.TestCase):
         # a faction whose contracts inside are all done: no flag, no ring or "Enter HQ"
         self.assertIn("function foundry_HqFinished(f)", text)
         self.assertIn("if foundry_HqFinished('china') then\nObjective_Remove('foundry_hq_china')", text)
-        self.assertIn("if Utility_DoesActorExist(h.guard) and foundry_gaza_HqIn ~= f and foundry_HqFinished(f) then", text)
+        self.assertIn("if Utility_DoesActorExist(h.guard) and foundry_gaza_HqIn ~= f and bQuiet then", text)
+        self.assertIn("local bQuiet = foundry_HqFinished(f)", text)
         self.assertIn("Objective_Remove(h.guard)\nfoundry_gaza_HqUnuse(h.guard)", text)
         # one greeting per visit, then the briefing; a new set of lines stops the one playing
         self.assertIn("foundry_gaza_HqSay(h.greeting, foundry_gaza_HqOffer)", text)

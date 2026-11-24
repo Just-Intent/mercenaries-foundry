@@ -1936,17 +1936,20 @@ def welcome_lua(mails):
 HQ_FACTIONS = ("allies", "china", "mafia", "sk")
 
 
-HQ_FINISHED_LUA = """-- A faction's HQ here is finished when it offered contracts inside it on
--- this map (its interior's) and every one is done (and not repeatable) or
--- lost: its flag and its guard's ring and "Enter HQ" go (looked at whenever
--- free roam starts here, so after each contract too).
+HQ_FINISHED_LUA = """-- A faction's HQ here has nothing to offer when it has contracts inside it
+-- on this map (its interior's) and none can be offered now: each is done
+-- (and not repeatable), lost, or not yet allowed (its "requires",
+-- "requires_cards" or "requires_intel"). Its flag and its guard's ring and
+-- "Enter HQ" go until one can be (looked at whenever free roam starts here
+-- and at each of the guards' looks), for good once all are done.
 function foundry_HqFinished(f)
 if not tFoundryContracts then return false end
 local any = false
 for i, c in tFoundryContracts do
 if c.interior == f and c.map == sFoundryOnMap and not c.px then
 any = true
-if not ((foundry_IsDone(c) and not c.repeatable) or Utility_ReadNumberFromScribbleMemory('foundry_lost_' .. c.id)) then
+if not ((foundry_IsDone(c) and not c.repeatable) or Utility_ReadNumberFromScribbleMemory('foundry_lost_' .. c.id))
+and (not foundry_Unlocked or foundry_Unlocked(c)) then
 return false
 end
 end
@@ -2420,6 +2423,7 @@ Utility_LoadUtilityScript('util_objectives')
 if not {P}HqArmed then {P}HqArmed = {{}} end
 if not {P}HqLeadArmed then {P}HqLeadArmed = {{}} end
 if not {P}HqGuardMode then {P}HqGuardMode = {{}} end
+if not {P}HqWasQuiet then {P}HqWasQuiet = {{}} end
 if not {P}HqUsed then {P}HqUsed = {{}} end
 {P}HqParkModels = {{ {", ".join(f"[{_lua(m)}] = {_lua(tm)}" for m, tm in sorted((park_models or {}).items()))} }}
 {P}HqWaits = 0
@@ -2563,7 +2567,13 @@ else
 {P}HqTimer = Event_RelativeTimer('{P}HqLook', 'b', 5.0)
 end
 for f, h in {P}Hq do
-if Utility_DoesActorExist(h.guard) and {P}HqIn ~= f and foundry_HqFinished(f) then
+local bQuiet = foundry_HqFinished(f)
+if {P}HqWasQuiet[f] ~= bQuiet then
+local bFirst = {P}HqWasQuiet[f] == nil
+{P}HqWasQuiet[f] = bQuiet
+if not bFirst and {P}HqFlags then {P}HqFlags() end   -- a contract allowed (or taken) since free roam started
+end
+if Utility_DoesActorExist(h.guard) and {P}HqIn ~= f and bQuiet then
 -- every contract inside done: no ring, no "Enter HQ" (once per guard)
 if {P}HqArmed[h.guard] ~= 'finished' then
 {P}HqArmed[h.guard] = 'finished'
@@ -3303,8 +3313,21 @@ def layers_script(layers, pilots=(), arrive=False, welcome=(), deck=False, relat
             "Utility_ResetToBaseLayerOnly(m)",
             "return true",
             "end",
+            # A save made in free roam on a new map: the game resumes its own
+            # map's level (SW), so the player woke there with the new map's
+            # state. Back to the new map (foundry_free_map, which its free roam
+            # writes and the travel pilots set or clear).
+            "function foundry_ResumeFreeMap()",
+            "local m = Utility_ReadStringFromScribbleMemory('foundry_free_map')",
+            "local here = Utility_ReadStringFromScribbleMemory('SkipTo_Map')",
+            "if not m or m == here or (here ~= 'sw' and here ~= 'nw') then return false end",
+            "Utility_WriteStringToScribbleMemory('foundry_map_start', 'a save from free roam on ' .. m .. ' woke on ' .. here .. ': back to ' .. m)",
+            "Utility_ResetToBaseLayerOnly(m)",
+            "return true",
+            "end",
             "function foundry_LoadMapLayers()",
             "if foundry_ResumeNewMap() then return end",
+            "if foundry_ResumeFreeMap() then return end",
             "local map = Utility_ReadStringFromScribbleMemory('SkipTo_Map')",
             "for i, l in tFoundryLayers do",
             "if l.map == map then",
@@ -3316,14 +3339,16 @@ def layers_script(layers, pilots=(), arrive=False, welcome=(), deck=False, relat
             "end",
             "end",
             "end"]
+    if deck:
+        # first, so nothing failing after it leaves a new map's meter in the
+        # game's keys on SW (a save from Gaza showed Gaza's clubs meter there)
+        out += ["Utility_LoadUtilityScript('foundry_deck')", "foundry_DeckLeave()   -- the game's cards back in the PDA"]
     if arrive or pilots:
         out += ["foundry_Arrive()"]
     if pilots:
         out += ["foundry_TravelArm()"]
     if welcome:
         out += ["foundry_Welcome()"]
-    if deck:
-        out += ["Utility_LoadUtilityScript('foundry_deck')", "foundry_DeckLeave()   -- the game's cards back in the PDA"]
     if relations:
         out += ["-- faction relations a new map set (its \"relations\"), as they were"] + relations_restore_lines(relations)
     out += ["end"]
@@ -3391,6 +3416,9 @@ def travel_lua(prefix, pilots, by_map=True):
                 "end",
                 f"function {P}Go{i}()",
                 f"local t = {P}List[{i}]",
+                "-- the new map free roam is on (a save made there comes back to it: foundry_LoadMapLayers)",
+                "if t.to == 'sw' or t.to == 'nw' then Utility_EraseValueFromScribbleMemory('foundry_free_map') "
+                "else Utility_WriteStringToScribbleMemory('foundry_free_map', t.to) end",
                 "Utility_SavePlayerData()",
                 "if t.ax then",
                 "Utility_WriteNumberToScribbleMemory('foundry_arrive_x', t.ax)",
@@ -3501,6 +3529,9 @@ Utility_WriteStringToScribbleMemory('SkipTo_Map', {_lua(map_name)})
 end
 Utility_EraseValueFromScribbleMemory('foundry_play_map')
 Utility_EraseValueFromScribbleMemory('foundry_play_arc')
+-- free roam is here: a save made now comes back here (the game resumes only
+-- its own maps' levels; foundry_LoadMapLayers on SW or NW sends it back)
+Utility_WriteStringToScribbleMemory('foundry_free_map', {_lua(map_name)})
 Utility_LoadUtilityScript('foundry_contracts')
 foundry_ReturnFromContract()
 foundry_SetupContracts()
