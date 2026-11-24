@@ -87,6 +87,11 @@ Script commands it adds, for the Lua box or any script:
 - `Foundry_MapFines(false)`: until the next level loads, no fine for a
   death the player causes (0x56FD0's $100), through a byte the port reads
   (0x87BF00). Used by a new map's `"collateral_fines": false`.
+- `Foundry_FindPlaced('<model>', n)`: the n-th live object within 150 m of the
+  player whose GeometryFile is that model, as handle, x, y, z (nothing if
+  none): for objects scripts can't name, such as a placed charge.
+  `Foundry_MoveObject(handle, x, y, z, yaw?)` moves one (degrees); true if it
+  could.
 - `Foundry_Log('<text>')`: writes a script's line to plugins.log. A new
   map's HQ interiors log their measurements with it (`hq dump ...` lines:
   `foundry_<map>_HqDump`, `foundry_HqDump()` in the Lua box). Retail's HQ

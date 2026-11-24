@@ -3756,6 +3756,92 @@ static int MERC_PLUGIN_CALL cmd_map_fines(void *ud, uint32_t L)
     return 1;
 }
 
+/* Objects scripts can't name (a placed charge, AmmoPlaced, has no name):
+ * Foundry_FindPlaced(model, n) gives the n-th live object (1 unless given)
+ * drawing that model (its GeometryFile) as handle, x, y, z, or nothing;
+ * Foundry_MoveObject(handle, x, y, z, yaw?) puts it there (degrees, as
+ * the editor's live moves). For a map script's pager bombs: one picked up
+ * is moved along with whoever carries it, and the C4 detonator's broadcast
+ * sets it off where it is. */
+static void push_number(uint32_t L, double v)
+{
+    uint32_t w[3] = {L, 0, 0};
+    memcpy(&w[1], &v, 8);
+    lua_call(MF_FN_lua_pushnumber, 3, w);
+}
+
+static uint32_t find_slot_object(uint32_t handle)
+{
+    static uint32_t objs[OBJECT_SLOTS], handles[OBJECT_SLOTS];
+    if (!handle || !host->read_guest(host->context, OBJECTS, objs, sizeof(objs)) ||
+        !host->read_guest(host->context, OBJECT_HANDLES, handles, sizeof(handles))) return 0;
+    for (unsigned i = 0; i < OBJECT_SLOTS; i++)
+        if (objs[i] && handles[i] == handle) return objs[i];
+    return 0;
+}
+
+static int MERC_PLUGIN_CALL cmd_find_placed(void *ud, uint32_t L)
+{
+    (void)ud;
+    char model[64];
+    if (!lua_arg_text(L, 1, model, sizeof(model))) return 0;
+    int want = 1;
+    uint32_t a2[2] = {L, 2};
+    MercGuestCall c;
+    if ((int)lua_call(MF_FN_lua_gettop, 1, a2) >= 2 && guest(MF_FN_Lua_ArgNumber, 0, 2, a2, &c) && c.st0 >= 1)
+        want = (int)c.st0;
+    static uint32_t objs[OBJECT_SLOTS], handles[OBJECT_SLOTS];
+    if (!host->read_guest(host->context, OBJECTS, objs, sizeof(objs)) ||
+        !host->read_guest(host->context, OBJECT_HANDLES, handles, sizeof(handles))) return 0;
+    /* within 150 m of the player only: each object's model is a guest call
+     * the first time (cached by handle), and the table has 16,384 slots */
+    uint32_t player = find_player();
+    float pm[16];
+    if (!player || !host->read_guest(host->context, player + MF_OFF_Actor_transform, pm, sizeof(pm))) return 0;
+    int seen = 0;
+    for (unsigned i = 0; i < OBJECT_SLOTS; i++) {
+        uint32_t obj = objs[i];
+        unsigned char head[0x34];
+        if (!obj || !host->read_guest(host->context, obj, head, sizeof(head))) continue;
+        uint16_t flags;
+        memcpy(&flags, head + MF_OFF_WorldObject_flags, 2);
+        if (!(flags & 1) || (flags & 4)) continue;          /* active, not removed */
+        float q[3];
+        memcpy(q, head + WORLDOBJECT_POSITION, 12);
+        float dx = q[0] - pm[12], dz = q[2] - pm[14];
+        if (dx * dx + dz * dz > 150.0f * 150.0f) continue;
+        char m[48];
+        object_model(obj, handles[i], m, sizeof(m));
+        if (_stricmp(m, model) != 0 || ++seen < want) continue;
+        float pos[3];
+        memcpy(pos, head + WORLDOBJECT_POSITION, 12);
+        push_number(L, (double)handles[i]);
+        for (int k = 0; k < 3; k++) push_number(L, pos[k]);
+        return 4;
+    }
+    return 0;
+}
+
+static int MERC_PLUGIN_CALL cmd_move_object(void *ud, uint32_t L)
+{
+    (void)ud;
+    MercGuestCall c;
+    float v[5] = {0};
+    uint32_t top[2] = {L, 1};
+    int n = (int)lua_call(MF_FN_lua_gettop, 1, top);
+    if (n < 4) return 0;
+    for (int k = 0; k < 5 && k < n; k++) {
+        uint32_t a[2] = {L, (uint32_t)(k + 1)};
+        if (!guest(MF_FN_Lua_ArgNumber, 0, 2, a, &c)) return 0;
+        v[k] = (float)c.st0;
+    }
+    uint32_t obj = find_slot_object((uint32_t)v[0]);
+    int ok = obj && live_apply(obj, v + 1, v[4] * 3.14159265f / 180.0f, 0);
+    uint32_t args[2] = {L, (uint32_t)ok};
+    lua_call(MF_FN_Lua_PushBool, 2, args);
+    return 1;
+}
+
 static int MERC_PLUGIN_CALL cmd_map_captives(void *ud, uint32_t L)
 {
     (void)ud;
@@ -3878,6 +3964,8 @@ MERC_PLUGIN_EXPORT int MERC_PLUGIN_CALL MercenariesPlugin_Init(
         !h->add_lua_command(h->context, "Foundry_MapTemplate", cmd_map_template, NULL) ||
         !h->add_lua_command(h->context, "Foundry_MapCaptives", cmd_map_captives, NULL) ||
         !h->add_lua_command(h->context, "Foundry_MapFines", cmd_map_fines, NULL) ||
+        !h->add_lua_command(h->context, "Foundry_FindPlaced", cmd_find_placed, NULL) ||
+        !h->add_lua_command(h->context, "Foundry_MoveObject", cmd_move_object, NULL) ||
         !h->add_lua_command(h->context, "Foundry_Log", cmd_log, NULL))
         h->log(h->context, "script commands unavailable; Foundry_TrafficZone, Foundry_Range, Foundry_Sample, "
                            "Foundry_Label, Foundry_SetHandling and Foundry_MapText may not exist");
