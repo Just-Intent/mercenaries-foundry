@@ -3937,6 +3937,31 @@ static int MERC_PLUGIN_CALL cmd_actor_template(void *ud, uint32_t L)
     return 1;
 }
 
+/* Foundry_ActorModel(actor): the model an object draws (its GeometryFile),
+ * in lower case (the game's Lua has no string library); nothing if none.
+ * For HQ parking's fallback: a layer's own vehicle has no template's block,
+ * so the map script looks its model up in the map's own templates. */
+static int MERC_PLUGIN_CALL cmd_actor_model(void *ud, uint32_t L)
+{
+    (void)ud;
+    MercGuestCall c;
+    uint32_t args[2] = {L, 1}, obj = 0, handle = 0;
+    if ((int)lua_call(MF_FN_lua_gettop, 1, args) < 1) return 0;
+    if (guest(MF_FN_Lua_ArgActor, 0, 2, args, &c)) obj = c.eax;
+    if (!obj) return 0;
+    host->read_guest(host->context, obj + MF_OFF_WorldObject_handle, &handle, 4);
+    char m[64];
+    object_model(obj, handle, m, sizeof(m));
+    if (!m[0]) return 0;
+    for (char *q = m; *q; q++) *q = (char)tolower((unsigned char)*q);
+    uint32_t scratch, size;
+    if (!host->guest_scratch(host->context, &scratch, &size) || size < sizeof(m)) return 0;
+    host->write_guest(host->context, scratch, m, strlen(m) + 1);
+    uint32_t push[2] = {L, scratch};
+    guest(MF_FN_lua_pushstring, 0, 2, push, &c);
+    return 1;
+}
+
 static int MERC_PLUGIN_CALL cmd_spawn_template(void *ud, uint32_t L)
 {
     (void)ud;
@@ -4271,6 +4296,7 @@ MERC_PLUGIN_EXPORT int MERC_PLUGIN_CALL MercenariesPlugin_Init(
         !h->add_lua_command(h->context, "Foundry_RemoveObject", cmd_remove_object, NULL) ||
         !h->add_lua_command(h->context, "Foundry_ActorTemplate", cmd_actor_template, NULL) ||
         !h->add_lua_command(h->context, "Foundry_SpawnTemplate", cmd_spawn_template, NULL) ||
+        !h->add_lua_command(h->context, "Foundry_ActorModel", cmd_actor_model, NULL) ||
         !h->add_lua_command(h->context, "Foundry_MapShop", cmd_map_shop, NULL) ||
         !h->add_lua_command(h->context, "Foundry_Log", cmd_log, NULL))
         h->log(h->context, "script commands unavailable; Foundry_TrafficZone, Foundry_Range, Foundry_Sample, "

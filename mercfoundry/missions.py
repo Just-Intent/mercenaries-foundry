@@ -2335,7 +2335,7 @@ def chair_clips(inside):
 BANTER_BANKS = {"allies": "aso.bouaso0", "sk": "sks.bousks0", "china": "cso.boucso0", "mafia": "mso.boumso0"}
 
 
-def interiors_lua(prefix, inside, flagged=()):
+def interiors_lua(prefix, inside, flagged=(), park_models=None):
     """Lua for a new map's HQ interiors, made to play as retail's HQs
     (bouncer.lua, briefing.lua, briefing_utilities.lua):
 
@@ -2371,7 +2371,10 @@ def interiors_lua(prefix, inside, flagged=()):
     again too when its faction turns hostile or stops being hostile.
     flagged: factions with an HQ point flag ("hqs"): their guard gets a
     ring and name in the world only, not a second HQ blip; others carry
-    the HQ flag themselves, as the bouncers do."""
+    the HQ flag themselves, as the bouncers do.
+    park_models: {model (lower case): template} of the map's own vehicle
+    templates, for parking a vehicle a layer placed (no template's block
+    for Foundry_ActorTemplate to find): its model names its template."""
     P = prefix
     rows = []
     for f, i in inside.items():
@@ -2418,6 +2421,7 @@ if not {P}HqArmed then {P}HqArmed = {{}} end
 if not {P}HqLeadArmed then {P}HqLeadArmed = {{}} end
 if not {P}HqGuardMode then {P}HqGuardMode = {{}} end
 if not {P}HqUsed then {P}HqUsed = {{}} end
+{P}HqParkModels = {{ {", ".join(f"[{_lua(m)}] = {_lua(tm)}" for m, tm in sorted((park_models or {}).items()))} }}
 {P}HqWaits = 0
 -- The last steps inside, for finding out what happened: {P}HqLog() in
 -- Foundry Console's Lua box returns them.
@@ -2505,6 +2509,11 @@ Actor_SetPosition(car, h.park[1], h.park[2], h.park[3])
 Actor_SetYaw(car, h.park[4])
 local t = nil
 if Foundry_ActorTemplate then t = Foundry_ActorTemplate(car) end
+-- a layer's own vehicle: the map's template that draws its model
+if not t and Foundry_ActorModel then
+local m = Foundry_ActorModel(car)
+if m then t = {P}HqParkModels[m] end
+end
 if t and {P}HqIn then Utility_WriteStringToScribbleMemory('foundry_hq_park_' .. {P}HqIn, t) end
 {P}HqTrace('parked the vehicle (' .. (t or 'template not known') .. ')')
 end

@@ -500,6 +500,24 @@ def _write_shops(data, result):
     then the maps'), their texts, their pictures in the datapod load list and
     their icons in the hud list."""
     from . import shop
+    LIST = name_hash("list")
+    icons = sorted(getattr(data, "map_hud_icons", ()) or ())
+    if icons:
+        # new maps' copies' own HUD icons (HudTextureName), the mod's textures
+        # among them, load with the HUD as the game's (the hud load list)
+        mod_tex = {k for k, kind, _ in data.added() if kind == texture.TEXTURE}
+        mine = [n for n in icons if name_hash(n) in mod_tex]
+        for a, r in data.records(LIST):
+            if r.key == name_hash("hud") and mine:
+                new = shop.add_textures_to_list(data.current(a, r).decode("latin-1"), mine)
+                if new is not None:
+                    data.set(a, r, new.encode("latin-1"))
+                    result.changes.append(f"HUD icons of the maps' own templates load with the HUD: {', '.join(mine)}")
+                break
+        game_tex = {r.key for _, r in data.records(texture.TEXTURE)}
+        for n in icons:
+            if name_hash(n) not in mod_tex and name_hash(n) not in game_tex:
+                result.warnings.append(f"maps' \"templates\": HudTextureName {n!r} is no texture (add textures/{n}.png)")
     shops = getattr(data, "map_shops", None)
     if not shops:
         return
@@ -507,7 +525,6 @@ def _write_shops(data, result):
     game = (data.dir / "DATAPOD" / "itemshop.ini").read_bytes().decode("latin-1")
     data.files[shop.CATALOGUE] = shop.catalogue_text(game, every).encode("latin-1")
     _set_strings(data, shop.strings(every))
-    LIST = name_hash("list")
     have = {r.key for _, r in data.records(texture.TEXTURE)} |         {k for k, kind, _ in data.added() if kind == texture.TEXTURE}
     for list_name, field in (("datapod", "picture"), ("hud", "icon")):
         names = [it[field] for it in every if it.get(field)]
@@ -3339,7 +3356,20 @@ def map_script(name, doc, layers, pilots=(), contacts=False, extra=(), hqs=None,
         from .missions import interiors_lua
         if not contacts:
             text += f"sFoundryOnMap = {_lua_str(name.lower())}\n"
-        text += interiors_lua(f"foundry_{name.lower()}_", inside, flagged=list(hqs or {}))
+        # the map's own vehicle copies by model (GeometryFile), for parking a
+        # vehicle its layers placed; an _empty copy first where two share one
+        park_models = {}
+        for tdef in doc.get("templates") or []:
+            if not isinstance(tdef, dict) or not tdef.get("as"):
+                continue
+            gf = next((str(v) for k, v in (tdef.get("set") or {}).items() if str(k).lower() == "geometryfile"), None)
+            if not gf:
+                continue
+            as_ = str(tdef["as"])
+            old_t = park_models.get(gf.lower())
+            if old_t is None or (not old_t.lower().endswith("_empty") and as_.lower().endswith("_empty")):
+                park_models[gf.lower()] = as_
+        text += interiors_lua(f"foundry_{name.lower()}_", inside, flagged=list(hqs or {}), park_models=park_models)
     if shop_items:
         from . import shop as _shop
         text += _shop.lua(f"foundry_{name.lower()}_", name, shop_items)
@@ -3554,6 +3584,14 @@ def _apply_maps(data, folder, result):
                                      f"or one of this map's \"templates\" copies)")
             data.map_template_swaps = getattr(data, "map_template_swaps", {})
             data.map_template_swaps[name.lower()] = swaps
+        # a copy's own HUD icon (HudTextureName: a weapon's, bottom right; a
+        # support item's): loaded with the HUD after every step (_write_shops)
+        for tdef in templates_wanted:
+            if isinstance(tdef, dict):
+                for k, v in (tdef.get("set") or {}).items():
+                    if str(k).lower() == "hudtexturename" and v:
+                        data.map_hud_icons = getattr(data, "map_hud_icons", set())
+                        data.map_hud_icons.add(str(v))
         if templates_wanted or map_rules:
             tlayer, tnames, tshared, trecs, unused = _map_templates(data, name, templates_wanted, where,
                                                                      map_rules)
