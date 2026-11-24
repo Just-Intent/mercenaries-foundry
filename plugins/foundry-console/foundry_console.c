@@ -3372,9 +3372,20 @@ static void maptexalias_poll(double dt)
  * Foundry_MapTexture call counted as another half second for the ones asked
  * for before it, so with the deck's portraits a map's first textures were
  * given up on as the map loaded (bigflags: the PDA's Factions page). */
+static double tcount_timer = -1;     /* seconds into the level; the template table's fill logged at 15 */
 static void maptex_poll(double dt)
 {
     maptex_clock += dt;
+    if (tcount_timer >= 0 && (tcount_timer += dt) > 15.0) {
+        uint32_t n = 0;
+        char line[160];
+        tcount_timer = -1;
+        host->read_guest(host->context, MF_VAR_g_TemplateTable, &n, 4);
+        snprintf(line, sizeof(line), "template table: %u of 4096 templates loaded%s", n,
+                 n > 3900 ? " (nearly full: templates past the end don't load, and what spawns from them has no "
+                            "properties)" : "");
+        host->log(host->context, line);
+    }
     maptexalias_poll(dt);
     maptemplate_poll(dt);
     any_captive_poll(dt);
@@ -3641,6 +3652,7 @@ static void MERC_PLUGIN_CALL level_load_before(void *ud, MercHookContext *c)
     maptemplate_restore();
     shop_level_reset();
     shop_url_restore();
+    tcount_timer = 0;
     memset(card_seen, 0, sizeof(card_seen));   /* handles are reused on the next level */
     if (any_captive_on || any_captive_wait >= 0) any_captive_set(0);
     { uint8_t z = 0; host->write_guest(host->context, 0x87BF00u, &z, 1); }   /* fines back (Foundry_MapFines) */

@@ -911,8 +911,8 @@ class MissionTests(unittest.TestCase):
         # a placed giver comes from its own layer: waited for (its actor can
         # appear a moment after the layer loads); spawned by the script only
         # when it was removed because its contract wasn't offered yet (0.263)
-        self.assertIn("if c.px and tFoundryGone[name] then\ntFoundryGone[name] = nil\n"
-                      "Mission_Spawn(c.template, name, c.px, c.py, c.pz, c.heading)", placed_lua)
+        self.assertIn("if c.px and tFoundryGone[name] then\ntFoundryGone[name] = nil\n", placed_lua)
+        self.assertIn("Mission_Spawn(c.template, name, c.px, c.py, c.pz, c.heading + 180)", placed_lua)
         self.assertIn("if c.px then tFoundryGone[name] = true end", placed_lua)
         self.assertIn("bWaiting = true", placed_lua)
         self.assertIn("Event_RelativeTimer('foundry_SetupContracts', 'b', 1.0)", placed_lua)
