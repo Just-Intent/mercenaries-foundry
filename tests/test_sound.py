@@ -215,6 +215,47 @@ class TracksCueTest(unittest.TestCase):
             self.assertEqual(new.sounds[new.cue(c.name).sound].waves, bank.sounds[c.sound].waves)
 
 
+class RuntimeControlTest(unittest.TestCase):
+    """Banks with runtime controls (the helicopter banks' rotor_speed, stick
+    and damage): they stay last and find their curves after a cue is added
+    (0.306: Gaza's vh_lbird lost them and entering a helicopter crashed)."""
+
+    def bank_with_controls(self):
+        base = bytearray(make_xsb(["fx"], [("engine", 0), ("one", 1)],
+                                  [("tracks", [[(0, struct.pack("<IHH", 0, 0, 0)), (3, b"\0" * 4)]]),
+                                   ("simple", 1, 0)]))
+        at = len(base)
+        curves = [("rotor_speed", 3), ("stick", 2)]
+        table, blob = bytearray(), bytearray()
+        off = at + 24 * len(curves)
+        for i, (name, points) in enumerate(curves):
+            table += struct.pack("<II", points << 24 | 5, off + len(blob)) + name.encode().ljust(16, b"\0")
+            blob += bytes((i * 31 + k) % 251 for k in range(24 * points))
+        data = base + table + blob
+        struct.pack_into("<I", data, 0x14, at)
+        struct.pack_into("<H", data, 0x20, len(curves))
+        return bytes(data)
+
+    def test_controls_survive_new_cues(self):
+        data = self.bank_with_controls()
+        before = xsb.controls(data)
+        self.assertEqual([n for n, _ in before], ["rotor_speed", "stick"])
+        bank = xsb.parse(data)
+        out = xsb.add_cues(data, [("heli", {(0, 0): 2}, 0, bank.cue("engine").sound), ("beep", 1, 0, 1)])
+        self.assertEqual(xsb.controls(out), before)       # same curves, still last, still found
+        new = xsb.parse(out)
+        self.assertEqual(new.problems, [])
+        self.assertEqual(new.sounds[new.cue("heli").sound].waves, [("fx", 2)])
+        self.assertEqual(new.sounds[new.cue("engine").sound].waves, [("fx", 0)])
+        self.assertEqual(xsb.crc(out), struct.unpack_from("<H", out, 6)[0])
+
+    def test_a_bank_without_controls_still_ends_at_0x14(self):
+        data = make_xsb(["fx"], [("one", 0)], [("simple", 0, 0)])
+        out = xsb.add_cues(data, [("two", 1, 0, 0)])
+        self.assertEqual(struct.unpack_from("<I", out, 0x14)[0], len(out))
+        self.assertEqual(xsb.controls(out), [])
+
+
 class CopiedCueTest(unittest.TestCase):
     """new/<cue>.json {"like": <cue>}: a copy of a multi-track cue (as a
     helicopter engine's), its own waves where given, the rest shared."""

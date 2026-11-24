@@ -11,9 +11,9 @@ cleanly this way):
 
   0x00  "SDBK", u16 version (11), u16 CRC-16/X.25 of bytes 8 onward (checked)
   0x08  u32 wave bank names (16 bytes each), u32 track table, u32 variation
-        and 3D data, u32 end
-  0x18  u16 ?, u16 name table size, u16 sound count, u16 cue count, u16 ?,
-        u16 wave bank count
+        and 3D data, u32 runtime controls (below; the end when there are none)
+  0x18  u16 ?, u16 name table size, u16 sound count, u16 cue count, u16
+        runtime control count, u16 wave bank count
   0x38  cues, 20 bytes: u16 flags, u16 sound (0xFFFF: none), u32 name
         offset, u32 -1, u16 0, u16 name slot, u32 0x07FFFFFF
   The u16 at 0x1A is the size of the cue name table, max(16, cue count);
@@ -34,6 +34,14 @@ cleanly this way):
           u32 offset of a variation table)
         3 loop/end (8, always last), 4 and 5 pitch/volume (16),
         12 and 15 (8), 8, 10, 11, 16: u32 length, then that many bytes
+  runtime controls (the u32 at 0x14, count at 0x20), last in the bank: per
+        control 24 bytes, u32 (top byte: its curve's point count), u32 offset
+        of its curve, 16 bytes name ("rotor_speed", "stick", "damage" in the
+        helicopter banks); then the curves, 24 bytes a point, to the end.
+        Every one of the 113 retail banks fits this exactly (23 have
+        controls). A bank that grows must move them, or the game reads
+        garbage when a script or the engine sets one (0.306: entering a
+        helicopter with Gaza's vh_lbird crashed in XACT, 0x27FA56).
 """
 import re
 import struct
@@ -167,6 +175,13 @@ def add_cues(data: bytes, cues) -> bytes:
     cue_end = 0x38 + 20 * ncue
     sound_end = cue_end + 20 * nsound
     shift = 40 * len(cues)
+    # the runtime controls stay last: the new names and tracks go in before them
+    controls_at, = struct.unpack_from("<I", data, 0x14)
+    ncontrol, = struct.unpack_from("<H", data, 0x20)
+    if not ncontrol:
+        controls_at = len(data)
+    elif not sound_end <= controls_at <= len(data) - 24 * ncontrol:
+        raise ValueError("the bank's runtime controls aren't where they should be")
 
     def moved(off):
         return off + shift if off >= sound_end else off + 20 * len(cues) if off >= cue_end else off
@@ -195,7 +210,7 @@ def add_cues(data: bytes, cues) -> bytes:
                     struct.pack_into("<I", out, p + 8, moved(struct.unpack_from("<I", data, p + 8)[0]))
                 p += EVENT_SIZE[kind] if kind in EVENT_SIZE else 8 + struct.unpack_from("<I", data, p + 4)[0]
     new_cues, new_sounds, names = bytearray(), bytearray(), bytearray()
-    end = len(data) + shift
+    end = controls_at + shift
     for name, *_ in cues:
         names += name.encode("latin-1") + b"\0"
     names += b"\0" * (-(end + len(names)) % 4)
@@ -247,8 +262,15 @@ def add_cues(data: bytes, cues) -> bytes:
             struct.pack_into("<I", rec, 0, table_at)
         new_sounds += rec
     body = bytes(out)
-    result = bytearray(body[:cue_end] + new_cues + body[cue_end:sound_end] + new_sounds + body[sound_end:] + names
-                       + tracks_blob)
+    result = bytearray(body[:cue_end] + new_cues + body[cue_end:sound_end] + new_sounds
+                       + body[sound_end:controls_at] + names + tracks_blob + body[controls_at:])
+    # the runtime controls moved by all that went in before them, their
+    # curves' offsets with them
+    grow = shift + len(names) + len(tracks_blob)
+    struct.pack_into("<I", result, 0x14, controls_at + grow)
+    for i in range(ncontrol):
+        at = controls_at + grow + 24 * i + 4
+        struct.pack_into("<I", result, at, struct.unpack_from("<I", data, controls_at + 24 * i + 4)[0] + grow)
     struct.pack_into("<HH", result, 0x1C, nsound + len(cues), ncue + len(cues))
     # The cue name table: as many slots as cues (16 at least), each cue
     # keeping its slot; a changed size moves every cue's slot.
@@ -256,9 +278,34 @@ def add_cues(data: bytes, cues) -> bytes:
     struct.pack_into("<H", result, 0x1A, size)
     for i, c in enumerate(bank.cues + [Cue(0, n, 0) for n, *_ in cues]):
         struct.pack_into("<H", result, 0x38 + 20 * i + 14, name_slot(c.name, size))
-    struct.pack_into("<I", result, 0x14, len(result))
     struct.pack_into("<H", result, 6, crc(result))
+    if controls(bytes(result)) != controls(data):
+        raise ValueError("adding cues lost the bank's runtime controls")
     return bytes(result)
+
+
+def controls(data: bytes):
+    """The bank's runtime controls: [(name, curve bytes)], [] when it has
+    none. ValueError when they don't fit the layout (each control's curve
+    right after the last, the last ending the bank)."""
+    at, = struct.unpack_from("<I", data, 0x14)
+    n, = struct.unpack_from("<H", data, 0x20)
+    if not n:
+        return []
+    if at + 24 * n > len(data):
+        raise ValueError(f"{n} runtime controls at {at:#x}, past the bank's end ({len(data):#x})")
+    out, expect = [], at + 24 * n
+    for i in range(n):
+        head, off = struct.unpack_from("<II", data, at + 24 * i)
+        name = data[at + 24 * i + 8:at + 24 * i + 24].split(b"\0")[0].decode("latin-1")
+        size = 24 * (head >> 24)
+        if off != expect:
+            raise ValueError(f"runtime control {name}: its curve at {off:#x}, not {expect:#x}")
+        out.append((name, data[off:off + size]))
+        expect = off + size
+    if expect != len(data):
+        raise ValueError(f"runtime controls end at {expect:#x}, the bank at {len(data):#x}")
+    return out
 
 
 def name_slot(name: str, size: int) -> int:

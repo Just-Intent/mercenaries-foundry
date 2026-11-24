@@ -1532,8 +1532,8 @@ util_ObjMsgPrint{{ sMsg = o.text, sType = sMsg .. 'ADD', vIdx = iIdx,
                   tCounter = {{ vCurr = 0, vLim = o.need or table.getn(o.targets) }}, sObjective = o.name }}
 foundry_CollectTick()
 elseif o.kind == 'destroy' then
-mission_ObjectiveDestroy{{ callbackFunc = foundry_TargetDown, objectiveName = o.name, objectiveDesc = o.text,
-                          actorName = o.targets, objectiveType = sObjType, targetType = sTargetType }}
+o.objType, o.targetType = sObjType, sTargetType
+foundry_DestroyArm(o)
 util_ObjMsgPrint{{ sMsg = o.text, sType = sMsg .. 'ADD', vIdx = iIdx,
                   tCounter = {{ vCurr = 0, vLim = o.need or table.getn(o.targets) }}, sObjective = o.name }}
 else
@@ -1707,6 +1707,45 @@ iFoundryEarned = iFoundryEarned + o.bonus
 else
 iFoundryGroupLeft = iFoundryGroupLeft - 1
 if iFoundryGroupLeft <= 0 then foundry_NextObjective() end
+end
+end
+
+-- A destroy objective's targets, watched once they exist: retail's verb looks
+-- each one up as the objective starts (Utility_GetActorAsInt, and the death
+-- event on the actor then), while its marker follows the name, so a squad
+-- member not spawned yet (an encounter squad appears as the player comes
+-- near, as the objective's zone is reached) got its ring but never counted
+-- (0.306: sw_allies20's Guards). Looked again every half second, a minute.
+function foundry_DestroyArm(o)
+if not o.armed then o.armed, o.armTries = {{}}, 0 end
+local ready, missing = {{}}, 0
+for i, a in ipairs(o.targets) do
+if not o.armed[a] then
+if Utility_DoesActorExist(a) then
+table.insert(ready, a)
+o.armed[a] = true
+else
+missing = missing + 1
+end
+end
+end
+if table.getn(ready) > 0 then
+mission_ObjectiveDestroy{{ callbackFunc = foundry_TargetDown, objectiveName = o.name, objectiveDesc = o.text,
+                          actorName = ready, objectiveType = o.objType, targetType = o.targetType }}
+end
+if missing > 0 then
+o.armTries = o.armTries + 1
+if o.armTries == 1 or o.armTries == 120 then
+foundry_Note(o.name .. ': ' .. missing .. ' target(s) not there yet, looked for again')
+end
+if o.armTries < 120 then Event_RelativeTimer('foundry_DestroyArmAgain', 'b', 0.5) end
+elseif o.armTries > 0 then
+foundry_Note(o.name .. ': all targets watched after ' .. o.armTries .. ' look(s)')
+end
+end
+function foundry_DestroyArmAgain()
+for sName, o in pairs(tFoundryActive) do
+if o.kind == 'destroy' and o.armed and not o.done then foundry_DestroyArm(o) end
 end
 end
 
