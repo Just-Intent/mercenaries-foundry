@@ -784,6 +784,12 @@ fail the build (traffic routes, the name table, texture sizes and memory, model 
   copy of a building or prop that has no name. Type or pick it in the toolbar
   box (the list shows each one's kind and where it's from), click **Place**
   (or press P), then click the ground.
+  - **Pickups and crates** (under Place) lists retail's pickups as its maps
+    place them: health, ammo, vehicle ammo, grenades, C4, armour and money;
+    supply, health and weapon crates (`template_crate_*`); and weapon pickups
+    (AK-47, M4, MP5, SMG, MG36, the rifles, RPG, SMAW, Stinger). Pick one, then
+    click the ground; its item settings (what a crate holds, a pickup's
+    amount) are in the Properties panel once placed.
   - With the live link on, the list starts with what the running game has
     loaded where the player is ("spawns live now"): those appear in the game
     as you place them. Anything else shows in game after Save and the next

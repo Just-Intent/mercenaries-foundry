@@ -16,6 +16,7 @@ header .top-map { display: inline-flex; align-items: center; gap: 4px; color: #b
 #rail .rail-place { display: flex; flex-direction: column; gap: 4px; padding: 6px; border: 1px solid #3a3f46;
                     border-radius: 5px; background: #2c3138; }
 #rail .rail-place input { width: 100%; font-size: 12px; }
+#rail .rail-place select { width: 100%; font-size: 12px; }
 /* what the 3D view draws */
 #layers-box { position: absolute; top: 8px; left: 8px; z-index: 4; background: rgba(36, 40, 45, 0.92);
               border: 1px solid #4a5059; border-radius: 5px; padding: 4px 8px; font-size: 12px; }

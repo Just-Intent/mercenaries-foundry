@@ -1543,6 +1543,14 @@ $('sel-crown').addEventListener('change', async () => {
 });
 $('copy').onclick = copySelected;
 $('place').onclick = startPlace;
+// Retail's pickups and crates (copies of the ones its maps place): pick, then click the ground
+$('place-pickup').onchange = (e) => {
+  const v = e.target.value;
+  e.target.value = '';
+  if (!v) return;
+  $('place-template').value = v;
+  startPlace();
+};
 $('delete').onclick = deleteSelected;
 $('copy-name').addEventListener('change', () => state.selected && renameCopy(state.selected, $('copy-name').value));
 $('revert').onclick = () => revertSelected();

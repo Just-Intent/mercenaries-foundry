@@ -38,6 +38,41 @@
       <input id="place-template" type="text" list="placeables" spellcheck="false" placeholder="Template, object or model:"
              title="Anything from any map: a template (vehicle, prop, character), a named object, or model:<model> for a building or prop. Click Place, then the ground.">
       <button id="place" title="Place it where you click (P)">Place</button>
+    <select id="place-pickup" title="Retail's pickups and crates, as its maps place them: pick one, then click the ground. Its item settings are in the Properties panel once placed.">
+      <option value="">Pickups and crates…</option>
+      <optgroup label="Supplies">
+        <option value="model:global_pic_health">Health pack</option>
+        <option value="model:global_pic_ammopack">Ammo pack</option>
+        <option value="model:global_pic_ammoveh">Vehicle ammo</option>
+        <option value="model:global_pic_grenades">Grenades</option>
+        <option value="model:global_pic_c4box">C4 box</option>
+        <option value="model:global_pic_armor">Armor</option>
+        <option value="model:global_money">Money</option>
+      </optgroup>
+      <optgroup label="Crates">
+        <option value="model:global_pic_crate">Supply crate</option>
+        <option value="model:global_crate_health">Health crate</option>
+        <option value="template_crate_heavy">Crate: heavy weapons</option>
+        <option value="template_crate_sniper">Crate: sniper</option>
+        <option value="template_crate_stinger">Crate: Stinger</option>
+        <option value="template_crate_C4">Crate: C4</option>
+        <option value="template_crate_atrocket">Crate: AT rocket</option>
+        <option value="template_crate_advanced">Crate: advanced</option>
+      </optgroup>
+      <optgroup label="Weapons">
+        <option value="model:global_pic_ak47">AK-47</option>
+        <option value="model:global_pic_m4">M4</option>
+        <option value="model:global_pic_mp5">MP5</option>
+        <option value="model:global_pic_smg">SMG</option>
+        <option value="model:global_pic_mg36">MG36</option>
+        <option value="model:global_pic_covertrifle">Covert rifle</option>
+        <option value="model:global_pic_sniperrifle">Sniper rifle</option>
+        <option value="model:global_pic_amrifle">Anti-materiel rifle</option>
+        <option value="model:global_pic_rpg">RPG</option>
+        <option value="model:global_pic_smaw">SMAW</option>
+        <option value="model:global_pic_stinger">Stinger</option>
+      </optgroup>
+    </select>
     </div>
     <button id="new-path" title="Draw a path: click points on the ground, double-click to finish">New path</button>
     <button id="new-zone" title="Draw a zone's outline: click points, double-click to finish">New zone</button>
