@@ -441,6 +441,9 @@ def _write_map_text(data, result):
                               + f" of its own, shown there with Foundry Console ({name})")
 
 
+SHOP_URL_MAX = 23      # the game's "http://www.menace.ru/%s" and its terminator: 24 bytes
+
+
 def _write_map_templates(data, result):
     """After every step: a new map with "template_overrides" has its master
     script's ScriptInit tell Foundry Console which templates spawn with which
@@ -478,6 +481,20 @@ def _write_map_templates(data, result):
         call = f"if Foundry_MapFines then{nl}Foundry_MapFines(FALSE){nl}end{nl}"
         data.replace_added(name_hash(m), SCRIPT, script.encode(script.with_source(old, text[:at] + call + text[at:])))
         result.changes.append(f"maps/{m}.json: no fine for deaths the player causes there, with Foundry Console")
+    for m, url in sorted(getattr(data, "map_shop_url", {}).items()):
+        master = data.find_added(name_hash(m), SCRIPT)
+        if master is None:
+            raise ValueError(f"maps/{m}.json: no master script for its \"shop_url\"")
+        old = script.decode(master)
+        text = old.source
+        at = text.find("function ScriptInit()")
+        if at < 0:
+            raise ValueError(f"maps/{m}.json: its master script has no ScriptInit for \"shop_url\"")
+        at = text.index("\n", at) + 1
+        nl = "\r\n" if "\r\n" in text else "\n"
+        call = f"if Foundry_ShopUrl then{nl}Foundry_ShopUrl({missions._lua(url)}){nl}end{nl}"
+        data.replace_added(name_hash(m), SCRIPT, script.encode(script.with_source(old, text[:at] + call + text[at:])))
+        result.changes.append(f"maps/{m}.json: the PDA shop's address bar reads {url} there, with Foundry Console")
     for m in sorted(getattr(data, "map_any_captive", ())):
         master = data.find_added(name_hash(m), SCRIPT)
         if master is None:
@@ -3519,6 +3536,16 @@ def _apply_maps(data, folder, result):
         if not fines:
             data.map_no_fines = getattr(data, "map_no_fines", set())
             data.map_no_fines.add(name.lower())
+        # "shop_url": the PDA shop's address bar there ("http://www.menace.ru/%s";
+        # the page, topmenu.php and so on, goes in for %s): Foundry_ShopUrl
+        url = mdoc.get("shop_url")
+        if url is not None:
+            ok = isinstance(url, str) and len(url) <= SHOP_URL_MAX and url.count("%") == 1 and "%s" in url and url.isascii()
+            if not ok:
+                raise ValueError(f"{where}: \"shop_url\" is text of at most {SHOP_URL_MAX} characters with one %s "
+                                 f"where the page's name goes (\"www.frontier-sup.com/%s\")")
+            data.map_shop_url = getattr(data, "map_shop_url", {})
+            data.map_shop_url[name.lower()] = url
         # "relations": its factions' moods while it's loaded; the game's maps
         # put the pairs back (foundry_layers) as they were before
         relations = missions.map_relations(where, mdoc)
@@ -3710,7 +3737,7 @@ def _apply_maps(data, folder, result):
         if not any(r.key == key for _, r in data.records(SCRIPT)) and data.find_added(key, SCRIPT) is None:
             if mdoc.get("start") or mdoc.get("message") or mdoc.get("weather") or layers or pilots or contacts or extra \
                     or hqs or inside or deck or mdoc.get("any_captive") or mdoc.get("relations") \
-                    or mdoc.get("collateral_fines") is False:
+                    or mdoc.get("collateral_fines") is False or mdoc.get("shop_url"):
                 source = map_script(name, mdoc, layers, pilots, contacts, extra, hqs, inside, deck=deck,
                                     gates=getattr(data, "layer_gates", {}))
                 made.append("script (" + ", ".join(

@@ -590,8 +590,12 @@ maps/<name>.json `"shop"` (mercfoundry/shop.py has the full format):
   (a map's own item ordered on another map would name a template that isn't loaded there).
 - The shop stays the Mafia slot's (prices by its mood, its refusal and donation). On a map whose
   factions.json makes the Mafia slot another faction (Gaza's Settlers), that's the store's.
-- Not done: the `menace.ru` URL, a per-map shop name beyond the texts (`text/*.json` with `"map"`
-  renames them), keeping a map's items from a hostile shop faction's refusal.
+- `"shop_url": "www.frontier-sup.com/%s"` (maps json, toolkit 0.279): the address bar there. The
+  game's `http://www.menace.ru/%s` (`0x2E7CF8`, 24 bytes) is overwritten by Foundry Console's
+  `Foundry_ShopUrl` while the map is loaded and put back as the next level loads. At most 23
+  characters, one `%s` (the page: topmenu.php, weapons.php, vehicles.php).
+- Not done: a per-map shop name beyond the texts (`text/*.json` with `"map"` renames them),
+  keeping a map's items from a hostile shop faction's refusal.
 - Not tried in game yet (0.277): the hiding, the save hook, and the copied items' deliveries.
 
 ### The game's shop items (to copy from)

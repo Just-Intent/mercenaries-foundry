@@ -536,6 +536,16 @@ class ModBuildTests(unittest.TestCase):
         self.write("maps/island.json", json.dumps({"from": "blank", "loads_like": None, "collateral_fines": "no"}))
         with self.assertRaisesRegex(ValueError, "collateral_fines"):
             modbuild.build(self.project, self.data, self.out)
+        # "shop_url": the PDA shop's address bar there
+        self.write("maps/island.json", json.dumps({"from": "blank", "loads_like": None,
+                                                   "shop_url": "www.island-shop.com/%s"}))
+        modbuild.build(self.project, self.data, self.out)
+        master = script.decode(self.records("assets.dsk")[(name_hash("island"), SCRIPT)]).source
+        self.assertIn("Foundry_ShopUrl('www.island-shop.com/%s')", master)
+        for bad in ("www.island-shop.com/", "www.a-very-long-shop-name.com/%s", "a%s%s"):
+            self.write("maps/island.json", json.dumps({"from": "blank", "loads_like": None, "shop_url": bad}))
+            with self.assertRaisesRegex(ValueError, "shop_url"):
+                modbuild.build(self.project, self.data, self.out)
         # "relations": the map's faction moods, kept and put back on the game's maps
         self.write("maps/island.json", json.dumps({"from": "blank", "loads_like": None, "relations": {
             "mafia": {"civ": "hostile", "allies": "friendly"}, "allies": {"civ": -30}}}))

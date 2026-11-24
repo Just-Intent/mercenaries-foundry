@@ -3194,10 +3194,10 @@ static void texreq_release(void)
     texreq_count = 0;
 }
 #define MAPTEX_PENDING_MAX 128
-typedef struct { uint32_t from, to; double waited; } MapTexPending;
+typedef struct { uint32_t from, to; double since; } MapTexPending;
 static MapTexPending maptex_pending[MAPTEX_PENDING_MAX];
 static unsigned maptex_pending_count;
-static double maptex_poll_timer;
+static double maptex_clock;           /* seconds of play since the plugin started */
 
 static int texture_loaded(uint32_t hash)
 {
@@ -3354,9 +3354,10 @@ static void MERC_PLUGIN_CALL datapod_draw_before(void *ud, MercHookContext *c)
 
 static void maptexalias_poll(double dt)
 {
-    if ((!maptexalias_count && !byname_wait_count) || (maptexalias_timer += dt) < 1.0) return;
+    if (!maptexalias_count && !byname_wait_count) return;
+    if (byname_wait_count) byname_wait_poll();     /* every frame: swapped the frame the game's loads */
+    if ((maptexalias_timer += dt) < 1.0) return;
     maptexalias_timer = 0;
-    byname_wait_poll();
     for (unsigned i = 0; i < maptexalias_count; i++) {
         uint32_t values = 0, now = 0;
         int at = texture_slot(maptexalias[i].key, &values);
@@ -3366,18 +3367,19 @@ static void maptexalias_poll(double dt)
     }
 }
 
-/* each half second: swap the sprites of textures now loaded (gives up after 30 s) */
+/* every frame: swap the sprites of textures now loaded, the frame each one
+ * is (gives up after 60 s). 0.278 looked each half second, and every
+ * Foundry_MapTexture call counted as another half second for the ones asked
+ * for before it, so with the deck's portraits a map's first textures were
+ * given up on as the map loaded (bigflags: the PDA's Factions page). */
 static void maptex_poll(double dt)
 {
+    maptex_clock += dt;
     maptexalias_poll(dt);
     maptemplate_poll(dt);
     any_captive_poll(dt);
     shop_poll(dt);
     if (!maptex_pending_count) return;
-    maptex_poll_timer += dt;
-    if (maptex_poll_timer < 0.5) return;
-    double step = maptex_poll_timer;
-    maptex_poll_timer = 0;
     for (unsigned i = 0; i < maptex_pending_count;) {
         MapTexPending *p = &maptex_pending[i];
         char line[160];
@@ -3385,16 +3387,16 @@ static void maptex_poll(double dt)
             unsigned n = maptex_swap(p->from, p->to);
             if (n)
                 snprintf(line, sizeof(line), "map HUD art: %08X drawn as %08X on %u sprites (loaded after %.1f s)",
-                         p->from, p->to, n, p->waited);
+                         p->from, p->to, n, maptex_clock - p->since);
             else {                    /* drawn by name (no sprite): the texture table */
                 int now = maptexalias_set(p->from, p->to);
                 if (!now && byname_wait_count < BYNAME_WAIT_MAX)
                     byname_wait[byname_wait_count++] = (ByNameWait){p->from, p->to};
                 snprintf(line, sizeof(line), "map HUD art: %08X drawn by name as %08X: %s (loaded after %.1f s)",
                          p->from, p->to, now ? "swapped" :
-                         "the game's isn't loaded yet; swapped when it is", p->waited);
+                         "the game's isn't loaded yet; swapped when it is", maptex_clock - p->since);
             }
-        } else if ((p->waited += step) > 30.0) {
+        } else if (maptex_clock - p->since > 60.0) {
             uint32_t values = 0, tex = 0;
             uint8_t state[2] = {0, 0};
             uint16_t ready = 0;
@@ -3437,9 +3439,8 @@ static int MERC_PLUGIN_CALL cmd_map_texture(void *ud, uint32_t L)
     while (asked < texreq_count && texreq[asked] != other) asked++;   /* once per texture */
     if (asked == texreq_count && texreq_count < TEXREQ_MAX && guest(TEXTURE_REQUEST, TEXTURE_STREAMER, 2, keep, &c))
         texreq[texreq_count++] = other;
-    maptex_pending[maptex_pending_count++] = (MapTexPending){want, other, 0.0};
-    maptex_poll_timer = 0.5;                       /* look right away */
-    maptex_poll(0.0);
+    maptex_pending[maptex_pending_count++] = (MapTexPending){want, other, maptex_clock};
+    maptex_poll(0.0);                              /* look right away */
     uint32_t args[2] = {L, 1};
     lua_call(MF_FN_Lua_PushBool, 2, args);
     return 1;
@@ -3626,6 +3627,7 @@ static unsigned maptemplate_count, maptemplate_used;    /* Foundry_MapTemplate's
 static void maptemplate_restore(void);
 static int any_captive_on;
 static void any_captive_set(int on);
+static void shop_url_restore(void);
 static double any_captive_wait;
 static void MERC_PLUGIN_CALL level_load_before(void *ud, MercHookContext *c)
 {
@@ -3638,6 +3640,7 @@ static void MERC_PLUGIN_CALL level_load_before(void *ud, MercHookContext *c)
     }
     maptemplate_restore();
     shop_level_reset();
+    shop_url_restore();
     memset(card_seen, 0, sizeof(card_seen));   /* handles are reused on the next level */
     if (any_captive_on || any_captive_wait >= 0) any_captive_set(0);
     { uint8_t z = 0; host->write_guest(host->context, 0x87BF00u, &z, 1); }   /* fines back (Foundry_MapFines) */
@@ -4169,6 +4172,58 @@ static int MERC_PLUGIN_CALL cmd_map_shop(void *ud, uint32_t L)
     return 1;
 }
 
+/* Foundry_ShopUrl(url): the PDA shop's address bar ("http://www.menace.ru/%s",
+ * 0x2E7CF8, 24 bytes: the page's name, topmenu.php and so on, goes in for %s)
+ * reads url until the next level loads. At most 23 characters with exactly
+ * one %s. Returns true, or nil. */
+#define SHOP_URL_ADDR 0x2E7CF8u
+#define SHOP_URL_SIZE 24
+static char shop_url_game[SHOP_URL_SIZE];
+static int shop_url_on;
+
+static void shop_url_restore(void)
+{
+    if (!shop_url_on) return;
+    host->write_guest(host->context, SHOP_URL_ADDR, shop_url_game, SHOP_URL_SIZE);
+    shop_url_on = 0;
+    host->log(host->context, "map shop address: the game's put back");
+}
+
+static int MERC_PLUGIN_CALL cmd_shop_url(void *ud, uint32_t L)
+{
+    char url[64], now[SHOP_URL_SIZE];
+    (void)ud;
+    if (!lua_arg_text(L, 1, url, sizeof(url))) return 0;
+    const char *at = strchr(url, '%');
+    if (strlen(url) >= SHOP_URL_SIZE || !at || at[1] != 's' || strchr(at + 1, '%')) {
+        char line[160];
+        snprintf(line, sizeof(line), "map shop address: '%s' isn't one (at most %d characters with one %%s)", url,
+                 SHOP_URL_SIZE - 1);
+        host->log(host->context, line);
+        return 0;
+    }
+    if (!shop_url_on) {
+        if (!host->read_guest(host->context, SHOP_URL_ADDR, shop_url_game, SHOP_URL_SIZE) ||
+            memcmp(shop_url_game, "http://", 7) != 0) {
+            host->log(host->context, "map shop address: the game's isn't where it should be; left alone");
+            return 0;
+        }
+        shop_url_on = 1;
+    }
+    char buf[SHOP_URL_SIZE] = {0};
+    memcpy(buf, url, strlen(url));
+    host->write_guest(host->context, SHOP_URL_ADDR, buf, SHOP_URL_SIZE);
+    char line[128];
+    int ok = host->read_guest(host->context, SHOP_URL_ADDR, now, SHOP_URL_SIZE) && !memcmp(now, buf, SHOP_URL_SIZE);
+    snprintf(line, sizeof(line), "map shop address: %s until the next level loads%s", url,
+             ok ? "" : " (didn't take: the game's stays)");
+    host->log(host->context, line);
+    if (!ok) return 0;
+    uint32_t args[2] = {L, 1};
+    lua_call(MF_FN_Lua_PushBool, 2, args);
+    return 1;
+}
+
 static int MERC_PLUGIN_CALL cmd_map_captives(void *ud, uint32_t L)
 {
     (void)ud;
@@ -4290,6 +4345,7 @@ MERC_PLUGIN_EXPORT int MERC_PLUGIN_CALL MercenariesPlugin_Init(
         !h->add_lua_command(h->context, "Foundry_HqMode", cmd_hq_mode, NULL) ||
         !h->add_lua_command(h->context, "Foundry_MapTemplate", cmd_map_template, NULL) ||
         !h->add_lua_command(h->context, "Foundry_MapCaptives", cmd_map_captives, NULL) ||
+        !h->add_lua_command(h->context, "Foundry_ShopUrl", cmd_shop_url, NULL) ||
         !h->add_lua_command(h->context, "Foundry_MapFines", cmd_map_fines, NULL) ||
         !h->add_lua_command(h->context, "Foundry_FindPlaced", cmd_find_placed, NULL) ||
         !h->add_lua_command(h->context, "Foundry_MoveObject", cmd_move_object, NULL) ||
