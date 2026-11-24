@@ -3101,7 +3101,70 @@ end
               f"function {P}HqBribe_{f}() {P}HqBribe({_lua(f)}) end\n" for f in inside)
 
 
-def layers_script(layers, pilots=(), arrive=False, welcome=(), deck=False):
+# Faction relations (Faction_SetRelation(a, b, value), -100..100, as retail's
+# gameflow_SetFactionRelations sets them per chapter; util_GetMinimumNonHostileMood
+# is -59, and a bribe leaves -40). Words for values.
+RELATION_MOODS = {"hostile": -80, "unfriendly": -40, "neutral": 0, "friendly": 60}
+RELATION_FACTIONS = ("allies", "china", "mafia", "sk", "nk", "civ")
+
+
+def map_relations(where, doc):
+    """maps json "relations": {<faction>: {<other>: hostile | unfriendly |
+    neutral | friendly | -100..100}} checked: [(faction, other, value)]."""
+    rel = doc.get("relations")
+    if rel is None:
+        return []
+    if not isinstance(rel, dict):
+        raise ValueError(f"{where}: \"relations\" is {{<faction>: {{<other>: <mood>}}}}")
+    out = []
+    for a, row in rel.items():
+        a = str(a).lower()
+        if a not in RELATION_FACTIONS:
+            raise ValueError(f"{where}: \"relations\": {a!r} isn't one of {', '.join(RELATION_FACTIONS)}")
+        if not isinstance(row, dict):
+            raise ValueError(f"{where}: \"relations\" {a}: give {{<other faction>: <mood>}}")
+        for b, mood in row.items():
+            b = str(b).lower()
+            if b not in RELATION_FACTIONS or b == a:
+                raise ValueError(f"{where}: \"relations\" {a}: {b!r} isn't another of {', '.join(RELATION_FACTIONS)}")
+            if isinstance(mood, str) and mood.lower() in RELATION_MOODS:
+                v = RELATION_MOODS[mood.lower()]
+            elif isinstance(mood, (int, float)) and -100 <= mood <= 100:
+                v = int(mood)
+            else:
+                raise ValueError(f"{where}: \"relations\" {a} to {b}: {', '.join(RELATION_MOODS)} or -100 to 100, "
+                                 f"not {mood!r}")
+            out.append((a, b, v))
+    return out
+
+
+def relations_lua(prefix, pairs):
+    """{prefix}Relations(): a new map's faction relations set (each pair's
+    value before them kept once, foundry_rel_keep_<a>_<b>, for the game's maps
+    to put back: relations_restore_lines)."""
+    out = [f"function {prefix}Relations()"]
+    for a, b, v in pairs:
+        key = _lua(f"foundry_rel_keep_{a}_{b}")
+        out += [f"if not Utility_ReadNumberFromScribbleMemory({key}) then "
+                f"Utility_WriteNumberToScribbleMemory({key}, Faction_GetRelation({_lua(a)}, {_lua(b)})) end",
+                f"Faction_SetRelation({_lua(a)}, {_lua(b)}, {v})"]
+    out.append("end")
+    return "\n".join(out) + "\n"
+
+
+def relations_restore_lines(pairs):
+    """Free roam on a game map: relations a new map set put back as they were."""
+    out = []
+    for a, b in sorted({(a, b) for a, b, _ in pairs}):
+        key = _lua(f"foundry_rel_keep_{a}_{b}")
+        out += [f"if Utility_ReadNumberFromScribbleMemory({key}) then",
+                f"Faction_SetRelation({_lua(a)}, {_lua(b)}, Utility_ReadNumberFromScribbleMemory({key}))",
+                f"Utility_EraseValueFromScribbleMemory({key})",
+                "end"]
+    return out
+
+
+def layers_script(layers, pilots=(), arrive=False, welcome=(), deck=False, relations=()):
     """Lua for foundry_layers: load each mod layer marked "load": "map" when
     free roam starts on its map. A layer is loaded again only if it's gone:
     when one of its named objects no longer exists (a mission reset the
@@ -3162,6 +3225,8 @@ def layers_script(layers, pilots=(), arrive=False, welcome=(), deck=False):
         out += ["foundry_Welcome()"]
     if deck:
         out += ["Utility_LoadUtilityScript('foundry_deck')", "foundry_DeckLeave()   -- the game's cards back in the PDA"]
+    if relations:
+        out += ["-- faction relations a new map set (its \"relations\"), as they were"] + relations_restore_lines(relations)
     out += ["end"]
     text = "\n".join(out) + "\n"
     if arrive or pilots:

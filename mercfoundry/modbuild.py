@@ -1980,7 +1980,9 @@ def _apply_map_layers(data, result):
                                                                 getattr(data, "travel_pilots", []),
                                                                 getattr(data, "travel_arrive", False),
                                                                 getattr(data, "welcome", []),
-                                                                deck=bool(getattr(data, "decks", None))))))
+                                                                deck=bool(getattr(data, "decks", None)),
+                                                                relations=[p for ps in getattr(data, "map_relations", {}).values()
+                                                                           for p in ps]))))
     for map_ in missions.FREE_ROAM_MAPS:
         for a, r in data.records(name_hash("list")):
             if r.key == name_hash(map_):
@@ -2912,9 +2914,9 @@ def _new_animtables(data, folder, result):
         spec = json.loads(f.read_text(encoding="utf-8"))
         if not isinstance(spec, dict):
             raise ValueError(f"{where}: give {{\"base\": <table>, \"fallback\": <table>, \"add\": {{<table>: [handles]}}}}")
-        unknown = set(spec) - {"base", "fallback", "add"}
+        unknown = set(spec) - {"base", "fallback", "add", "set"}
         if unknown:
-            raise ValueError(f"{where}: unknown keys {', '.join(sorted(unknown))} (base, fallback, add)")
+            raise ValueError(f"{where}: unknown keys {', '.join(sorted(unknown))} (base, fallback, add, set)")
 
         def table(n, what):
             hit = tables.get(name_hash(str(n)))
@@ -2969,6 +2971,41 @@ def _new_animtables(data, folder, result):
             if not hits:
                 raise ValueError(f"{where}: \"add\": {src_name} has no handles matching {', '.join(map(str, patterns))}")
             added += hits
+        # "set": {<handle>: <clip> | {"anim", "priority"?, "flags"?}}: the
+        # handle plays that clip in every set that has it (its priority and
+        # flags kept unless given), else it's added to "default" (priority
+        # 40 and flags "0x5", loops at equal priority, unless given): a
+        # working crew's idle and fidgets as a working loop
+        sets_ = spec.get("set") or {}
+        if not isinstance(sets_, dict):
+            raise ValueError(f"{where}: \"set\" is {{<handle>: <clip> or {{\"anim\", \"priority\", \"flags\"}}}}")
+        n_set = 0
+        for handle, val in sets_.items():
+            if isinstance(val, str):
+                val = {"anim": val}
+            if not isinstance(val, dict) or not isinstance(val.get("anim"), str) or not val["anim"] \
+                    or not set(val) <= {"anim", "priority", "flags"}:
+                raise ValueError(f"{where}: \"set\" {handle}: give a clip, or {{\"anim\", \"priority\", \"flags\"}}")
+            hit = False
+            for st in doc["sets"]:
+                for e in st["entries"]:
+                    if e["handle"].lower() == str(handle).lower():
+                        e.pop("variants", None)
+                        e.pop("meaning", None)
+                        e["anim"] = val["anim"]
+                        for k in ("priority", "flags"):
+                            if k in val:
+                                e[k] = val[k]
+                        hit = True
+            if not hit:
+                default = next((s for s in doc["sets"] if s["name"].lower() == "default"), None)
+                if default is None:
+                    default = {"name": "default", "entries": []}
+                    doc["sets"].insert(0, default)
+                default["entries"].append({"handle": str(handle), "anim": val["anim"],
+                                           "priority": val.get("priority", 40), "flags": str(val.get("flags", "0x5"))})
+            clips_added.add(val["anim"])
+            n_set += 1
         data.new("assets.dsk", key, animtable.ANIMTABLE, animtable.from_json(doc))
         # loaded where the base is: in the template layer every level loads
         # (LEVEL_TEMPLATE_LAYERS: template_humans has the people's tables)
@@ -2999,11 +3036,28 @@ def _new_animtables(data, folder, result):
         result.changes.append(f"animtable {name}: new, a copy of {base}"
                               + (f" falling back on {fallback}" if fallback else "")
                               + (f", {added} entries added from {', '.join(add)}" if added else "")
+                              + (f", {n_set} handles set" if n_set else "")
                               + (f"; loads with {next(n for n in LEVEL_TEMPLATE_LAYERS if name_hash(n) == level[0][1].key)} on every level" if level else f"; loads where {base} does ({lists} load lists)"))
         if not lists:
             result.warnings.append(f"{where}: no load list loads {base}, so nothing loads {name}")
         unloaded = sorted(c for c in clips_added if c.lower() not in loaded_clips)
-        if unloaded and lists:
+        known_clips = {r.key for _, r in data.records(name_hash("animation"))} | \
+            {k for k, kind, _ in data.added() if kind == name_hash("animation")}
+        missing = [c for c in unloaded if name_hash(c) not in known_clips]
+        if missing:
+            # (retail's own tables name a few clips the game lacks)
+            result.warnings.append(f"{where}: no clip named {', '.join(missing[:6])} in the game or the mod")
+        unloaded = [c for c in unloaded if c not in missing]
+        if unloaded and level:
+            # the clips the table names now load with it (template_humans)
+            a, r = level[0]
+            text = data.current(a, r).decode("latin-1")
+            for c in unloaded:
+                text = missions.add_to_list(text, "animation", c)
+            data.set(a, r, text.encode("latin-1"))
+            result.changes.append(f"animtable {name}: its clips {', '.join(unloaded[:6])}"
+                                  f"{' ...' if len(unloaded) > 6 else ''} load with it")
+        elif unloaded and lists:
             result.warnings.append(f"{where}: clips the added entries name that no list loading {base} loads "
                                    f"(they play only where something else loads them): {', '.join(unloaded[:6])}"
                                    + (" ..." if len(unloaded) > 6 else ""))
@@ -3128,12 +3182,21 @@ def map_script(name, doc, layers, pilots=(), contacts=False, extra=(), hqs=None,
     # (free roam, a contract, a retry): a contract accepted in an HQ room
     # arrived with no HUD although ScriptInit's Ui_EnableHud(TRUE) ran (0.260)
     hud_on = f"foundry_{name.lower()}_HudOn"
+    from .missions import map_relations, relations_lua
+    relations = map_relations(f"maps/{name}.json", doc)
+    if relations:
+        # its factions' moods (again by the timers below: a contract's start
+        # runs gameflow, which sets the game's by chapter)
+        lines.append(f"foundry_{name.lower()}_Relations()")
     lines += [f"Event_RelativeTimer('{hud_on}', 'b', 1.0)", f"Event_RelativeTimer('{hud_on}', 'b', 3.0)"]
     text = "\n".join(lines + ["end", ""])
     text += (f"function {hud_on}()\n"
              f"-- unless an HQ room here hides it (its \"hide_hud\")\n"
              f"if not foundry_{name.lower()}_HqHudOff then Ui_EnableHud(TRUE) end\n"
-             "end\n")
+             + (f"foundry_{name.lower()}_Relations()\n" if relations else "")
+             + "end\n")
+    if relations:
+        text += relations_lua(f"foundry_{name.lower()}_", relations)
     if pilots:
         text += travel_lua(prefix, list(pilots), by_map=False)
     if contacts:
@@ -3284,6 +3347,12 @@ def _apply_maps(data, folder, result):
         if any_captive:
             data.map_any_captive = getattr(data, "map_any_captive", set())
             data.map_any_captive.add(name.lower())
+        # "relations": its factions' moods while it's loaded; the game's maps
+        # put the pairs back (foundry_layers) as they were before
+        relations = missions.map_relations(where, mdoc)
+        if relations:
+            data.map_relations = getattr(data, "map_relations", {})
+            data.map_relations[name.lower()] = relations
         overrides = mdoc.get("template_overrides") or {}
         if not isinstance(overrides, dict):
             raise ValueError(f"{where}: \"template_overrides\" is {{<game template>: {{<property>: value}} or <template>}}")
@@ -3438,7 +3507,7 @@ def _apply_maps(data, folder, result):
                 data.replace_added(key, name_hash("list"), text.encode("latin-1"))
         if not any(r.key == key for _, r in data.records(SCRIPT)) and data.find_added(key, SCRIPT) is None:
             if mdoc.get("start") or mdoc.get("message") or mdoc.get("weather") or layers or pilots or contacts or extra \
-                    or hqs or inside or deck or mdoc.get("any_captive"):
+                    or hqs or inside or deck or mdoc.get("any_captive") or mdoc.get("relations"):
                 source = map_script(name, mdoc, layers, pilots, contacts, extra, hqs, inside, deck=deck)
                 made.append("script (" + ", ".join(
                     (["where you arrive"] if (mdoc.get("start") or {}).get("position") else [])
@@ -4722,9 +4791,28 @@ def build(projects, data_dir, out_dir, name=None, description=None) -> Result:
             for project, pname in zip(projects, mod_names):
                 _apply_welcome_mail(data, project, pname, result)
             _apply_deck_mails(data, result)
+            # new maps' "relations" (the maps step, later, checks and writes
+            # them): the game's maps put them back
+            from . import missions as _missions
+            for project in projects:
+                mdir = Path(project) / "maps"
+                for mf in sorted(mdir.glob("*.json")) if mdir.is_dir() else []:
+                    try:
+                        rel = _missions.map_relations(f"maps/{mf.name}",
+                                                      json.loads(mf.read_text(encoding="utf-8")))
+                    except (ValueError, json.JSONDecodeError):
+                        rel = []          # the maps step reports it
+                    if rel:
+                        data.map_relations = getattr(data, "map_relations", {})
+                        data.map_relations[mf.stem.lower()] = rel
+            has_global = any(r.key == name_hash("global") for _, r in data.records(SCRIPT))
             if getattr(data, "map_layers", None) or getattr(data, "travel_arrive", False) \
-                    or getattr(data, "welcome", None) or getattr(data, "decks", None):
+                    or getattr(data, "welcome", None) or getattr(data, "decks", None) \
+                    or (getattr(data, "map_relations", None) and has_global):
                 _apply_map_layers(data, result)
+            elif getattr(data, "map_relations", None):
+                result.warnings.append("new maps' \"relations\": no global script, so the game's maps won't "
+                                       "put the factions' moods back")
     # after every step: the Lua check (the maps step writes new maps' master
     # scripts after the missions step), and a new map's step lists the
     # scripts it runs

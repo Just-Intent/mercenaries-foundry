@@ -516,6 +516,24 @@ class ModBuildTests(unittest.TestCase):
         self.write("maps/island.json", json.dumps({"from": "blank", "loads_like": None, "any_captive": "yes"}))
         with self.assertRaisesRegex(ValueError, "true or false"):
             modbuild.build(self.project, self.data, self.out)
+        # "relations": the map's faction moods, kept and put back on the game's maps
+        self.write("maps/island.json", json.dumps({"from": "blank", "loads_like": None, "relations": {
+            "mafia": {"civ": "hostile", "allies": "friendly"}, "allies": {"civ": -30}}}))
+        modbuild.build(self.project, self.data, self.out)
+        recs = self.records("assets.dsk")
+        master = script.decode(recs[(name_hash("island"), SCRIPT)]).source
+        self.assertIn("Faction_SetRelation('mafia', 'civ', -80)", master)
+        self.assertIn("Faction_SetRelation('mafia', 'allies', 60)", master)
+        self.assertIn("Faction_SetRelation('allies', 'civ', -30)", master)
+        self.assertIn("Utility_WriteNumberToScribbleMemory('foundry_rel_keep_mafia_civ', Faction_GetRelation('mafia', 'civ'))", master)
+        self.assertLess(master.index("foundry_island_Relations()"), master.index("function foundry_island_HudOn()"))
+        from mercfoundry import missions
+        layers = missions.layers_script([], relations=missions.map_relations("m", {"relations": {"mafia": {"civ": "hostile"}}}))
+        self.assertIn("Faction_SetRelation('mafia', 'civ', Utility_ReadNumberFromScribbleMemory('foundry_rel_keep_mafia_civ'))", layers)
+        for bad in ({"mafia": {"civilians": "hostile"}}, {"mafia": {"civ": "angry"}}, {"mafia": {"mafia": "hostile"}}):
+            self.write("maps/island.json", json.dumps({"from": "blank", "loads_like": None, "relations": bad}))
+            with self.assertRaises(ValueError):
+                modbuild.build(self.project, self.data, self.out)
 
     def test_map_text(self):
         # text/*.json with "map": the game's text stays; the new map's own

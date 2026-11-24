@@ -152,6 +152,15 @@ class NewClipModTests(unittest.TestCase):
             self.assertIn(b"load my_guy", arecs[name_hash("template_humans")])
             self.assertNotIn(b"my_guy", arecs.get(name_hash("some_layer"), both))
             self.assertTrue(any("loads with template_humans on every level" in c for c in result.changes))
+            # "set": a handle's clip replaced where it is, or added to default
+            (d / "proj" / "animtables" / "my_guy.new.json").write_text(json.dumps(
+                {"base": "guy_table", "set": {"lb_run": "dig_loop", "fb_new": {"anim": "dig_loop", "flags": "0x1"}}}))
+            modbuild.build(d / "proj", d / "data", d / "out2")
+            got = animtable.to_json({r.key: dsk.Archive(d / "out2" / "assets.dsk").read(r)
+                                     for r in dsk.Archive(d / "out2" / "assets.dsk").records}[name_hash("my_guy")])
+            entries = {e["handle"]: e for e in got["sets"][0]["entries"]}
+            self.assertEqual((entries["lb_run"]["anim"], entries["lb_run"]["priority"]), ("dig_loop", 40))
+            self.assertEqual((entries["fb_new"]["anim"], entries["fb_new"]["flags"]), ("dig_loop", "0x1"))
 
     def test_new_name_clash_is_an_error(self):
         with tempfile.TemporaryDirectory() as tmp:
