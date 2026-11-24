@@ -247,6 +247,7 @@ function foundry_DeckEnter(m)
 local d = tFoundryDecks[m]
 if not d then return end
 local on = Utility_ReadStringFromScribbleMemory('foundry_deck_on')
+if Foundry_Log then Foundry_Log('deck: entering ' .. m .. ' (in the PDA: ' .. tostring(on or 'the game') .. ')') end
 if on == m then foundry_DeckMails(m) return end
 if on then foundry_DeckLeave() end
 for j, suit in ipairs(d.suits) do
@@ -270,6 +271,7 @@ end
 -- Anywhere else: the map's states kept, the game's back.
 function foundry_DeckLeave()
 local m = Utility_ReadStringFromScribbleMemory('foundry_deck_on')
+if Foundry_Log then Foundry_Log('deck: leaving ' .. tostring(m or 'none')) end
 if not m then return end
 local old = Utility_ReadStringFromScribbleMemory('foundry_deck_suit')   -- 0.201-0.208 saves: one suit
 for j, suit in ipairs({{ 'clubs', 'diamonds', 'hearts', 'spades' }}) do

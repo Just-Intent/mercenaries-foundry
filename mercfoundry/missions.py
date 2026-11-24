@@ -3256,8 +3256,17 @@ MOODS_LUA = """-- A new map's own faction moods (maps json "own_moods"): its fac
 -- foundry_mood_on, saved with them: a save made there and loaded anywhere
 -- puts each map's back where it belongs (as the Deck's foundry_deck_on).
 tFoundryMoodFactions = { 'allies', 'china', 'mafia', 'sk' }
+function foundry_MoodsNow()
+local t = ''
+for i, f in tFoundryMoodFactions do t = t .. ' ' .. f .. ' ' .. tostring(Faction_GetRelation(f, 'prokat')) end
+return t
+end
+function foundry_MoodsTrace(s)
+if Foundry_Log then Foundry_Log('moods: ' .. s .. ';' .. foundry_MoodsNow()) end
+end
 function foundry_MoodsEnter(m, tStart)
 local on = Utility_ReadStringFromScribbleMemory('foundry_mood_on')
+foundry_MoodsTrace('entering ' .. m .. ' (in the slots: ' .. tostring(on or 'the game') .. ')')
 if on == m then return end
 if on then foundry_MoodsLeave() end
 for i, f in tFoundryMoodFactions do
@@ -3267,9 +3276,11 @@ if not v and tStart then v = tStart[f] end
 if v then Faction_SetRelation(f, 'prokat', v) end
 end
 Utility_WriteStringToScribbleMemory('foundry_mood_on', m)
+foundry_MoodsTrace(m .. "'s in")
 end
 function foundry_MoodsLeave()
 local m = Utility_ReadStringFromScribbleMemory('foundry_mood_on')
+foundry_MoodsTrace('leaving ' .. tostring(m or 'none'))
 if not m then return end
 for i, f in tFoundryMoodFactions do
 Utility_WriteNumberToScribbleMemory('foundry_mood_' .. m .. '_' .. f, Faction_GetRelation(f, 'prokat'))
@@ -3278,6 +3289,7 @@ if k then Faction_SetRelation(f, 'prokat', k) end
 Utility_EraseValueFromScribbleMemory('foundry_mood_keep_' .. f)
 end
 Utility_EraseValueFromScribbleMemory('foundry_mood_on')
+foundry_MoodsTrace("the game's back")
 end
 """
 
