@@ -86,7 +86,10 @@ Script commands it adds, for the Lua box or any script:
   whose own textures don't show (Gaza's card men, 0.262).
 - `Foundry_MapFines(false)`: until the next level loads, no fine for a
   death the player causes (0x56FD0's $100), through a byte the port reads
-  (0x87BF00). Used by a new map's `"collateral_fines": false`.
+  (0x87BF00). Used by a new map's `"collateral_fines": false`. Since 0.280
+  the economy event 0x14BC0 reads it too: no "Collateral Damage" (a
+  civilian's, the player's growing amount at +0xE48) or press-casualty fine
+  and no notice. Allied casualties and bounties stay.
 - `Foundry_FindPlaced('<model>', n)`: the n-th live object within 150 m of the
   player whose GeometryFile is that model, as handle, x, y, z (nothing if
   none): for objects scripts can't name, such as a placed charge.
