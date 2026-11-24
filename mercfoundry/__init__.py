@@ -1,2 +1,2 @@
 """Mercenaries Foundry: modding tools for Mercenaries: Playground of Destruction."""
-__version__ = "0.266.0"
+__version__ = "0.267.0"

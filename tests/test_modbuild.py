@@ -1313,6 +1313,18 @@ class MapScriptTests(unittest.TestCase):
         doc["interiors"]["allies"]["bribe"] = "lots"
         with self.assertRaises(ValueError):
             missions.interiors("maps/gaza.json", "gaza", doc)
+        # "parking": the player's last vehicle is put there on going in
+        doc["interiors"]["allies"]["bribe"] = True
+        doc["interiors"]["allies"]["parking"] = {"position": [10, 2, 30], "heading": 90}
+        one = missions.interiors("maps/gaza.json", "gaza", doc)["allies"]
+        lua = missions.interiors_lua("p_", {"allies": one})
+        self.assertIn("park = { 10.00, 2.00, 30.00, 270.0 }", lua)
+        self.assertIn("Event_AiInVehicle('p_HqCarIn', 'b', 'player0', TRUE)", lua)
+        self.assertIn("p_HqPark(h)\np_HqHold()", lua)
+        self.assertEqual(luacheck.check(lua), [])
+        doc["interiors"]["allies"]["parking"] = [10, 2, 30]
+        with self.assertRaises(ValueError):
+            missions.interiors("maps/gaza.json", "gaza", doc)
 
     def test_interior_chair_seats_as_retail(self):
         from mercfoundry import luacheck, missions

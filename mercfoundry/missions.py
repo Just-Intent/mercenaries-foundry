@@ -2033,6 +2033,17 @@ def interior_guard(map_name, faction):
     return f"foundry_hqguard_{map_name.lower()}_{faction}"
 
 
+def _parking(where, spot):
+    """An interior's "parking" {position, heading?}: ([x, y, z], the yaw the
+    game reads for a vehicle facing that heading), or None."""
+    if spot is None:
+        return None
+    if not isinstance(spot, dict) or not isinstance(spot.get("position"), (list, tuple)) \
+            or len(spot["position"]) != 3 or not all(isinstance(v, (int, float)) for v in spot["position"]):
+        raise ValueError(f"{where} is {{\"position\": [x, y, z], \"heading\"?}}")
+    return [float(v) for v in spot["position"]], player_yaw(spot.get("heading"))
+
+
 def interiors(where, map_name, doc):
     """maps/<name>.json "interiors" checked: {faction: {guard: {template?,
     position, heading?, name?, prompt?, side?, marker?}, room: {position,
@@ -2129,6 +2140,9 @@ def interiors(where, map_name, doc):
                   # retail's bouncers can be shot (bouncer.lua makes one invincible only
                   # through its bribe); "invincible": true keeps this guard unhurt
                   "guard_safe": bool(g.get("invincible", False)),
+                  # "parking": {position, heading?}: the player's last vehicle is put
+                  # there on going in (retail's HQ visit reloads the world instead)
+                  "parking": _parking(f"{w}: \"parking\"", i.get("parking")),
                   "marker": marker,
                   "room": [float(v) for v in room["position"]], "rheading": float(room.get("heading") or 0),
                   "camera": cam_pos,
@@ -2365,7 +2379,7 @@ def interiors_lua(prefix, inside, flagged=()):
             "%s = { guard = %s, prompt = %s, name = %s, side = %s, marker = %s, ttype = %s, blip = %s, rx = %.2f, ry = %.2f, rz = %.2f, "
             "rh = %.1f, leaders = { %s }, door = %s, doorprompt = %s, doordist = %.1f, exitdelay = %.1f, talkprompt = %s,\n"
             " starter = %s, acceptprompt = %s, bribe = %s, bribecost = %s,%s cx = %.2f, cy = %.2f, cz = %.2f,\n"
-            " amb = %s, hidehud = %s, banter = { %s }, moods = %s, respawn = %s, gsafe = %s,\n"
+            " amb = %s, hidehud = %s, banter = { %s }, moods = %s, respawn = %s, gsafe = %s, park = %s,\n"
             " chair = %s,\n follow = %s,\n"
             " greeting = %s,\n gmood = { %s },\n nags = %s,\n idle = %s },"
             % (f, _lua(i["guard"]), _lua_str(i["prompt"]), _lua_str(i["name"]), _lua(i["side"]),
@@ -2385,6 +2399,7 @@ def interiors_lua(prefix, inside, flagged=()):
                "TRUE" if i.get("guard_moods") else "FALSE",
                "TRUE" if i.get("respawn") else "FALSE",
                "TRUE" if i.get("guard_safe") else "FALSE",
+               ("{ %.2f, %.2f, %.2f, %.1f }" % (*i["parking"][0], i["parking"][1])) if i.get("parking") else "false",
                _chair_row(i.get("chair")), _follow_row(i.get("follow")),
                i["greeting"],
                ", ".join(f"{m} = {lines}" for m, lines in (i.get("greetings") or {}).items()),
@@ -2462,7 +2477,34 @@ Ai_SetHostileRange(name, 0.0)
 Actor_SetVerifiable(name, FALSE)
 if bHurt then Actor_SetInvincible(name, false) else Actor_SetInvincible(name, true) end
 end
+-- The player's last vehicle, for its parking spot ("parking") on going in:
+-- noted each time they get in (Event_AiInVehicle, armed again either way).
+function {P}HqCarIn()
+{P}HqCar = Utility_GetActorsVehicle('player0')
+Event_AiInVehicle('{P}HqCarOut', 'b', 'player0', FALSE)
+end
+function {P}HqCarOut()
+Event_AiInVehicle('{P}HqCarIn', 'b', 'player0', TRUE)
+end
+-- Going in: the last vehicle, if it's within 80 m of the guard, to the
+-- parking spot (retail's HQ visit reloads the world; this room is on the map).
+function {P}HqPark(h)
+local car = {P}HqCar
+if not h.park or not car then return end
+local cx, cy, cz = Actor_GetPosition(car)
+local gx, gy, gz = Actor_GetPosition(h.guard)
+if not cx or not gx then return end
+local dx, dz = cx - gx, cz - gz
+if dx * dx + dz * dz > 6400 then return end
+Actor_SetPosition(car, h.park[1], h.park[2], h.park[3])
+Actor_SetYaw(car, h.park[4])
+{P}HqTrace('parked the vehicle')
+end
 function {P}HqArm()
+if not {P}HqCarWatch then
+{P}HqCarWatch = 1
+Event_AiInVehicle('{P}HqCarIn', 'b', 'player0', TRUE)
+end
 -- one look-timer at a time: a new start replaces the one waiting
 if {P}HqTimer then Event_CancelEvent({P}HqTimer) {P}HqTimer = nil end
 {P}HqWaits = 0
@@ -2844,6 +2886,7 @@ for i, a in h.leaders do
 {P}HqLeader(a)
 if Utility_DoesActorExist(a) then Actor_LookAtActor(a, 'player0') end
 end
+{P}HqPark(h)
 {P}HqHold()
 {P}HqCam(h.leaders[1])
 Event_RelativeTimer('{P}HqLit', 'b', 0.5)

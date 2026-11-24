@@ -74,6 +74,7 @@ export function createHq(ctx) {
       return [i.camera, 'position', 'point'];
     }
     if (kind === 'chair') return [k.interiors[f], 'chair', 'spot'];
+    if (kind === 'parking') return [k.interiors[f], 'parking', 'spot'];
     if (kind === 'bounds0' || kind === 'bounds1') {
       const i = k.interiors[f];
       i.camera = i.camera || {};
@@ -102,6 +103,9 @@ export function createHq(ctx) {
       <label class="sky-row"><span>Name</span><input data-int-k="guard.name" value="${esc(g.name || '')}" placeholder="${esc(name(f))} HQ"></label>
       <label class="sky-row"><span>Template</span><input data-int-k="guard.template" list="templates" value="${esc(g.template || '')}" placeholder="template_${f}_bouncer"></label>
       <label class="sky-row"><span>Prompt</span><input data-int-k="guard.prompt" value="${esc(g.prompt || '')}" placeholder="Enter HQ"></label>
+      ${spotRow('Parking', i.parking || null, `parking:${f}`)}
+      <p class="hint">Where the player's vehicle is put when they go in (the last one they drove, if it's within 80 m
+        of the guard), facing the heading: the HQ entrance stays clear and the vehicle waits there.</p>
       ${spotRow('Room', i.room, `room:${f}`)}
       <label class="sky-row"><span>Camera</span><select data-int-k="camera.mode">
         <option value="" ${(i.camera || {}).mode !== 'fixed' ? 'selected' : ''}>follows behind the player (as retail)</option>

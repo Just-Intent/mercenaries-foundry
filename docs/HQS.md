@@ -112,6 +112,7 @@ interiors_lua, from maps json `"interiors"`).
 | An HQ with no work left (retail: the boss's last mission done, the HQ still there) | **0.262:** once every contract offered inside a faction's room on this map is done (not repeatable) or lost, its flag (`"hqs"`) and its guard's ring and "Enter HQ" go; looked at whenever free roam starts on the map (after each contract too). A faction with no contracts inside keeps them | by request (Gaza) |
 | One greeting, then the briefing | **0.263:** the first visit's `"greeting"`, else the one by mood (`"greetings"`), then the briefing or `"idle"`; one set of lines at a time | same |
 | The bouncer can be shot (invincible only through the bribe) | **0.264:** the guard outside can be shot (until 0.264 it was invincible and bullets passed through it); `"invincible": true` in `"guard"` keeps it safe. Leaders inside can't be hurt | same |
+| The vehicle you came in (lost with the world's reload) | **0.267:** `"parking"` {position, heading}: the last vehicle the player drove, if within 80 m of the guard, is put there as they go in (HQs panel: Parking) | by request |
 | HUD off | on; `"hide_hud"` hides it (for voiced lines only: ours are on-screen messages) (0.232) | by choice |
 | Room atmosphere, ambient light 80 | the map's own light | gap |
 | Music stopped, room ambience cue | music stopped; `"ambience"` cue (Briefing_SetAmbientSoundCue), off on leaving (0.232) | same |
