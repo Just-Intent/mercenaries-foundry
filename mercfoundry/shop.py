@@ -245,13 +245,22 @@ def lua(prefix, map_name, shop_items, open_here=False):
             cond = f"(Utility_ReadNumberFromScribbleMemory({_lua_str(key)}) or 0) >= {u[2]}"
         rows.append((it["weapon"], cond))
     names = ", ".join(_lua_str(w) for w, _ in rows)
-    checks = "".join(
-        f"if not Utility_ReadNumberFromScribbleMemory({_lua_str('foundry_shop_' + w)}) and {c} then\n"
-        f"Shop_UnlockItem({_lua_str(w)})\n"
-        f"Utility_WriteNumberToScribbleMemory({_lua_str('foundry_shop_' + w)}, 1)\n"
-        f"end\n" for w, c in rows)
+    checks = "".join(f"if {c} then {prefix}ShopUnlock({_lua_str(w)}) end\n" for w, c in rows)
     return (f"-- The map's own store (maps json \"shop\", mercfoundry/shop.py): only its\n"
             f"-- items in the PDA shop here (Foundry Console), unlocked as their rules say.\n"
+            f"-- Whether an item is unlocked is asked of the shop each time (Foundry\n"
+            f"-- Console): the save's player data, read after this script as a level\n"
+            f"-- loads, replaces the unlocked list, so a mark kept in scribble memory\n"
+            f"-- said unlocked when it wasn't (Gaza's store stayed empty, 0.277-0.285).\n"
+            f"-- Without Foundry Console, once per save as before.\n"
+            f"function {prefix}ShopUnlock(t)\n"
+            f"local have = nil\n"
+            f"if Foundry_ShopUnlocked then have = Foundry_ShopUnlocked(t) end\n"
+            f"if have then return end\n"
+            f"if have == nil and Utility_ReadNumberFromScribbleMemory('foundry_shop_' .. t) then return end\n"
+            f"Shop_UnlockItem(t)\n"
+            f"Utility_WriteNumberToScribbleMemory('foundry_shop_' .. t, 1)\n"
+            f"end\n"
             f"function {prefix}Shop()\n"
             f"if Foundry_MapShop then Foundry_MapShop({names}) end\n"
             + (f"if Foundry_MapShopOpen then Foundry_MapShopOpen() end\n" if open_here else "") +

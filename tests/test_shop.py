@@ -87,6 +87,11 @@ class ShopTest(unittest.TestCase):
         lua = shop.lua("foundry_gaza_", "gaza", its)
         self.assertIn("Foundry_MapShop('template_support_gaza_hermes')", lua)
         self.assertIn("Utility_ReadNumberFromScribbleMemory('foundry_done_sw_allies21')", lua)
+        # unlocked as often as the shop's own list lacks it (a load replaces the list)
+        self.assertIn("foundry_gaza_ShopUnlock('template_support_gaza_hermes')", lua)
+        self.assertIn("if Foundry_ShopUnlocked then have = Foundry_ShopUnlocked(t) end", lua)
+        from mercfoundry import luacheck
+        self.assertEqual(luacheck.check(lua), [])
         with self.assertRaises(ValueError):
             shop.catalogue_text(GAME_INI * 64, its)
         # the game's lock is left alone unless "open": then Foundry Console opens it here only

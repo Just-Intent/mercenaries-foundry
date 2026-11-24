@@ -605,6 +605,34 @@ maps/<name>.json `"shop"` (mercfoundry/shop.py has the full format):
 - Not done: a per-map shop name beyond the texts (`text/*.json` with `"map"` renames them),
   keeping a map's items from a hostile shop faction's refusal.
 - Not tried in game yet (0.277): the hiding, the save hook, and the copied items' deliveries.
+- The locked page (0.286): the shop page's state (`0xCE9F0`) is the locked page when the lock is
+  on *or* when no tab has an item (`0xC8AD0` per tab), so a map's store with nothing unlocked
+  (the rest hidden) looks locked. The store's unlocks are looked at every 5 s by asking Foundry
+  Console's `Foundry_ShopUnlocked(template)` (true, false, or nil when the catalogue lacks it):
+  the save's player data, read after the map's script as a level loads (`0x189490`), replaces
+  the unlocked list, and until 0.285 the script's once-per-save scribble mark kept it from
+  unlocking again. Foundry Console logs "none of this map's items unlocked yet" when the list
+  is empty on the map, and an item missing from the catalogue (itemshop.ini not loaded).
+
+### The shop page's art: sprites
+
+The page draws sprites, parts of a texture (static constructors at `0x24EFB0`, arguments
+sprite, x, y, w, h, texture, texture width, height), at fixed places (`0xC4B60` the header,
+`0xC5980` the tab flag; screen units of the PDA page):
+
+| sprite | texture (size) | part x, y, w, h | drawn |
+|---|---|---|---|
+| `0x4E324447` band | `shoplogo` (256x64 DXT3) | 1, 1, 209, 21 | four times as the header's frame: at 6.5, 30 (211x23), flipped down at 6.5, 76, mirrored at 428.5, 30 and both at 428.5, 76: keep words out of it |
+| `0x4BCA13D0` left word | `shoplogo` | 1, 33, 121, 30 | 63.5, 37 (121x30): "MERCHANT" |
+| `0x4ECA1889` right word | `shoplogo` | 123, 33, 123, 30 | 246.5, 37 (121x30): "OF MENACE" |
+| `0x9B2402BB` | `shoplogo` | 230, 2, 23, 23 | the "!" |
+| `0xA33714BF` | `shoplogo` | 218, 1, 9, 30 | a bar |
+| `0xE4E2AB29` big flag | `shopflag` (64x32 DXT1) | 1, 1, 42, 29 | 195.5, 39 (42x29), between the words |
+| `0x40900C4B` small flag | `shopflag` | 4, 4, 36, 23 | every page state (`0xC5980`, 38x25), the tab |
+
+A map's own `"hud_textures"` art keeps this layout: a flag painted in the middle of the
+whole 64x32 shows off to the right in both flag sprites. The locked page (state `0xC6100`)
+draws the small flag and its lines but not the header.
 
 ### The game's shop items (to copy from)
 

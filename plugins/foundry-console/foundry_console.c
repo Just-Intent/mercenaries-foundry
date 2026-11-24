@@ -4118,6 +4118,45 @@ static void shop_unhide(int only_allowed)
     host->write_guest(host->context, SHOP_LIST_COUNT, &n, 4);
 }
 
+/* Foundry_ShopUnlocked(template): true if the PDA shop's unlocked list has
+ * the item (shown or hidden here), nil if not; false if the catalogue has no
+ * such item. The map's store asks it each 5 s: the save's player data, read
+ * after the map's script as a level loads (0x189490), replaces the list, so
+ * an item unlocked in ScriptInit was gone again while the script's
+ * once-per-save mark stayed (Gaza's store, empty, showed the locked page:
+ * 0xCE9F0 shows it when no tab has an item, as when the lock is on). */
+static int MERC_PLUGIN_CALL cmd_shop_unlocked(void *ud, uint32_t L)
+{
+    static uint32_t hashes[128], cats[128], list[128 * 3];
+    char t[72];
+    uint32_t ccount = 0, n = 0;
+    (void)ud;
+    if (!lua_arg_text(L, 1, t, sizeof(t)) || !shop_catalogue(hashes, cats, &ccount) ||
+        !host->read_guest(host->context, SHOP_LIST_COUNT, &n, 4) || n > 128 ||
+        !host->read_guest(host->context, SHOP_LIST, list, n * 12)) return 0;
+    uint32_t want = hash_name(t);
+    int known = 0, have = 0;
+    for (uint32_t i = 0; i < ccount; i++) known |= hashes[i] == want;
+    for (uint32_t k = 0; k < n && !have; k++) have = list[k * 3] < ccount && hashes[list[k * 3]] == want;
+    for (unsigned i = 0; i < shop_hidden_count && !have; i++) have = shop_hidden[i].hash == want;
+    if (!known) {
+        static uint32_t warned[16];
+        unsigned w = 0;
+        while (w < 16 && warned[w] && warned[w] != want) w++;
+        if (w < 16 && !warned[w]) {
+            warned[w] = want;
+            char line[160];
+            snprintf(line, sizeof(line), "map shop: %s isn't in the shop's catalogue (%u items): the mod's "
+                     "DATAPOD/itemshop.ini didn't load?", t, ccount);
+            host->log(host->context, line);
+        }
+    }
+    if (!have && !known) return 0;
+    uint32_t args[2] = {L, (uint32_t)have};
+    lua_call(MF_FN_Lua_PushBool, 2, args);
+    return 1;
+}
+
 /* Foundry_MapShopOpen(): the PDA shop open on this map whatever the game's
  * lock (Shop_SetShopLocked: the byte at shop +0x19BC, cleared by retail's
  * first Mafia contract). The lock is saved with the player data and read back
@@ -4151,6 +4190,15 @@ static void shop_poll(double dt)
     shop_timer = 0;
     shop_unhide(1);
     shop_hide();
+    static int empty_logged;
+    uint32_t n = 1;
+    host->read_guest(host->context, SHOP_LIST_COUNT, &n, 4);
+    if (shop_map_on && !n && !empty_logged) {
+        empty_logged = 1;
+        host->log(host->context, "map shop: none of this map's items unlocked yet, so the PDA shows its locked page");
+    } else if (n) {
+        empty_logged = 0;
+    }
 }
 
 static void MERC_PLUGIN_CALL save_before(void *ud, MercHookContext *c)
@@ -4407,6 +4455,7 @@ MERC_PLUGIN_EXPORT int MERC_PLUGIN_CALL MercenariesPlugin_Init(
         !h->add_lua_command(h->context, "Foundry_ActorModel", cmd_actor_model, NULL) ||
         !h->add_lua_command(h->context, "Foundry_MapShop", cmd_map_shop, NULL) ||
         !h->add_lua_command(h->context, "Foundry_MapShopOpen", cmd_map_shop_open, NULL) ||
+        !h->add_lua_command(h->context, "Foundry_ShopUnlocked", cmd_shop_unlocked, NULL) ||
         !h->add_lua_command(h->context, "Foundry_Log", cmd_log, NULL))
         h->log(h->context, "script commands unavailable; Foundry_TrafficZone, Foundry_Range, Foundry_Sample, "
                            "Foundry_Label, Foundry_SetHandling and Foundry_MapText may not exist");
