@@ -432,7 +432,7 @@ def names(source):
 PLUGIN_COMMANDS = frozenset({"Foundry_TrafficZone", "Foundry_SetHandling", "Foundry_Range", "Foundry_Sample",
                              "Foundry_Label", "Foundry_MapText", "Foundry_MapTexture", "Foundry_HqMode",
                              "Foundry_MapTemplate", "Foundry_Log", "Foundry_MapCaptives", "Foundry_MapFines", "Foundry_ShopUrl", "Foundry_FindPlaced", "Foundry_MoveObject", "Foundry_RemoveObject",
-                             "Foundry_ActorTemplate", "Foundry_SpawnTemplate", "Foundry_MapShop", "Foundry_MapShopOpen", "Foundry_ShopUnlocked", "Foundry_AiAlert", "Foundry_ActorModel"})
+                             "Foundry_ActorTemplate", "Foundry_SpawnTemplate", "Foundry_MapShop", "Foundry_MapShopOpen", "Foundry_ShopUnlocked", "Foundry_AiAlert", "Foundry_IsEngaging", "Foundry_ActorModel"})
 
 
 def known_names(sources):
