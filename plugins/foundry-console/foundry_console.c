@@ -4249,20 +4249,40 @@ static void shop_unhide(int only_allowed)
  * an item unlocked in ScriptInit was gone again while the script's
  * once-per-save mark stayed (Gaza's store, empty, showed the locked page:
  * 0xCE9F0 shows it when no tab has an item, as when the lock is on). */
+static unsigned shop_unlocked_logs;            /* Foundry_ShopUnlocked's lines this level */
 static int MERC_PLUGIN_CALL cmd_shop_unlocked(void *ud, uint32_t L)
 {
     static uint32_t hashes[128], cats[128], list[128 * 3];
     char t[72];
     uint32_t ccount = 0, n = 0;
     (void)ud;
-    if (!lua_arg_text(L, 1, t, sizeof(t)) || !shop_catalogue(hashes, cats, &ccount) ||
+    if (!lua_arg_text(L, 1, t, sizeof(t))) return 0;
+    if (!shop_catalogue(hashes, cats, &ccount) ||
         !host->read_guest(host->context, SHOP_LIST_COUNT, &n, 4) || n > 128 ||
-        !host->read_guest(host->context, SHOP_LIST, list, n * 12)) return 0;
+        !host->read_guest(host->context, SHOP_LIST, list, n * 12)) {
+        if (shop_unlocked_logs < 24) {
+            char line[160];
+            shop_unlocked_logs++;
+            snprintf(line, sizeof(line), "map shop: asked about %s, but the shop couldn't be read (catalogue %u, list %u)",
+                     t, ccount, n);
+            host->log(host->context, line);
+        }
+        return 0;
+    }
     uint32_t want = hash_name(t);
-    int known = 0, have = 0;
+    int known = 0, have = 0, hidden = 0;
     for (uint32_t i = 0; i < ccount; i++) known |= hashes[i] == want;
     for (uint32_t k = 0; k < n && !have; k++) have = list[k * 3] < ccount && hashes[list[k * 3]] == want;
-    for (unsigned i = 0; i < shop_hidden_count && !have; i++) have = shop_hidden[i].hash == want;
+    for (unsigned i = 0; i < shop_hidden_count && !have; i++) have = hidden = shop_hidden[i].hash == want;
+    /* why an item isn't unlocked again, once per item a level (0.304: after
+     * a Gaza save's return none of its 7 came back, list and hidden empty) */
+    if (have && shop_unlocked_logs < 24) {
+        char line[160];
+        shop_unlocked_logs++;
+        snprintf(line, sizeof(line), "map shop: %s is unlocked already (%s; %u in the list)", t,
+                 hidden ? "hidden here" : "in the list", n);
+        host->log(host->context, line);
+    }
     if (!known) {
         static uint32_t warned[16];
         unsigned w = 0;
@@ -4372,6 +4392,7 @@ static void shop_level_reset(void)
     shop_map_count = 0;
     shop_timer = 0;
     shop_empty_logged = 0;                     /* each level says so again */
+    shop_unlocked_logs = 0;
     shop_level_time = 0;
 }
 
