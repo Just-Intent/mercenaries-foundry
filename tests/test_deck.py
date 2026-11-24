@@ -61,6 +61,17 @@ class DeckTests(unittest.TestCase):
             with self.assertRaises(ValueError):
                 deck.parse("deck/clubs.json", dict(DOC, unlock_mail=bad), {"gaza"})
 
+    def test_suit_after_a_contract(self):
+        # "after": the suit's number cards appear once that contract is done
+        d = deck.parse("deck/clubs.json", dict(DOC, after="sw_allies22"), {"gaza"})
+        self.assertEqual(d["after"], "sw_allies22")
+        lua = deck.script([d])
+        self.assertIn("bounty = 40000, after = 'sw_allies22' }", lua)
+        self.assertIn("and (not c.after or Utility_ReadNumberFromScribbleMemory('foundry_done_' .. c.after))", lua)
+        self.assertEqual(luacheck.check(lua), [])
+        with self.assertRaises(ValueError):
+            deck.parse("deck/clubs.json", dict(DOC, after=["sw_allies22"]), {"gaza"})
+
     def test_face_found_by_name(self):
         with tempfile.TemporaryDirectory() as t:
             mod = Path(t)
@@ -79,8 +90,8 @@ class DeckTests(unittest.TestCase):
         lua = deck.script([d])
         self.assertEqual(luacheck.check(lua), [])
         # number cards placed only; the face card comes through a contract
-        self.assertIn("{ suit = 'clubs', rank = 2, actor = 'gaza_card_clubs02', layer = 'gaza_card_clubs02', bounty = 40000 }", lua)
-        self.assertIn("{ suit = 'clubs', rank = 3, actor = 'gaza_card_clubs03', layer = false, bounty = 12500 }", lua)
+        self.assertIn("{ suit = 'clubs', rank = 2, actor = 'gaza_card_clubs02', layer = 'gaza_card_clubs02', bounty = 40000, after = false }", lua)
+        self.assertIn("{ suit = 'clubs', rank = 3, actor = 'gaza_card_clubs03', layer = false, bounty = 12500, after = false }", lua)
         self.assertNotIn("rank = 12", lua)
         # retail's verify flow and the PDA's keys
         self.assertIn("mission_ObjectiveVerify{", lua)

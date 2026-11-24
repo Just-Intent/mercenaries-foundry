@@ -110,6 +110,7 @@ interiors_lua, from maps json `"interiors"`).
 | Seated in a chair, camera on the room's authored shot | **0.234: `"chair"`**: retail's three stages with the faction's HQ clips (sit down; seated with use-only control and "Stand up"; up again, mode 13), seated on coming in; the fixed camera (0.231) frames it | closer |
 | Follow camera once standing (rooms built for it) | **0.237:** a camera behind the way the player walks (`"camera"` mode follow, the default), kept inside the floor's corners (`"bounds"`); `"mode": "fixed"` keeps the 0.231 spot | closer |
 | An HQ with no work left (retail: the boss's last mission done, the HQ still there) | **0.262:** once every contract offered inside a faction's room on this map is done (not repeatable) or lost, its flag (`"hqs"`) and its guard's ring and "Enter HQ" go; looked at whenever free roam starts on the map (after each contract too). A faction with no contracts inside keeps them | by request (Gaza) |
+| One greeting, then the briefing | **0.263:** the first visit's `"greeting"`, else the one by mood (`"greetings"`), then the briefing or `"idle"`; one set of lines at a time | same |
 | HUD off | on; `"hide_hud"` hides it (for voiced lines only: ours are on-screen messages) (0.232) | by choice |
 | Room atmosphere, ambient light 80 | the map's own light | gap |
 | Music stopped, room ambience cue | music stopped; `"ambience"` cue (Briefing_SetAmbientSoundCue), off on leaving (0.232) | same |

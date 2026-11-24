@@ -2852,8 +2852,9 @@ Event_RelativeTimer('{P}HqDumpWalk', 'b', 2.0)
 if h.chair then
 if h.chair.auto then {P}HqSit() else {P}HqUse(h.chair.obj, h.chair.sitprompt, '{P}HqSit') end
 end
--- the greeting on the first visit (per save, as retail's); later visits go
--- straight to the next briefing, or the idle lines
+-- one greeting per visit, then the briefing (or the idle lines), as
+-- retail's: the first visit's greeting (per save), else the one by mood.
+-- (Until 0.263 the first visit played both, one set after the other.)
 local sKey = 'foundry_hq_greeted_' .. {P}HqIn
 if Utility_ReadNumberFromScribbleMemory(sKey) == 1 or table.getn(h.greeting) == 0 then
 {P}HqTrace('lit: again, no greeting')
@@ -2861,7 +2862,7 @@ if Utility_ReadNumberFromScribbleMemory(sKey) == 1 or table.getn(h.greeting) == 
 else
 Utility_WriteNumberToScribbleMemory(sKey, 1)
 {P}HqTrace('lit: greeting')
-{P}HqSay(h.greeting, {P}HqMoodGreeting)
+{P}HqSay(h.greeting, {P}HqOffer)
 end
 end
 -- Every visit: a greeting by the faction's mood toward the player (retail's
@@ -2943,6 +2944,7 @@ if not h then return end
 end
 -- Using the first leader (when the way out is something else): the briefing again.
 function {P}HqTalk()
+if {P}HqLines then return end      -- lines are playing: no second set over them
 {P}HqOffer()
 end
 function {P}HqOffer()
@@ -3063,6 +3065,8 @@ end
 -- Lines one after another (a message each, for its seconds; a sound cue too
 -- if it has one), then fDone.
 function {P}HqSay(lines, fDone)
+-- one set at a time: the set playing stops (its next line's timer with it)
+if {P}HqNextTimer then Event_CancelEvent({P}HqNextTimer) {P}HqNextTimer = nil end
 {P}HqLines = lines
 {P}HqLine = 0
 {P}HqDone = fDone
@@ -3071,6 +3075,7 @@ if h and table.getn(lines) > 0 then {P}HqCam(h.leaders[1]) end
 {P}HqNext()
 end
 function {P}HqNext()
+{P}HqNextTimer = nil
 if not {P}HqLines or not {P}HqIn then return end
 {P}HqLine = {P}HqLine + 1
 local l = {P}HqLines[{P}HqLine]
@@ -3083,7 +3088,7 @@ return
 end
 Ui_MessageBoxPrint(l.text)
 if l.sound then Audio_PlayVoiceover(l.sound) end
-Event_RelativeTimer('{P}HqNext', 'b', l.seconds)
+{P}HqNextTimer = Event_RelativeTimer('{P}HqNext', 'b', l.seconds)
 end
 """ + "".join(f"function {P}HqEnter_{f}() {P}HqEnter({_lua(f)}) end\n"
               f"function {P}HqBribe_{f}() {P}HqBribe({_lua(f)}) end\n" for f in inside)
@@ -3634,6 +3639,7 @@ def contracts_script(contracts, insertions=()):
         "tFoundryMarked = tFoundryMarked or {}   -- contact name -> the actor its marker was set up on",
         "tFoundryArmed = tFoundryArmed or {}     -- contact name -> the actor its use event is waiting on",
         "tFoundryGivers = tFoundryGivers or {}   -- a placed giver's actor (as int) -> its contract",
+        "tFoundryGone = tFoundryGone or {}       -- placed givers removed until their contract is offered",
         "-- A placed giver's side, and no fighting. A character in a layer sleeps",
         "-- (dormant) until the player comes near, and a side set while it sleeps",
         "-- doesn't hold: set it again each time it wakes (as nw_sk4 does for its",
@@ -3755,10 +3761,18 @@ def contracts_script(contracts, insertions=()):
         "-- offered inside its HQ (the map's interiors), not by a contact",
         "elseif c.map == map and ((foundry_IsDone(c) and not c.repeatable) or not foundry_Unlocked(c)",
         "or Utility_ReadNumberFromScribbleMemory('foundry_lost_' .. c.id)) then",
-        "if Utility_DoesActorExist(name) then Objective_Remove(name) Actor_Remove(name) end",
+        "if Utility_DoesActorExist(name) then",
+        "Objective_Remove(name) Actor_Remove(name)",
+        "-- a placed giver not offered yet: spawned from its template once it is",
+        "-- (the ace's giver at the mark), its layer won't bring it back",
+        "if c.px then tFoundryGone[name] = true end",
+        "end",
         "elseif c.map == map then",
         "if not Utility_DoesActorExist(name) then",
-        "if c.px then",
+        "if c.px and tFoundryGone[name] then",
+        "tFoundryGone[name] = nil",
+        "Mission_Spawn(c.template, name, c.px, c.py, c.pz, c.heading)",
+        "elseif c.px then",
         "bWaiting = true   -- its layer hasn't brought it yet",
         "else",
         "local x, y, z = Location_GetPosition(c.location)",
@@ -3894,8 +3908,10 @@ def _sections(text):
 # (RsMissionDataManager, 0x15F650: 16 rows of 4 entries at 0x3C0900). Past 64
 # its loop stops advancing and asks Config_FindKey for the same MissionName
 # forever: the game hangs before the main menu (Gaza's 12 plus the Editor
-# Test's 3 on retail's 52, playtest 0.217).
-MAX_MISSIONS = 64
+# Test's 3 on retail's 52, playtest 0.217). The port fork (Patch-Generated,
+# "Mission table room") moves the table to 0x879000 with room for 96: 44 for
+# mods. A stock port exe still hangs past 64.
+MAX_MISSIONS = 96
 
 
 def mission_count(text):

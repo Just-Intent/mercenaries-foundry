@@ -1226,6 +1226,10 @@ class MapScriptTests(unittest.TestCase):
         self.assertIn("if foundry_HqFinished('china') then\nObjective_Remove('foundry_hq_china')", text)
         self.assertIn("if Utility_DoesActorExist(h.guard) and foundry_gaza_HqIn ~= f and foundry_HqFinished(f) then", text)
         self.assertIn("Objective_Remove(h.guard)\nfoundry_gaza_HqUnuse(h.guard)", text)
+        # one greeting per visit, then the briefing; a new set of lines stops the one playing
+        self.assertIn("foundry_gaza_HqSay(h.greeting, foundry_gaza_HqOffer)", text)
+        self.assertIn("if foundry_gaza_HqNextTimer then Event_CancelEvent(foundry_gaza_HqNextTimer)", text)
+        self.assertIn("foundry_gaza_HqNextTimer = Event_RelativeTimer('foundry_gaza_HqNext', 'b', l.seconds)", text)
 
     def test_interior_contract_in_free_roam(self):
         from mercfoundry import luacheck, missions

@@ -123,8 +123,14 @@ def parse(where, doc, new_maps, mod_folder=None):
             raise ValueError(f"{where}: the unlock mail's \"vo\" is a sound cue <bank>.<cue>, like fio.xfio085")
         mail = {"sender": str(mail.get("sender") or "mail.senders.techgal"), "subject": str(mail["subject"]),
                 "body": str(mail["body"]), "vo": str(vo) if vo else "", "mark": int(mark)}
+    # "after": a contract (its id) that must be done before the suit's number
+    # cards appear (retail's acts: spades after the Ace of Clubs)
+    after = doc.get("after")
+    if after is not None and not (isinstance(after, str) and re.fullmatch(r"[A-Za-z0-9_]+", after)):
+        raise ValueError(f"{where}: \"after\" names the contract (its id, like sw_allies22) that must be done "
+                         "before this suit's number cards appear")
     return {"map": m, "suit": suit, "cards": sorted(cards, key=lambda c: c["rank"]), "others": others,
-            "unlock_mail": mail}
+            "unlock_mail": mail, "after": after.lower() if after else None}
 
 
 # Retail's ace unlock (gameflow.lua): at iTargetIntel the suit's ace mail
@@ -188,9 +194,10 @@ def script(decks, mails=None):
         by_map.setdefault(d["map"], []).append(d)
     for m, ds in by_map.items():
         cards = ",\n".join(
-            "  { suit = %s, rank = %d, actor = %s, layer = %s, bounty = %d }" % (
+            "  { suit = %s, rank = %d, actor = %s, layer = %s, bounty = %d, after = %s }" % (
                 _lua(d["suit"]), c["rank"], _lua(c["actor"]) if c["actor"] else "false",
-                _lua(c["layer"]) if c["layer"] else "false", c["bounty"])
+                _lua(c["layer"]) if c["layer"] else "false", c["bounty"],
+                _lua(d["after"]) if d.get("after") else "false")
             for d in ds for c in d["cards"] if c["rank"] <= 10 and c["actor"])
         suits = ", ".join(_lua(d["suit"]) for d in ds)
         unlock = ", ".join(
@@ -335,7 +342,9 @@ if not tFoundryDeckArmed then tFoundryDeckArmed = {{}} end
 if not tFoundryDeckLoaded then tFoundryDeckLoaded = {{}} end
 tFoundryDeckBy = {{}}
 for i, c in ipairs(d.cards) do
+-- a suit with "after" appears once that contract is done (free roam after it runs this again)
 if not Utility_ReadStringFromScribbleMemory(c.suit .. c.rank .. 'status') and c.layer
+and (not c.after or Utility_ReadNumberFromScribbleMemory('foundry_done_' .. c.after))
 and not Utility_DoesActorExist(c.actor) and not tFoundryDeckLoaded[c.layer] then
 tFoundryDeckLoaded[c.layer] = 1
 Utility_ReadLevelFile(c.layer)
@@ -437,6 +446,8 @@ if c.hNear then Event_CancelEvent(c.hNear) c.hNear = nil end
 Utility_WriteStringToScribbleMemory(c.suit .. c.rank .. 'status', state)
 Utility_WriteStringToScribbleMemory('foundry_deck_' .. sFoundryDeckMap .. '_' .. c.suit .. c.rank .. 'status', state)
 foundry_DeckMeter(c.suit)
+-- a contract the meter unlocks (an ace's placed giver) is offered now
+if foundry_SetupContracts then foundry_SetupContracts() end
 iFoundryDeckPay = c.bounty
 if not bDead then iFoundryDeckPay = c.bounty * 2 end
 Desktop_BeginVerify('foundry_DeckPay', c.suit, c.rank, state, FALSE)

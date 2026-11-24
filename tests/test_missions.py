@@ -78,7 +78,7 @@ class MissionTests(unittest.TestCase):
         # the game's mission table holds 64 (it hangs at boot past that)
         self.assertEqual(missions.mission_count(text), missions.mission_count(INI) + 1)
         self.assertEqual(missions.mission_count("MissionName\tA\n  missionname B\n; MissionName C\nMissionNames D"), 2)
-        self.assertEqual(missions.MAX_MISSIONS, 64)
+        self.assertEqual(missions.MAX_MISSIONS, 96)   # the port fork's table (0.263); retail's held 64
 
     def test_text_plan(self):
         doc = {"title": "Field Test", "description": "Clear a squad.",
@@ -890,8 +890,11 @@ class MissionTests(unittest.TestCase):
         self.assertIn("or not foundry_Unlocked(c)\nor Utility_ReadNumberFromScribbleMemory('foundry_lost_' .. c.id)) then", chained_lua)
         self.assertIn("template = 'template_civ_civilian01'", placed_lua)
         # a placed giver comes from its own layer: waited for (its actor can
-        # appear a moment after the layer loads), never spawned by the script
-        self.assertNotIn("Mission_Spawn(c.template, name, c.px", placed_lua)
+        # appear a moment after the layer loads); spawned by the script only
+        # when it was removed because its contract wasn't offered yet (0.263)
+        self.assertIn("if c.px and tFoundryGone[name] then\ntFoundryGone[name] = nil\n"
+                      "Mission_Spawn(c.template, name, c.px, c.py, c.pz, c.heading)", placed_lua)
+        self.assertIn("if c.px then tFoundryGone[name] = true end", placed_lua)
         self.assertIn("bWaiting = true", placed_lua)
         self.assertIn("Event_RelativeTimer('foundry_SetupContracts', 'b', 1.0)", placed_lua)
         # its use event once at a time (re-armed when used)
