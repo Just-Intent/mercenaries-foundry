@@ -250,7 +250,10 @@ local on = Utility_ReadStringFromScribbleMemory('foundry_deck_on')
 if Foundry_Log then Foundry_Log('deck: entering ' .. m .. ' (in the PDA: ' .. tostring(on or 'the game') .. ')') end
 if on == m then foundry_DeckMails(m) return end
 if on then foundry_DeckLeave() end
-for j, suit in ipairs(d.suits) do
+-- every suit, the map's unused ones too: they show its stand-in cards
+-- ("others"), and kept the game's states and meters (0.303: Gaza's
+-- PDA showed SW's diamonds and hearts intel)
+for j, suit in ipairs({{ 'clubs', 'diamonds', 'hearts', 'spades' }}) do
 for i, k in ipairs(foundry_DeckKeys(suit)) do
 foundry_DeckCopy(k[1], 'foundry_deck_keep_' .. k[1], k[2])
 foundry_DeckCopy('foundry_deck_' .. m .. '_' .. k[1], k[1], k[2])
