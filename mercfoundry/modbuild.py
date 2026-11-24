@@ -3404,7 +3404,7 @@ def map_script(name, doc, layers, pilots=(), contacts=False, extra=(), hqs=None,
     if mine:
         text += _gates_lua(G, mine)
     if pilots:
-        text += travel_lua(prefix, list(pilots), by_map=False)
+        text += travel_lua(prefix, list(pilots), by_map=False, deck=deck)
     if contacts:
         text += funcs
     if hqs:

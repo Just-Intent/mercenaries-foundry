@@ -223,6 +223,10 @@ tFoundryDecks = {{
 -- The keys the PDA reads for a suit ('s' string, 'n' number).
 function foundry_DeckKeys(suit)
 local t = {{ {{ 'iCurrentIntel' .. suit, 'n' }} }}
+-- the meter the PDA has shown so far (its own, 0xCB070/0xCB120 write it,
+-- 0xCDD70 reads it): kept per map too, or back on SW it counted up again
+local cap = {{ clubs = 'Clubs', diamonds = 'Diamonds', hearts = 'Hearts', spades = 'Spades' }}
+table.insert(t, {{ 'displayedIntel' .. cap[suit], 'n' }})
 for rank = 2, 14 do
 table.insert(t, {{ suit .. rank .. 'status', 's' }})
 table.insert(t, {{ suit .. rank .. 'info', 's' }})

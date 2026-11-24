@@ -1019,6 +1019,7 @@ class NewMapMissionTests(unittest.TestCase):
                       "Utility_WriteStringToScribbleMemory('foundry_retry_map', 'isle')\n"
                       "Utility_WriteStringToScribbleMemory('foundry_retry_arc', 'sw')\n"
                       "Utility_WriteStringToScribbleMemory('foundry_map_start', 'accepted sw_china12, loading isle')\n"
+                      "if foundry_DeckEnter then foundry_DeckEnter('isle') end\n"   # its cards before it loads
                       "Utility_ResetToBaseLayerOnly('isle')", start)
         self.assertNotIn("DebugSkipToMission", start[:start.index("\ntFoundryStart")])
         # accepted before the map loads, as retail's starter: the pause menu

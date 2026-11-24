@@ -67,6 +67,7 @@ class Game:
         self.errors = []
         self.shop = set()           # the PDA shop's unlocked list
         self.popups = []            # "new support item" notices, in order
+        self.pda = {}               # the card keys the PDA was built from
 
     # ------------------------------------------------------------ the game's functions
     def _install(self, lua):
@@ -213,6 +214,9 @@ class Game:
         self.lua = Interpreter()
         self._install(self.lua)
         self.scribble["SkipTo_Map"] = m
+        # Level_Load builds the PDA's cards and meters from the script values
+        # (0xCE460) before any script runs: what it saw, for pda_stale()
+        self.pda = {k: v for k, v in self.scribble.items() if self._pda_key(k)}
         if m in GAME_MAPS:
             for suit in SUITS:                          # gameflow_GenericInit
                 self.scribble.setdefault("iCurrentIntel" + suit, "%f" % 0)
@@ -281,6 +285,29 @@ class Game:
         self.load_level("sw")
 
     # ------------------------------------------------------------ looking
+    @staticmethod
+    def _pda_key(k):
+        low = k.lower()
+        return (low.startswith("icurrentintel") or low.startswith("displayedintel")
+                or any(low.startswith(s) and (low.endswith("status") or low.endswith("statusdisplayed"))
+                       for s in SUITS))
+
+    def pda_stale(self):
+        """The card keys the PDA was built from at this level's load that
+        differ from the live ones now (empty: it shows this map's)."""
+        live = {k: v for k, v in self.scribble.items() if self._pda_key(k)}
+
+        def value(d, k):
+            v = d.get(k)
+            if k.lower().endswith("status"):
+                return v
+            try:                    # a number: none reads as 0 to the PDA
+                return float(v) if v is not None else 0.0
+            except ValueError:
+                return v
+        keys = set(live) | set(self.pda)
+        return sorted(k for k in keys if value(live, k) != value(self.pda, k))
+
     def moods(self):
         return {f: self.relations.get((f, "prokat"), 0.0) for f in MOOD_FACTIONS}
 
@@ -320,6 +347,9 @@ def round_trip(scripts, new_map, sw_moods=None):
             bad.append(f"intel {i}, not {intel}")
         if g.black:
             bad.append("the screen is left black")
+        stale = g.pda_stale()
+        if stale:
+            bad.append(f"the PDA was built from the other map's cards ({', '.join(stale[:4])})")
         report.append(f"{'ok ' if not bad else 'BAD'} {tag}: {g.level}, moods {m}, intel {i}")
         problems.extend(f"{tag}: {b}" for b in bad)
         return m, i

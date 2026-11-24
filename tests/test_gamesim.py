@@ -85,6 +85,8 @@ class GameSimTests(unittest.TestCase):
         self.assertEqual({k: round(v, 2) for k, v in g.moods().items()}, moods)
         self.assertEqual(g.intel(), intel)
         self.assertFalse(g.black, "the screen is still black")
+        # the PDA is built from the cards as the level loads: they must be this map's by then
+        self.assertEqual(g.pda_stale(), [])
 
     def test_trips_saves_and_reloads_keep_each_maps_own(self):
         g = self.g

@@ -3450,7 +3450,10 @@ def layers_script(layers, pilots=(), arrive=False, welcome=(), deck=False, relat
             "Event_RelativeTimer('foundry_ResumeGo', 'b', 3.0)",
             "end",
             "function foundry_ResumeGo()",
-            "if sFoundryResumeMap then Utility_ResetToBaseLayerOnly(sFoundryResumeMap) end",
+            "if not sFoundryResumeMap then return end"]
+    if deck:
+        out += _DECK_BEFORE_LOAD("sFoundryResumeMap")
+    out += ["Utility_ResetToBaseLayerOnly(sFoundryResumeMap)",
             "end",
             # On a game map, a new map's moods, cards and relations go back
             # to the game's first, a save going back to its new map too: they
@@ -3494,13 +3497,13 @@ def layers_script(layers, pilots=(), arrive=False, welcome=(), deck=False, relat
     if arrive or pilots:
         text += ARRIVE_LUA
     if pilots:
-        text += travel_lua("foundry_Travel", list(pilots))
+        text += travel_lua("foundry_Travel", list(pilots), deck=deck)
     if welcome:
         text += welcome_lua(list(welcome))
     return text
 
 
-def travel_lua(prefix, pilots, by_map=True):
+def travel_lua(prefix, pilots, by_map=True, deck=False):
     """Lua for travel pilots: characters you use to go to another map (as
     retail's quadrant pilot: a question, then Utility_SavePlayerData and
     Utility_ResetToBaseLayerOnly). pilots: [{map, actor, to, prompt, title,
@@ -3567,10 +3570,22 @@ def travel_lua(prefix, pilots, by_map=True):
                 "-- travel is free roam: no contract to start where it lands",
                 "Utility_EraseValueFromScribbleMemory('SkipTo_Faction')",
                 "Utility_EraseValueFromScribbleMemory('SkipTo_MissionNumber')",
-                "if t.to == 'sw' or t.to == 'nw' then Utility_WriteStringToScribbleMemory('SkipTo_Map', t.to) end",
-                "Utility_ResetToBaseLayerOnly(t.to)",
+                "if t.to == 'sw' or t.to == 'nw' then Utility_WriteStringToScribbleMemory('SkipTo_Map', t.to) end"]
+        if deck:
+            out += _DECK_BEFORE_LOAD("t.to")
+        out += ["Utility_ResetToBaseLayerOnly(t.to)",
                 "end"]
     return "\n".join(out) + "\n"
+
+
+def _DECK_BEFORE_LOAD(to):
+    """Lua: the PDA's cards for the map `to` (a Lua expression) put in before
+    its level loads: Level_Load builds the PDA's cards and meters from the
+    script values (0xCE460), so a swap made when the new map's script runs
+    came too late, and the PDA showed the other map's (0.308: back on SW the
+    two of clubs was x'd out and its intel given again)."""
+    return ["Utility_LoadUtilityScript('foundry_deck')",
+            f"if {to} == 'sw' or {to} == 'nw' then foundry_DeckLeave() else foundry_DeckEnter({to}) end"]
 
 
 def map_mission_lua(map_name, free_roam=()):
@@ -4301,6 +4316,8 @@ def contracts_script(contracts, insertions=()):
                 f"Utility_WriteStringToScribbleMemory('foundry_retry_map', {_lua(c['play'])})",
                 f"Utility_WriteStringToScribbleMemory('foundry_retry_arc', {_lua(parse_id(c['id'])[0])})",
                 f"Utility_WriteStringToScribbleMemory('foundry_map_start', {_lua('accepted ' + c['id'] + ', loading ' + c['play'])})",
+                # its cards before its level loads (the PDA reads them then)
+                f"if foundry_DeckEnter then foundry_DeckEnter({_lua(c['play'])}) end",
                 f"Utility_ResetToBaseLayerOnly({_lua(c['play'])})",
                 "end"]
         else:
