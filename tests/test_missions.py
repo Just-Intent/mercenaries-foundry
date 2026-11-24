@@ -376,6 +376,25 @@ class MissionTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             missions.contract("sw_allies22", dict(doc, requires_cards={"suit": "clubs", "cards": ["X"]}), "t", "d")
 
+    def test_placed_giver_into_the_hq_room(self):
+        from mercfoundry import luacheck
+        doc = {"title": "The Shadow", "map": "gaza", "contact": {
+            "interior": "allies", "position": [10, 2, 30], "marker": "none", "name": "Ace Contract",
+            "briefing": ["Find him."]}}
+        c, _ = missions.contract("sw_allies21", doc, "t", "d")
+        self.assertEqual((c["interior"], c["map"], c["target_type"]), ("allies", "gaza", None))
+        lua = missions.contracts_script([c])
+        self.assertEqual(luacheck.check(lua), [])
+        use = lua[lua.index("function foundry_Use_sw_allies21()"):]
+        use = use[:use.index("\nend")]
+        self.assertIn("foundry_gaza_HqEnterFor('allies', 'sw_allies21', 'foundry_contact_sw_allies21')", use)
+        self.assertNotIn("QuestionBox", use)
+        self.assertIn("if c.interior and not c.px then", lua)
+        room = missions.interiors_lua("foundry_gaza_", {})
+        self.assertIn("function foundry_gaza_HqEnterFor(f, id, giver)", room)
+        self.assertIn("local bMine = (foundry_gaza_HqOnly and c.id == foundry_gaza_HqOnly) or "
+                      "(not foundry_gaza_HqOnly and not c.px)", room)
+
     def test_card_man_appears_with_his_objective(self):
         from mercfoundry import luacheck
         doc = {"objectives": [{"type": "goto", "text": "Go", "zone": "z1"},

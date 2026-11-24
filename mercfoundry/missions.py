@@ -1944,7 +1944,7 @@ function foundry_HqFinished(f)
 if not tFoundryContracts then return false end
 local any = false
 for i, c in tFoundryContracts do
-if c.interior == f and c.map == sFoundryOnMap then
+if c.interior == f and c.map == sFoundryOnMap and not c.px then
 any = true
 if not ((foundry_IsDone(c) and not c.repeatable) or Utility_ReadNumberFromScribbleMemory('foundry_lost_' .. c.id)) then
 return false
@@ -2661,7 +2661,8 @@ end
 function {P}HqContract(f)
 if not tFoundryContracts then return nil end
 for i, c in tFoundryContracts do
-if c.interior == f and c.map == sFoundryOnMap and not (foundry_IsDone(c) and not c.repeatable)
+local bMine = ({P}HqOnly and c.id == {P}HqOnly) or (not {P}HqOnly and not c.px)
+if bMine and c.interior == f and c.map == sFoundryOnMap and not (foundry_IsDone(c) and not c.repeatable)
 and foundry_Unlocked(c) and not Utility_ReadNumberFromScribbleMemory('foundry_lost_' .. c.id) then
 return c
 end
@@ -2904,6 +2905,20 @@ else
 {P}HqGoIn()
 end
 end
+-- A placed giver's way in (a contract's "contact" with "interior" and
+-- "position", as retail's ace bouncer): the room briefs that contract alone.
+function {P}HqEnterFor(f, id, giver)
+local h = {P}Hq[f]
+if not h or {P}HqIn then return end
+{P}HqTrace('enter ' .. f .. ' for ' .. id)
+{P}HqIn = f
+{P}HqOnly = id
+{P}HqUnuse(h.guard)
+{P}HqGuardMode[f] = nil
+if giver and Utility_DoesActorExist(giver) then Actor_EnableScriptedUse(giver, FALSE, '') end
+{P}HqBack = {{ Actor_GetPosition('player0') }}
+{P}HqGoIn()
+end
 function {P}HqGoIn()
 Cinematic_FadeOut(0.5)
 Event_RelativeTimer('{P}HqInside', 'b', 0.6)
@@ -3101,6 +3116,7 @@ if not c or not h then return end
 if h.respawn then Utility_WriteStringToScribbleMemory('PlayerStartLocationName', 'loc_hq-' .. {P}HqIn .. '-respawn') end
 {P}HqTidy(h)
 {P}HqIn = nil
+{P}HqOnly = nil
 {P}HqOffered = nil
 {P}HqRelease()
 foundry_Start(c)
@@ -3146,9 +3162,11 @@ if b and b[1] then Actor_SetPosition('player0', b[1], b[2], b[3]) end
 {P}HqRelease()
 {P}HqUnpark(f)   -- out the way they came: the vehicle is still parked
 {P}HqIn = nil
+{P}HqOnly = nil
 Cinematic_FadeIn(0.5)
 {P}HqArmed[h.guard] = nil
 {P}HqArm()
+if foundry_SetupContracts then foundry_SetupContracts() end   -- a placed giver's use again
 end
 -- Lines one after another (a message each, for its seconds; a sound cue too
 -- if it has one), then fDone.
@@ -3682,8 +3700,9 @@ def contract(asset_id, doc, title_key, description_key):
             raise ValueError(f"\"contact\" \"interior\" is one of {', '.join(HQ_FACTIONS)}, not {interior!r}")
         if not play_map(asset_id, doc):
             raise ValueError("a contact in an HQ interior is on a mod's new map: give the mission a \"map\"")
-        if c.get("position"):
-            raise ValueError("\"contact\": an HQ interior's contract has no \"position\" (the HQ guard is its way in)")
+        # with "position": a giver placed on the map takes the player into the
+        # room, which briefs only this contract (retail's ace bouncer); without,
+        # the HQ guard's way in briefs the interior's contracts in turn
     return {"id": asset_id, "map": (play_map(asset_id, doc) if c.get("position") or interior else None) or map_,
             "faction": faction, "number": number,
             "repeatable": bool(doc.get("repeatable", False)),
@@ -3910,8 +3929,8 @@ def contracts_script(contracts, insertions=()):
         "local bWaiting = false",
         "for i, c in tFoundryContracts do",
         "local name = foundry_ContactName(c)",
-        "if c.interior then",
-        "-- offered inside its HQ (the map's interiors), not by a contact",
+        "if c.interior and not c.px then",
+        "-- offered inside its HQ (the map's interiors) by the HQ guard's way in, not by a contact",
         "elseif c.map == map and ((foundry_IsDone(c) and not c.repeatable) or not foundry_Unlocked(c)",
         "or Utility_ReadNumberFromScribbleMemory('foundry_lost_' .. c.id)) then",
         "if Utility_DoesActorExist(name) then",
@@ -3963,13 +3982,25 @@ def contracts_script(contracts, insertions=()):
         "end",
         "end"]
     for c in contracts:
+        if c.get("interior") and c.get("position"):
+            # the giver is the room's door for this contract alone (retail's ace
+            # bouncer): the map's interiors script briefs it there
+            enter = f"foundry_{c['map']}_HqEnterFor"
+            out += [
+                f"function foundry_Use_{c['id']}()",
+                f"tFoundryArmed[{_lua(contact_actor(c['id']))}] = nil   -- re-armed when the player comes out",
+                f"if {enter} then {enter}({_lua(c['interior'])}, {_lua(c['id'])}, "
+                f"{_lua(contact_actor(c['id']))}) end",
+                "end"]
+        else:
+            out += [
+                f"function foundry_Use_{c['id']}()",
+                f"tFoundryArmed[{_lua(contact_actor(c['id']))}] = nil   -- used: re-armed if the player says no",
+                f"Utility_QuestionBox(Utility_GetStringById({_lua(c['title_key'])}), "
+                f"Utility_GetStringById({_lua(c['description_key'])}), true, "
+                f"'foundry_Start_{c['id']}', 'foundry_SetupContracts')",
+                "end"]
         out += [
-            f"function foundry_Use_{c['id']}()",
-            f"tFoundryArmed[{_lua(contact_actor(c['id']))}] = nil   -- used: re-armed if the player says no",
-            f"Utility_QuestionBox(Utility_GetStringById({_lua(c['title_key'])}), "
-            f"Utility_GetStringById({_lua(c['description_key'])}), true, "
-            f"'foundry_Start_{c['id']}', 'foundry_SetupContracts')",
-            "end",
             f"function foundry_Start_{c['id']}()",
             f"local f = {_lua(c['faction'])}",
             "for i, key in foundry_Kept(f) do",
