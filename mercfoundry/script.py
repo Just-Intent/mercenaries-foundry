@@ -53,6 +53,13 @@ class _Bits:
 def decompress(data: bytes, expected: int) -> bytes:
     if not 0 <= expected <= MAX_SIZE:
         raise ValueError("invalid decompressed size")
+    import sys
+    from . import buildcache
+    return buildcache.cached("unlz", sys.modules[__name__], (bytes(data), expected),
+                             lambda: _decompress(data, expected), disk=False)
+
+
+def _decompress(data: bytes, expected: int) -> bytes:
     s = _Bits(data)
     out = bytearray()
     while True:
@@ -111,6 +118,12 @@ def compress(data: bytes) -> bytes:
     """Compress so that decompress(result, len(data)) == data."""
     if len(data) > MAX_SIZE:
         raise ValueError("script too large")
+    import sys
+    from . import buildcache
+    return buildcache.cached("lz", sys.modules[__name__], (bytes(data),), lambda: _compress(data))
+
+
+def _compress(data: bytes) -> bytes:
     w = _Writer()
     heads = {}  # 3-byte prefix -> recent positions, newest last
     i, n = 0, len(data)

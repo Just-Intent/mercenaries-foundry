@@ -365,19 +365,24 @@ def replace_image(tex: Texture, width: int, height: int, rgba: bytes) -> Texture
     if len(rgba) != width * height * 4:
         raise ValueError("image data does not match its size")
     mips = max(1, min(tex.mips, max(width, height).bit_length()))
-    levels, w, h, img = [], width, height, rgba
-    for level in range(mips):
-        if level:
-            w, h, img = downsample(img, w, h)
-        if tex.format == DXT1:
-            levels.append(encode_dxt(img, w, h, alpha=False))
-        elif tex.format == DXT3:
-            levels.append(encode_dxt(img, w, h, alpha=True))
-        elif tex.format == ARGB8:
-            levels.append(encode_argb8_swizzled(img, w, h))
-        else:
-            raise ValueError(f"can't encode texture format {tex.format_name}")
-    body = b"".join(levels)
+    if tex.format not in (DXT1, DXT3, ARGB8):
+        raise ValueError(f"can't encode texture format {tex.format_name}")
+
+    def make():
+        levels, w, h, img = [], width, height, rgba
+        for level in range(mips):
+            if level:
+                w, h, img = downsample(img, w, h)
+            if tex.format == DXT1:
+                levels.append(encode_dxt(img, w, h, alpha=False))
+            elif tex.format == DXT3:
+                levels.append(encode_dxt(img, w, h, alpha=True))
+            else:
+                levels.append(encode_argb8_swizzled(img, w, h))
+        return b"".join(levels)
+    import sys
+    from . import buildcache
+    body = buildcache.cached("texture", sys.modules[__name__], (tex.format, mips, width, height, bytes(rgba)), make)
     info = bytearray(tex.info)
     struct.pack_into("<HH", info, 0, width, height)
     struct.pack_into("<H", info, 6, mips)

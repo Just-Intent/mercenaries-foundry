@@ -288,8 +288,15 @@ def sync(game, data_dir=None, force=False, enable=False) -> SyncResult:
             result.up_to_date = True
             _enable(game, loader, result, enable)
             return result
+    # the slow steps' results (textures, compression) kept beside the toolkit
+    # in foundry/cache: the next preparation (a mod edit, a toolkit update)
+    # redoes only what changed, and a playtest package can carry them
+    from . import buildcache
+    buildcache.configure(game / "foundry" / "cache")
     result.build = modbuild.build(sources, data_dir, out, name=OUTPUT,
                                   description="Built on this PC from: " + ", ".join(result.sources))
+    buildcache.prune()
+    result.notes.append(buildcache.summary())
     doc = json.loads(meta.read_text(encoding="utf-8"))
     # The port's memory options for big mods. The launcher writes the first two
     # itself for any mod with archives, but only when no mod brings its own

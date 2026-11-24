@@ -119,6 +119,18 @@ class _Data:
         self.reads = set()      # (mod name, archive, ident)
         self.conflicts = []
         self._names = None
+        self._small = {}        # (archive, ident) -> an original small record's bytes
+
+    def _original(self, name, rec):
+        """An original record's bytes; small ones (load lists, scripts) read
+        from disk once."""
+        if rec.size > 65536:
+            return self.archive(name).read(rec)
+        k = (name, rec.ident)
+        b = self._small.get(k)
+        if b is None:
+            b = self._small[k] = self.archive(name).read(rec)
+        return b
 
     def archive(self, name):
         if name not in self.archives:
@@ -139,20 +151,20 @@ class _Data:
     def current(self, name, rec):
         self.reads.add((self.project, name, rec.ident))
         pending = self.replace.get(name, {}).get(rec.ident)
-        return pending if pending is not None else self.archive(name).read(rec)
+        return pending if pending is not None else self._original(name, rec)
 
     def peek(self, name, rec):
         """Like current(), for a step that replaces the record outright (so
         building on it doesn't count as merging with earlier mods)."""
         pending = self.replace.get(name, {}).get(rec.ident)
-        return pending if pending is not None else self.archive(name).read(rec)
+        return pending if pending is not None else self._original(name, rec)
 
     def set(self, name, rec, data):
         prev = self.changed_by.get((name, rec.ident))
         if prev is not None and prev != self.project and (self.project, name, rec.ident) not in self.reads:
             self.conflicts.append(f"{self.project} replaces {self.label(rec.key, rec.kind)}, which {prev} "
                                   f"also changes; {prev}'s change to it is lost")
-        if data != self.archive(name).read(rec):
+        if data != self._original(name, rec):
             self.replace.setdefault(name, {})[rec.ident] = data
             self.changed_by[(name, rec.ident)] = self.project
         else:
@@ -4144,7 +4156,11 @@ def _glb_textures(data, name, f, result):
         # layers, built earlier, and the game's own lists)
         LIST = name_hash("list")
 
+        low_name = name.lower()
+
         def with_textures(text):
+            if low_name not in text.lower():
+                return None
             sections = encounters.parse_list(text)
             if name.lower() not in {m.lower() for m in sections.get("model", [])}:
                 return None

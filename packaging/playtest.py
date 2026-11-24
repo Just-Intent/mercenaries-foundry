@@ -185,6 +185,23 @@ def main():
     pyz = ROOT / "dist" / "mercfoundry.pyz"
     hang = ROOT / "tools" / "hangsnap" / "out" / "hangsnap.exe"
 
+    # The build cache (mercfoundry/buildcache.py) filled for these mods, in
+    # foundry/cache: the test PC's first launch then reuses the slow steps'
+    # results (textures, compression) instead of making them all again. Its
+    # keys include the toolkit's source, so they match the packaged pyz.
+    from mercfoundry import sync as _sync
+    sources = [release / "mods" / m for m in loader if m != BUILT_MOD and _sync.is_source(release / "mods" / m)]
+    if sources:
+        import os
+        import tempfile
+        env = dict(os.environ, MERCFOUNDRY_CACHE=str(release / "foundry" / "cache"))
+        with tempfile.TemporaryDirectory() as tmp:
+            r = subprocess.run([sys.executable, "-m", "mercfoundry", "mod", "build", "--data",
+                                str(_sync.retail_data(release)), "--out", tmp] + [str(s) for s in sources],
+                               cwd=ROOT, env=env, capture_output=True, text=True)
+        line = next((l.strip() for l in r.stdout.splitlines() if "build cache:" in l), "")
+        print(f"cache for the first launch: {line or 'not filled (the build failed: ' + r.stdout[-300:] + ')'}")
+
     exe_hash = hashlib.sha256((release / "mercenaries_recomp.exe").read_bytes()).hexdigest()
     stamp = datetime.datetime.now().strftime("%Y%m%d-%H%M")
     name = f"Mercenaries-Foundry-Playtest-{__version__}-{stamp}"

@@ -264,12 +264,15 @@ def cmd_mod_new(args):
 
 
 def cmd_mod_build(args):
-    from . import modbuild, verify as verifier
+    from . import buildcache, modbuild, verify as verifier
+    buildcache.configure(buildcache.default_folder())
     try:
         result = modbuild.build(args.folder, args.data, args.out,
                                 name=None if len(args.folder) == 1 else Path(args.out).name)
     except (ValueError, KeyError, FileNotFoundError, PermissionError) as err:
         sys.exit(f"build failed: {err}")
+    buildcache.prune()
+    print(f"  {buildcache.summary()}")
     for line in result.changes:
         print(f"  {line}")
     for w in result.warnings:
