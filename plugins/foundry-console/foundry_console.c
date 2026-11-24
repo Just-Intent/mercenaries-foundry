@@ -1265,11 +1265,105 @@ static void heap_watch(double dt)
     since_log = 0;
 }
 
+/* The actor pool's lists (0.307): 0x31BDF8 keeps each placed object's
+ * 0x200-byte block on two lists (+0x68, +0x78), linked through a node near
+ * the block's end: +0x1DC and +0x1E0 its links, +0x1E4 the block. The level
+ * unload (0x174F60 -> 0x3A140) takes the first block, unlinks it and deletes
+ * it until the list is empty; a block whose links were overwritten stays
+ * first, and is deleted again and again (the stops after a visit to Gaza
+ * with its drones). Walked once a second and as each level unloads: the
+ * first broken link is logged with the block around it, so the log says
+ * what wrote over it and when. Only reads. */
+#define ACTOR_POOL 0x0031BDF8u
+static int pool_bad_logged;
+static double pool_level_time;
+
+static void pool_dump(const char *what, uint32_t block)
+{
+    uint32_t w[128];
+    char line[200];
+    if (!block || !host->read_guest(host->context, block, w, sizeof(w))) {
+        snprintf(line, sizeof(line), "actor pool: %s %08X can't be read", what, block);
+        host->log(host->context, line);
+        return;
+    }
+    snprintf(line, sizeof(line), "actor pool: %s %08X (vtable %08X):", what, block, w[0]);
+    host->log(host->context, line);
+    for (int r = 0; r < 16; r++) {
+        int n = snprintf(line, sizeof(line), "  +%03X", r * 32);
+        for (int k = 0; k < 8; k++) n += snprintf(line + n, sizeof(line) - n, " %08X", w[r * 8 + k]);
+        host->log(host->context, line);
+    }
+    /* whose it is: words in it that are live world objects, by model */
+    static uint32_t objs[OBJECT_SLOTS], handles[OBJECT_SLOTS];
+    if (!host->read_guest(host->context, OBJECTS, objs, sizeof(objs)) ||
+        !host->read_guest(host->context, OBJECT_HANDLES, handles, sizeof(handles))) return;
+    int named = 0;
+    for (int k = 0; k < 128 && named < 6; k++) {
+        if (w[k] < 0x10000u) continue;
+        for (unsigned i = 0; i < OBJECT_SLOTS; i++) {
+            if (objs[i] != w[k]) continue;
+            char m[48];
+            object_model(objs[i], handles[i], m, sizeof(m));
+            snprintf(line, sizeof(line), "  +%03X points at object %08X (handle %08X, model %s)", k * 4, objs[i],
+                     handles[i], m[0] ? m : "?");
+            host->log(host->context, line);
+            named++;
+            break;
+        }
+    }
+}
+
+static void pool_check(const char *when)
+{
+    char line[240];
+    if (pool_bad_logged >= 2) return;
+    for (int L = 0; L < 2; L++) {
+        uint32_t head = ACTOR_POOL + (L ? 0x78u : 0x68u), h[4] = {0};
+        if (!host->read_guest(host->context, head, h, sizeof(h))) return;
+        uint32_t x = h[1], prev = head, n = 0;
+        while (x != head && n < 20000) {
+            uint32_t node[3] = {0}, back = 0;
+            int ok = x && host->read_guest(host->context, x, node, sizeof(node)) &&
+                     host->read_guest(host->context, node[1], &back, 4);
+            /* each node: its +4 neighbour's +0 leads back to it, its +0 is the
+             * one before, its +8 the block the node ends */
+            const char *why = !ok ? "can't be read" : back != x ? "its next one doesn't lead back to it"
+                            : node[0] != prev ? "it doesn't lead back to the one before"
+                            : node[2] != x - 0x1DCu ? "its block isn't the one it ends" : NULL;
+            if (why) {
+                pool_bad_logged++;
+                snprintf(line, sizeof(line), "actor pool: list %d broken %s (%.1f s into the level): node %08X after %08X, "
+                         "links %08X %08X block %08X: %s; %u nodes walked, the list says %u",
+                         L, when, pool_level_time, x, prev, node[0], node[1], node[2], why, n, h[3]);
+                host->log(host->context, line);
+                if (prev != head) pool_dump("the block before", prev - 0x1DCu);
+                pool_dump("the block", x - 0x1DCu);
+                if (ok && node[1] != head) pool_dump("the block after", node[1] - 0x1DCu);
+                return;
+            }
+            prev = x;
+            x = node[1];
+            n++;
+        }
+    }
+}
+
+static void pool_watch(double dt)
+{
+    static double since;
+    pool_level_time += dt;
+    if ((since += dt) < 1.0) return;
+    since = 0;
+    pool_check("in play");
+}
+
 static int MERC_PLUGIN_CALL on_update(void *ud, const MercPluginUpdate *u)
 {
     (void)ud;
     InterlockedExchange(&sample_playing, host->in_gameplay(host->context) != 0);
     if (sample_playing) heap_watch(u->wall_delta_seconds);
+    if (sample_playing) pool_watch(u->wall_delta_seconds);
     live_update(u->wall_delta_seconds);
     maptex_poll(u->wall_delta_seconds);
     maptext_poll(u->wall_delta_seconds);
@@ -3728,6 +3822,8 @@ static void MERC_PLUGIN_CALL level_load_before(void *ud, MercHookContext *c)
     shop_url_restore();
     tcount_timer = 0;
     scribble_logged = 0;
+    pool_check("as the level unloads");   /* before the unload walks the lists */
+    pool_level_time = 0;
     memset(card_seen, 0, sizeof(card_seen));   /* handles are reused on the next level */
     /* so are handles and object addresses together: a level loaded after
      * another kept the first level's models for them (Gaza's pagers, never
