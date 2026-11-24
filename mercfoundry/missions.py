@@ -3739,6 +3739,16 @@ def play_map(asset_id, doc):
     return m if m and m != parse_id(asset_id)[0] else None
 
 
+def _closes_after(spec):
+    if not spec:
+        return []
+    if isinstance(spec, str):
+        spec = [spec]
+    if not isinstance(spec, list) or not all(isinstance(x, str) and x.strip() for x in spec):
+        raise ValueError("\"closes_after\" is a contract id or a list of them (\"sw_allies21\")")
+    return [x.strip().lower() for x in spec]
+
+
 def _required_cards(spec):
     """"requires_cards": {"suit": "clubs", "cards": ["J", "Q", "K"]} as the
     PDA's keys (clubs11, ...)."""
@@ -3824,6 +3834,10 @@ def contract(asset_id, doc, title_key, description_key):
             "side": str(c.get("side") or "civ"),
             # Missions that must be done before this one is offered.
             "requires": [str(r).lower() for r in doc.get("requires") or []],
+            # Missions whose completion closes this one ("closes_after": an act's
+            # ace ends the act's unfinished contracts): no longer offered, its HQ
+            # and giver treat it as gone; one already under way runs to its end.
+            "closes_after": _closes_after(doc.get("closes_after")),
             # Deck cards that must be verified first ("requires_cards": {suit,
             # cards}): the contract's map's deck (a mod's own), else the game's.
             "requires_cards": _required_cards(doc.get("requires_cards")),
@@ -3879,6 +3893,7 @@ def contracts_script(contracts, insertions=()):
                        (", px = %.2f, py = %.2f, pz = %.2f, heading = %.1f, side = %s" % (
                            *c["position"], c["heading"], _lua(c["side"])) if c["position"] else "")
                        + (", requires = { %s }" % ", ".join(_lua(r) for r in c["requires"]) if c["requires"] else "")
+        + (", closes = { %s }" % ", ".join(_lua(r) for r in c["closes_after"]) if c.get("closes_after") else "")
         + (", cards = { %s }" % ", ".join(_lua(k) for k in c["requires_cards"]) if c.get("requires_cards") else "")
         + (", intel = { suit = %s, mark = %d }" % (_lua(c["requires_intel"][0]), c["requires_intel"][1])
            if c.get("requires_intel") else "")
@@ -3951,6 +3966,12 @@ def contracts_script(contracts, insertions=()):
         "iFoundryWaits = iFoundryWaits or 0      -- seconds spent waiting for placed givers",
         "-- Offered only once the missions it requires are done.",
         "function foundry_Unlocked(c)",
+        "-- closed by a later contract (\"closes_after\": an act's ace done): gone",
+        "if c.closes then",
+        "for i, id in c.closes do",
+        "if Utility_ReadNumberFromScribbleMemory('foundry_done_' .. id) then return false end",
+        "end",
+        "end",
         "if c.requires then",
         "for i, id in c.requires do",
         "if not Utility_ReadNumberFromScribbleMemory('foundry_done_' .. id) then return false end",

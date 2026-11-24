@@ -376,6 +376,20 @@ class MissionTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             missions.contract("sw_allies22", dict(doc, requires_cards={"suit": "clubs", "cards": ["X"]}), "t", "d")
 
+    def test_closes_after(self):
+        from mercfoundry import luacheck
+        doc = {"title": "Clubs one", "map": "gaza", "contact": {"interior": "allies", "briefing": ["Go."]},
+               "closes_after": "sw_allies21"}
+        c, _ = missions.contract("sw_allies20", doc, "t", "d")
+        self.assertEqual(c["closes_after"], ["sw_allies21"])
+        lua = missions.contracts_script([c])
+        self.assertEqual(luacheck.check(lua), [])
+        self.assertIn("closes = { 'sw_allies21' }", lua)
+        unlocked = lua[lua.index("function foundry_Unlocked(c)"):]
+        self.assertLess(unlocked.index("if c.closes then"), unlocked.index("if c.requires then"))
+        with self.assertRaises(ValueError):
+            missions.contract("sw_allies20", dict(doc, closes_after=[3]), "t", "d")
+
     def test_placed_giver_into_the_hq_room(self):
         from mercfoundry import luacheck
         doc = {"title": "The Shadow", "map": "gaza", "contact": {
