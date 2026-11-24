@@ -2486,19 +2486,47 @@ end
 function {P}HqCarOut()
 Event_AiInVehicle('{P}HqCarIn', 'b', 'player0', TRUE)
 end
--- Going in: the last vehicle, if it's within 80 m of the guard, to the
--- parking spot (retail's HQ visit reloads the world; this room is on the map).
+-- Going in: the last vehicle (aircraft too), if where it stands is within
+-- 80 m of the guard, to the parking spot (retail's HQ visit reloads the
+-- world; this room is on the map). Taking a contract reloads the level and
+-- the vehicle with it: its template (Foundry_ActorTemplate) is kept in the
+-- save's scribble memory (foundry_hq_park_<faction>) and {P}HqParked spawns
+-- it there again once the level has loaded. Walking out without a reload
+-- forgets it (the vehicle is still there). Damage and ammo aren't kept.
 function {P}HqPark(h)
 local car = {P}HqCar
-if not h.park or not car then return end
+if not h.park or not car or not Utility_DoesActorExist(car) then return end
 local cx, cy, cz = Actor_GetPosition(car)
 local gx, gy, gz = Actor_GetPosition(h.guard)
 if not cx or not gx then return end
 local dx, dz = cx - gx, cz - gz
-if dx * dx + dz * dz > 6400 then return end
+if dx * dx + dz * dz > 6400 then {P}HqTrace('vehicle too far to park') return end
 Actor_SetPosition(car, h.park[1], h.park[2], h.park[3])
 Actor_SetYaw(car, h.park[4])
-{P}HqTrace('parked the vehicle')
+local t = nil
+if Foundry_ActorTemplate then t = Foundry_ActorTemplate(car) end
+if t and {P}HqIn then Utility_WriteStringToScribbleMemory('foundry_hq_park_' .. {P}HqIn, t) end
+{P}HqTrace('parked the vehicle (' .. (t or 'template not known') .. ')')
+end
+function {P}HqUnpark(f)
+Utility_WriteStringToScribbleMemory('foundry_hq_park_' .. f, '')
+end
+-- Each level load (free roam or a contract): a vehicle kept by {P}HqPark
+-- comes back at its HQ's parking spot, 2 s in (the world around it loaded).
+function {P}HqParked()
+for f, h in {P}Hq do
+local t = h.park and Utility_ReadStringFromScribbleMemory('foundry_hq_park_' .. f)
+if t and t ~= '' and Foundry_SpawnTemplate then
+{P}HqUnpark(f)
+local name = 'foundry_hq_parked_' .. f
+if not Utility_DoesActorExist(name) and Foundry_SpawnTemplate(t, name, h.park[1], h.park[2] + 0.5, h.park[3]) then
+if Utility_DoesActorExist(name) then Actor_SetYaw(name, h.park[4]) end
+end
+end
+end
+end
+function {P}HqParkedSoon()
+Event_RelativeTimer('{P}HqParked', 'b', 2.0)
 end
 function {P}HqArm()
 if not {P}HqCarWatch then
@@ -3107,6 +3135,7 @@ local h = {P}Hq[f]
 local b = {P}HqBack
 if b and b[1] then Actor_SetPosition('player0', b[1], b[2], b[3]) end
 {P}HqRelease()
+{P}HqUnpark(f)   -- out the way they came: the vehicle is still parked
 {P}HqIn = nil
 Cinematic_FadeIn(0.5)
 {P}HqArmed[h.guard] = nil

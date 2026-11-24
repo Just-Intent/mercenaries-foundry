@@ -3249,6 +3249,9 @@ def map_script(name, doc, layers, pilots=(), contacts=False, extra=(), hqs=None,
         hq.append(f"foundry_{name.lower()}_HqFlags()")
     if inside:
         hq.append(f"foundry_{name.lower()}_HqArm()")
+        if any(i.get("parking") for i in inside.values()):
+            # each load, a contract's too: the vehicle parked on going in, back
+            lines.append(f"foundry_{name.lower()}_HqParkedSoon()")
     if deck:
         hq += ["Utility_LoadUtilityScript('foundry_deck')",
                f"foundry_DeckEnter({_lua_str(name.lower())})",

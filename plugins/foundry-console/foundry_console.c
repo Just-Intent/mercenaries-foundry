@@ -3897,6 +3897,74 @@ static int MERC_PLUGIN_CALL cmd_remove_object(void *ud, uint32_t L)
     return 1;
 }
 
+/* Foundry_ActorTemplate(actor): the template an object was spawned from,
+ * as its name (templates.tsv) or "0x<hash>" when the list doesn't name it;
+ * nothing for an object whose property block is no template's (placed
+ * scenery, a layer's own object). Spawned objects share their template's
+ * block (WorldObject +template), so it's found in g_TemplateTable's blocks.
+ * Foundry_SpawnTemplate(template, name, x, y, z): spawns a template (a
+ * name, or "0x<hash>" from Foundry_ActorTemplate) under a new name, facing
+ * +z (Actor_SetYaw after); true if it spawned. For an HQ's parking spot:
+ * the vehicle the player went in with, after a contract reloads the level. */
+static int MERC_PLUGIN_CALL cmd_actor_template(void *ud, uint32_t L)
+{
+    (void)ud;
+    MercGuestCall c;
+    uint32_t args[2] = {L, 1}, obj = 0, block = 0;
+    if ((int)lua_call(MF_FN_lua_gettop, 1, args) < 1) return 0;
+    if (guest(MF_FN_Lua_ArgActor, 0, 2, args, &c)) obj = c.eax;
+    if (!obj || !host->read_guest(host->context, obj + MF_OFF_WorldObject_template, &block, 4) || !block) return 0;
+    static uint32_t blocks[0x1000], hashes[0x1000];
+    if (!host->read_guest(host->context, MF_VAR_g_TemplateTable + 8, blocks, sizeof(blocks)) ||
+        !host->read_guest(host->context, MF_VAR_g_TemplateTable + 0x4008, hashes, sizeof(hashes))) return 0;
+    uint32_t hash = 0;
+    for (unsigned i = 0; i < 0x1000 && !hash; i++)
+        if (hashes[i] && blocks[i] == block) hash = hashes[i];
+    if (!hash) return 0;
+    char text[72];
+    const char *name = template_name(hash);
+    if (name) snprintf(text, sizeof(text), "%s", name);
+    else snprintf(text, sizeof(text), "0x%08X", hash);
+    uint32_t scratch, size;
+    if (!host->guest_scratch(host->context, &scratch, &size) || size < sizeof(text)) return 0;
+    host->write_guest(host->context, scratch, text, strlen(text) + 1);
+    uint32_t push[2] = {L, scratch};
+    guest(MF_FN_lua_pushstring, 0, 2, push, &c);
+    return 1;
+}
+
+static int MERC_PLUGIN_CALL cmd_spawn_template(void *ud, uint32_t L)
+{
+    (void)ud;
+    MercGuestCall c;
+    char tmpl[72], name[64];
+    int ok = 0;
+    if (lua_arg_text(L, 1, tmpl, sizeof(tmpl)) && lua_arg_text(L, 2, name, sizeof(name)) && tmpl[0] && name[0]) {
+        float pos[3] = {0, 0, 0};
+        for (int k = 0; k < 3; k++) {
+            uint32_t a[2] = {L, (uint32_t)(3 + k)};
+            if (guest(MF_FN_Lua_ArgNumber, 0, 2, a, &c)) pos[k] = (float)c.st0;
+        }
+        uint32_t hash = (tmpl[0] == '0' && (tmpl[1] == 'x' || tmpl[1] == 'X')) ? (uint32_t)strtoul(tmpl + 2, NULL, 16)
+                                                                              : hash_name(tmpl);
+        uint32_t scratch, size;
+        if (hash && host->guest_scratch(host->context, &scratch, &size) && size >= 160) {
+            float m[16] = {1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, pos[0], pos[1], pos[2], 1};
+            host->write_guest(host->context, scratch, m, sizeof(m));
+            host->write_guest(host->context, scratch + 64, name, strlen(name) + 1);
+            uint32_t args[5] = {hash, scratch + 64, scratch, 0, 0};
+            ok = guest(MF_FN_Spawner_SpawnTemplate, MF_VAR_g_Spawner, 5, args, &c) && c.eax;
+        }
+        char line[200];
+        snprintf(line, sizeof(line), "spawn template: %s as %s at %.1f, %.1f, %.1f%s", tmpl, name, pos[0], pos[1],
+                 pos[2], ok ? "" : " failed");
+        host->log(host->context, line);
+    }
+    uint32_t args[2] = {L, (uint32_t)ok};
+    lua_call(MF_FN_Lua_PushBool, 2, args);
+    return 1;
+}
+
 static int MERC_PLUGIN_CALL cmd_map_captives(void *ud, uint32_t L)
 {
     (void)ud;
@@ -4022,6 +4090,8 @@ MERC_PLUGIN_EXPORT int MERC_PLUGIN_CALL MercenariesPlugin_Init(
         !h->add_lua_command(h->context, "Foundry_FindPlaced", cmd_find_placed, NULL) ||
         !h->add_lua_command(h->context, "Foundry_MoveObject", cmd_move_object, NULL) ||
         !h->add_lua_command(h->context, "Foundry_RemoveObject", cmd_remove_object, NULL) ||
+        !h->add_lua_command(h->context, "Foundry_ActorTemplate", cmd_actor_template, NULL) ||
+        !h->add_lua_command(h->context, "Foundry_SpawnTemplate", cmd_spawn_template, NULL) ||
         !h->add_lua_command(h->context, "Foundry_Log", cmd_log, NULL))
         h->log(h->context, "script commands unavailable; Foundry_TrafficZone, Foundry_Range, Foundry_Sample, "
                            "Foundry_Label, Foundry_SetHandling and Foundry_MapText may not exist");
