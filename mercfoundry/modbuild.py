@@ -4138,6 +4138,8 @@ def _new_models(data, folder, result):
             result.changes.append(f"model {name}: joints moved ({', '.join(moved)})")
         result.changes.append(f"model {name}: new, from {f.name} on {base}'s skeleton: {len(report.added)} pieces, "
                               + (f"{base}'s own collision" if keep_base_collision else
+                                 f"a collision mesh of its own triangles ({len(model.decode(nm, ns).collision[0].triangles)})"
+                                 if spec_doc.get("collision") == "mesh" else
                                  f"{report.collision_boxes} collision boxes")
                               + (f", {len(report.edited) + len(report.kept)} of the base's pieces kept from the file"
                                  if report.edited or report.kept else "")
