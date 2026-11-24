@@ -3877,6 +3877,24 @@ static int MERC_PLUGIN_CALL cmd_find_placed(void *ud, uint32_t L)
     return 0;
 }
 
+/* Foundry_AiAlert(actor): the actor's AI alert level, as the AI keeps it:
+ * 0 normal, 1 caution, 2 danger (fighting). The AI is the actor's vtable
+ * +0xBC (Lua_ArgAi, as the Ai_ commands find it); its +0x20 indexes its three
+ * perception values (+0x4D4 ai_perceptionNormal, +0x4D8 Caution, +0x4DC
+ * Danger: 0x6BA70 sets them, 0x653E0 reads by the level). Nil for something
+ * with no AI. For a script that only wants calm people (Gaza's pagers). */
+static int MERC_PLUGIN_CALL cmd_ai_alert(void *ud, uint32_t L)
+{
+    (void)ud;
+    MercGuestCall c;
+    uint32_t args[2] = {L, 1};
+    if ((int)lua_call(MF_FN_lua_gettop, 1, args) < 1 || !guest(MF_FN_Lua_ArgAi, 0, 2, args, &c) || !c.eax) return 0;
+    uint32_t level = 0xFFFFFFFFu;
+    if (!host->read_guest(host->context, c.eax + 0x20, &level, 4) || level > 2) return 0;
+    push_number(L, (double)level);
+    return 1;
+}
+
 static int MERC_PLUGIN_CALL cmd_move_object(void *ud, uint32_t L)
 {
     (void)ud;
@@ -4460,6 +4478,7 @@ MERC_PLUGIN_EXPORT int MERC_PLUGIN_CALL MercenariesPlugin_Init(
         !h->add_lua_command(h->context, "Foundry_ShopUrl", cmd_shop_url, NULL) ||
         !h->add_lua_command(h->context, "Foundry_MapFines", cmd_map_fines, NULL) ||
         !h->add_lua_command(h->context, "Foundry_FindPlaced", cmd_find_placed, NULL) ||
+        !h->add_lua_command(h->context, "Foundry_AiAlert", cmd_ai_alert, NULL) ||
         !h->add_lua_command(h->context, "Foundry_MoveObject", cmd_move_object, NULL) ||
         !h->add_lua_command(h->context, "Foundry_RemoveObject", cmd_remove_object, NULL) ||
         !h->add_lua_command(h->context, "Foundry_ActorTemplate", cmd_actor_template, NULL) ||
