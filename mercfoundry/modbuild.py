@@ -3389,7 +3389,8 @@ def map_script(name, doc, layers, pilots=(), contacts=False, extra=(), hqs=None,
         text += interiors_lua(f"foundry_{name.lower()}_", inside, flagged=list(hqs or {}), park_models=park_models)
     if shop_items:
         from . import shop as _shop
-        text += _shop.lua(f"foundry_{name.lower()}_", name, shop_items)
+        text += _shop.lua(f"foundry_{name.lower()}_", name, shop_items,
+                          _shop.is_open(f"maps/{name}.json", doc))
     return text
 
 

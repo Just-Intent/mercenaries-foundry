@@ -590,6 +590,14 @@ maps/<name>.json `"shop"` (mercfoundry/shop.py has the full format):
   (a map's own item ordered on another map would name a template that isn't loaded there).
 - The shop stays the Mafia slot's (prices by its mood, its refusal and donation). On a map whose
   factions.json makes the Mafia slot another faction (Gaza's Settlers), that's the store's.
+- `"shop": {"open": true, "items": [...]}` (toolkit 0.281): the store is open on the map whatever
+  the game's lock (`Shop_SetShopLocked`, the byte at shop `+0x19BC`, which retail's first Mafia
+  contract clears). The lock is saved with the player data and read back after the map's script
+  runs (`0xCDC20`, from `0x189490`), so Foundry Console's `Foundry_MapShopOpen` notes a set lock
+  as the game's and clears it, puts it back for each save and as the next level loads: the
+  saves and the game's own maps keep their lock. Without `"open"` the map's store follows the
+  game's lock. Until 0.280 the store's script called `Shop_SetShopLocked(false)`, which the
+  save's lock then undid.
 - `"shop_url": "www.frontier-sup.com/%s"` (maps json, toolkit 0.279): the address bar there. The
   game's `http://www.menace.ru/%s` (`0x2E7CF8`, 24 bytes) is overwritten by Foundry Console's
   `Foundry_ShopUrl` while the map is loaded and put back as the next level loads. At most 23

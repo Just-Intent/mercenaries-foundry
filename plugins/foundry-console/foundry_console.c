@@ -4118,9 +4118,35 @@ static void shop_unhide(int only_allowed)
     host->write_guest(host->context, SHOP_LIST_COUNT, &n, 4);
 }
 
+/* Foundry_MapShopOpen(): the PDA shop open on this map whatever the game's
+ * lock (Shop_SetShopLocked: the byte at shop +0x19BC, cleared by retail's
+ * first Mafia contract). The lock is saved with the player data and read back
+ * after the map's script runs (0xCDC20, from 0x189490), so it's looked at
+ * every half second: a set lock is noted as the game's and cleared. The
+ * game's goes back for each save (so the save keeps it) and as the next
+ * level loads. Needs the save hook. */
+#define SHOP_LOCK (SHOP + 0x19BCu)
+static int shop_open_on;                       /* this level opened its store */
+static uint8_t shop_lock_game;                 /* the game's lock while it's open */
+
+static void shop_open_poll(void)
+{
+    uint8_t lock = 0, zero = 0;
+    if (!shop_open_on || shop_saving || !host->read_guest(host->context, SHOP_LOCK, &lock, 1) || !lock) return;
+    shop_lock_game = lock;
+    host->write_guest(host->context, SHOP_LOCK, &zero, 1);
+    host->log(host->context, "map shop: open here (the game's lock is kept for the saves and other levels)");
+}
+
+static void shop_open_put_back(void)
+{
+    if (shop_open_on) host->write_guest(host->context, SHOP_LOCK, &shop_lock_game, 1);
+}
+
 static void shop_poll(double dt)
 {
     if (!shop_hooked) return;
+    shop_open_poll();
     if ((shop_timer += dt) < 0.5) return;
     shop_timer = 0;
     shop_unhide(1);
@@ -4132,6 +4158,7 @@ static void MERC_PLUGIN_CALL save_before(void *ud, MercHookContext *c)
     (void)ud; (void)c;
     shop_saving = 1;
     shop_unhide(0);
+    shop_open_put_back();
 }
 
 static void MERC_PLUGIN_CALL save_after(void *ud, MercHookContext *c)
@@ -4139,10 +4166,13 @@ static void MERC_PLUGIN_CALL save_after(void *ud, MercHookContext *c)
     (void)ud; (void)c;
     shop_hide();
     shop_saving = 0;
+    shop_open_poll();
 }
 
 static void shop_level_reset(void)
 {
+    shop_open_put_back();
+    shop_open_on = 0;
     /* back in the list first, in case the game saves it after this (the
      * load empties it, and the save's restore fills it again) */
     shop_unhide(0);
@@ -4167,6 +4197,28 @@ static int MERC_PLUGIN_CALL cmd_map_shop(void *ud, uint32_t L)
     snprintf(line, sizeof(line), "map shop: this map's store sells %u items (the rest hidden here)", shop_map_count);
     host->log(host->context, line);
     shop_hide();
+    uint32_t args[2] = {L, 1};
+    lua_call(MF_FN_Lua_PushBool, 2, args);
+    return 1;
+}
+
+static int MERC_PLUGIN_CALL cmd_map_shop_open(void *ud, uint32_t L)
+{
+    (void)ud;
+    if (!shop_hooked) {
+        host->log(host->context, "map shop: can't open it here without the save hook (the game's lock stays)");
+        return 0;
+    }
+    if (!shop_open_on) {
+        uint8_t lock = 0;
+        host->read_guest(host->context, SHOP_LOCK, &lock, 1);
+        shop_lock_game = lock;
+        shop_open_on = 1;
+        host->log(host->context, lock ? "map shop: open here (the game's lock, on, is kept for the saves and other levels)"
+                                      : "map shop: open here (the game's is open too)");
+        uint8_t zero = 0;
+        if (lock) host->write_guest(host->context, SHOP_LOCK, &zero, 1);
+    }
     uint32_t args[2] = {L, 1};
     lua_call(MF_FN_Lua_PushBool, 2, args);
     return 1;
@@ -4354,6 +4406,7 @@ MERC_PLUGIN_EXPORT int MERC_PLUGIN_CALL MercenariesPlugin_Init(
         !h->add_lua_command(h->context, "Foundry_SpawnTemplate", cmd_spawn_template, NULL) ||
         !h->add_lua_command(h->context, "Foundry_ActorModel", cmd_actor_model, NULL) ||
         !h->add_lua_command(h->context, "Foundry_MapShop", cmd_map_shop, NULL) ||
+        !h->add_lua_command(h->context, "Foundry_MapShopOpen", cmd_map_shop_open, NULL) ||
         !h->add_lua_command(h->context, "Foundry_Log", cmd_log, NULL))
         h->log(h->context, "script commands unavailable; Foundry_TrafficZone, Foundry_Range, Foundry_Sample, "
                            "Foundry_Label, Foundry_SetHandling and Foundry_MapText may not exist");

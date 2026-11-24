@@ -65,6 +65,20 @@ def parse_unlock(where, u):
                      f"\"intel <suit> <n>\"")
 
 
+def is_open(where, doc):
+    """maps json "shop" "open": true: the PDA shop is open on the map whatever
+    the game's lock (retail's first Mafia contract opens it), with Foundry
+    Console's Foundry_MapShopOpen; the game's lock stays for saves and other
+    levels."""
+    shop = doc.get("shop")
+    if not isinstance(shop, dict):
+        return False
+    v = shop.get("open", False)
+    if v not in (True, False):
+        raise ValueError(f"{where}: \"shop\" \"open\" is true (open here whatever the game's lock) or false")
+    return v
+
+
 def items(where, map_name, doc):
     """maps json "shop" as a list of items (dicts with their generated names),
     checked as far as the json alone can be; [] when there's no shop."""
@@ -215,7 +229,7 @@ def strings(shop_items):
     return out
 
 
-def lua(prefix, map_name, shop_items):
+def lua(prefix, map_name, shop_items, open_here=False):
     """{prefix}Shop(): the store named to Foundry Console and the unlocks
     looked at (then every 5 s)."""
     from .missions import _lua_str
@@ -240,7 +254,7 @@ def lua(prefix, map_name, shop_items):
             f"-- items in the PDA shop here (Foundry Console), unlocked as their rules say.\n"
             f"function {prefix}Shop()\n"
             f"if Foundry_MapShop then Foundry_MapShop({names}) end\n"
-            f"Shop_SetShopLocked(false)\n"
+            + (f"if Foundry_MapShopOpen then Foundry_MapShopOpen() end\n" if open_here else "") +
             f"{prefix}ShopUnlocks()\n"
             f"end\n"
             f"function {prefix}ShopUnlocks()\n"

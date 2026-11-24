@@ -89,6 +89,14 @@ class ShopTest(unittest.TestCase):
         self.assertIn("Utility_ReadNumberFromScribbleMemory('foundry_done_sw_allies21')", lua)
         with self.assertRaises(ValueError):
             shop.catalogue_text(GAME_INI * 64, its)
+        # the game's lock is left alone unless "open": then Foundry Console opens it here only
+        self.assertNotIn("Shop_SetShopLocked", lua)
+        self.assertNotIn("Foundry_MapShopOpen", lua)
+        self.assertIn("Foundry_MapShopOpen()", shop.lua("foundry_gaza_", "gaza", its, True))
+        self.assertTrue(shop.is_open("w", {"shop": {"open": True, "items": []}}))
+        self.assertFalse(shop.is_open("w", {"shop": {"items": []}}))
+        with self.assertRaises(ValueError):
+            shop.is_open("w", {"shop": {"open": "yes", "items": []}})
 
     def test_load_list(self):
         text = "[model]\r\nload a\r\n\r\n[texture]\r\nload shop_x\r\n"
