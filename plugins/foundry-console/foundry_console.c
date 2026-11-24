@@ -3842,6 +3842,25 @@ static int MERC_PLUGIN_CALL cmd_move_object(void *ud, uint32_t L)
     return 1;
 }
 
+/* Foundry_RemoveObject(handle): takes away an object Foundry_FindPlaced
+ * found (a thrown pager once a placed one stands in for it). True if it
+ * could. */
+static int MERC_PLUGIN_CALL cmd_remove_object(void *ud, uint32_t L)
+{
+    (void)ud;
+    MercGuestCall c;
+    uint32_t a[2] = {L, 1};
+    int ok = 0;
+    if ((int)lua_call(MF_FN_lua_gettop, 1, a) >= 1 && guest(MF_FN_Lua_ArgNumber, 0, 2, a, &c)) {
+        uint32_t obj = find_slot_object((uint32_t)c.st0);
+        float none[3] = {0, 0, 0};
+        ok = obj && live_apply(obj, none, 0, 1);
+    }
+    uint32_t args[2] = {L, (uint32_t)ok};
+    lua_call(MF_FN_Lua_PushBool, 2, args);
+    return 1;
+}
+
 static int MERC_PLUGIN_CALL cmd_map_captives(void *ud, uint32_t L)
 {
     (void)ud;
@@ -3966,6 +3985,7 @@ MERC_PLUGIN_EXPORT int MERC_PLUGIN_CALL MercenariesPlugin_Init(
         !h->add_lua_command(h->context, "Foundry_MapFines", cmd_map_fines, NULL) ||
         !h->add_lua_command(h->context, "Foundry_FindPlaced", cmd_find_placed, NULL) ||
         !h->add_lua_command(h->context, "Foundry_MoveObject", cmd_move_object, NULL) ||
+        !h->add_lua_command(h->context, "Foundry_RemoveObject", cmd_remove_object, NULL) ||
         !h->add_lua_command(h->context, "Foundry_Log", cmd_log, NULL))
         h->log(h->context, "script commands unavailable; Foundry_TrafficZone, Foundry_Range, Foundry_Sample, "
                            "Foundry_Label, Foundry_SetHandling and Foundry_MapText may not exist");

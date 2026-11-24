@@ -92,6 +92,7 @@ Script commands it adds, for the Lua box or any script:
   none): for objects scripts can't name, such as a placed charge.
   `Foundry_MoveObject(handle, x, y, z, yaw?)` moves one (degrees); true if it
   could.
+  `Foundry_RemoveObject(handle)` takes one away; true if it could.
 - `Foundry_Log('<text>')`: writes a script's line to plugins.log. A new
   map's HQ interiors log their measurements with it (`hq dump ...` lines:
   `foundry_<map>_HqDump`, `foundry_HqDump()` in the Lua box). Retail's HQ
