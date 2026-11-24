@@ -38,6 +38,7 @@
 #include <stdarg.h>
 #include <stdio.h>
 #include <string.h>
+#include <stdlib.h>
 #include <math.h>
 #include <ctype.h>
 #include "mercenaries_plugin.h"
@@ -3258,19 +3259,50 @@ typedef struct { uint32_t sprite, original, replaced; } MapSpriteSwap;
 static MapSpriteSwap mapsprite[MAPSPRITE_MAX];
 static unsigned mapsprite_count;
 
+static int u32_order(const void *a, const void *b)
+{
+    uint32_t x = *(const uint32_t *)a, y = *(const uint32_t *)b;
+    return x < y ? -1 : x > y;
+}
+
+/* The swaps undone, but only on sprites still in the game's sprite table:
+ * this runs as the next level loads, after the old one is unloaded, and a
+ * sprite freed with it kept the swapped hash in its memory, so the check of
+ * that word alone passed and the original was written into memory the new
+ * level had taken. That was the actor pool's broken link (0.310: one word,
+ * +0x1E0 of an SW tree's block, the original hash of a Gaza sprite that had
+ * been at the block's node, 0.5 s into SW's load after Gaza): the level-load
+ * stops after a Gaza visit. */
 static void mapsprite_restore(void)
 {
-    unsigned put = 0;
+    unsigned put = 0, gone = 0;
+    uint32_t map = 0, size = 0, values = 0, *live = NULL;
+    if (mapsprite_count && host->read_guest(host->context, SPRITE_MAP_PTR, &map, 4) && map &&
+        host->read_guest(host->context, map + 0x10, &size, 4) && size && size <= 0x100000 &&
+        host->read_guest(host->context, map + 0x18, &values, 4) && values &&
+        (live = (uint32_t *)malloc(4 * (size_t)size)) != NULL &&
+        host->read_guest(host->context, values, live, 4 * size))
+        qsort(live, size, 4, u32_order);
+    else {
+        free(live);
+        live = NULL;
+    }
     for (unsigned i = mapsprite_count; i-- > 0;) {
-        uint32_t now = 0;
-        if (host->read_guest(host->context, mapsprite[i].sprite + 4, &now, 4) && now == mapsprite[i].replaced) {
-            host->write_guest(host->context, mapsprite[i].sprite + 4, &mapsprite[i].original, 4);
+        uint32_t now = 0, sp = mapsprite[i].sprite;
+        if (!live || !bsearch(&sp, live, size, 4, u32_order)) {
+            gone++;
+            continue;
+        }
+        if (host->read_guest(host->context, sp + 4, &now, 4) && now == mapsprite[i].replaced) {
+            host->write_guest(host->context, sp + 4, &mapsprite[i].original, 4);
             put++;
         }
     }
+    free(live);
     if (mapsprite_count) {
-        char line[96];
-        snprintf(line, sizeof(line), "map HUD art: %u of %u sprites put back", put, mapsprite_count);
+        char line[140];
+        snprintf(line, sizeof(line), "map HUD art: %u of %u sprites put back (%u no longer in the game's sprite table, "
+                 "left alone)", put, mapsprite_count, gone);
         host->log(host->context, line);
     }
     mapsprite_count = 0;
@@ -3677,7 +3709,8 @@ static void maptext_poll(double dt)
 typedef struct { uint32_t addr, original, replaced; } DataPodSwap;
 static DataPodSwap dpswap[DATAPOD_CARD_COUNT * 3];
 static unsigned dpswap_count;
-static uint32_t datapod_vm;
+static uint32_t datapod_vm, dpswap_vm;       /* the PDA block the swaps were made in */
+#define DATAPOD_VM_PTR (0x0034ABC8u + 0x24u)  /* the current PDA block (RsDataPodVM's +0x24) */
 
 static void datapod_remap(void)
 {
@@ -3693,8 +3726,10 @@ static void datapod_remap(void)
                 if (!host->write_guest(host->context, addr, &to, 4)) break;
                 unsigned k;
                 for (k = 0; k < dpswap_count && dpswap[k].addr != addr; k++) {}
-                if (k == dpswap_count && dpswap_count < DATAPOD_CARD_COUNT * 3)
+                if (k == dpswap_count && dpswap_count < DATAPOD_CARD_COUNT * 3) {
                     dpswap[dpswap_count++] = (DataPodSwap){addr, h, to};
+                    dpswap_vm = datapod_vm;
+                }
                 else if (k < dpswap_count)
                     dpswap[k].replaced = to;
                 n++;
@@ -3705,8 +3740,20 @@ static void datapod_remap(void)
     (void)n;
 }
 
+/* undone only in the PDA block they were made in, if it's still the game's:
+ * Level_Load builds the PDA again (0xCE460 allocates), so after a level
+ * change the old block's addresses may be memory the new level has taken
+ * (as the HUD art's were, 0.310) */
 static void datapod_restore(void)
 {
+    uint32_t cur = 0;
+    if (dpswap_count && (!host->read_guest(host->context, DATAPOD_VM_PTR, &cur, 4) || cur != dpswap_vm)) {
+        char line[120];
+        snprintf(line, sizeof(line), "map text: %u PDA card swaps left alone (their PDA block %08X is gone, now %08X)",
+                 dpswap_count, dpswap_vm, cur);
+        host->log(host->context, line);
+        dpswap_count = 0;
+    }
     for (unsigned i = 0; i < dpswap_count; i++) {
         uint32_t now = 0;
         if (host->read_guest(host->context, dpswap[i].addr, &now, 4) && now == dpswap[i].replaced)
@@ -4171,6 +4218,16 @@ static void fly_update(double dt)
             f->look = 1.0;
         }
         if (!f->obj) continue;
+        /* still that object? asked of the game each frame (its handle), never
+         * a pointer kept from before: freed memory keeps the old handle */
+        {
+            MercGuestCall hc;
+            if (!guest(MF_FN_World_ObjectFromHandle, 0, 1, &f->handle, &hc) || hc.eax != f->obj) {
+                f->obj = 0;
+                f->look = 0;
+                continue;
+            }
+        }
         uint16_t flags = 0;
         host->read_guest(host->context, f->obj + MF_OFF_WorldObject_flags, &flags, 2);
         if (!(flags & FLAG_PLAIN)) {
