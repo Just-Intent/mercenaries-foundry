@@ -242,7 +242,11 @@ class ModBuildTests(unittest.TestCase):
                       (self.out / "DATAxbox" / "TEST" / "island.ini").read_bytes().decode("latin-1"))
         source = script.decode(self.records("assets.dsk")[(name_hash("island"), SCRIPT)]).source
         self.assertIn("Utility_ReadLevelFile('isle_camp')\nActor_SetPosition('player0', 10.00, 5.00, -20.00)\n"
-                      "Actor_SetYaw('player0', 270.0)\nUi_PrintHudMessage('Welcome to the island')\nend\n", source)
+                      "Actor_SetYaw('player0', 270.0)\nUi_PrintHudMessage('Welcome to the island')\n"
+                      # the HUD on again a moment after the start, however it started
+                      "Event_RelativeTimer('foundry_island_HudOn', 'b', 1.0)\n"
+                      "Event_RelativeTimer('foundry_island_HudOn', 'b', 3.0)\nend\n"
+                      "function foundry_island_HudOn()\n", source)
         self.assertIn("Utility_ReadLevelFile('\\\\TEMPLATE\\\\template_vehicles_ch2')", source)
         from mercfoundry import luacheck
         self.assertEqual(luacheck.check(source), [])
@@ -267,7 +271,8 @@ class ModBuildTests(unittest.TestCase):
         recs = self.records("assets.dsk")
         source = script.decode(recs[(name_hash("island"), SCRIPT)]).source
         self.assertIn("Ui_PrintHudMessage('Welcome to the island')\nUtility_LoadUtilityScript('isle_events')\n"
-                      "if isle_events_Start then isle_events_Start() end\nend\n", source)
+                      "if isle_events_Start then isle_events_Start() end\n"
+                      "Event_RelativeTimer('foundry_island_HudOn', 'b', 1.0)\n", source)
         self.assertEqual(luacheck.check(source), [])
         self.assertIn(b"load isle_events", recs[(name_hash("island"), name_hash("list"))])
         self.write("maps/island.json", json.dumps({"from": "blank", "scripts": ["isle_nothing"]}))

@@ -3121,7 +3121,16 @@ def map_script(name, doc, layers, pilots=(), contacts=False, extra=(), hqs=None,
     for e in extra:
         lines.append(f"Utility_LoadUtilityScript({_lua_str(e)})")
         lines.append(f"if {e}_Start then {e}_Start() end")
+    # the HUD on again a moment after the start, however the map started
+    # (free roam, a contract, a retry): a contract accepted in an HQ room
+    # arrived with no HUD although ScriptInit's Ui_EnableHud(TRUE) ran (0.260)
+    hud_on = f"foundry_{name.lower()}_HudOn"
+    lines += [f"Event_RelativeTimer('{hud_on}', 'b', 1.0)", f"Event_RelativeTimer('{hud_on}', 'b', 3.0)"]
     text = "\n".join(lines + ["end", ""])
+    text += (f"function {hud_on}()\n"
+             f"-- unless an HQ room here hides it (its \"hide_hud\")\n"
+             f"if not foundry_{name.lower()}_HqHudOff then Ui_EnableHud(TRUE) end\n"
+             "end\n")
     if pilots:
         text += travel_lua(prefix, list(pilots), by_map=False)
     if contacts:
