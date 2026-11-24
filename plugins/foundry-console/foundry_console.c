@@ -3719,6 +3719,10 @@ static void MERC_PLUGIN_CALL level_load_before(void *ud, MercHookContext *c)
     tcount_timer = 0;
     scribble_logged = 0;
     memset(card_seen, 0, sizeof(card_seen));   /* handles are reused on the next level */
+    /* so are handles and object addresses together: a level loaded after
+     * another kept the first level's models for them (Gaza's pagers, never
+     * found by Foundry_FindPlaced after SW, 0.297) */
+    memset(model_cache, 0, sizeof(model_cache));
     if (any_captive_on || any_captive_wait >= 0) any_captive_set(0);
     { uint8_t z = 0; host->write_guest(host->context, 0x87BF00u, &z, 1); }   /* fines back (Foundry_MapFines) */
     maptemplate_count = maptemplate_used = 0;
