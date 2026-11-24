@@ -106,6 +106,8 @@ static void hq_dump_poll(double dt);
 static void ground_probe_poll(double dt);
 static void maptemplate_poll(double dt);
 static void any_captive_poll(double dt);
+static void shop_poll(double dt);
+static void shop_level_reset(void);
 static int MERC_PLUGIN_CALL cmd_sample(void *ud, uint32_t L);
 static int MERC_PLUGIN_CALL cmd_label(void *ud, uint32_t L);
 static CRITICAL_SECTION lock;
@@ -3370,6 +3372,7 @@ static void maptex_poll(double dt)
     maptexalias_poll(dt);
     maptemplate_poll(dt);
     any_captive_poll(dt);
+    shop_poll(dt);
     if (!maptex_pending_count) return;
     maptex_poll_timer += dt;
     if (maptex_poll_timer < 0.5) return;
@@ -3634,6 +3637,7 @@ static void MERC_PLUGIN_CALL level_load_before(void *ud, MercHookContext *c)
         host->log(host->context, line);
     }
     maptemplate_restore();
+    shop_level_reset();
     memset(card_seen, 0, sizeof(card_seen));   /* handles are reused on the next level */
     if (any_captive_on || any_captive_wait >= 0) any_captive_set(0);
     { uint8_t z = 0; host->write_guest(host->context, 0x87BF00u, &z, 1); }   /* fines back (Foundry_MapFines) */
@@ -3965,6 +3969,181 @@ static int MERC_PLUGIN_CALL cmd_spawn_template(void *ud, uint32_t L)
     return 1;
 }
 
+/* A map's own store (maps json "shop"). The PDA shop (0x34ABC8) keeps one
+ * unlocked list for the whole save (+0x1194, 12 bytes each: catalogue
+ * index, stock/price, new; count +0x1794; per-category counts +0x1798) over
+ * one catalogue (+0x190, 32 bytes each: +8 template hash, +0x1C category;
+ * count +0x1190). Foundry_MapShop(template, ...) until the next level loads
+ * hides every unlocked item not named; on a level that doesn't call it,
+ * items whose template isn't loaded there (another map's) are hidden. Hidden
+ * entries are taken out of the list and put back just before the game
+ * saves it (Utility_SavePlayerData), then taken out again, so the save keeps
+ * every unlock. Looked at each half second (unlocks and the save's restore
+ * add entries). */
+#define SHOP 0x34ABC8u
+#define SHOP_LIST (SHOP + 0x1194u)
+#define SHOP_LIST_COUNT (SHOP + 0x1794u)
+#define SHOP_CAT_COUNTS (SHOP + 0x1798u)
+#define SHOP_CATALOGUE (SHOP + 0x190u)
+#define SHOP_CATALOGUE_COUNT (SHOP + 0x1190u)
+#define SHOP_MAP_MAX 64
+static uint32_t shop_map[SHOP_MAP_MAX];
+static unsigned shop_map_count;
+static int shop_map_on;                       /* this level named its store */
+typedef struct { uint32_t entry[3], hash; } ShopHidden;
+static ShopHidden shop_hidden[128];
+static unsigned shop_hidden_count;
+static double shop_timer;
+static int shop_saving;
+static int shop_hooked;                       /* hiding is safe only with the save hook */
+
+static int shop_catalogue(uint32_t *hashes, uint32_t *cats, uint32_t *count)
+{
+    static uint32_t raw[128 * 8];
+    if (!host->read_guest(host->context, SHOP_CATALOGUE_COUNT, count, 4) || *count > 128 ||
+        !host->read_guest(host->context, SHOP_CATALOGUE, raw, *count * 32)) return 0;
+    for (uint32_t i = 0; i < *count; i++) { hashes[i] = raw[i * 8 + 2]; cats[i] = raw[i * 8 + 7]; }
+    return 1;
+}
+
+static int shop_allowed(uint32_t hash)
+{
+    if (shop_map_on) {
+        for (unsigned i = 0; i < shop_map_count; i++)
+            if (shop_map[i] == hash) return 1;
+        return 0;
+    }
+    return template_slot(hash) >= 0;          /* loaded here (another map's own isn't) */
+}
+
+static void shop_cat_add(uint32_t cat, int by)
+{
+    uint32_t n = 0;
+    if (cat > 2) return;
+    host->read_guest(host->context, SHOP_CAT_COUNTS + 4 * cat, &n, 4);
+    n = (uint32_t)((int)n + by);
+    if ((int)n < 0) n = 0;
+    host->write_guest(host->context, SHOP_CAT_COUNTS + 4 * cat, &n, 4);
+}
+
+static void shop_hide(void)
+{
+    static uint32_t hashes[128], cats[128], list[128 * 3];
+    uint32_t ccount = 0, n = 0;
+    if (!shop_catalogue(hashes, cats, &ccount) || !ccount) return;
+    if (!host->read_guest(host->context, SHOP_LIST_COUNT, &n, 4) || n > 128 ||
+        !host->read_guest(host->context, SHOP_LIST, list, n * 12)) return;
+    uint32_t kept = 0, hid = 0;
+    for (uint32_t k = 0; k < n; k++) {
+        uint32_t idx = list[k * 3];
+        uint32_t hash = idx < ccount ? hashes[idx] : 0;
+        if (!hash || shop_allowed(hash) || shop_hidden_count >= 128) {
+            if (kept != k) memmove(&list[kept * 3], &list[k * 3], 12);
+            kept++;
+            continue;
+        }
+        ShopHidden *h = &shop_hidden[shop_hidden_count++];
+        memcpy(h->entry, &list[k * 3], 12);
+        h->hash = hash;
+        shop_cat_add(cats[idx], -1);
+        hid++;
+    }
+    if (!hid) return;
+    host->write_guest(host->context, SHOP_LIST, list, kept * 12);
+    host->write_guest(host->context, SHOP_LIST_COUNT, &kept, 4);
+    if (!shop_saving) {
+        char line[96];
+        snprintf(line, sizeof(line), "map shop: %u items hidden on this map (%u shown)", hid, kept);
+        host->log(host->context, line);
+    }
+}
+
+/* all hidden entries back in the list, or (only_allowed) those allowed now:
+ * a template table still loading hides the game's own for a moment */
+static void shop_unhide(int only_allowed)
+{
+    static uint32_t hashes[128], cats[128], list[128 * 3];
+    uint32_t ccount = 0, n = 0;
+    if (!shop_hidden_count) return;
+    if (!shop_catalogue(hashes, cats, &ccount) ||
+        !host->read_guest(host->context, SHOP_LIST_COUNT, &n, 4) || n > 128 ||
+        !host->read_guest(host->context, SHOP_LIST, list, n * 12)) return;
+    unsigned left = 0;
+    for (unsigned i = 0; i < shop_hidden_count; i++) {
+        if (n >= 128 || (only_allowed && !shop_allowed(shop_hidden[i].hash))) {
+            shop_hidden[left++] = shop_hidden[i];
+            continue;
+        }
+        int there = 0;
+        for (uint32_t k = 0; k < n && !there; k++) {
+            uint32_t idx = list[k * 3];
+            there = idx < ccount && hashes[idx] == shop_hidden[i].hash;
+        }
+        if (there) continue;                  /* unlocked again since */
+        memcpy(&list[n * 3], shop_hidden[i].entry, 12);
+        n++;
+        uint32_t idx = shop_hidden[i].entry[0];
+        if (idx < ccount) shop_cat_add(cats[idx], 1);
+    }
+    shop_hidden_count = left;
+    host->write_guest(host->context, SHOP_LIST, list, n * 12);
+    host->write_guest(host->context, SHOP_LIST_COUNT, &n, 4);
+}
+
+static void shop_poll(double dt)
+{
+    if (!shop_hooked) return;
+    if ((shop_timer += dt) < 0.5) return;
+    shop_timer = 0;
+    shop_unhide(1);
+    shop_hide();
+}
+
+static void MERC_PLUGIN_CALL save_before(void *ud, MercHookContext *c)
+{
+    (void)ud; (void)c;
+    shop_saving = 1;
+    shop_unhide(0);
+}
+
+static void MERC_PLUGIN_CALL save_after(void *ud, MercHookContext *c)
+{
+    (void)ud; (void)c;
+    shop_hide();
+    shop_saving = 0;
+}
+
+static void shop_level_reset(void)
+{
+    /* back in the list first, in case the game saves it after this (the
+     * load empties it, and the save's restore fills it again) */
+    shop_unhide(0);
+    shop_hidden_count = 0;
+    shop_map_on = 0;
+    shop_map_count = 0;
+    shop_timer = 0;
+}
+
+static int MERC_PLUGIN_CALL cmd_map_shop(void *ud, uint32_t L)
+{
+    (void)ud;
+    uint32_t a[2] = {L, 1};
+    int n = (int)lua_call(MF_FN_lua_gettop, 1, a);
+    shop_map_count = 0;
+    for (int i = 1; i <= n && shop_map_count < SHOP_MAP_MAX; i++) {
+        char t[72];
+        if (lua_arg_text(L, i, t, sizeof(t)) && t[0]) shop_map[shop_map_count++] = hash_name(t);
+    }
+    shop_map_on = 1;
+    char line[96];
+    snprintf(line, sizeof(line), "map shop: this map's store sells %u items (the rest hidden here)", shop_map_count);
+    host->log(host->context, line);
+    shop_hide();
+    uint32_t args[2] = {L, 1};
+    lua_call(MF_FN_Lua_PushBool, 2, args);
+    return 1;
+}
+
 static int MERC_PLUGIN_CALL cmd_map_captives(void *ud, uint32_t L)
 {
     (void)ud;
@@ -4092,6 +4271,7 @@ MERC_PLUGIN_EXPORT int MERC_PLUGIN_CALL MercenariesPlugin_Init(
         !h->add_lua_command(h->context, "Foundry_RemoveObject", cmd_remove_object, NULL) ||
         !h->add_lua_command(h->context, "Foundry_ActorTemplate", cmd_actor_template, NULL) ||
         !h->add_lua_command(h->context, "Foundry_SpawnTemplate", cmd_spawn_template, NULL) ||
+        !h->add_lua_command(h->context, "Foundry_MapShop", cmd_map_shop, NULL) ||
         !h->add_lua_command(h->context, "Foundry_Log", cmd_log, NULL))
         h->log(h->context, "script commands unavailable; Foundry_TrafficZone, Foundry_Range, Foundry_Sample, "
                            "Foundry_Label, Foundry_SetHandling and Foundry_MapText may not exist");
@@ -4106,6 +4286,10 @@ MERC_PLUGIN_EXPORT int MERC_PLUGIN_CALL MercenariesPlugin_Init(
     if (!h->hook_guest(h->context, MF_FN_DataPod_DrawTexture, datapod_draw_before, NULL, NULL))
         h->log(h->context, "PDA draw hook unavailable (run port-hooks); a map's own card portraits show once the "
                            "game's have loaded (a moment of the game's first)");
+    if (!h->hook_guest(h->context, MF_FN_Utility_SavePlayerData, save_before, save_after, NULL))
+        h->log(h->context, "save hook unavailable (run port-hooks); a map's own store (Foundry_MapShop) shows every item");
+    else
+        shop_hooked = 1;
     if (!h->hook_guest(h->context, MF_FN_Level_Load, level_load_before, NULL, NULL))
         h->log(h->context, "level load hook unavailable (run port-hooks); a map's own text (Foundry_MapText) "
                            "stays after leaving it");

@@ -494,6 +494,42 @@ def _write_map_templates(data, result):
         result.changes.append(f"maps/{m}.json: any subdued human counts as a captive there, with Foundry Console")
 
 
+def _write_shops(data, result):
+    """After every step: new maps' stores ("shop", shop.py) in the PDA
+    shop's catalogue (DATAxbox/DATAPOD/itemshop.ini, loose: the game's items
+    then the maps'), their texts, their pictures in the datapod load list and
+    their icons in the hud list."""
+    from . import shop
+    shops = getattr(data, "map_shops", None)
+    if not shops:
+        return
+    every = [it for m in sorted(shops) for it in shops[m]]
+    game = (data.dir / "DATAPOD" / "itemshop.ini").read_bytes().decode("latin-1")
+    data.files[shop.CATALOGUE] = shop.catalogue_text(game, every).encode("latin-1")
+    _set_strings(data, shop.strings(every))
+    LIST = name_hash("list")
+    have = {r.key for _, r in data.records(texture.TEXTURE)} |         {k for k, kind, _ in data.added() if kind == texture.TEXTURE}
+    for list_name, field in (("datapod", "picture"), ("hud", "icon")):
+        names = [it[field] for it in every if it.get(field)]
+        for n in names:
+            if name_hash(n) not in have:
+                result.warnings.append(f"\"shop\": no texture named {n!r} (the {field} of an item; add "
+                                       f"textures/{n}.png): it draws nothing")
+        key = name_hash(list_name)
+        for a, r in data.records(LIST):
+            if r.key == key:
+                new = shop.add_textures_to_list(data.current(a, r).decode("latin-1"), names)
+                if new is not None:
+                    data.set(a, r, new.encode("latin-1"))
+                break
+        else:
+            result.warnings.append(f"\"shop\": the game's {list_name} load list wasn't found")
+    for m in sorted(shops):
+        result.changes.append(f"maps/{m}.json: its store sells {len(shops[m])} items there (the game's shop "
+                              f"items hidden there, with Foundry Console): "
+                              + ", ".join(f"{it['id']} ${it['price']:,}" for it in shops[m]))
+
+
 def _set_strings(data, edits):
     """Set text strings (key -> text) in english.dsk; new keys go into the
     registry record holding the key with the longest shared prefix.
@@ -3252,6 +3288,11 @@ def map_script(name, doc, layers, pilots=(), contacts=False, extra=(), hqs=None,
         if any(i.get("parking") for i in inside.values()):
             # each load, a contract's too: the vehicle parked on going in, back
             lines.append(f"foundry_{name.lower()}_HqParkedSoon()")
+    from . import shop as _shop
+    shop_items = _shop.items(f"maps/{name}.json", name, doc)
+    if shop_items:
+        # each load, a contract's too: the map's store and its unlocks
+        lines.append(f"foundry_{name.lower()}_Shop()")
     if deck:
         hq += ["Utility_LoadUtilityScript('foundry_deck')",
                f"foundry_DeckEnter({_lua_str(name.lower())})",
@@ -3299,6 +3340,9 @@ def map_script(name, doc, layers, pilots=(), contacts=False, extra=(), hqs=None,
         if not contacts:
             text += f"sFoundryOnMap = {_lua_str(name.lower())}\n"
         text += interiors_lua(f"foundry_{name.lower()}_", inside, flagged=list(hqs or {}))
+    if shop_items:
+        from . import shop as _shop
+        text += _shop.lua(f"foundry_{name.lower()}_", name, shop_items)
     return text
 
 
@@ -3456,6 +3500,28 @@ def _apply_maps(data, folder, result):
             raise ValueError(f"{where}: \"template_overrides\" is {{<game template>: {{<property>: value}} or <template>}}")
         templates_wanted = list(mdoc.get("templates") or [])
         own_copies = {str(t.get("as")).lower() for t in templates_wanted if isinstance(t, dict) and t.get("as")}
+        # "shop": the map's own store, each item two template copies (shop.py);
+        # the catalogue, texts and load lists after every step (_write_shops)
+        from . import shop as _shop
+        shop_items = _shop.items(where, name, mdoc)
+        if shop_items:
+            by_name_s, _ = _world_index(data, [data.archive(n) for n in ARCHIVES if (data.dir / n).exists()])
+
+            def props_of(t):
+                hits = sorted(by_name_s.get(str(t).lower(), []), key=lambda h: not h["layer"].lower().startswith("template"))
+                return {str(k).lower(): v for k, v in hits[0]["properties"]} if hits else None
+
+            game_cat = _shop.catalogue_blocks((data.dir / "DATAPOD" / "itemshop.ini").read_bytes().decode("latin-1"))
+            entries = _shop.template_entries(
+                shop_items, game_cat, props_of,
+                lambda t: t.lower() in own_copies or bool(by_name_s.get(t.lower())))
+            for e in entries:
+                if e["as"].lower() in own_copies or by_name_s.get(e["as"].lower()):
+                    raise ValueError(f"{where}: \"shop\": a template named {e['as']} is already there")
+                own_copies.add(e["as"].lower())
+            templates_wanted += entries
+            data.map_shops = getattr(data, "map_shops", {})
+            data.map_shops[name.lower()] = shop_items
         swaps = []
         for t, spec in overrides.items():
             t = str(t)
@@ -3508,7 +3574,7 @@ def _apply_maps(data, folder, result):
                     data.new("assets.dsk", name_hash(tlayer), kind_, body_)
                 data.new_map_layers = getattr(data, "new_map_layers", {})
                 data.new_map_layers.setdefault(name.lower(), []).insert(0, tlayer)
-                listed = len(mdoc.get("templates") or []) - len(tshared)
+                listed = len(templates_wanted) - len(tshared)
                 made.append(f"{listed} templates in {tlayer}" + (
                     f" (and {len(tnames) - listed} they name: {', '.join(tnames[listed:])})" if len(tnames) > listed else ""))
         layers = getattr(data, "new_map_layers", {}).get(name.lower(), [])
@@ -4970,6 +5036,7 @@ def build(projects, data_dir, out_dir, name=None, description=None) -> Result:
     _usable_chairs(data, result)
     _write_map_text(data, result)
     _write_map_templates(data, result)
+    _write_shops(data, result)
     _check_lua(data, result)
     _check_new_scripts(data, result)
     _check_map_paths(data, result)

@@ -551,6 +551,117 @@ What can't be done without engine work:
   command. Without it, the shop's mood is always the Mafia's.
 - Optionally: a per-map catalogue file, more categories, a script command to lock items.
 
+## A map's own store (toolkit 0.277)
+
+maps/<name>.json `"shop"` (mercfoundry/shop.py has the full format):
+
+```json
+"shop": {"items": [
+  {"id": "hermes", "from": "template_support_p_surgicalstrike", "name": "Hermes drone missile",
+   "short": "...", "long": "...", "price": 90000, "unlock": "start",
+   "aircraft": "template_gaza_allies_support_a10b", "icon": "SupportIconX1Y2", "picture": "shop_hermes"},
+  {"id": "taxi", "from": "template_support_deliverStolenCivCar", "name": "Taxi", "price": 15000,
+   "unlock": "after sw_mafia20", "helicopter": "template_gaza_allies_chinook",
+   "load": "template_gaza_civ_80civic_empty"}
+]}
+```
+
+- Each item copies a game shop item ("from", the table below): its support weapon as
+  `template_support_<map>_<id>` and that weapon's ammunition as `template_sam_<map>_<id>`
+  (the map's own templates layer). The copy keeps how the item is used (laser, GPS beacon or smoke)
+  and changes the price (`MonetaryCost` and the catalogue's `DefaultPrice`, equal as in retail),
+  the plane (`"aircraft"`: `AirstrikeName`, or `ArtilleryAirplaneTemplateName` for artillery),
+  the delivery helicopter and its load (`"helicopter"`, `"load"`: a vehicle's `_empty` template,
+  a crate, or `self`), the menu icon (`HudTextureName`) and the shop picture. `"category"`
+  (Vehicle, Supply, Weapon: the shop's three tabs) defaults to the item's.
+- The catalogue is written loose (DATAxbox/DATAPOD/itemshop.ini): the game's 63 items, then every
+  map's, at most 128. Names and texts are new strings `support.<map>.<id>`,
+  `shop.<map>.<id>.short/.long`. Pictures are added to the `datapod` load list, icons to `hud`
+  (a texture named there must be the game's or the mod's own textures/<name>.png).
+- Unlocks (`"unlock"`): `start`, `after <contract id>` (scribble `foundry_done_<id>`),
+  `intel <suit> <n>` (the map's deck meter, `foundry_deck_<map>_iCurrentIntel<suit>`). Looked at
+  as the map loads and every 5 s after; each unlocked once per save (`foundry_shop_<template>`),
+  with the game's "new item" notice.
+- Foundry Console `Foundry_MapShop(template, ...)`: on the map only its items show. The game's and
+  other maps' unlocked items are taken out of the PDA's list while it's loaded. On every other
+  level, items whose template isn't loaded there (a map's own) are taken out. They're put back
+  just before the game saves the list (`Utility_SavePlayerData` hook) and as the next level loads,
+  so a save never loses an unlock. Without Foundry Console every unlocked item shows everywhere
+  (a map's own item ordered on another map would name a template that isn't loaded there).
+- The shop stays the Mafia slot's (prices by its mood, its refusal and donation). On a map whose
+  factions.json makes the Mafia slot another faction (Gaza's Settlers), that's the store's.
+- Not done: the `menace.ru` URL, a per-map shop name beyond the texts (`text/*.json` with `"map"`
+  renames them), keeping a map's items from a hostile shop faction's refusal.
+- Not tried in game yet (0.277): the hiding, the save hook, and the copied items' deliveries.
+
+### The game's shop items (to copy from)
+
+| item ("from") | tab | kind (use) | price | plane, or helicopter + load | icon | picture |
+|---|---|---|---|---|---|---|
+| `template_support_deliverH2` | Vehicle | drop (Grenade) | 35,000 | `template_mafia_cargocopter + template_mafia_h2_empty` | `SupportIconX6Y6` | `shop_mafiaSUV` |
+| `template_support_deliverH3` | Vehicle | drop (Grenade) | 30,000 | `template_mafia_cargocopter + template_civ_h3_empty` | `SupportIconH3` | `shop_h3` |
+| `template_support_p_airsuperiority` | Weapon | airstrike (Designator/GPS) | 200,000 | `template_sk_support_f22` | `SupportIconX4Y1` | `shop_airsuperiority` |
+| `template_support_p_tankbuster` | Weapon | airstrike (Designator/GPS) | 250,000 | `template_allies_support_a10b` | `SupportIconX3Y1` | `shop_tankbuster` |
+| `template_support_p_cruisemissile` | Weapon | airstrike (Designator/GPS) | 300,000 | `template_sk_support_cruise` | `SupportIconX2Y6` | `shop_cruisemissile` |
+| `template_support_p_smartbomb` | Weapon | airstrike (Designator/Laser) | 45,000 | `template_sk_support_f117` | `SupportIconX1Y5` | `shop_smartbomb` |
+| `template_support_p_surgicalstrike` | Weapon | airstrike (Designator/Laser) | 50,000 | `template_allies_support_tornado` | `SupportIconX1Y2` | `shop_surgicalstrike` |
+| `template_support_p_gunship` | Weapon | airstrike (Designator/Laser) | 75,000 | `template_sk_support_ac130` | `SupportIconGunship` | `shop_gunship` |
+| `template_support_p_gunship2` | Weapon | airstrike (Designator/Laser) | 150,000 | `template_sk_support_ac130` | `SupportIconGunship2` | `shop_gunship2` |
+| `template_support_p_gunship3` | Weapon | airstrike (Designator/Laser) | 225,000 | `template_sk_support_ac130` | `SupportIconGunship3` | `shop_gunship3` |
+| `template_support_strategicmissile` | Weapon | airstrike (Designator/GPS) | 75,000 | `template_mafia_support_frog` | `SupportIconX2Y1` | `shop_strategicmissile` |
+| `template_support_p_bunkerbuster` | Weapon | airstrike (Designator/Laser) | 350,000 | `template_allies_support_f15` | `SupportIconX1Y6` | `shop_bunkerbuster` |
+| `template_support_p_artillery` | Weapon | artillery (Grenade) | 50,000 | `template_china_support_66` | `SupportIconX2Y2` | `shop_artillery` |
+| `template_support_p_artillery2` | Weapon | artillery (Grenade) | 100,000 | `template_china_support_66_2` | `SupportIconArtillery2` | `shop_artillery2` |
+| `template_support_p_artillery3` | Weapon | artillery (Grenade) | 200,000 | `template_china_support_66_3` | `SupportIconArtillery3` | `shop_artillery3` |
+| `template_support_p_clusterbomb` | Weapon | airstrike (Designator/GPS) | 65,000 | `template_allies_support_a10` | `SupportIconX1Y1` | `shop_clusterbomb` |
+| `template_support_p_carpetbomb` | Weapon | airstrike (Designator/GPS) | 500,000 | `template_allies_support_b52` | `SupportIconX2Y4` | `shop_carpetbomb` |
+| `template_support_crate_mafiaCovert` | Supply | drop (Grenade) | 8,000 | `template_mafia_littlebird + template_crate_Covert` | `SupportIconCrate_covert` | `shop_crate_covert` |
+| `template_support_crate_mafiaAllies` | Supply | drop (Grenade) | 6,500 | `template_mafia_littlebird + template_crate_west` | `SupportIconCrate_west` | `shop_crate_west` |
+| `template_support_crate_mafiaSpecial` | Supply | drop (Grenade) | 12,000 | `template_mafia_littlebird + template_crate_MafiaSpecial` | `SupportIconCrate_special` | `shop_crate_special` |
+| `template_support_crate_mafiaChina` | Supply | drop (Grenade) | 6,000 | `template_mafia_littlebird + template_crate_East` | `SupportIconCrate_east` | `shop_crate_east` |
+| `template_support_crate_mafiaHealth` | Supply | drop (Grenade) | 2,500 | `template_mafia_littlebird + template_crate_health` | `SupportIconCrate_east` | `shop_crate_health` |
+| `template_support_crate_nk` | Supply | drop (Grenade) | 7,500 | `template_mafia_littlebird + template_crate_East` | `SupportIconCrate_east` | `shop_crate_east` |
+| `template_support_crate_mafia` | Supply | drop (Grenade) | 4,000 | `template_mafia_littlebird + template_crate_Mafia` | `SupportIconCrate_mafia` | `shop_crate_mafia` |
+| `template_support_crate_mafiaHeavy` | Supply | drop (Grenade) | 15,000 | `template_mafia_littlebird + template_crate_MafiaHeavy` | `SupportIconCrate_heavy` | `shop_crate_heavy` |
+| `template_support_deliverStolenNKBRDM` | Vehicle | drop (Grenade) | 40,000 | `template_mafia_cargocopter + template_nk_brdm_empty` | `SupportIconX3Y2` | `shop_nkbrdm` |
+| `template_support_deliverStolenNKBMP` | Vehicle | drop (Grenade) | 75,000 | `template_mafia_cargocopter + template_nk_bmp_empty` | `SupportIconX5Y6` | `shop_nkbmp` |
+| `template_support_deliverStolenNKBTR60` | Vehicle | drop (Grenade) | 25,000 | `template_mafia_cargocopter + template_nk_btr60_empty` | `SupportIconX5Y5` | `shop_nkbtr60` |
+| `template_support_deliverStolenNKJeep` | Vehicle | drop (Grenade) | 12,000 | `template_mafia_cargocopter + template_nk_jeep_empty` | `SupportIconX6Y3` | `shop_nkjeep` |
+| `template_support_deliverStolenCivCar` | Vehicle | drop (Grenade) | 5,000 | `template_mafia_cargocopter + template_civ_80civic_empty` | `SupportIconX6Y1` | `shop_civcar` |
+| `template_support_deliverStolenAlliesBlackhawk` | Vehicle | drop (Grenade) | 65,000 | `template_mafia_blackhawk + self` | `SupportIconBlackHawk` | `shop_alliesblackhawk` |
+| `template_support_deliverLittleBird` | Vehicle | drop (Grenade) | 95,000 | `template_mafia_littlebird + self` | `SupportIconMafiaLilBird` | `shop_mafialilbird` |
+| `template_support_deliverStolenSKHumveeAT` | Vehicle | drop (Grenade) | 35,000 | `template_mafia_cargocopter + template_sk_humveeAT_empty` | `SupportIconX6Y4` | `shop_skhumveeat` |
+| `template_support_deliverStolenSKHumveeMG` | Vehicle | drop (Grenade) | 25,000 | `template_mafia_cargocopter + template_sk_humveeMG_empty` | `SupportIconX6Y5` | `shop_skhumveemg` |
+| `template_support_deliverStolenSKAPC` | Vehicle | drop (Grenade) | 60,000 | `template_mafia_cargocopter + template_sk_kafv_empty` | `SupportIconX4Y2` | `shop_skapc` |
+| `template_support_deliverStolenAlliesStryker` | Vehicle | drop (Grenade) | 40,000 | `template_mafia_cargocopter + template_allies_stryker_empty` | `SupportIconX5Y4` | `shop_alliesstryker` |
+| `template_support_deliverStolenBaggageCar` | Vehicle | drop (Grenade) | 10,000 | `template_mafia_cargocopter + template_civ_baggagecar_empty` | `SupportIconBaggageCar` | `shop_baggagecar` |
+| `template_support_deliverStolenChinaJeep` | Vehicle | drop (Grenade) | 15,000 | `template_mafia_cargocopter + template_china_jeep_empty` | `SupportIconChinaJeep` | `shop_chinajeep` |
+| `template_support_deliverStolenChinaAPC` | Vehicle | drop (Grenade) | 50,000 | `template_mafia_cargocopter + template_china_apc_empty` | `SupportIconX4Y4` | `shop_chinaapc` |
+| `template_support_deliverStolenAlliesHumvee` | Vehicle | drop (Grenade) | 25,000 | `template_mafia_cargocopter + template_allies_humvee_empty` | `SupportIconX6Y5` | `shop_allieshumvee` |
+| `template_support_deliverTechnicalAT` | Vehicle | drop (Grenade) | 30,000 | `template_mafia_cargocopter + template_mafia_technicalAT_empty` | `SupportIconX5Y2` | `shop_mafiatechnicalat` |
+| `template_support_deliverTechnicalMG` | Vehicle | drop (Grenade) | 20,000 | `template_mafia_cargocopter + template_mafia_technicalMG_empty` | `SupportIconX5Y1` | `shop_mafiatechnicalmg` |
+| `template_support_deliverTechnicalGL` | Vehicle | drop (Grenade) | 35,000 | `template_mafia_cargocopter + template_mafia_technicalGL_empty` | `SupportIconX5Y1` | `shop_mafiatechnicalgl` |
+| `template_support_crate_mafiaSniper` | Supply | drop (Grenade) | 12,000 | `template_mafia_littlebird + template_crate_Sniper` | `SupportIconCrate_sniper` | `shop_crate_sniper` |
+| `template_support_crate_MafiaAmmoveh` | Supply | drop (Grenade) | 8,000 | `template_mafia_littlebird + template_pic_ammoveh` | `SupportIconCrate_ammoveh` | `shop_crate_ammoveh` |
+| `template_support_crate_MafiaArmor` | Supply | drop (Grenade) | 13,000 | `template_mafia_littlebird + template_pic_armor` | `SupportIconCrate_armor` | `shop_crate_armor` |
+| `template_support_deliverStolenZSU` | Vehicle | drop (Grenade) | 65,000 | `template_mafia_cargocopter + template_nk_zsu_empty` | `SupportIconX5Y3` | `shop_nkzsu` |
+| `template_support_deliverStolenPressTruck` | Vehicle | drop (Grenade) | 20,000 | `template_mafia_cargocopter + template_civ_presstruck_empty` | `SupportIconPressTruck` | `shop_presstruck` |
+| `template_support_deliverStolenAlliesAvenger` | Vehicle | drop (Grenade) | 35,000 | `template_mafia_cargocopter + template_allies_avenger_empty` | `SupportIconX6Y2` | `shop_alliesavenger` |
+| `template_support_deliverStolenNKTransport` | Vehicle | drop (Grenade) | 10,000 | `template_mafia_cargocopter + template_nk_transport_empty` | `SupportIconNKTransport` | `shop_nktransport` |
+| `template_support_deliverStolenSportsCar` | Vehicle | drop (Grenade) | 25,000 | `template_mafia_cargocopter + template_civ_sportscar_empty` | `SupportIconSportsCar` | `shop_sportscar` |
+| `template_support_deliverStolenTunguska` | Vehicle | drop (Grenade) | 100,000 | `template_mafia_cargocopter + template_china_tunguska_empty` | `SupportIconX4Y6` | `shop_tunguska` |
+| `template_support_p_fuelairbomb` | Weapon | airstrike (Designator/GPS) | 450,000 | `template_china_support_frogfoot` | `SupportIconX1Y3` | `shop_fuelairbomb` |
+| `template_support_deliverStolenNKLittleBird` | Vehicle | drop (Grenade) | 115,000 | `template_mafia_NKlittlebird + self` | `SupportIconNKLilBird` | `shop_nklilbird` |
+| `template_support_deliverVIPCar` | Vehicle | drop (Grenade) | 35,000 | `template_mafia_cargocopter + template_civ_50skgbcar` | `SupportIconMafiaVIPCar` | `shop_mafiavipCar` |
+| `template_support_deliverStolenChinaFuelTruck` | Vehicle | drop (Grenade) | 20,000 | `template_mafia_cargocopter + template_china_fueltruck_empty` | `SupportIconChinaFuelTruck` | `shop_chinafueltruck` |
+| `template_support_crate_mafiaVehicle` | Supply | drop (Grenade) | 30,000 | `template_mafia_littlebird + template_crate_ChinaVehicle` | `SupportIconCrate_vehicle` | `shop_crate_vehicle` |
+| `template_support_crate_sniperrifle` | Supply | drop (Grenade) | 15,000 | `template_mafia_littlebird + template_crate_sniperRifle` | `SupportIconCrate_sniper` | `shop_crate_sniper` |
+| `template_support_crate_stinger` | Supply | drop (Grenade) | 18,000 | `template_mafia_littlebird + template_crate_stinger` | `SupportIconCrate_stinger` | `shop_crate_stinger` |
+| `template_support_crate_atrocket` | Supply | drop (Grenade) | 18,000 | `template_mafia_littlebird + template_crate_atrocket` | `SupportIconCrate_ATrocket` | `shop_crate_atrocket` |
+| `template_support_crate_mafiaAdvanced` | Supply | drop (Grenade) | 20,000 | `template_mafia_littlebird + template_crate_advanced` | `SupportIconCrate_Prototype` | `shop_crate_prototype` |
+| `template_support_crate_mafiaCheatgun` | Supply | drop (Grenade) | 1,000,000 | `template_mafia_littlebird + template_crate_mafiaCheatgun` | `SupportIconCrate_cheat` | `shop_crate_cheat` |
+| `template_support_crate_mafiaC4` | Supply | drop (Grenade) | 8,000 | `template_mafia_littlebird + template_crate_c4` | `SupportIconCrate_c4` | `shop_crate_C4` |
+
 ## Appendix: engine functions
 
 | address | what | evidence |
