@@ -3370,7 +3370,7 @@ def layers_script(layers, pilots=(), arrive=False, welcome=(), deck=False, relat
             "Utility_WriteNumberToScribbleMemory('SkipTo_MissionNumber', n)",
             "Utility_EraseValueFromScribbleMemory('skipto_via_cheating')",
             "Utility_WriteStringToScribbleMemory('foundry_map_start', 'resumed a saved contract on ' .. m)",
-            "Utility_ResetToBaseLayerOnly(m)",
+            "foundry_ResumeAfter(m)",
             "return true",
             "end",
             # A save made in free roam on a new map: the game resumes its own
@@ -3385,8 +3385,20 @@ def layers_script(layers, pilots=(), arrive=False, welcome=(), deck=False, relat
             "if not m or sFoundryOnMap then return false end",
             "local here = Utility_ReadStringFromScribbleMemory('SkipTo_Map') or '?'",
             "Utility_WriteStringToScribbleMemory('foundry_map_start', 'a save from free roam on ' .. m .. ' woke on a game map (SkipTo_Map ' .. here .. '): back to ' .. m)",
-            "Utility_ResetToBaseLayerOnly(m)",
+            "foundry_ResumeAfter(m)",
             "return true",
+            "end",
+            # Not at once: SW's level is still loading its files when this
+            # runs, and a level load begun then waited for good on its loading
+            # picture (a Gaza save, 0.296). Black, then the new map 3 s later,
+            # as a pilot's trip leaves from a settled world.
+            "function foundry_ResumeAfter(m)",
+            "sFoundryResumeMap = m",
+            "Cinematic_FadeOut(0)",
+            "Event_RelativeTimer('foundry_ResumeGo', 'b', 3.0)",
+            "end",
+            "function foundry_ResumeGo()",
+            "if sFoundryResumeMap then Utility_ResetToBaseLayerOnly(sFoundryResumeMap) end",
             "end",
             "function foundry_LoadMapLayers()",
             "if foundry_ResumeNewMap() then return end",
