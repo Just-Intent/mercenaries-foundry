@@ -1062,6 +1062,42 @@ static void hud_command(const char *line)
         for (unsigned i = 0; i < n; i++)
             append_output("%u  %s%s%s  %.0f m", i + 1, list[i].name[0] ? list[i].name : "[",
                           list[i].name[0] ? "" : list[i].model, list[i].name[0] ? "" : "]", (double)list[i].distance);
+    } else if (!strcmp(cmd, "probe")) {
+        /* /probe: every object within 40 m written to the log (the console's
+         * output isn't), with the properties /pick shows: for telling what
+         * a thing in the world is from a playtest's logs. */
+        scan_nearby();
+        static Nearby list[MAX_NEARBY];
+        EnterCriticalSection(&lock);
+        unsigned n = nearby_count;
+        memcpy(list, nearby, n * sizeof(Nearby));
+        LeaveCriticalSection(&lock);
+        static const char *props[] = {"objectType", "faction", "hitPoints", "GeometryFile", "squad", "path"};
+        unsigned logged = 0;
+        for (unsigned i = 0; i < n; i++) {
+            if (list[i].distance > 40.0f) break;
+            char line[640];
+            uint16_t flags = 0;
+            host->read_guest(host->context, list[i].object + MF_OFF_WorldObject_flags, &flags, 2);
+            int k = snprintf(line, sizeof(line), "probe: %s%s%s at %.1f, %.1f, %.1f (%.0f m) handle 0x%08X flags 0x%04X",
+                             list[i].name[0] ? list[i].name : "[", list[i].name[0] ? "" : list[i].model,
+                             list[i].name[0] ? "" : "]", list[i].pos[0], list[i].pos[1], list[i].pos[2],
+                             (double)list[i].distance, list[i].handle, flags);
+            uint32_t vtable = 0, getter = 0;
+            host->read_guest(host->context, list[i].object, &vtable, 4);
+            if (vtable) host->read_guest(host->context, vtable + 0x0C, &getter, 4);
+            for (unsigned p = 0; getter && p < sizeof(props) / sizeof(props[0]) && k < (int)sizeof(line) - 1; p++) {
+                MercGuestCall c;
+                uint32_t hash = hash_name(props[p]);
+                char value[96];
+                if (!guest(getter, list[i].object, 1, &hash, &c) || !c.eax) continue;
+                read_text(c.eax, value, sizeof(value));
+                if (value[0]) k += snprintf(line + k, sizeof(line) - k, " %s=%s", props[p], value);
+            }
+            host->log(host->context, line);
+            logged++;
+        }
+        append_output("probe: %u objects within 40 m written to the log", logged);
     } else if (!strcmp(cmd, "pick")) {
         unsigned k = (unsigned)atoi(arg);
         EnterCriticalSection(&lock);
@@ -1089,7 +1125,7 @@ static void hud_command(const char *line)
     } else if (!strcmp(cmd, "objectives")) {
         hud_objectives();
     } else {
-        append_output("/spawn <template>  /near  /pick <n>  /up /down /left /right /here /remove  /money [n]  /objectives");
+        append_output("/spawn <template>  /near  /probe  /pick <n>  /up /down /left /right /here /remove  /money [n]  /objectives");
     }
 }
 
