@@ -1349,6 +1349,8 @@ static void pool_check(const char *when)
     }
 }
 
+static void fly_update(double dt);     /* Foundry_FlyLoop's, below */
+static unsigned flyer_count;
 static void pool_watch(double dt)
 {
     static double since;
@@ -1364,6 +1366,7 @@ static int MERC_PLUGIN_CALL on_update(void *ud, const MercPluginUpdate *u)
     InterlockedExchange(&sample_playing, host->in_gameplay(host->context) != 0);
     if (sample_playing) heap_watch(u->wall_delta_seconds);
     if (sample_playing) pool_watch(u->wall_delta_seconds);
+    if (sample_playing) fly_update(u->wall_delta_seconds);
     live_update(u->wall_delta_seconds);
     maptex_poll(u->wall_delta_seconds);
     maptext_poll(u->wall_delta_seconds);
@@ -3824,6 +3827,7 @@ static void MERC_PLUGIN_CALL level_load_before(void *ud, MercHookContext *c)
     scribble_logged = 0;
     pool_check("as the level unloads");   /* before the unload walks the lists */
     pool_level_time = 0;
+    flyer_count = 0;                           /* the map's script sets its loops again */
     memset(card_seen, 0, sizeof(card_seen));   /* handles are reused on the next level */
     /* so are handles and object addresses together: a level loaded after
      * another kept the first level's models for them (Gaza's pagers, never
@@ -4101,6 +4105,142 @@ static int MERC_PLUGIN_CALL cmd_move_object(void *ud, uint32_t L)
     uint32_t obj = find_slot_object((uint32_t)v[0]);
     int ok = obj && live_apply(obj, v + 1, v[4] * 3.14159265f / 180.0f, 0);
     uint32_t args[2] = {L, (uint32_t)ok};
+    lua_call(MF_FN_Lua_PushBool, 2, args);
+    return 1;
+}
+
+/* Foundry_FlyLoop(name, speed, x1, y1, z1, x2, y2, z2, ...): a named
+ * piece of scenery (a plain world object: no actor, no AI, no physics)
+ * moved along a closed loop of points every frame at `speed` m/s, facing
+ * where it goes (a point 40 m ahead, so it turns smoothly at the corners).
+ * For Gaza's drones (0.309): as helicopters they never flew and, placed in
+ * the air, went with the level-load stops; as scenery they're only drawn.
+ * The loop starts at the point nearest the object. Again with the same name
+ * replaces its loop; speed 0 stops it. Up to 16 at once, 64 points each;
+ * forgotten as a level loads (the map's script sets them again). True if
+ * the loop is taken; the object is looked for until it exists. */
+#define FLY_MAX 16
+#define FLY_POINTS 64
+typedef struct {
+    char name[48];
+    uint32_t obj, handle;
+    int n, logged;
+    float pts[3 * FLY_POINTS], len[FLY_POINTS], total, at, speed;
+    double look;                 /* seconds until the object is looked for (or checked) again */
+} Flyer;
+static Flyer flyers[FLY_MAX];
+static unsigned flyer_count;
+
+static void fly_point(const Flyer *f, float s, float *out)
+{
+    while (s < 0) s += f->total;
+    while (s >= f->total) s -= f->total;
+    int i = 0;
+    while (i < f->n - 1 && s >= f->len[i]) { s -= f->len[i]; i++; }
+    const float *a = f->pts + 3 * i, *b = f->pts + 3 * ((i + 1) % f->n);
+    float t = f->len[i] > 0 ? s / f->len[i] : 0;
+    for (int k = 0; k < 3; k++) out[k] = a[k] + (b[k] - a[k]) * t;
+}
+
+static void fly_update(double dt)
+{
+    for (unsigned i = 0; i < flyer_count; i++) {
+        Flyer *f = &flyers[i];
+        if (f->speed <= 0 || f->total <= 0) continue;
+        f->look -= dt;
+        if (f->look <= 0) {
+            /* found yet, and still the same object (its handle) */
+            uint32_t h = 0;
+            if (f->obj && (!host->read_guest(host->context, f->obj + MF_OFF_WorldObject_handle, &h, 4) || h != f->handle))
+                f->obj = 0;
+            if (!f->obj) {
+                f->obj = live_find(f->name, "-", 0, NULL);
+                if (f->obj) {
+                    host->read_guest(host->context, f->obj + MF_OFF_WorldObject_handle, &f->handle, 4);
+                    /* start where it stands: the nearest point of the loop */
+                    float pos[3] = {0}, best = 1e30f;
+                    host->read_guest(host->context, f->obj + WORLDOBJECT_POSITION, pos, 12);
+                    float run = 0;
+                    for (int k = 0; k < f->n; k++) {
+                        float dx = f->pts[3 * k] - pos[0], dz = f->pts[3 * k + 2] - pos[2];
+                        if (dx * dx + dz * dz < best) { best = dx * dx + dz * dz; f->at = run; }
+                        run += f->len[k];
+                    }
+                }
+            }
+            f->look = 1.0;
+        }
+        if (!f->obj) continue;
+        uint16_t flags = 0;
+        host->read_guest(host->context, f->obj + MF_OFF_WorldObject_flags, &flags, 2);
+        if (!(flags & FLAG_PLAIN)) {
+            if (!f->logged) {
+                f->logged = 1;
+                char line[160];
+                snprintf(line, sizeof(line), "fly loop: %s isn't plain scenery (an actor: a prop, vehicle or person), "
+                         "so it isn't moved; place a copy of a static object", f->name);
+                host->log(host->context, line);
+            }
+            continue;
+        }
+        f->at += f->speed * (float)dt;
+        if (f->at >= f->total) f->at -= f->total;
+        float pos[3], ahead[3];
+        fly_point(f, f->at, pos);
+        fly_point(f, f->at + 40.0f, ahead);
+        float yaw = atan2f(ahead[0] - pos[0], ahead[2] - pos[2]);
+        int ok = live_apply(f->obj, pos, yaw, 0);
+        if (f->logged < 2) {
+            /* once: did the move take (the object's own position after it) */
+            float got[3] = {0};
+            host->read_guest(host->context, f->obj + WORLDOBJECT_POSITION, got, 12);
+            char line[200];
+            snprintf(line, sizeof(line), "fly loop: %s moving (%s): asked (%.1f, %.1f, %.1f), it's at (%.1f, %.1f, %.1f)",
+                     f->name, ok ? "the move took" : "the move was refused", pos[0], pos[1], pos[2], got[0], got[1], got[2]);
+            host->log(host->context, line);
+            f->logged = 2;
+        }
+    }
+}
+
+static int MERC_PLUGIN_CALL cmd_fly_loop(void *ud, uint32_t L)
+{
+    (void)ud;
+    MercGuestCall c;
+    char name[48];
+    uint32_t top[2] = {L, 1};
+    int n = (int)lua_call(MF_FN_lua_gettop, 1, top);
+    if (n < 2 || !lua_arg_text(L, 1, name, sizeof(name)) || !name[0]) return 0;
+    float v[2 + 3 * FLY_POINTS];
+    int count = n - 1 < 1 + 3 * FLY_POINTS ? n - 1 : 1 + 3 * FLY_POINTS;
+    for (int k = 0; k < count; k++) {
+        uint32_t a[2] = {L, (uint32_t)(k + 2)};
+        if (!guest(MF_FN_Lua_ArgNumber, 0, 2, a, &c)) return 0;
+        v[k] = (float)c.st0;
+    }
+    unsigned i = 0;
+    while (i < flyer_count && _stricmp(flyers[i].name, name) != 0) i++;
+    if (i == flyer_count) {
+        if (flyer_count >= FLY_MAX) return 0;
+        flyer_count++;
+    }
+    Flyer *f = &flyers[i];
+    memset(f, 0, sizeof(*f));
+    snprintf(f->name, sizeof(f->name), "%s", name);
+    f->speed = v[0];
+    f->n = (count - 1) / 3;
+    if (f->n < 2 && f->speed > 0) return 0;
+    memcpy(f->pts, v + 1, sizeof(float) * 3 * f->n);
+    for (int k = 0; k < f->n; k++) {
+        const float *a = f->pts + 3 * k, *b = f->pts + 3 * ((k + 1) % f->n);
+        float dx = b[0] - a[0], dy = b[1] - a[1], dz = b[2] - a[2];
+        f->len[k] = sqrtf(dx * dx + dy * dy + dz * dz);
+        f->total += f->len[k];
+    }
+    char line[160];
+    snprintf(line, sizeof(line), "fly loop: %s on %d points, %.0f m round, at %.1f m/s", name, f->n, f->total, f->speed);
+    host->log(host->context, line);
+    uint32_t args[2] = {L, 1};
     lua_call(MF_FN_Lua_PushBool, 2, args);
     return 1;
 }
@@ -4744,6 +4884,7 @@ MERC_PLUGIN_EXPORT int MERC_PLUGIN_CALL MercenariesPlugin_Init(
         !h->add_lua_command(h->context, "Foundry_MapShopOpen", cmd_map_shop_open, NULL) ||
         !h->add_lua_command(h->context, "Foundry_ShopUnlocked", cmd_shop_unlocked, NULL) ||
         !h->add_lua_command(h->context, "Foundry_ShopRestore", cmd_shop_restore, NULL) ||
+        !h->add_lua_command(h->context, "Foundry_FlyLoop", cmd_fly_loop, NULL) ||
         !h->add_lua_command(h->context, "Foundry_ScriptValues", cmd_script_values, NULL) ||
         !h->add_lua_command(h->context, "Foundry_CentreWheels", cmd_centre_wheels, NULL) ||
         !h->add_lua_command(h->context, "Foundry_Log", cmd_log, NULL))

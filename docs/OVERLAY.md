@@ -103,6 +103,7 @@ Script commands it adds, for the Lua box or any script:
 - `Foundry_ScriptValues()`: how much of the game's script values (scribble memory) is in use, as
   "script values: N bytes in K keys" (also logged 15 s into each level). Retail's pool and its saves
   held 16 KB; the port's pool is 64 KB and packs about 30 KB into a save.
+- `Foundry_FlyLoop('<name>', speed, x1, y1, z1, x2, y2, z2, ...)`: moves a named piece of plain scenery (a placed copy of a static object: no actor, AI or physics) along a closed loop of points every frame at `speed` m/s, facing where it goes; it starts at the point nearest the object. Again with the same name replaces the loop, speed 0 stops it; up to 16 at once, 64 points each; forgotten as a level loads, so call it from the map's start each time. Logs once whether the move took, and says so if the object is an actor (not moved).
 - `Foundry_ShopRestore('<template>')`: puts a support item back in the PDA shop's unlocked list without the game's "new support item" popup (the save's own restore path), for items a save had unlocked before; true if it's in the list after.
 - `Foundry_Log('<text>')`: writes a script's line to plugins.log. A new
   map's HQ interiors log their measurements with it (`hq dump ...` lines:
