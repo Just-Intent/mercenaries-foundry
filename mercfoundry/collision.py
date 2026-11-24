@@ -572,3 +572,46 @@ def hull_to_box_shape(cshp_body: bytes, shape_index: int, extra_boxes=()) -> byt
     items[0] = (b"cinf", bytes(cinf))
     items[0] = (b"cinf", _cinf_tail(items[0][1], items))
     return ucfb.pack_children(items, pad_last)
+
+
+# Solid to people, vehicles and bullets: retail's triangle-mesh shapes use 7
+# (43 of 62 single-mesh blocks; the rest 3, 6 and 1).
+MESH_MATERIAL = 7
+
+
+def mesh_block(vertices, triangles, joint: int, material: int = MESH_MATERIAL) -> bytes:
+    """A collision block (cshp body) of one triangle-mesh shape (kind 4) with
+    its tree, as retail's single-mesh blocks are laid out: cinf (1 shape, no
+    box shapes, 1 tree, no boxes, 1 mesh of kind 4), sinf (material, joint,
+    kind 4, mesh flag 1), CMSH (the material as flags, vertices, triangles)
+    and CMOP. vertices in the joint's space; triangles wound with their cross
+    product pointing into the solid, as retail's."""
+    from . import cmop
+    if not triangles:
+        raise ValueError("no triangles for a collision mesh")
+    if len(vertices) > 0xFFFF or len(triangles) > 0xFFFF:
+        raise ValueError("collision mesh too large (65,535 vertices or triangles at most)")
+    cmsh = struct.pack("<IHHH", material, len(vertices), len(triangles), 0)
+    cmsh += b"".join(struct.pack("<3f", *v) for v in vertices)
+    cmsh += b"".join(struct.pack("<3H", *t) for t in triangles)
+    tree = cmop.build([_bounds([vertices[i] for i in t]) for t in triangles])
+    sinf = struct.pack("<4I", material, joint, 4, 1)
+    shap = ucfb.pack_children([(b"sinf", sinf), (b"CMSH", cmsh), (b"CMOP", tree)])
+    items = [(b"cinf", struct.pack("<7H", 1, 0, 1, 0, 1, 0, 0)), (b"shap", shap)]
+    items[0] = (b"cinf", _cinf_tail(items[0][1], items))
+    return ucfb.pack_children(items)
+
+
+def segments_with_block(segments_record: bytes, cshp_body: bytes) -> bytes:
+    """The segments record with its collision replaced by cshp_body (added
+    when it has none)."""
+    from . import script
+    cseg, cseg_pad = ucfb.unwrap(segments_record, b"CSEG", with_pad=True)
+    size, _ = struct.unpack_from("<II", cseg)
+    tree = script.decompress(cseg[8:], size)
+    roots, tree_pad = ucfb.split(tree)
+    items, pad_last = ucfb.split(roots[0][1])
+    items = [(t, b) for t, b in items if t != b"cshp"] + [(b"cshp", cshp_body)]
+    new_tree = ucfb.pack_children([(b"ucfb", ucfb.pack_children(items, pad_last))], tree_pad)
+    packed = script.compress(new_tree)
+    return ucfb.wrap(b"CSEG", struct.pack("<II", len(new_tree), len(packed)) + packed, cseg_pad)

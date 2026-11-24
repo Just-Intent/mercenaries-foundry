@@ -62,6 +62,26 @@ class CollisionTests(unittest.TestCase):
         self.assertEqual(len(collision.parse(body)[0].boxes), 1)
 
 
+    def test_mesh_block(self):
+        # "collision": "mesh": one kind-4 triangle-mesh shape with its tree,
+        # laid out as retail's single-mesh blocks (cinf 1 shape, 0 box shapes,
+        # 1 tree, 0 boxes, 1 mesh of kind 4; then vertex and triangle totals)
+        verts = [(0, 0, 0), (2, 0, 0), (0, 0, 2), (0, 1, 0)]
+        tris = [(0, 1, 2), (0, 3, 1), (0, 2, 3), (1, 3, 2)]
+        body = collision.mesh_block(verts, tris, name_hash("root"))
+        cinf = list(ucfb.iter_chunks(body))[0][1]
+        self.assertEqual(struct.unpack_from("<9H", cinf), (1, 0, 1, 0, 1, 0, 0, 4, 4))
+        shape = collision.parse(body)[0]
+        self.assertEqual((shape.kind, shape.material, shape.is_mesh, shape.has_tree), (4, 7, True, True))
+        self.assertEqual((len(shape.vertices), shape.triangles), (4, tris))
+        piece = segm(QUAD, [0, 1, 2, 3], "root")
+        rec = collision.segments_with_block(segments_record([piece, cshp([box_shape(9, "root", [((0, 1, 0), (1, 2, 3))])], 1)]), body)
+        cseg = ucfb.unwrap(rec, b"CSEG")
+        size, _ = struct.unpack_from("<II", cseg)
+        items = list(ucfb.iter_chunks(list(ucfb.iter_chunks(script.decompress(cseg[8:], size)))[0][1]))
+        self.assertEqual([t for t, _ in items], [b"segm", b"cshp"])        # replaced, still last
+        self.assertEqual(items[-1][1], body)
+
     def test_with_collision_of(self):
         # a new model keeping its base's collision ("collision": "base" in its
         # .new.json): its own fitted shapes go, the base's come in whole

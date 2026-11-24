@@ -29,7 +29,8 @@ Project layout (every part optional):
     models/<name>.new.json   {"base": <game model>} with models/<name>.glb: a
                           new model on the base's skeleton; "collision": "base"
                           keeps the base's own collision (an aircraft's tuned
-                          boxes) instead of a box fitted to each new piece;
+                          boxes) instead of a box fitted to each new piece, and
+                          "mesh" the pieces' own triangles (rocks, rubble);
                           "joints": {<joint>: [x, y, z]} moves joints (from
                           their parent; pieces bound to them follow): a
                           vehicle's seat, dock points and wheels
@@ -4111,10 +4112,16 @@ def _new_models(data, folder, result):
                 all_lods |= p.lod_mask
             ns = model.set_lod_masks(ns, all_lods)
         keep_base_collision = str(spec_doc.get("collision") or "").lower() == "base"
-        if spec_doc.get("collision") not in (None, "base", "fitted"):
-            raise ValueError(f"{where}: \"collision\" is \"base\" (keep the base model's) or \"fitted\" "
-                             f"(boxes fitted to the new pieces; the default)")
-        if keep_base_collision:
+        if spec_doc.get("collision") not in (None, "base", "fitted", "mesh"):
+            raise ValueError(f"{where}: \"collision\" is \"base\" (keep the base model's), \"fitted\" "
+                             f"(boxes fitted to the new pieces; the default) or \"mesh\" (the pieces' own "
+                             f"triangles, as retail's rocks and buildings)")
+        if spec_doc.get("collision") == "mesh":
+            # a triangle mesh of the coarsest level of detail's pieces (rocks,
+            # rubble, landmarks: boxes square off round shapes and stand over
+            # low ones as walls)
+            ns = collision.segments_with_block(ns, _mesh_collision(nm, ns, where))
+        elif keep_base_collision:
             # the base's own shapes: an aircraft's tuned fuselage boxes, not one
             # box per piece (a rotor's box held the extraction Black Hawk off
             # the ground and off its passengers, and made landing "too risky")
@@ -4154,6 +4161,48 @@ def _texture_names(data):
                 names.setdefault(name_hash(t), t)
         data.texture_names = names
     return data.texture_names
+
+
+def _mesh_collision(mr, sr, where):
+    """A triangle-mesh collision block from a model's own pieces: those drawn
+    at its coarsest level of detail, in its root joint's space (its rest
+    pose undone), wound as retail's (cross product into the solid)."""
+    from . import collision
+    m = model.decode(mr, sr)
+    pieces = [p for p in m.pieces if p.triangles]
+    if not pieces:
+        raise ValueError(f"{where}: \"collision\": \"mesh\": the model has no triangles")
+    top = max(p.lod_mask for p in pieces).bit_length() - 1
+    pieces = [p for p in pieces if p.lod_mask >> top & 1] or pieces
+    root = m.joints[0]
+    qx, qy, qz, qw = root.rotation
+    tx, ty, tz = root.translation
+
+    def to_root(p):
+        # inverse of the root's rest pose: q* (p - t) q
+        v = (p[0] - tx, p[1] - ty, p[2] - tz)
+        x, y, z, w = -qx, -qy, -qz, qw
+        ix = w * v[0] + y * v[2] - z * v[1]
+        iy = w * v[1] + z * v[0] - x * v[2]
+        iz = w * v[2] + x * v[1] - y * v[0]
+        iw = -x * v[0] - y * v[1] - z * v[2]
+        return (ix * w + iw * -x + iy * -z - iz * -y,
+                iy * w + iw * -y + iz * -x - ix * -z,
+                iz * w + iw * -z + ix * -y - iy * -x)
+    verts, tris, index = [], [], {}
+    for p in pieces:
+        local = []
+        for pos in p.positions:
+            q = tuple(round(c, 4) for c in to_root(pos))
+            if q not in index:
+                index[q] = len(verts)
+                verts.append(q)
+            local.append(index[q])
+        for a, b, c in p.triangles:
+            a, b, c = local[a], local[b], local[c]
+            if a != b and b != c and a != c:
+                tris.append((a, c, b))
+    return collision.mesh_block(verts, tris, name_hash(root.name))
 
 
 def _move_joints(mr, sr, spec_doc, where):
