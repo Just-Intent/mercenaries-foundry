@@ -129,8 +129,16 @@ def parse(where, doc, new_maps, mod_folder=None):
     if after is not None and not (isinstance(after, str) and re.fullmatch(r"[A-Za-z0-9_]+", after)):
         raise ValueError(f"{where}: \"after\" names the contract (its id, like sw_allies22) that must be done "
                          "before this suit's number cards appear")
+    # "until": a contract (its id) whose completion ends the suit's act: its
+    # number cards still at large leave the map (not verified, no bounty), as
+    # retail's finished acts' cards are gone
+    until = doc.get("until")
+    if until is not None and not (isinstance(until, str) and re.fullmatch(r"[A-Za-z0-9_]+", until)):
+        raise ValueError(f"{where}: \"until\" names the contract (its id, like sw_allies21) whose completion "
+                         "takes this suit's number cards off the map")
     return {"map": m, "suit": suit, "cards": sorted(cards, key=lambda c: c["rank"]), "others": others,
-            "unlock_mail": mail, "after": after.lower() if after else None}
+            "unlock_mail": mail, "after": after.lower() if after else None,
+            "until": until.lower() if until else None}
 
 
 # Retail's ace unlock (gameflow.lua): at iTargetIntel the suit's ace mail
@@ -194,10 +202,11 @@ def script(decks, mails=None):
         by_map.setdefault(d["map"], []).append(d)
     for m, ds in by_map.items():
         cards = ",\n".join(
-            "  { suit = %s, rank = %d, actor = %s, layer = %s, bounty = %d, after = %s }" % (
+            "  { suit = %s, rank = %d, actor = %s, layer = %s, bounty = %d, after = %s, till = %s }" % (
                 _lua(d["suit"]), c["rank"], _lua(c["actor"]) if c["actor"] else "false",
                 _lua(c["layer"]) if c["layer"] else "false", c["bounty"],
-                _lua(d["after"]) if d.get("after") else "false")
+                _lua(d["after"]) if d.get("after") else "false",
+                _lua(d["until"]) if d.get("until") else "false")
             for d in ds for c in d["cards"] if c["rank"] <= 10 and c["actor"])
         suits = ", ".join(_lua(d["suit"]) for d in ds)
         unlock = ", ".join(
@@ -342,9 +351,11 @@ if not tFoundryDeckArmed then tFoundryDeckArmed = {{}} end
 if not tFoundryDeckLoaded then tFoundryDeckLoaded = {{}} end
 tFoundryDeckBy = {{}}
 for i, c in ipairs(d.cards) do
--- a suit with "after" appears once that contract is done (free roam after it runs this again)
+-- a suit with "after" appears once that contract is done (free roam after it runs this again);
+-- with "until", it's gone once that one is
 if not Utility_ReadStringFromScribbleMemory(c.suit .. c.rank .. 'status') and c.layer
 and (not c.after or Utility_ReadNumberFromScribbleMemory('foundry_done_' .. c.after))
+and not foundry_DeckOver(c)
 and not Utility_DoesActorExist(c.actor) and not tFoundryDeckLoaded[c.layer] then
 tFoundryDeckLoaded[c.layer] = 1
 Utility_ReadLevelFile(c.layer)
@@ -353,12 +364,21 @@ end
 if hFoundryDeckTimer then Event_CancelEvent(hFoundryDeckTimer) end
 foundry_DeckLook()
 end
+-- The suit's act is over ("until" done): its cards at large leave the map.
+function foundry_DeckOver(c)
+return c.till and Utility_ReadNumberFromScribbleMemory('foundry_done_' .. c.till)
+end
 function foundry_DeckLook()
 hFoundryDeckTimer = Event_RelativeTimer('foundry_DeckLook', 'b', 5.0)
 local d = tFoundryDecks[sFoundryDeckMap]
 if not d then return end
 for i, c in ipairs(d.cards) do
-if not Utility_ReadStringFromScribbleMemory(c.suit .. c.rank .. 'status') and Utility_DoesActorExist(c.actor) then
+if foundry_DeckOver(c) and Utility_DoesActorExist(c.actor) then
+-- (its layer was loaded before the act ended: it goes now, its marker with it)
+if c.hWake then Event_CancelEvent(c.hWake) c.hWake = nil end
+foundry_DeckSleep(c)
+Actor_Remove(c.actor)
+elseif not Utility_ReadStringFromScribbleMemory(c.suit .. c.rank .. 'status') and Utility_DoesActorExist(c.actor) then
 local iActor = Utility_GetActorAsInt(c.actor)
 if tFoundryDeckArmed[c.actor] ~= iActor then
 tFoundryDeckArmed[c.actor] = iActor

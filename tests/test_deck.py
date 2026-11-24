@@ -66,11 +66,25 @@ class DeckTests(unittest.TestCase):
         d = deck.parse("deck/clubs.json", dict(DOC, after="sw_allies22"), {"gaza"})
         self.assertEqual(d["after"], "sw_allies22")
         lua = deck.script([d])
-        self.assertIn("bounty = 40000, after = 'sw_allies22' }", lua)
+        self.assertIn("bounty = 40000, after = 'sw_allies22', till = false }", lua)
         self.assertIn("and (not c.after or Utility_ReadNumberFromScribbleMemory('foundry_done_' .. c.after))", lua)
         self.assertEqual(luacheck.check(lua), [])
         with self.assertRaises(ValueError):
             deck.parse("deck/clubs.json", dict(DOC, after=["sw_allies22"]), {"gaza"})
+
+    def test_suit_until_a_contract(self):
+        # "until": the act is over once that contract is done; its cards at large leave
+        d = deck.parse("deck/clubs.json", dict(DOC, until="sw_allies21"), {"gaza"})
+        self.assertEqual(d["until"], "sw_allies21")
+        lua = deck.script([d])
+        self.assertEqual(luacheck.check(lua), [])
+        self.assertIn("till = 'sw_allies21' }", lua)
+        self.assertIn("and not foundry_DeckOver(c)", lua)
+        look = lua[lua.index("function foundry_DeckLook()"):]
+        self.assertLess(look.index("if foundry_DeckOver(c) and Utility_DoesActorExist(c.actor) then"),
+                        look.index("Actor_Remove(c.actor)"))
+        with self.assertRaises(ValueError):
+            deck.parse("deck/clubs.json", dict(DOC, until=3), {"gaza"})
 
     def test_face_found_by_name(self):
         with tempfile.TemporaryDirectory() as t:
@@ -90,8 +104,8 @@ class DeckTests(unittest.TestCase):
         lua = deck.script([d])
         self.assertEqual(luacheck.check(lua), [])
         # number cards placed only; the face card comes through a contract
-        self.assertIn("{ suit = 'clubs', rank = 2, actor = 'gaza_card_clubs02', layer = 'gaza_card_clubs02', bounty = 40000, after = false }", lua)
-        self.assertIn("{ suit = 'clubs', rank = 3, actor = 'gaza_card_clubs03', layer = false, bounty = 12500, after = false }", lua)
+        self.assertIn("{ suit = 'clubs', rank = 2, actor = 'gaza_card_clubs02', layer = 'gaza_card_clubs02', bounty = 40000, after = false, till = false }", lua)
+        self.assertIn("{ suit = 'clubs', rank = 3, actor = 'gaza_card_clubs03', layer = false, bounty = 12500, after = false, till = false }", lua)
         self.assertNotIn("rank = 12", lua)
         # retail's verify flow and the PDA's keys
         self.assertIn("mission_ObjectiveVerify{", lua)
