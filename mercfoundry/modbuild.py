@@ -29,7 +29,10 @@ Project layout (every part optional):
     models/<name>.new.json   {"base": <game model>} with models/<name>.glb: a
                           new model on the base's skeleton; "collision": "base"
                           keeps the base's own collision (an aircraft's tuned
-                          boxes) instead of a box fitted to each new piece
+                          boxes) instead of a box fitted to each new piece;
+                          "joints": {<joint>: [x, y, z]} moves joints (from
+                          their parent; pieces bound to them follow): a
+                          vehicle's seat, dock points and wheels
     animations/*.glb|.gltf   clips replace the game animations with the same
                           names (export them with `model --glb --anim`)
     animations/new.json   {"new clip": "template clip"}: clips with these
@@ -3955,9 +3958,12 @@ def _new_models(data, folder, result):
             # a vehicle's boxes as its two bodies: one shape alone becomes the
             # driving body and bullets pass through (collision.VEHICLE_BODY)
             ns = collision.split_segments_vehicle_boxes(ns)
+        nm, moved = _move_joints(nm, ns, spec_doc, where)
         data.new("streamed.dsk", key, model.MODEL, nm)
         data.new("streamed.dsk", key, model.SEGMENTS, ns)
         made.add(name.lower())
+        if moved:
+            result.changes.append(f"model {name}: joints moved ({', '.join(moved)})")
         result.changes.append(f"model {name}: new, from {f.name} on {base}'s skeleton: {len(report.added)} pieces, "
                               + (f"{base}'s own collision" if keep_base_collision else
                                  f"{report.collision_boxes} collision boxes")
@@ -3983,6 +3989,32 @@ def _texture_names(data):
                 names.setdefault(name_hash(t), t)
         data.texture_names = names
     return data.texture_names
+
+
+def _move_joints(mr, sr, spec_doc, where):
+    """models/<name>.new.json "joints": {<joint>: [x, y, z]}: each joint's
+    rest translation (relative to its parent joint, as the skeleton keeps
+    it) replaced, its rotation kept, and the pieces bound to it go with it:
+    a vehicle's seat and dock points (hp_seat_lf, hp_dock_lf: where the
+    rider sits and gets on) and its wheels (a motorcycle on a car's
+    skeleton). Returns (model record, names moved)."""
+    joints = spec_doc.get("joints") or {}
+    if not isinstance(joints, dict):
+        raise ValueError(f"{where}: \"joints\" is {{<joint>: [x, y, z]}} (its position from its parent joint)")
+    if not joints:
+        return mr, []
+    have = {j.name.lower(): j for j in model.decode(mr, sr).joints}
+    moved = []
+    for name, pos in joints.items():
+        j = have.get(str(name).lower())
+        if j is None:
+            raise ValueError(f"{where}: \"joints\": the model has no joint {name!r} "
+                             f"(it has {', '.join(sorted(have)[:12])}{' ...' if len(have) > 12 else ''})")
+        if not (isinstance(pos, (list, tuple)) and len(pos) == 3 and all(isinstance(v, (int, float)) for v in pos)):
+            raise ValueError(f"{where}: \"joints\" {name}: give [x, y, z] (metres from its parent joint)")
+        mr = model.with_joint_pose(mr, j.name, j.rotation, [float(v) for v in pos])
+        moved.append(j.name)
+    return mr, moved
 
 
 def _copy_model(data, name, base, src, spec_doc, where, keep_shadow, result):
@@ -4021,8 +4053,11 @@ def _copy_model(data, name, base, src, spec_doc, where, keep_shadow, result):
     data.copy_swaps = getattr(data, "copy_swaps", {})
     data.copy_swaps[name.lower()] = mapping
     key = name_hash(name)
+    mr, moved = _move_joints(mr, sr, spec_doc, where)
     data.new("streamed.dsk", key, model.MODEL, mr)
     data.new("streamed.dsk", key, model.SEGMENTS, sr)
+    if moved:
+        result.changes.append(f"model {name}: joints moved ({', '.join(moved)})")
     textures_ = []
     for h in model.texture_hashes(sr):
         n = names.get(h) or next((str(v) for v in swaps.values() if name_hash(str(v)) == h), None)

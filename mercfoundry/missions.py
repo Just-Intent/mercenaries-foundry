@@ -2126,6 +2126,9 @@ def interiors(where, map_name, doc):
                   "gpos": [float(v) for v in g["position"]], "gheading": float(g.get("heading") or 0),
                   "name": str(g.get("name") or f"{FACTION_NAMES[f]} HQ"),
                   "prompt": str(g.get("prompt") or "Enter HQ"), "side": str(g.get("side") or "civ"),
+                  # retail's bouncers can be shot (bouncer.lua makes one invincible only
+                  # through its bribe); "invincible": true keeps this guard unhurt
+                  "guard_safe": bool(g.get("invincible", False)),
                   "marker": marker,
                   "room": [float(v) for v in room["position"]], "rheading": float(room.get("heading") or 0),
                   "camera": cam_pos,
@@ -2362,7 +2365,7 @@ def interiors_lua(prefix, inside, flagged=()):
             "%s = { guard = %s, prompt = %s, name = %s, side = %s, marker = %s, ttype = %s, blip = %s, rx = %.2f, ry = %.2f, rz = %.2f, "
             "rh = %.1f, leaders = { %s }, door = %s, doorprompt = %s, doordist = %.1f, exitdelay = %.1f, talkprompt = %s,\n"
             " starter = %s, acceptprompt = %s, bribe = %s, bribecost = %s,%s cx = %.2f, cy = %.2f, cz = %.2f,\n"
-            " amb = %s, hidehud = %s, banter = { %s }, moods = %s, respawn = %s,\n"
+            " amb = %s, hidehud = %s, banter = { %s }, moods = %s, respawn = %s, gsafe = %s,\n"
             " chair = %s,\n follow = %s,\n"
             " greeting = %s,\n gmood = { %s },\n nags = %s,\n idle = %s },"
             % (f, _lua(i["guard"]), _lua_str(i["prompt"]), _lua_str(i["name"]), _lua(i["side"]),
@@ -2381,6 +2384,7 @@ def interiors_lua(prefix, inside, flagged=()):
                ", ".join(_lua(b) for b in i.get("banter") or []),
                "TRUE" if i.get("guard_moods") else "FALSE",
                "TRUE" if i.get("respawn") else "FALSE",
+               "TRUE" if i.get("guard_safe") else "FALSE",
                _chair_row(i.get("chair")), _follow_row(i.get("follow")),
                i["greeting"],
                ", ".join(f"{m} = {lines}" for m, lines in (i.get("greetings") or {}).items()),
@@ -2450,10 +2454,13 @@ if not {P}HqIn or {P}HqDumpN > 5 then return end
 {P}HqDump(({P}HqDumpTag or 'in the room') .. ' +' .. ({P}HqDumpN * 2) .. ' s')
 Event_RelativeTimer('{P}HqDumpWalk', 'b', 2.0)
 end
-function {P}HqRules(name)
+-- bHurt: the guard outside can be shot, as retail's bouncers (unless its
+-- "invincible"); the leaders in the room can't (retail's briefing cast).
+-- Until 0.264 the guard was invincible too, and bullets went through it.
+function {P}HqRules(name, bHurt)
 Ai_SetHostileRange(name, 0.0)
 Actor_SetVerifiable(name, FALSE)
-Actor_SetInvincible(name, true)
+if bHurt then Actor_SetInvincible(name, false) else Actor_SetInvincible(name, true) end
 end
 function {P}HqArm()
 -- one look-timer at a time: a new start replaces the one waiting
@@ -2486,11 +2493,11 @@ Objective_Remove(h.guard)
 {P}HqUnuse(h.guard)
 end
 Ai_SetFaction(h.guard, h.side)
-{P}HqRules(h.guard)
+{P}HqRules(h.guard, not h.gsafe)
 elseif Utility_DoesActorExist(h.guard) then
 local iActor = Utility_GetActorAsInt(h.guard)
 Ai_SetFaction(h.guard, h.side)   -- again each look: a side set while it slept doesn't hold
-{P}HqRules(h.guard)
+{P}HqRules(h.guard, not h.gsafe)
 local sWants = {P}HqGuardWants(f)
 if {P}HqArmed[h.guard] ~= iActor then
 {P}HqArmed[h.guard] = iActor
