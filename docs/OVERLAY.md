@@ -84,6 +84,9 @@ Script commands it adds, for the Lua box or any script:
   character model, "card probe: <name> draws <GeometryFile>; <model>_head
   loaded | not in the texture table; <model>_body ...". For copied models
   whose own textures don't show (Gaza's card men, 0.262).
+- `Foundry_MapFines(false)`: until the next level loads, no fine for a
+  death the player causes (0x56FD0's $100), through a byte the port reads
+  (0x87BF00). Used by a new map's `"collateral_fines": false`.
 - `Foundry_Log('<text>')`: writes a script's line to plugins.log. A new
   map's HQ interiors log their measurements with it (`hq dump ...` lines:
   `foundry_<map>_HqDump`, `foundry_HqDump()` in the Lua box). Retail's HQ

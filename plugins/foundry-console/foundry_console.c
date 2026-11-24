@@ -3600,6 +3600,7 @@ static void MERC_PLUGIN_CALL level_load_before(void *ud, MercHookContext *c)
     maptemplate_restore();
     memset(card_seen, 0, sizeof(card_seen));   /* handles are reused on the next level */
     if (any_captive_on || any_captive_wait >= 0) any_captive_set(0);
+    { uint8_t z = 0; host->write_guest(host->context, 0x87BF00u, &z, 1); }   /* fines back (Foundry_MapFines) */
     maptemplate_count = maptemplate_used = 0;
     datapod_restore();
     maptext_restore();
@@ -3737,6 +3738,24 @@ static void any_captive_poll(double dt)
     host->log(host->context, "map captives: on now (any subdued human counts as a captive until the next level loads)");
 }
 
+/* Foundry_MapFines(on): false turns off the fine for a death the player
+ * caused (0x56FD0: $100 off the player's money) until the next level loads,
+ * through a byte the port reads there (0x87BF00, free guest memory after the
+ * moved mission table; Patch-Generated "No fines switch"). Faction moods are
+ * another path and stay. Returns true. For a new map's "collateral_fines". */
+static int MERC_PLUGIN_CALL cmd_map_fines(void *ud, uint32_t L)
+{
+    (void)ud;
+    uint32_t args[2] = {L, 1};
+    int on = (int)lua_call(MF_FN_lua_gettop, 1, args) < 1 || lua_call(MF_FN_Lua_ArgBool, 2, args) != 0;
+    uint8_t b = on ? 0 : 1;
+    host->write_guest(host->context, 0x87BF00u, &b, 1);
+    host->log(host->context, on ? "map fines: the game's (a death the player caused costs money)"
+                                : "map fines: off until the next level loads");
+    lua_call(MF_FN_Lua_PushBool, 2, args);
+    return 1;
+}
+
 static int MERC_PLUGIN_CALL cmd_map_captives(void *ud, uint32_t L)
 {
     (void)ud;
@@ -3858,6 +3877,7 @@ MERC_PLUGIN_EXPORT int MERC_PLUGIN_CALL MercenariesPlugin_Init(
         !h->add_lua_command(h->context, "Foundry_HqMode", cmd_hq_mode, NULL) ||
         !h->add_lua_command(h->context, "Foundry_MapTemplate", cmd_map_template, NULL) ||
         !h->add_lua_command(h->context, "Foundry_MapCaptives", cmd_map_captives, NULL) ||
+        !h->add_lua_command(h->context, "Foundry_MapFines", cmd_map_fines, NULL) ||
         !h->add_lua_command(h->context, "Foundry_Log", cmd_log, NULL))
         h->log(h->context, "script commands unavailable; Foundry_TrafficZone, Foundry_Range, Foundry_Sample, "
                            "Foundry_Label, Foundry_SetHandling and Foundry_MapText may not exist");

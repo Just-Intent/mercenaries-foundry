@@ -516,6 +516,14 @@ class ModBuildTests(unittest.TestCase):
         self.write("maps/island.json", json.dumps({"from": "blank", "loads_like": None, "any_captive": "yes"}))
         with self.assertRaisesRegex(ValueError, "true or false"):
             modbuild.build(self.project, self.data, self.out)
+        # "collateral_fines": false: no fine for deaths the player causes there
+        self.write("maps/island.json", json.dumps({"from": "blank", "loads_like": None, "collateral_fines": False}))
+        modbuild.build(self.project, self.data, self.out)
+        master = script.decode(self.records("assets.dsk")[(name_hash("island"), SCRIPT)]).source
+        self.assertLess(master.index("function ScriptInit()"), master.index("Foundry_MapFines(FALSE)"))
+        self.write("maps/island.json", json.dumps({"from": "blank", "loads_like": None, "collateral_fines": "no"}))
+        with self.assertRaisesRegex(ValueError, "collateral_fines"):
+            modbuild.build(self.project, self.data, self.out)
         # "relations": the map's faction moods, kept and put back on the game's maps
         self.write("maps/island.json", json.dumps({"from": "blank", "loads_like": None, "relations": {
             "mafia": {"civ": "hostile", "allies": "friendly"}, "allies": {"civ": -30}}}))

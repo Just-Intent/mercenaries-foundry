@@ -463,6 +463,20 @@ def _write_map_templates(data, result):
         data.replace_added(name_hash(m), SCRIPT, script.encode(script.with_source(old, text[:at] + call + text[at:])))
         result.changes.append(f"maps/{m}.json: {len(swaps)} game templates spawn with the map's own properties there "
                               f"({', '.join(f'{t} as {to}' for t, to in swaps)}), in place with Foundry Console")
+    for m in sorted(getattr(data, "map_no_fines", ())):
+        master = data.find_added(name_hash(m), SCRIPT)
+        if master is None:
+            raise ValueError(f"maps/{m}.json: no master script for its \"collateral_fines\"")
+        old = script.decode(master)
+        text = old.source
+        at = text.find("function ScriptInit()")
+        if at < 0:
+            raise ValueError(f"maps/{m}.json: its master script has no ScriptInit for \"collateral_fines\"")
+        at = text.index("\n", at) + 1
+        nl = "\r\n" if "\r\n" in text else "\n"
+        call = f"if Foundry_MapFines then{nl}Foundry_MapFines(FALSE){nl}end{nl}"
+        data.replace_added(name_hash(m), SCRIPT, script.encode(script.with_source(old, text[:at] + call + text[at:])))
+        result.changes.append(f"maps/{m}.json: no fine for deaths the player causes there, with Foundry Console")
     for m in sorted(getattr(data, "map_any_captive", ())):
         master = data.find_added(name_hash(m), SCRIPT)
         if master is None:
@@ -3347,6 +3361,14 @@ def _apply_maps(data, folder, result):
         if any_captive:
             data.map_any_captive = getattr(data, "map_any_captive", set())
             data.map_any_captive.add(name.lower())
+        # "collateral_fines": false: no fine for a death the player causes there
+        # (Foundry_MapFines; the port's 0x56FD0 reads its switch)
+        fines = mdoc.get("collateral_fines", True)
+        if fines not in (True, False):
+            raise ValueError(f"{where}: \"collateral_fines\" is true (the game's) or false (none on this map)")
+        if not fines:
+            data.map_no_fines = getattr(data, "map_no_fines", set())
+            data.map_no_fines.add(name.lower())
         # "relations": its factions' moods while it's loaded; the game's maps
         # put the pairs back (foundry_layers) as they were before
         relations = missions.map_relations(where, mdoc)
@@ -3507,7 +3529,8 @@ def _apply_maps(data, folder, result):
                 data.replace_added(key, name_hash("list"), text.encode("latin-1"))
         if not any(r.key == key for _, r in data.records(SCRIPT)) and data.find_added(key, SCRIPT) is None:
             if mdoc.get("start") or mdoc.get("message") or mdoc.get("weather") or layers or pilots or contacts or extra \
-                    or hqs or inside or deck or mdoc.get("any_captive") or mdoc.get("relations"):
+                    or hqs or inside or deck or mdoc.get("any_captive") or mdoc.get("relations") \
+                    or mdoc.get("collateral_fines") is False:
                 source = map_script(name, mdoc, layers, pilots, contacts, extra, hqs, inside, deck=deck)
                 made.append("script (" + ", ".join(
                     (["where you arrive"] if (mdoc.get("start") or {}).get("position") else [])
