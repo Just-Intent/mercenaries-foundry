@@ -241,8 +241,12 @@ def lua(prefix, map_name, shop_items, open_here=False):
         elif u[0] == "after":
             cond = f"Utility_ReadNumberFromScribbleMemory({_lua_str('foundry_done_' + u[1])})"
         else:
+            # the live meter while the map's cards are in the PDA (the kept
+            # key is only written on leaving, so it lagged a visit behind)
             key = f"foundry_deck_{map_name.lower()}_iCurrentIntel{u[1]}"
-            cond = f"(Utility_ReadNumberFromScribbleMemory({_lua_str(key)}) or 0) >= {u[2]}"
+            live = (f"Utility_ReadStringFromScribbleMemory('foundry_deck_on') == {_lua_str(map_name.lower())} "
+                    f"and Utility_ReadNumberFromScribbleMemory({_lua_str('iCurrentIntel' + u[1])})")
+            cond = f"(({live}) or Utility_ReadNumberFromScribbleMemory({_lua_str(key)}) or 0) >= {u[2]}"
         rows.append((it["weapon"], cond))
     names = ", ".join(_lua_str(w) for w, _ in rows)
     checks = "".join(f"if {c} then {prefix}ShopUnlock({_lua_str(w)}) end\n" for w, c in rows)
@@ -260,6 +264,7 @@ def lua(prefix, map_name, shop_items, open_here=False):
             f"if have == nil and Utility_ReadNumberFromScribbleMemory('foundry_shop_' .. t) then return end\n"
             f"Shop_UnlockItem(t)\n"
             f"Utility_WriteNumberToScribbleMemory('foundry_shop_' .. t, 1)\n"
+            f"if Foundry_Log then Foundry_Log('shop: unlocked ' .. t) end\n"
             f"end\n"
             f"function {prefix}Shop()\n"
             f"if Foundry_MapShop then Foundry_MapShop({names}) end\n"

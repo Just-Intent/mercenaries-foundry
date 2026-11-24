@@ -4306,15 +4306,33 @@ static void shop_open_put_back(void)
     if (shop_open_on) host->write_guest(host->context, SHOP_LOCK, &shop_lock_game, 1);
 }
 
+static int shop_empty_logged;
+static double shop_level_time;                 /* seconds into the level, for the 10 s report */
 static void shop_poll(double dt)
 {
     if (!shop_hooked) return;
     shop_open_poll();
+    if (shop_level_time >= 0 && (shop_level_time += dt) >= 10.0) {
+        /* what the PDA's store has to go on, once per level (0.301: Gaza's
+         * looked closed after a save came back to it): the lock, the list and
+         * the tab counts (0xCE9F0 shows the closed page when no tab has one) */
+        uint8_t lock = 0;
+        uint32_t n = 0, cats[3] = {0};
+        char line[200];
+        shop_level_time = -1;
+        host->read_guest(host->context, SHOP_LOCK, &lock, 1);
+        host->read_guest(host->context, SHOP_LIST_COUNT, &n, 4);
+        host->read_guest(host->context, SHOP_CAT_COUNTS, cats, sizeof(cats));
+        snprintf(line, sizeof(line), "map shop: 10 s in: lock %u%s, %u items in the list, tabs %u %u %u, %u hidden%s",
+                 lock, shop_open_on ? " (opened here)" : "", n, cats[0], cats[1], cats[2], shop_hidden_count,
+                 shop_map_on ? " (this map's store)" : "");
+        host->log(host->context, line);
+    }
     if ((shop_timer += dt) < 0.5) return;
     shop_timer = 0;
     shop_unhide(1);
     shop_hide();
-    static int empty_logged;
+    int empty_logged = shop_empty_logged;
     uint32_t n = 1;
     host->read_guest(host->context, SHOP_LIST_COUNT, &n, 4);
     if (shop_map_on && !n && !empty_logged) {
@@ -4323,6 +4341,7 @@ static void shop_poll(double dt)
     } else if (n) {
         empty_logged = 0;
     }
+    shop_empty_logged = empty_logged;
 }
 
 static void MERC_PLUGIN_CALL save_before(void *ud, MercHookContext *c)
@@ -4352,6 +4371,8 @@ static void shop_level_reset(void)
     shop_map_on = 0;
     shop_map_count = 0;
     shop_timer = 0;
+    shop_empty_logged = 0;                     /* each level says so again */
+    shop_level_time = 0;
 }
 
 static int MERC_PLUGIN_CALL cmd_map_shop(void *ud, uint32_t L)
