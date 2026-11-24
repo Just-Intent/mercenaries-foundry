@@ -3394,6 +3394,7 @@ def layers_script(layers, pilots=(), arrive=False, welcome=(), deck=False, relat
             # as a pilot's trip leaves from a settled world.
             "function foundry_ResumeAfter(m)",
             "sFoundryResumeMap = m",
+            "Utility_WriteNumberToScribbleMemory('foundry_resume_black', 1)",
             "Cinematic_FadeOut(0)",
             "Event_RelativeTimer('foundry_ResumeGo', 'b', 3.0)",
             "end",
@@ -3529,12 +3530,21 @@ def map_mission_lua(map_name, free_roam=()):
     # loaded (SW, by the pilot back) started that contract there instead of
     # free roam, and the player landed off SW's map at the contract's start
     start = [f"sFoundryOnMap = {_lua(map_name)}",
+             # a save sent back here went black on SW (foundry_ResumeAfter);
+             # a level load doesn't lift it (0.298: Gaza stayed black)
+             "if Utility_ReadNumberFromScribbleMemory('foundry_resume_black') then",
+             "Utility_EraseValueFromScribbleMemory('foundry_resume_black')",
+             f"Event_RelativeTimer({_lua(P + 'ResumeLit')}, 'b', 1.0)",
+             "end",
              f"if not {P}Mission() then",
              "Utility_EraseValueFromScribbleMemory('SkipTo_Faction')",
              "Utility_EraseValueFromScribbleMemory('SkipTo_MissionNumber')",
              f"{P}FreeRoam()",
              "end"]
     funcs = f"""-- Missions played on {map_name} (Mercenaries Foundry)
+function {P}ResumeLit()
+Cinematic_FadeIn(0.5)
+end
 function {P}Mission()
 local pm = Utility_ReadStringFromScribbleMemory('foundry_play_map')
 if not pm and Utility_ReadStringFromScribbleMemory('foundry_retry_map') == {_lua(map_name)}

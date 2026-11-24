@@ -1042,7 +1042,12 @@ class NewMapMissionTests(unittest.TestCase):
         start, funcs = missions.map_mission_lua("isle")
         # free roam clears a contract's SkipTo_* left behind (a Retry's, the
         # contract not restarted), which started it on SW after the pilot back
-        self.assertEqual(start, ["sFoundryOnMap = 'isle'", "if not foundry_isle_Mission() then",
+        self.assertEqual(start, ["sFoundryOnMap = 'isle'",
+                                 "if Utility_ReadNumberFromScribbleMemory('foundry_resume_black') then",
+                                 "Utility_EraseValueFromScribbleMemory('foundry_resume_black')",
+                                 "Event_RelativeTimer('foundry_isle_ResumeLit', 'b', 1.0)",
+                                 "end",
+                                 "if not foundry_isle_Mission() then",
                                  "Utility_EraseValueFromScribbleMemory('SkipTo_Faction')",
                                  "Utility_EraseValueFromScribbleMemory('SkipTo_MissionNumber')",
                                  "foundry_isle_FreeRoam()", "end"])

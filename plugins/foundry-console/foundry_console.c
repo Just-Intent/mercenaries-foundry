@@ -1247,9 +1247,19 @@ static void heap_watch(double dt)
         if (blocks[2 * i + 1] > largest) largest = blocks[2 * i + 1];
     int shrank = last_largest && largest + 65536 <= last_largest;
     if (since_log < 5.0 && !shrank && !(largest < 262144 && largest != last_largest)) return;
-    char msg[160];
-    snprintf(msg, sizeof(msg), "heap: %u KB free of %u KB in %u pieces, largest %u KB (%u bytes)%s",
-             h[2] / 1024, h[1] / 1024, count, largest / 1024, largest, largest < 262144 ? " LOW" : "");
+    char msg[260];
+    int at = snprintf(msg, sizeof(msg), "heap: %u KB free of %u KB in %u pieces, largest %u KB (%u bytes)%s",
+                      h[2] / 1024, h[1] / 1024, count, largest / 1024, largest, largest < 262144 ? " LOW" : "");
+    /* The actor pool (0x31BDF8: placed objects' memory, ActorMemory_WriteReport's
+     * totals) grows in 0x200-byte blocks (0x3A370: +1C bytes, +20 blocks) from
+     * a heap of its own at +28 (laid out as the main heap's, it seems). Gaza ran
+     * it out on the sixth level load of a run (0.298); logged here to see
+     * whether it grows from level to level. */
+    uint32_t pool[3] = {0}, ah[3] = {0};
+    if (at > 0 && host->read_guest(host->context, 0x31BE14u, pool, 8) &&
+        host->read_guest(host->context, 0x31BE20u, ah, sizeof(ah)) && ah[1] && ah[1] < 0x4000000u && ah[2] <= ah[1])
+        snprintf(msg + at, sizeof(msg) - at, "; actor heap %u KB free of %u KB, pool %u blocks (%u KB)",
+                 ah[2] / 1024, ah[1] / 1024, pool[1], pool[0] / 1024);
     host->log(host->context, msg);
     last_largest = largest;
     since_log = 0;
