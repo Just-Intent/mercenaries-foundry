@@ -96,6 +96,9 @@ Script commands it adds, for the Lua box or any script:
   `Foundry_MoveObject(handle, x, y, z, yaw?)` moves one (degrees); true if it
   could.
   `Foundry_RemoveObject(handle)` takes one away; true if it could.
+- `Foundry_ScriptValues()`: how much of the game's script values (scribble memory) is in use, as
+  "script values: N bytes in K keys" (also logged 15 s into each level). Retail's pool and its saves
+  held 16 KB; the port's pool is 64 KB and packs about 30 KB into a save.
 - `Foundry_Log('<text>')`: writes a script's line to plugins.log. A new
   map's HQ interiors log their measurements with it (`hq dump ...` lines:
   `foundry_<map>_HqDump`, `foundry_HqDump()` in the Lua box). Retail's HQ

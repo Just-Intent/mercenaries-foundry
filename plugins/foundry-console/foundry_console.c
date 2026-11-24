@@ -3373,6 +3373,40 @@ static void maptexalias_poll(double dt)
  * for before it, so with the deck's portraits a map's first textures were
  * given up on as the map loaded (bigflags: the PDA's Factions page). */
 static double tcount_timer = -1;     /* seconds into the level; the template table's fill logged at 15 */
+static int scribble_logged = 1;      /* the script values' use logged with it */
+
+/* The game's script values (scribble memory, 0x414150): every
+ * Utility_Write*ToScribbleMemory value (numbers as "%f" text) in one text
+ * pool, {name hash, text, NUL} end to end from +0x3008 to +0x300C, the keys'
+ * count at +0. Retail's pool is 16 KB and a save kept only 16 KB of it, so a
+ * mod's values past that were lost on loading (Gaza, 0.294); the port's
+ * pool is 64 KB now and packs a bigger one into the save (about 30 KB of
+ * values fit). */
+static void scribble_report(char *line, size_t size)
+{
+    uint32_t keys = 0, base = 0, end = 0;
+    const uint32_t g = MF_VAR_g_ScribbleMemory;
+    if (!host->read_guest(host->context, g, &keys, 4) ||
+        !host->read_guest(host->context, g + MF_OFF_ScribbleMemory_text, &base, 4) ||
+        !host->read_guest(host->context, g + MF_OFF_ScribbleMemory_end, &end, 4) || end < base) {
+        snprintf(line, size, "script values: unreadable");
+        return;
+    }
+    const uint32_t used = end - base;
+    snprintf(line, size, "script values: %u bytes in %u keys%s", used, keys,
+             used > 30000u || keys > 1900u ? " (near what a save holds: about 30 KB packed, 2,032 keys)"
+             : used > 16384u ? " (past retail's 16 KB: the port packs them into the save)" : "");
+}
+
+/* Foundry_ScriptValues(): that line, for the console. */
+static int MERC_PLUGIN_CALL cmd_script_values(void *ud, uint32_t L)
+{
+    char line[200];
+    (void)ud;
+    scribble_report(line, sizeof(line));
+    push_text(L, line);
+    return 1;
+}
 static void maptex_poll(double dt)
 {
     maptex_clock += dt;
@@ -3384,6 +3418,12 @@ static void maptex_poll(double dt)
         snprintf(line, sizeof(line), "template table: %u of 4096 templates loaded%s", n,
                  n > 3900 ? " (nearly full: templates past the end don't load, and what spawns from them has no "
                             "properties)" : "");
+        host->log(host->context, line);
+    }
+    if (tcount_timer < 0 && !scribble_logged) {
+        char line[200];
+        scribble_logged = 1;
+        scribble_report(line, sizeof(line));
         host->log(host->context, line);
     }
     maptexalias_poll(dt);
@@ -3653,6 +3693,7 @@ static void MERC_PLUGIN_CALL level_load_before(void *ud, MercHookContext *c)
     shop_level_reset();
     shop_url_restore();
     tcount_timer = 0;
+    scribble_logged = 0;
     memset(card_seen, 0, sizeof(card_seen));   /* handles are reused on the next level */
     if (any_captive_on || any_captive_wait >= 0) any_captive_set(0);
     { uint8_t z = 0; host->write_guest(host->context, 0x87BF00u, &z, 1); }   /* fines back (Foundry_MapFines) */
@@ -4503,6 +4544,7 @@ MERC_PLUGIN_EXPORT int MERC_PLUGIN_CALL MercenariesPlugin_Init(
         !h->add_lua_command(h->context, "Foundry_MapShop", cmd_map_shop, NULL) ||
         !h->add_lua_command(h->context, "Foundry_MapShopOpen", cmd_map_shop_open, NULL) ||
         !h->add_lua_command(h->context, "Foundry_ShopUnlocked", cmd_shop_unlocked, NULL) ||
+        !h->add_lua_command(h->context, "Foundry_ScriptValues", cmd_script_values, NULL) ||
         !h->add_lua_command(h->context, "Foundry_Log", cmd_log, NULL))
         h->log(h->context, "script commands unavailable; Foundry_TrafficZone, Foundry_Range, Foundry_Sample, "
                            "Foundry_Label, Foundry_SetHandling and Foundry_MapText may not exist");
