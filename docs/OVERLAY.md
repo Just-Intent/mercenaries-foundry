@@ -96,6 +96,10 @@ Script commands it adds, for the Lua box or any script:
   `Foundry_MoveObject(handle, x, y, z, yaw?)` moves one (degrees); true if it
   could.
   `Foundry_RemoveObject(handle)` takes one away; true if it could.
+- `Foundry_CentreWheels('<wheel model>', ...)`: vehicles whose geometryNameWheel is one of these (up to 15)
+  draw their wheels on their centre line (x 0), as one tyre per axle that still spins and steers (a motorbike on a
+  car's skeleton). Stays until called again. Needs the port of toolkit 0.296; models/<wheel>.new.json
+  `"centre_line": true` makes new maps call it.
 - `Foundry_ScriptValues()`: how much of the game's script values (scribble memory) is in use, as
   "script values: N bytes in K keys" (also logged 15 s into each level). Retail's pool and its saves
   held 16 KB; the port's pool is 64 KB and packs about 30 KB into a save.

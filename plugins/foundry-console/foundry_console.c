@@ -3398,6 +3398,30 @@ static void scribble_report(char *line, size_t size)
              : used > 16384u ? " (past retail's 16 KB: the port packs them into the save)" : "");
 }
 
+/* Foundry_CentreWheels(model, ...): vehicles whose wheel model
+ * (geometryNameWheel) is one of these draw their wheels at x 0 in the
+ * vehicle's frame, so a motorbike's pair of physics wheels draws as one tyre
+ * that still spins and steers. The port reads the list at 0x87BF40 (count,
+ * then up to 15 name hashes) in 0x45C50 each frame; it stays until replaced
+ * (a mod's own wheel models are harmless anywhere). Needs the port build of
+ * toolkit 0.296. Returns how many are listed. */
+#define CENTRE_WHEELS 0x87BF40u
+static void push_number(uint32_t L, double v);
+static int MERC_PLUGIN_CALL cmd_centre_wheels(void *ud, uint32_t L)
+{
+    uint32_t list[16] = {0}, n = 0;
+    char name[72], line[160];
+    (void)ud;
+    for (int i = 1; i <= 15 && lua_arg_text(L, i, name, sizeof(name)) && name[0]; i++)
+        list[1 + n++] = hash_name(name);
+    list[0] = n;
+    host->write_guest(host->context, CENTRE_WHEELS, list, 4u * (1u + n));
+    snprintf(line, sizeof(line), "centre wheels: %u wheel model%s drawn on vehicles' centre line", n, n == 1 ? "" : "s");
+    host->log(host->context, line);
+    push_number(L, (double)n);
+    return 1;
+}
+
 /* Foundry_ScriptValues(): that line, for the console. */
 static int MERC_PLUGIN_CALL cmd_script_values(void *ud, uint32_t L)
 {
@@ -4545,6 +4569,7 @@ MERC_PLUGIN_EXPORT int MERC_PLUGIN_CALL MercenariesPlugin_Init(
         !h->add_lua_command(h->context, "Foundry_MapShopOpen", cmd_map_shop_open, NULL) ||
         !h->add_lua_command(h->context, "Foundry_ShopUnlocked", cmd_shop_unlocked, NULL) ||
         !h->add_lua_command(h->context, "Foundry_ScriptValues", cmd_script_values, NULL) ||
+        !h->add_lua_command(h->context, "Foundry_CentreWheels", cmd_centre_wheels, NULL) ||
         !h->add_lua_command(h->context, "Foundry_Log", cmd_log, NULL))
         h->log(h->context, "script commands unavailable; Foundry_TrafficZone, Foundry_Range, Foundry_Sample, "
                            "Foundry_Label, Foundry_SetHandling and Foundry_MapText may not exist");

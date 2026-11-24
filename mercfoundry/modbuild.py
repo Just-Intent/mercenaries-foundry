@@ -33,7 +33,9 @@ Project layout (every part optional):
                           "mesh" the pieces' own triangles (rocks, rubble);
                           "joints": {<joint>: [x, y, z]} moves joints (from
                           their parent; pieces bound to them follow): a
-                          vehicle's seat, dock points and wheels
+                          vehicle's seat, dock points and wheels;
+                          "centre_line": true on a wheel model draws the
+                          wheels of vehicles using it at x 0 (a motorbike)
     animations/*.glb|.gltf   clips replace the game animations with the same
                           names (export them with `model --glb --anim`)
     animations/new.json   {"new clip": "template clip"}: clips with these
@@ -507,6 +509,23 @@ def _write_map_templates(data, result):
         call = f"if Foundry_ShopUrl then{nl}Foundry_ShopUrl({missions._lua(url)}){nl}end{nl}"
         data.replace_added(name_hash(m), SCRIPT, script.encode(script.with_source(old, text[:at] + call + text[at:])))
         result.changes.append(f"maps/{m}.json: the PDA shop's address bar reads {url} there, with Foundry Console")
+    wheels = sorted(getattr(data, "centre_wheels", ()))
+    for m in sorted(getattr(data, "new_maps", ())) if wheels else ():
+        master = data.find_added(name_hash(m), SCRIPT)
+        if master is None:
+            continue
+        old = script.decode(master)
+        text = old.source
+        at = text.find("function ScriptInit()")
+        if at < 0:
+            continue
+        at = text.index("\n", at) + 1
+        nl = "\r\n" if "\r\n" in text else "\n"
+        names = ", ".join(missions._lua(w) for w in wheels)
+        call = f"if Foundry_CentreWheels then{nl}Foundry_CentreWheels({names}){nl}end{nl}"
+        data.replace_added(name_hash(m), SCRIPT, script.encode(script.with_source(old, text[:at] + call + text[at:])))
+        result.changes.append(f"maps/{m}.json: vehicles with wheel model {', '.join(wheels)} draw their wheels on the "
+                              f"centre line, with Foundry Console")
     for m in sorted(getattr(data, "map_any_captive", ())):
         master = data.find_added(name_hash(m), SCRIPT)
         if master is None:
@@ -4226,6 +4245,14 @@ def _new_models(data, folder, result):
         keep_shadow = spec_doc.get("shadow", True)
         if keep_shadow not in (True, False):
             raise ValueError(f"{where}: \"shadow\" is true (the base's, the default) or false (none)")
+        # "centre_line": true on a wheel model: vehicles with it as their
+        # geometryNameWheel draw their wheels at x 0 (a motorbike's pair as
+        # one tyre; the physics wheels stay apart), with Foundry Console
+        centre = spec_doc.get("centre_line", False)
+        if centre not in (True, False):
+            raise ValueError(f"{where}: \"centre_line\" is true or false")
+        if centre:
+            data.centre_wheels = getattr(data, "centre_wheels", set()) | {name}
         src = None
         for a in ("streamed.dsk", "locked.dsk"):
             if not (data.dir / a).exists():
