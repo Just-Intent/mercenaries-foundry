@@ -5138,16 +5138,24 @@ def build(projects, data_dir, out_dir, name=None, description=None) -> Result:
                 mdir = Path(project) / "maps"
                 for mf in sorted(mdir.glob("*.json")) if mdir.is_dir() else []:
                     try:
-                        rel = _missions.map_relations(f"maps/{mf.name}",
-                                                      json.loads(mf.read_text(encoding="utf-8")))
+                        mdoc_ = json.loads(mf.read_text(encoding="utf-8"))
+                        rel = _missions.map_relations(f"maps/{mf.name}", mdoc_)
+                        own = _missions.own_moods(f"maps/{mf.name}", mdoc_) is not None
                     except (ValueError, json.JSONDecodeError):
-                        rel = []          # the maps step reports it
+                        rel, own = [], False   # the maps step reports it
                     if rel:
                         data.map_relations = getattr(data, "map_relations", {})
                         data.map_relations[mf.stem.lower()] = rel
+                    if own:
+                        # "own_moods" too: the maps step, later, records it,
+                        # so foundry_layers was written without the game's
+                        # moods put back (SW and Gaza shared one set, 0.301)
+                        data.map_own_moods = getattr(data, "map_own_moods", set())
+                        data.map_own_moods.add(mf.stem.lower())
             has_global = any(r.key == name_hash("global") for _, r in data.records(SCRIPT))
             if getattr(data, "map_layers", None) or getattr(data, "travel_arrive", False) \
                     or getattr(data, "welcome", None) or getattr(data, "decks", None) \
+                    or getattr(data, "map_own_moods", None) \
                     or (getattr(data, "map_relations", None) and has_global):
                 _apply_map_layers(data, result)
             elif getattr(data, "map_relations", None):

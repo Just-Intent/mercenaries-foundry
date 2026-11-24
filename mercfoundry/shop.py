@@ -275,9 +275,13 @@ def lua(prefix, map_name, shop_items, open_here=False):
             # the next real unlock (0.294)
             f"Event_RelativeTimer('{prefix}ShopUnlocks', 'b', 2.0)\n"
             f"end\n"
+            # the next look first, so nothing failing below stops them (0.302:
+            # Gaza's never unlocked anything in a minute's visit)
             f"function {prefix}ShopUnlocks()\n"
-            f"{checks}"
             f"Event_RelativeTimer('{prefix}ShopUnlocks', 'b', 5.0)\n"
+            f"if not {prefix}ShopLooked and Foundry_Log then Foundry_Log('shop: looking at the unlocks') end\n"
+            f"{prefix}ShopLooked = 1\n"
+            f"{checks}"
             f"end\n")
 
 

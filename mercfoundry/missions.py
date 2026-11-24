@@ -3413,7 +3413,22 @@ def layers_script(layers, pilots=(), arrive=False, welcome=(), deck=False, relat
             "function foundry_ResumeGo()",
             "if sFoundryResumeMap then Utility_ResetToBaseLayerOnly(sFoundryResumeMap) end",
             "end",
+            # On a game map, a new map's moods, cards and relations go back
+            # to the game's first, a save going back to its new map too: they
+            # came after the resume's return, so a Gaza save's wake on SW
+            # left them in (0.301); that map's ScriptInit swaps its own in.
+            "function foundry_LeaveNewMaps()"]
+    if moods:
+        out += ["foundry_MoodsLeave()   -- the game's faction moods back (a new map's \"own_moods\")"]
+    if deck:
+        # first, so nothing failing after it leaves a new map's meter in the
+        # game's keys on SW (a save from Gaza showed Gaza's clubs meter there)
+        out += ["Utility_LoadUtilityScript('foundry_deck')", "foundry_DeckLeave()   -- the game's cards back in the PDA"]
+    if relations:
+        out += ["-- faction relations a new map set (its \"relations\"), as they were"] + relations_restore_lines(relations)
+    out += ["end",
             "function foundry_LoadMapLayers()",
+            "foundry_LeaveNewMaps()",
             "if foundry_ResumeNewMap() then return end",
             "if foundry_ResumeFreeMap() then return end",
             "local map = Utility_ReadStringFromScribbleMemory('SkipTo_Map')",
@@ -3427,20 +3442,12 @@ def layers_script(layers, pilots=(), arrive=False, welcome=(), deck=False, relat
             "end",
             "end",
             "end"]
-    if moods:
-        out += ["foundry_MoodsLeave()   -- the game's faction moods back (a new map's \"own_moods\")"]
-    if deck:
-        # first, so nothing failing after it leaves a new map's meter in the
-        # game's keys on SW (a save from Gaza showed Gaza's clubs meter there)
-        out += ["Utility_LoadUtilityScript('foundry_deck')", "foundry_DeckLeave()   -- the game's cards back in the PDA"]
     if arrive or pilots:
         out += ["foundry_Arrive()"]
     if pilots:
         out += ["foundry_TravelArm()"]
     if welcome:
         out += ["foundry_Welcome()"]
-    if relations:
-        out += ["-- faction relations a new map set (its \"relations\"), as they were"] + relations_restore_lines(relations)
     out += ["end"]
     text = "\n".join(out) + "\n"
     if moods:
