@@ -2096,7 +2096,8 @@ def _apply_map_layers(data, result):
                                                                 getattr(data, "welcome", []),
                                                                 deck=bool(getattr(data, "decks", None)),
                                                                 relations=[p for ps in getattr(data, "map_relations", {}).values()
-                                                                           for p in ps]))))
+                                                                           for p in ps],
+                                                                moods=bool(getattr(data, "map_own_moods", None))))))
     for map_ in missions.FREE_ROAM_MAPS:
         for a, r in data.records(name_hash("list")):
             if r.key == name_hash(map_):
@@ -3339,6 +3340,13 @@ def map_script(name, doc, layers, pilots=(), contacts=False, extra=(), hqs=None,
     if shop_items:
         # each load, a contract's too: the map's store and its unlocks
         lines.append(f"foundry_{name.lower()}_Shop()")
+    from .missions import own_moods, MOODS_LUA
+    moods = own_moods(f"maps/{name}.json", doc)
+    if moods is not None:
+        # first thing: the map's own moods in the game's slots (every load, a
+        # contract's too; nothing happens if they're in already)
+        start_t = "{ " + ", ".join(f"{f} = {v}" for f, v in sorted(moods.items())) + " }" if moods else "nil"
+        lines.insert(lines.index("Debug_EnableCallStack(false)"), f"foundry_MoodsEnter({_lua_str(name.lower())}, {start_t})")
     if deck:
         hq += ["Utility_LoadUtilityScript('foundry_deck')",
                f"foundry_DeckEnter({_lua_str(name.lower())})",
@@ -3364,6 +3372,8 @@ def map_script(name, doc, layers, pilots=(), contacts=False, extra=(), hqs=None,
         lines.append(f"foundry_{name.lower()}_Relations()")
     lines += [f"Event_RelativeTimer('{hud_on}', 'b', 1.0)", f"Event_RelativeTimer('{hud_on}', 'b', 3.0)"]
     text = "\n".join(lines + ["end", ""])
+    if moods is not None:
+        text += MOODS_LUA
     text += (f"function {hud_on}()\n"
              f"-- unless an HQ room here hides it (its \"hide_hud\")\n"
              f"if not foundry_{name.lower()}_HqHudOff then Ui_EnableHud(TRUE) end\n"
@@ -3565,6 +3575,11 @@ def _apply_maps(data, folder, result):
         if relations:
             data.map_relations = getattr(data, "map_relations", {})
             data.map_relations[name.lower()] = relations
+        # "own_moods": the map's factions' moods kept apart from the game's
+        # (missions.MOODS_LUA; the game's maps put the game's back)
+        if missions.own_moods(where, mdoc) is not None:
+            data.map_own_moods = getattr(data, "map_own_moods", set())
+            data.map_own_moods.add(name.lower())
         overrides = mdoc.get("template_overrides") or {}
         if not isinstance(overrides, dict):
             raise ValueError(f"{where}: \"template_overrides\" is {{<game template>: {{<property>: value}} or <template>}}")

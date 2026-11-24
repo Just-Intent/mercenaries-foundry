@@ -1207,6 +1207,24 @@ class MapScriptTests(unittest.TestCase):
         self.assertEqual(luacheck.check(text), [])
         self.assertNotIn("Mission_EnableAtmosphere", modbuild.map_script("gaza", {}, []))
 
+    def test_own_moods(self):
+        # a new map's factions' moods kept apart from the game's
+        from mercfoundry import luacheck, missions
+        text = modbuild.map_script("gaza", {"own_moods": {"allies": "friendly", "sk": -20}}, [])
+        self.assertEqual(luacheck.check(text), [])
+        self.assertLess(text.index("foundry_MoodsEnter('gaza', { allies = 60, sk = -20 })"),
+                        text.index("Debug_EnableCallStack(false)"))
+        self.assertIn("function foundry_MoodsLeave()", text)
+        self.assertIn("foundry_MoodsEnter('gaza', nil)", modbuild.map_script("gaza", {"own_moods": True}, []))
+        self.assertNotIn("MoodsEnter", modbuild.map_script("gaza", {}, []))
+        with self.assertRaises(ValueError):
+            missions.own_moods("w", {"own_moods": {"nk": 10}})
+        layers = missions.layers_script([], moods=True)
+        self.assertEqual(luacheck.check(layers), [])
+        self.assertLess(layers.index("foundry_MoodsLeave()   --"), layers.index("function foundry_MoodsEnter"))
+        # the free-roam resume goes by the script's own map, not SkipTo_Map
+        self.assertIn("if not m or sFoundryOnMap then return false end", layers)
+
     def _interiors(self):
         from mercfoundry import missions
         doc = {"interiors": {"allies": {

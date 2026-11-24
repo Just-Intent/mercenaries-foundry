@@ -3247,6 +3247,66 @@ def map_relations(where, doc):
     return out
 
 
+MOOD_FACTIONS = ("allies", "china", "mafia", "sk")
+
+MOODS_LUA = """-- A new map's own faction moods (maps json "own_moods"): its factions are
+-- the game's four mood slots under other names, so while free roam or a
+-- contract is on the map the slots hold the map's moods, and the game's are
+-- kept aside (foundry_mood_keep_<f>). Which map's moods the slots hold is in
+-- foundry_mood_on, saved with them: a save made there and loaded anywhere
+-- puts each map's back where it belongs (as the Deck's foundry_deck_on).
+tFoundryMoodFactions = { 'allies', 'china', 'mafia', 'sk' }
+function foundry_MoodsEnter(m, tStart)
+local on = Utility_ReadStringFromScribbleMemory('foundry_mood_on')
+if on == m then return end
+if on then foundry_MoodsLeave() end
+for i, f in tFoundryMoodFactions do
+Utility_WriteNumberToScribbleMemory('foundry_mood_keep_' .. f, Faction_GetRelation(f, 'prokat'))
+local v = Utility_ReadNumberFromScribbleMemory('foundry_mood_' .. m .. '_' .. f)
+if not v and tStart then v = tStart[f] end
+if v then Faction_SetRelation(f, 'prokat', v) end
+end
+Utility_WriteStringToScribbleMemory('foundry_mood_on', m)
+end
+function foundry_MoodsLeave()
+local m = Utility_ReadStringFromScribbleMemory('foundry_mood_on')
+if not m then return end
+for i, f in tFoundryMoodFactions do
+Utility_WriteNumberToScribbleMemory('foundry_mood_' .. m .. '_' .. f, Faction_GetRelation(f, 'prokat'))
+local k = Utility_ReadNumberFromScribbleMemory('foundry_mood_keep_' .. f)
+if k then Faction_SetRelation(f, 'prokat', k) end
+Utility_EraseValueFromScribbleMemory('foundry_mood_keep_' .. f)
+end
+Utility_EraseValueFromScribbleMemory('foundry_mood_on')
+end
+"""
+
+
+def own_moods(where, doc):
+    """maps json "own_moods": true (the map's moods start as the game's on the
+    first visit) or {<faction>: hostile | unfriendly | neutral | friendly |
+    -100..100} (where each starts). None when the map shares the game's."""
+    v = doc.get("own_moods")
+    if v is None or v is False:
+        return None
+    if v is True:
+        return {}
+    if not isinstance(v, dict):
+        raise ValueError(f"{where}: \"own_moods\" is true or {{<faction>: <mood>}}")
+    out = {}
+    for f, mood in v.items():
+        f = str(f).lower()
+        if f not in MOOD_FACTIONS:
+            raise ValueError(f"{where}: \"own_moods\": {f!r} isn't one of {', '.join(MOOD_FACTIONS)}")
+        if isinstance(mood, str) and mood.lower() in RELATION_MOODS:
+            out[f] = RELATION_MOODS[mood.lower()]
+        elif isinstance(mood, (int, float)) and not isinstance(mood, bool) and -100 <= mood <= 100:
+            out[f] = int(mood)
+        else:
+            raise ValueError(f"{where}: \"own_moods\" {f}: {', '.join(RELATION_MOODS)} or -100 to 100, not {mood!r}")
+    return out
+
+
 def relations_lua(prefix, pairs):
     """{prefix}Relations(): a new map's faction relations set (each pair's
     value before them kept once, foundry_rel_keep_<a>_<b>, for the game's maps
@@ -3273,7 +3333,7 @@ def relations_restore_lines(pairs):
     return out
 
 
-def layers_script(layers, pilots=(), arrive=False, welcome=(), deck=False, relations=()):
+def layers_script(layers, pilots=(), arrive=False, welcome=(), deck=False, relations=(), moods=False):
     """Lua for foundry_layers: load each mod layer marked "load": "map" when
     free roam starts on its map. A layer is loaded again only if it's gone:
     when one of its named objects no longer exists (a mission reset the
@@ -3319,9 +3379,12 @@ def layers_script(layers, pilots=(), arrive=False, welcome=(), deck=False, relat
             # writes and the travel pilots set or clear).
             "function foundry_ResumeFreeMap()",
             "local m = Utility_ReadStringFromScribbleMemory('foundry_free_map')",
-            "local here = Utility_ReadStringFromScribbleMemory('SkipTo_Map')",
-            "if not m or m == here or (here ~= 'sw' and here ~= 'nw') then return false end",
-            "Utility_WriteStringToScribbleMemory('foundry_map_start', 'a save from free roam on ' .. m .. ' woke on ' .. here .. ': back to ' .. m)",
+            "-- this script runs on the game's maps only (a new map's own script sets",
+            "-- sFoundryOnMap first); SkipTo_Map can still name the new map after a",
+            "-- load lands here (0.283 compared them, and didn't go back)",
+            "if not m or sFoundryOnMap then return false end",
+            "local here = Utility_ReadStringFromScribbleMemory('SkipTo_Map') or '?'",
+            "Utility_WriteStringToScribbleMemory('foundry_map_start', 'a save from free roam on ' .. m .. ' woke on a game map (SkipTo_Map ' .. here .. '): back to ' .. m)",
             "Utility_ResetToBaseLayerOnly(m)",
             "return true",
             "end",
@@ -3339,6 +3402,8 @@ def layers_script(layers, pilots=(), arrive=False, welcome=(), deck=False, relat
             "end",
             "end",
             "end"]
+    if moods:
+        out += ["foundry_MoodsLeave()   -- the game's faction moods back (a new map's \"own_moods\")"]
     if deck:
         # first, so nothing failing after it leaves a new map's meter in the
         # game's keys on SW (a save from Gaza showed Gaza's clubs meter there)
@@ -3353,6 +3418,8 @@ def layers_script(layers, pilots=(), arrive=False, welcome=(), deck=False, relat
         out += ["-- faction relations a new map set (its \"relations\"), as they were"] + relations_restore_lines(relations)
     out += ["end"]
     text = "\n".join(out) + "\n"
+    if moods:
+        text += MOODS_LUA
     if arrive or pilots:
         text += ARRIVE_LUA
     if pilots:
