@@ -1221,6 +1221,11 @@ class MapScriptTests(unittest.TestCase):
                       "'hqchina', 4.00, 5.00, 6.00, TRUE, TRUE, FALSE)", text)    # blip, then x, y, z (sw_sk2's order)
         self.assertIn("Event_RelativeTimer('foundry_gaza_HqFlagsLater', 'b', 2.0)", text)     # once more, later
         self.assertIn("text = 'Chief: Sit down.', seconds = 3", text)
+        # a faction whose contracts inside are all done: no flag, no ring or "Enter HQ"
+        self.assertIn("function foundry_HqFinished(f)", text)
+        self.assertIn("if foundry_HqFinished('china') then\nObjective_Remove('foundry_hq_china')", text)
+        self.assertIn("if Utility_DoesActorExist(h.guard) and foundry_gaza_HqIn ~= f and foundry_HqFinished(f) then", text)
+        self.assertIn("Objective_Remove(h.guard)\nfoundry_gaza_HqUnuse(h.guard)", text)
 
     def test_interior_contract_in_free_roam(self):
         from mercfoundry import luacheck, missions

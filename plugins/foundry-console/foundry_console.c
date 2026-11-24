@@ -2883,6 +2883,48 @@ static int terrain_height_at(float x, float z, float *out)
     return 1;
 }
 
+/* Card probe (Gaza's card men drew retail's grey-jacketed card man although
+ * each is a copy model, gaza_card_<suit>NN, drawing textures of its own):
+ * once per card man within range, the model his object asks for
+ * (GeometryFile) and whether that model's _head and _body textures are in
+ * the game's texture table (Texture_Find's), with the texture pointers. */
+static uint32_t card_seen[64];
+static int texture_slot(uint32_t key, uint32_t *values);
+static void card_probe(const Nearby *list, unsigned n)
+{
+    for (unsigned i = 0; i < n; i++) {
+        const Nearby *e = &list[i];
+        uint32_t key;
+        if (e->name[0]) {
+            if ((!strstr(e->name, "card") && !strstr(e->name, "deck_")) || strstr(e->name, "_guard") ||
+                strstr(e->name, "_prop") || strstr(e->name, "_pickup")) continue;
+            key = e->handle;
+        } else {
+            /* an unnamed character drawn as a Gaza copy (the IDF's soldiers):
+             * once per model */
+            if (strncmp(e->model, "gaza_", 5) || (!strstr(e->model, "_hum_") && !strstr(e->model, "idf"))) continue;
+            key = hash_name(e->model) | 1u;
+        }
+        unsigned k;
+        for (k = 0; k < 64 && card_seen[k] && card_seen[k] != key; k++) {}
+        if (k == 64 || card_seen[k] == key) continue;
+        card_seen[k] = key;
+        char model[48], tex[64], line[400];
+        object_model(e->object, e->handle, model, sizeof(model));
+        int len = snprintf(line, sizeof(line), "card probe: %s draws %s", e->name[0] ? e->name : "(unnamed)", model[0] ? model : "(no GeometryFile)");
+        static const char *parts[] = {"_head", "_body"};
+        for (unsigned p = 0; p < 2; p++) {
+            uint32_t values = 0, tp = 0;
+            snprintf(tex, sizeof(tex), "%s%s", model, parts[p]);
+            int at = model[0] ? texture_slot(hash_name(tex), &values) : -1;
+            if (at >= 0) host->read_guest(host->context, values + 4 * (uint32_t)at, &tp, 4);
+            len += snprintf(line + len, sizeof(line) - (size_t)len, "; %s %s", tex,
+                            at < 0 ? "not in the texture table" : tp ? "loaded" : "named, no texture");
+        }
+        host->log(host->context, line);
+    }
+}
+
 static void ground_probe_poll(double dt)
 {
     if ((ground_probe_t += dt) < 2.0) return;
@@ -2894,6 +2936,7 @@ static void ground_probe_poll(double dt)
     n = nearby_count;
     memcpy(list, nearby, n * sizeof(Nearby));
     LeaveCriticalSection(&lock);
+    card_probe(list, n);
     for (unsigned i = 0; i < n; i++) {
         const Nearby *e = &list[i];
         if (!is_helicopter(e)) continue;
@@ -3555,6 +3598,7 @@ static void MERC_PLUGIN_CALL level_load_before(void *ud, MercHookContext *c)
         host->log(host->context, line);
     }
     maptemplate_restore();
+    memset(card_seen, 0, sizeof(card_seen));   /* handles are reused on the next level */
     if (any_captive_on || any_captive_wait >= 0) any_captive_set(0);
     maptemplate_count = maptemplate_used = 0;
     datapod_restore();

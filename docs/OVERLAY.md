@@ -79,6 +79,11 @@ Script commands it adds, for the Lua box or any script:
   Cleared before the next level loads. Used by a new map's
   `"any_captive"`. Not yet run in game: what verifying such a captive does
   (the PDA, pay) is to be seen.
+- Card probe (logged with the ground probe, every 2 s): once per card man
+  in range (a name with "card" or "deck_") and once per unnamed Gaza
+  character model, "card probe: <name> draws <GeometryFile>; <model>_head
+  loaded | not in the texture table; <model>_body ...". For copied models
+  whose own textures don't show (Gaza's card men, 0.262).
 - `Foundry_Log('<text>')`: writes a script's line to plugins.log. A new
   map's HQ interiors log their measurements with it (`hq dump ...` lines:
   `foundry_<map>_HqDump`, `foundry_HqDump()` in the Lua box). Retail's HQ

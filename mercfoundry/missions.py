@@ -1936,6 +1936,26 @@ def welcome_lua(mails):
 HQ_FACTIONS = ("allies", "china", "mafia", "sk")
 
 
+HQ_FINISHED_LUA = """-- A faction's HQ here is finished when it offered contracts inside it on
+-- this map (its interior's) and every one is done (and not repeatable) or
+-- lost: its flag and its guard's ring and "Enter HQ" go (looked at whenever
+-- free roam starts here, so after each contract too).
+function foundry_HqFinished(f)
+if not tFoundryContracts then return false end
+local any = false
+for i, c in tFoundryContracts do
+if c.interior == f and c.map == sFoundryOnMap then
+any = true
+if not ((foundry_IsDone(c) and not c.repeatable) or Utility_ReadNumberFromScribbleMemory('foundry_lost_' .. c.id)) then
+return false
+end
+end
+end
+return any
+end
+"""
+
+
 def hq_flags_lua(prefix, hqs, skip=()):
     """Lua for a new map's faction HQ flags (maps/<name>.json "hqs":
     {faction: [x, y, z]}): an objective at each point with the faction's HQ
@@ -1947,18 +1967,22 @@ def hq_flags_lua(prefix, hqs, skip=()):
     x, y, z, gps, pda, world), as its Lua wrapper (0x114880) reads it and
     sw_sk2 calls it; util_objectives' region helper passes x, y, z before
     the blip, which no retail script calls."""
-    out = [f"function {prefix}HqFlags()"]
+    out = HQ_FINISHED_LUA.rstrip("\n").split("\n") + [f"function {prefix}HqFlags()"]
     for f in HQ_FACTIONS:
         if f not in hqs or f in skip:
             continue
         x, y, z = (float(v) for v in hqs[f])
         name = f"foundry_hq_{f}"
-        out += [f"Objective_SetShortDescription({_lua(name)}, Utility_GetStringById('standardMission.bouncer.{f}.shortDesc'))",
+        out += [f"if foundry_HqFinished({_lua(f)}) then",
+                f"Objective_Remove({_lua(name)})   -- every contract here done: no flag",
+                "else",
+                f"Objective_SetShortDescription({_lua(name)}, Utility_GetStringById('standardMission.bouncer.{f}.shortDesc'))",
                 f"Objective_SetLongDescription({_lua(name)}, '')",
                 f"Objective_SetType({_lua(name)}, 'OBJECTIVE_TYPE_PRIMARY')",
                 f"Objective_SetTargetVector({_lua(name)}, {_lua(name)}, "
                 f"Utility_GetStringById('standardMission.bouncer.{f}.tgtCaption'), 'TARGET_TYPE_HQ_{f.upper()}', "
-                f"'hq{f}', {x:.2f}, {y:.2f}, {z:.2f}, TRUE, TRUE, FALSE)"]
+                f"'hq{f}', {x:.2f}, {y:.2f}, {z:.2f}, TRUE, TRUE, FALSE)",
+                "end"]
     out += [f"if not {prefix}HqFlagsAgain then",
             f"{prefix}HqFlagsAgain = true",
             f"Event_RelativeTimer('{prefix}HqFlagsLater', 'b', 2.0)",
@@ -2362,7 +2386,7 @@ def interiors_lua(prefix, inside, flagged=()):
                ", ".join(f"{m} = {lines}" for m, lines in (i.get("greetings") or {}).items()),
                i.get("nags") or "{ }",
                i["idle"]))
-    return f"""-- HQ interiors (Mercenaries Foundry: maps json "interiors"), played as
+    return HQ_FINISHED_LUA + f"""-- HQ interiors (Mercenaries Foundry: maps json "interiors"), played as
 -- retail's HQs: bouncer, briefing and briefing_utilities
 -- util_objectives' helpers call util_misc's util_SetDefault; on SW global
 -- has loaded it, on a new map nothing else does
@@ -2453,7 +2477,17 @@ else
 {P}HqTimer = Event_RelativeTimer('{P}HqLook', 'b', 5.0)
 end
 for f, h in {P}Hq do
-if Utility_DoesActorExist(h.guard) then
+if Utility_DoesActorExist(h.guard) and {P}HqIn ~= f and foundry_HqFinished(f) then
+-- every contract inside done: no ring, no "Enter HQ" (once per guard)
+if {P}HqArmed[h.guard] ~= 'finished' then
+{P}HqArmed[h.guard] = 'finished'
+{P}HqGuardMode[f] = nil
+Objective_Remove(h.guard)
+{P}HqUnuse(h.guard)
+end
+Ai_SetFaction(h.guard, h.side)
+{P}HqRules(h.guard)
+elseif Utility_DoesActorExist(h.guard) then
 local iActor = Utility_GetActorAsInt(h.guard)
 Ai_SetFaction(h.guard, h.side)   -- again each look: a side set while it slept doesn't hold
 {P}HqRules(h.guard)
