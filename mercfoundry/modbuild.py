@@ -1237,6 +1237,23 @@ def _apply_encounters(data, folder, result):
                 # a mod's new map: its master script loads the layer (_apply_maps)
                 data.new_map_layers = getattr(data, "new_map_layers", {})
                 data.new_map_layers.setdefault(m, []).append(layer)
+                # "until" / "after": a contract (its id) ends or begins the layer
+                # (an outpost that changes hands with a face card's contract)
+                gate = {}
+                for k in ("until", "after"):
+                    v = doc.get(k)
+                    if v is None:
+                        continue
+                    if not isinstance(v, str) or not re.fullmatch(r"[A-Za-z0-9_]+", v):
+                        raise ValueError(f"encounters/{f.name}: \"{k}\" names a contract (its id, like sw_sk22)")
+                    gate[k] = v.lower()
+                if gate:
+                    # (an "unnamed" layer's plain objects have no names to remove)
+                    plain = {o.get("name") for o in doc.get("objects") or []} if doc.get("unnamed") else set()
+                    gate["names"] = [n for n in encounters.member_names(doc) if n not in plain]
+                    gate["zones"] = sorted((doc.get("boundaries") or {}).keys())
+                    data.layer_gates = getattr(data, "layer_gates", {})
+                    data.layer_gates[layer.lower()] = gate
             elif m not in missions.FREE_ROAM_MAPS:
                 result.warnings.append(f"encounters/{f.name}: \"load\": \"map\" works on the free-roam maps "
                                        f"({', '.join(missions.FREE_ROAM_MAPS).upper()}), not {m.upper() or 'no map'}; "
@@ -3139,7 +3156,47 @@ def _renamed_record(body, new):
 OBJECTIVE_SLOTS = 16      # objectives the game holds at once (0x3C31B8, 0x1760 bytes each)
 
 
-def map_script(name, doc, layers, pilots=(), contacts=False, extra=(), hqs=None, inside=None, deck=False):
+def _gates_lua(G, gates):
+    """A new map's layers gated on contracts (encounters "until" / "after"):
+    {G}GateOpen(layer), and {G}Gates() for free roam there: a layer whose
+    contract is now done (its "until") has its named objects removed and its
+    zones turned off; one now allowed (its "after") is loaded."""
+    def lua(v):
+        return "'" + str(v).replace("\\", "\\\\").replace("'", "\\'") + "'"
+    rows = []
+    for l, g in sorted(gates.items()):
+        rows.append("[%s] = { untilc = %s, afterc = %s, names = { %s }, zones = { %s } }" % (
+            lua(l), lua(g["until"]) if g.get("until") else "nil", lua(g["after"]) if g.get("after") else "nil",
+            ", ".join(lua(n) for n in g.get("names", [])), ", ".join(lua(z) for z in g.get("zones", []))))
+    out = [f"{G}GateLoaded = {G}GateLoaded or {{}}",
+           f"{G}GateRows = {{",
+           ",\n".join(rows),
+           "}",
+           f"function {G}GateOpen(l)",
+           f"local g = {G}GateRows[l]",
+           "if not g then return true end",
+           "if g.untilc and Utility_ReadNumberFromScribbleMemory('foundry_done_' .. g.untilc) then return false end",
+           "if g.afterc and not Utility_ReadNumberFromScribbleMemory('foundry_done_' .. g.afterc) then return false end",
+           "return true",
+           "end",
+           f"function {G}Gates()",
+           f"for l, g in {G}GateRows do",
+           f"local bOpen = {G}GateOpen(l)",
+           f"if bOpen and not {G}GateLoaded[l] then",
+           "Utility_ReadLevelFile(l)",
+           f"{G}GateLoaded[l] = 1",
+           f"elseif not bOpen and {G}GateLoaded[l] then",
+           "-- its contract is done: its people and things go, its zones turn off",
+           "for i, n in g.names do if Utility_DoesActorExist(n) then Actor_Remove(n) end end",
+           "for i, z in g.zones do Boundary_Enable(z, FALSE) end",
+           f"{G}GateLoaded[l] = nil",
+           "end",
+           "end",
+           "end"]
+    return "\n".join(out) + "\n"
+
+
+def map_script(name, doc, layers, pilots=(), contacts=False, extra=(), hqs=None, inside=None, deck=False, gates=None):
     """A new map's master script (run as the map loads): blank's set-up, its
     layers, where the player arrives, a message, and its travel pilots
     (missions.travel_lua) armed. extra: scripts (maps json "scripts") loaded
@@ -3158,7 +3215,17 @@ def map_script(name, doc, layers, pilots=(), contacts=False, extra=(), hqs=None,
              "bHudOutput = false",
              "Ui_EnableHud(TRUE)   -- the HUD on (a visit to an HQ room, a load or a death left it off)",
              "Utility_ReadLevelFile('\\\\TEMPLATE\\\\template_vehicles_ch2')   -- vehicle templates, as blank's"]
-    lines += [f"Utility_ReadLevelFile({_lua_str(l)})" for l in layers]
+    # layers gated on a contract (encounters "until" / "after"): loaded only
+    # while it holds; free roam here looks again (foundry_<map>_Gates)
+    gates = gates or {}
+    G = f"foundry_{name.lower()}_"
+    for l in layers:
+        g = gates.get(l.lower())
+        if g:
+            lines.append(f"if {G}GateOpen({_lua_str(l.lower())}) then Utility_ReadLevelFile({_lua_str(l)}) "
+                         f"{G}GateLoaded[{_lua_str(l.lower())}] = 1 end")
+        else:
+            lines.append(f"Utility_ReadLevelFile({_lua_str(l)})")
     start = doc.get("start") or {}
     if start.get("position"):
         x, y, z = (float(v) for v in start["position"])
@@ -3175,6 +3242,8 @@ def map_script(name, doc, layers, pilots=(), contacts=False, extra=(), hqs=None,
     if pilots:
         lines.append(f"{prefix}Arm()")
     hq = []                       # free roam here: the HQ flags and interiors
+    if gates:
+        hq.append(f"{G}Gates()")
     if hqs:
         hq.append(f"foundry_{name.lower()}_HqFlags()")
     if inside:
@@ -3211,6 +3280,9 @@ def map_script(name, doc, layers, pilots=(), contacts=False, extra=(), hqs=None,
              + "end\n")
     if relations:
         text += relations_lua(f"foundry_{name.lower()}_", relations)
+    mine = {l: g for l, g in gates.items() if l in {x.lower() for x in layers}}
+    if mine:
+        text += _gates_lua(G, mine)
     if pilots:
         text += travel_lua(prefix, list(pilots), by_map=False)
     if contacts:
@@ -3531,7 +3603,8 @@ def _apply_maps(data, folder, result):
             if mdoc.get("start") or mdoc.get("message") or mdoc.get("weather") or layers or pilots or contacts or extra \
                     or hqs or inside or deck or mdoc.get("any_captive") or mdoc.get("relations") \
                     or mdoc.get("collateral_fines") is False:
-                source = map_script(name, mdoc, layers, pilots, contacts, extra, hqs, inside, deck=deck)
+                source = map_script(name, mdoc, layers, pilots, contacts, extra, hqs, inside, deck=deck,
+                                    gates=getattr(data, "layer_gates", {}))
                 made.append("script (" + ", ".join(
                     (["where you arrive"] if (mdoc.get("start") or {}).get("position") else [])
                     + ([f"loads {', '.join(layers)}"] if layers else [])

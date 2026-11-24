@@ -516,6 +516,18 @@ class ModBuildTests(unittest.TestCase):
         self.write("maps/island.json", json.dumps({"from": "blank", "loads_like": None, "any_captive": "yes"}))
         with self.assertRaisesRegex(ValueError, "true or false"):
             modbuild.build(self.project, self.data, self.out)
+        # layers gated on a contract ("until" / "after"): an outpost that changes hands
+        lua = modbuild._gates_lua("foundry_island_", {"outpost": {"until": "sw_sk22", "names": ["g1"], "zones": ["z1"]},
+                                                      "held": {"after": "sw_sk22", "names": [], "zones": []}})
+        self.assertIn("['outpost'] = { untilc = 'sw_sk22', afterc = nil, names = { 'g1' }, zones = { 'z1' } }", lua)
+        self.assertIn("for i, n in g.names do if Utility_DoesActorExist(n) then Actor_Remove(n) end end", lua)
+        from mercfoundry import luacheck
+        self.assertEqual(luacheck.check(lua), [])
+        src = modbuild.map_script("island", {}, ["outpost", "camp"], gates={"outpost": {"until": "sw_sk22"}})
+        self.assertIn("if foundry_island_GateOpen('outpost') then Utility_ReadLevelFile('outpost') "
+                      "foundry_island_GateLoaded['outpost'] = 1 end", src)
+        self.assertIn("Utility_ReadLevelFile('camp')", src)
+        self.assertIn("foundry_island_Gates()", src)
         # "collateral_fines": false: no fine for deaths the player causes there
         self.write("maps/island.json", json.dumps({"from": "blank", "loads_like": None, "collateral_fines": False}))
         modbuild.build(self.project, self.data, self.out)
