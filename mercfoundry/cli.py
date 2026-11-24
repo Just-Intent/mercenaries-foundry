@@ -263,6 +263,18 @@ def cmd_mod_new(args):
     print(f"created mod project {folder}; see its README.md")
 
 
+def cmd_mod_sim(args):
+    """mod sim: gamesim.round_trip on a build's scripts."""
+    from .gamesim import built_scripts, round_trip
+    problems, report = round_trip(built_scripts(args.out), args.map.lower())
+    for line in report:
+        print(line)
+    for p in problems:
+        print("problem:", p)
+    print("no problems" if not problems else f"{len(problems)} problem(s)")
+    return 1 if problems else 0
+
+
 def cmd_mod_build(args):
     from . import buildcache, modbuild, verify as verifier
     buildcache.configure(buildcache.default_folder())
@@ -899,6 +911,10 @@ def main(argv=None):
     m.add_argument("folder", nargs="+", help="mod project folder (several build together, later ones win)")
     m.add_argument("--data", required=True, help="the game's DATAxbox folder")
     m.add_argument("--out", required=True, help="output folder, e.g. <port>/mods/<YourMod>")
+    m = modsub.add_parser("sim", help="run a built mod's scripts through trips, saves and reloads, without the game")
+    m.set_defaults(fn=cmd_mod_sim)
+    m.add_argument("out", help="a mod build's output folder (its assets.dsk)")
+    m.add_argument("--map", required=True, help="the new map to travel to (it needs a pilot on SW)")
     m = modsub.add_parser("pack", help="copy a mod with game-derived files rewritten as changes, for sharing")
     m.set_defaults(fn=cmd_mod_pack)
     m.add_argument("folder", help="mod project folder")

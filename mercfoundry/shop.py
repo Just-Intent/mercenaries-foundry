@@ -261,7 +261,16 @@ def lua(prefix, map_name, shop_items, open_here=False):
             f"local have = nil\n"
             f"if Foundry_ShopUnlocked then have = Foundry_ShopUnlocked(t) end\n"
             f"if have then return end\n"
-            f"if have == nil and Utility_ReadNumberFromScribbleMemory('foundry_shop_' .. t) then\n"
+            f"local before = Utility_ReadNumberFromScribbleMemory('foundry_shop_' .. t)\n"
+            # unlocked before in this save, gone from the list since (a level
+            # load): back without the "new support item" popup (0.305: each
+            # contract's start showed the same popups again)
+            f"if have == false and before and Foundry_ShopRestore then\n"
+            f"Foundry_ShopRestore(t)\n"
+            f"if Foundry_Log then Foundry_Log('shop: back in the list ' .. t) end\n"
+            f"return\n"
+            f"end\n"
+            f"if have == nil and before then\n"
             f"if Foundry_Log and not {prefix}ShopSaid then Foundry_Log('shop: ' .. t .. ' not asked of the shop; the save marks it unlocked') end\n"
             f"{prefix}ShopSaid = 1\n"
             f"return\n"

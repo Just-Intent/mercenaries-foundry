@@ -4301,6 +4301,29 @@ static int MERC_PLUGIN_CALL cmd_shop_unlocked(void *ud, uint32_t L)
     return 1;
 }
 
+/* Foundry_ShopRestore(template): the item back in the PDA shop's unlocked
+ * list without the "new support item" popup: 0xCDA60 (Shop_UnlockItem's,
+ * RsDataPodVM) with its second argument set, as the save's own restore calls
+ * it (0xCDC20): the entry isn't marked new (+0x119C) and no notice is queued
+ * (0xC8560 skipped). For a map's store putting back what the save had
+ * unlocked: each level load after the first showed the same popups again
+ * (0.305, Gaza's settlers contracts). True if the item is in the list after. */
+#define SHOP_UNLOCK_FN 0x000CDA60u
+static int MERC_PLUGIN_CALL cmd_shop_restore(void *ud, uint32_t L)
+{
+    char t[72];
+    MercGuestCall c;
+    uint32_t args[2];
+    (void)ud;
+    if (!lua_arg_text(L, 1, t, sizeof(t))) return 0;
+    args[0] = hash_name(t);
+    args[1] = 1;
+    int ok = guest(SHOP_UNLOCK_FN, SHOP, 2, args, &c) && (int32_t)c.eax >= 0;
+    uint32_t push[2] = {L, (uint32_t)ok};
+    lua_call(MF_FN_Lua_PushBool, 2, push);
+    return 1;
+}
+
 /* Foundry_MapShopOpen(): the PDA shop open on this map whatever the game's
  * lock (Shop_SetShopLocked: the byte at shop +0x19BC, cleared by retail's
  * first Mafia contract). The lock is saved with the player data and read back
@@ -4624,6 +4647,7 @@ MERC_PLUGIN_EXPORT int MERC_PLUGIN_CALL MercenariesPlugin_Init(
         !h->add_lua_command(h->context, "Foundry_MapShop", cmd_map_shop, NULL) ||
         !h->add_lua_command(h->context, "Foundry_MapShopOpen", cmd_map_shop_open, NULL) ||
         !h->add_lua_command(h->context, "Foundry_ShopUnlocked", cmd_shop_unlocked, NULL) ||
+        !h->add_lua_command(h->context, "Foundry_ShopRestore", cmd_shop_restore, NULL) ||
         !h->add_lua_command(h->context, "Foundry_ScriptValues", cmd_script_values, NULL) ||
         !h->add_lua_command(h->context, "Foundry_CentreWheels", cmd_centre_wheels, NULL) ||
         !h->add_lua_command(h->context, "Foundry_Log", cmd_log, NULL))
