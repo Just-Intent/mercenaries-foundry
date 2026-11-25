@@ -3882,6 +3882,7 @@ static void MERC_PLUGIN_CALL level_load_before(void *ud, MercHookContext *c)
     memset(model_cache, 0, sizeof(model_cache));
     if (any_captive_on || any_captive_wait >= 0) any_captive_set(0);
     { uint8_t z = 0; host->write_guest(host->context, 0x87BF00u, &z, 1); }   /* fines back (Foundry_MapFines) */
+    { uint8_t z = 0; host->write_guest(host->context, 0x87BF01u, &z, 1); }   /* the store's mood check back (Foundry_MapShopOpen) */
     maptemplate_count = maptemplate_used = 0;
     datapod_restore();
     maptext_restore();
@@ -4819,6 +4820,14 @@ static int MERC_PLUGIN_CALL cmd_map_shop_open(void *ud, uint32_t L)
     if (!shop_hooked) {
         host->log(host->context, "map shop: can't open it here without the save hook (the game's lock stays)");
         return 0;
+    }
+    {   /* 0.321: and not closed by the shop faction's mood (the game's Mafia
+         * slot: 0xCE9F0 shows the closed page while 0x95EE0 finds it not
+         * friendly; Gaza's Settlers at 0 after a trip's mood swap), through a
+         * byte the port reads there (0x87BF01, Patch-Generated "Store open
+         * whatever the mood"); cleared as each level loads */
+        uint8_t one = 1;
+        host->write_guest(host->context, 0x87BF01u, &one, 1);
     }
     if (!shop_open_on) {
         uint8_t lock = 0;
