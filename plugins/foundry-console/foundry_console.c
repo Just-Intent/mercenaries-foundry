@@ -4133,6 +4133,85 @@ static int MERC_PLUGIN_CALL cmd_find_placed(void *ud, uint32_t L)
  * a position that isn't a number or is over 2 km from the object's). The
  * first answer for each of 8 handles is logged with both positions. From the
  * game's code, not yet seen in game: check its log against FindPlaced's. */
+/* An actor's template name hash, as retail's serialization finds it (Actor
+ * +8 -> its property record +4 -> sorted inherited property tables, key
+ * 0x8D39BDE6 the Name; the port's mod_extensions.c reads it the same way). */
+static uint32_t actor_template_hash(uint32_t actor)
+{
+    uint32_t record = 0, props = 0;
+    if (!host->read_guest(host->context, actor + 8u, &record, 4) || !record ||
+        !host->read_guest(host->context, record + 4u, &props, 4)) return 0;
+    for (unsigned depth = 0; props && depth < 64u; depth++) {
+        int16_t count = 0;
+        uint32_t entries = 0;
+        if (!host->read_guest(host->context, props + 4u, &count, 2) ||
+            !host->read_guest(host->context, props + 8u, &entries, 4)) return 0;
+        int lo = 0, hi = count - 1;
+        while (lo <= hi) {
+            const int mid = lo + (hi - lo) / 2;
+            uint32_t kv[2];
+            if (!host->read_guest(host->context, entries + 8u * (uint32_t)mid, kv, 8)) return 0;
+            if (kv[0] == 0x8D39BDE6u) return kv[1];
+            if (kv[0] < 0x8D39BDE6u) lo = mid + 1; else hi = mid - 1;
+        }
+        if (!host->read_guest(host->context, props, &props, 4)) return 0;
+    }
+    return 0;
+}
+
+/* Foundry_FindRounds(ammo template, n): the n-th live round (1 unless
+ * given) of that ammunition template, as key, x, y, z, or nothing (0.334).
+ * Gaza's thrown pager: Foundry_FindPlaced by model found a round's world
+ * object for one look only (it goes inactive in flight) and could also
+ * find real frags and pickups. This walks the object table whatever the
+ * active flag (not removed ones), takes objects whose actor's template is
+ * the ammunition template, and gives the round's flight position (as
+ * Foundry_ProjectilePos: +2B4 in flight or while +268 is zero, else +268).
+ * The key works with ProjectilePos, MoveObject and RemoveObject. */
+static int MERC_PLUGIN_CALL cmd_find_rounds(void *ud, uint32_t L)
+{
+    (void)ud;
+    char ammo[72];
+    if (!lua_arg_text(L, 1, ammo, sizeof(ammo))) return 0;
+    const uint32_t want = hash_name(ammo);
+    int nth = 1;
+    uint32_t a2[2] = {L, 2};
+    MercGuestCall c;
+    if ((int)lua_call(MF_FN_lua_gettop, 1, a2) >= 2 && guest(MF_FN_Lua_ArgNumber, 0, 2, a2, &c) && c.st0 >= 1)
+        nth = (int)c.st0;
+    static uint32_t objs[OBJECT_SLOTS], handles[OBJECT_SLOTS];
+    if (!host->read_guest(host->context, OBJECTS, objs, sizeof(objs)) ||
+        !host->read_guest(host->context, OBJECT_HANDLES, handles, sizeof(handles))) return 0;
+    int seen = 0;
+    for (unsigned i = 0; i < OBJECT_SLOTS; i++) {
+        uint32_t obj = objs[i], actor = 0;
+        uint16_t flags = 0;
+        if (!obj || !host->read_guest(host->context, obj + MF_OFF_WorldObject_flags, &flags, 2) || (flags & 4) ||
+            !host->read_guest(host->context, obj + MF_OFF_WorldObject_actor, &actor, 4) || !actor ||
+            actor_template_hash(actor) != want || ++seen < nth) continue;
+        float a[3] = {0}, b[3] = {0}, wp[3] = {0};
+        uint8_t flag = 0;
+        host->read_guest(host->context, actor + 0x2B4u, a, 12);
+        host->read_guest(host->context, actor + 0x268u, b, 12);
+        host->read_guest(host->context, actor + 0x2F8u, &flag, 1);
+        host->read_guest(host->context, obj + WORLDOBJECT_POSITION, wp, 12);
+        const int b_zero = b[0] == 0.0f && b[1] == 0.0f && b[2] == 0.0f;
+        const float *pp = (flag & 8) || b_zero ? a : b;
+        push_number(L, placed_key(i, handles[i]));
+        for (int k = 0; k < 3; k++) push_number(L, pp[k]);
+        static unsigned said;
+        if (said < 12u) {
+            said++;
+            char line[220];
+            snprintf(line, sizeof(line), "find rounds: %s %d: key %.0f, actor %08X, flags %04X, at (%.2f, %.2f, %.2f), the object's +08 (%.2f, %.2f, %.2f)",
+                     ammo, seen, placed_key(i, handles[i]), actor, flags, pp[0], pp[1], pp[2], wp[0], wp[1], wp[2]);
+            host->log(host->context, line);
+        }
+        return 4;
+    }
+    return 0;
+}
+
 static int MERC_PLUGIN_CALL cmd_projectile_pos(void *ud, uint32_t L)
 {
     (void)ud;
@@ -4284,6 +4363,54 @@ static void fly_update(double dt)
                             hc.eax == f->obj)
                             f->handle = name_handles[j];
                     if (!f->handle) { f->obj = 0; f->look = 1.0; continue; }
+                    if (f->finds == 1 && i == 0) {
+                        /* 0.334: the object moves (+08 follows the loop) but isn't
+                         * drawn there: look, read-only, for the matrices that hold
+                         * its place now (translation = its position), in its own
+                         * block and two steps out, so a drawn one can be moved too */
+                        float p0[3];
+                        host->read_guest(host->context, f->obj + WORLDOBJECT_POSITION, p0, 12);
+                        static uint32_t a1[0x400 / 4], b1[0x400 / 4], c1[0x400 / 4];
+                        unsigned found = 0, reads = 0;
+                        char line[200];
+                        if (host->read_guest(host->context, f->obj, a1, sizeof(a1))) {
+                            for (unsigned x = 0; x < 0x400 / 4 && found < 16; x++) {
+                                if (x + 3 <= 0x400 / 4 && x * 4 != WORLDOBJECT_POSITION) {
+                                    const float *q = (const float *)&a1[x];
+                                    if (fabsf(q[0] - p0[0]) < 0.01f && fabsf(q[1] - p0[1]) < 0.01f && fabsf(q[2] - p0[2]) < 0.01f) {
+                                        snprintf(line, sizeof(line), "fly loop probe: %s position at obj+%X", f->name, x * 4);
+                                        host->log(host->context, line); found++;
+                                    }
+                                }
+                                const uint32_t p1 = a1[x];
+                                if (p1 < 0x10000u || p1 >= 0x04000000u || (p1 & 3u) || p1 == f->obj || reads >= 600u ||
+                                    !host->read_guest(host->context, p1, b1, sizeof(b1))) continue;
+                                reads++;
+                                for (unsigned y = 0; y + 3 <= 0x400 / 4 && found < 16; y++) {
+                                    const float *q = (const float *)&b1[y];
+                                    if (fabsf(q[0] - p0[0]) < 0.01f && fabsf(q[1] - p0[1]) < 0.01f && fabsf(q[2] - p0[2]) < 0.01f) {
+                                        snprintf(line, sizeof(line), "fly loop probe: %s position at obj+%X -> %08X +%X", f->name, x * 4, p1, y * 4);
+                                        host->log(host->context, line); found++;
+                                    }
+                                    const uint32_t p2 = b1[y];
+                                    if (p2 < 0x10000u || p2 >= 0x04000000u || (p2 & 3u) || p2 == f->obj || p2 == p1 || reads >= 600u ||
+                                        !host->read_guest(host->context, p2, c1, sizeof(c1))) continue;
+                                    reads++;
+                                    for (unsigned z = 0; z + 3 <= 0x400 / 4 && found < 16; z++) {
+                                        const float *q2 = (const float *)&c1[z];
+                                        if (fabsf(q2[0] - p0[0]) < 0.01f && fabsf(q2[1] - p0[1]) < 0.01f && fabsf(q2[2] - p0[2]) < 0.01f) {
+                                            snprintf(line, sizeof(line), "fly loop probe: %s position at obj+%X -> %08X +%X -> %08X +%X",
+                                                     f->name, x * 4, p1, y * 4, p2, z * 4);
+                                            host->log(host->context, line); found++;
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                        snprintf(line, sizeof(line), "fly loop probe: %s at (%.2f, %.2f, %.2f): %u place(s) found besides +08",
+                                 f->name, p0[0], p0[1], p0[2], found);
+                        host->log(host->context, line);
+                    }
                     /* start where it stands: the nearest point of the loop */
                     float pos[3] = {0}, best = 1e30f;
                     host->read_guest(host->context, f->obj + WORLDOBJECT_POSITION, pos, 12);
@@ -5246,6 +5373,7 @@ MERC_PLUGIN_EXPORT int MERC_PLUGIN_CALL MercenariesPlugin_Init(
         !h->add_lua_command(h->context, "Foundry_FlyLoop", cmd_fly_loop, NULL) ||
         !h->add_lua_command(h->context, "Foundry_PhysicsProbe", cmd_physics_probe, NULL) ||
         !h->add_lua_command(h->context, "Foundry_ProjectilePos", cmd_projectile_pos, NULL) ||
+        !h->add_lua_command(h->context, "Foundry_FindRounds", cmd_find_rounds, NULL) ||
         !h->add_lua_command(h->context, "Foundry_ScriptValues", cmd_script_values, NULL) ||
         !h->add_lua_command(h->context, "Foundry_CentreWheels", cmd_centre_wheels, NULL) ||
         !h->add_lua_command(h->context, "Foundry_Log", cmd_log, NULL))
