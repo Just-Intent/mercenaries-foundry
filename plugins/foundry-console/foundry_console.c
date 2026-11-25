@@ -3883,6 +3883,7 @@ static void MERC_PLUGIN_CALL level_load_before(void *ud, MercHookContext *c)
     if (any_captive_on || any_captive_wait >= 0) any_captive_set(0);
     { uint8_t z = 0; host->write_guest(host->context, 0x87BF00u, &z, 1); }   /* fines back (Foundry_MapFines) */
     { uint8_t z = 0; host->write_guest(host->context, 0x87BF01u, &z, 1); }   /* the store's mood check back (Foundry_MapShopOpen) */
+    { uint32_t z = 0; host->write_guest(host->context, 0x87B000u, &z, 4); }   /* every AI takes grudges again (Foundry_IgnoreAttacks) */
     maptemplate_count = maptemplate_used = 0;
     datapod_restore();
     maptext_restore();
@@ -4261,6 +4262,30 @@ static int MERC_PLUGIN_CALL cmd_projectile_pos(void *ud, uint32_t L)
     push_number(L, flying ? 1.0 : 0.0);
     for (int k = 0; k < 3; k++) push_number(L, a[k]);   /* 0.332: +2B4 as well */
     return 7;
+}
+
+/* Foundry_IgnoreAttacks(template, ...): AIs spawned from these templates (a
+ * vehicle's pilot, a person) take no grudge against whoever shoots at them
+ * until the next level loads: the port skips Ai_AddEnemy for them (0x65250;
+ * the list, count + 15 name hashes, at 0x87B000). For Gaza's traffic drones,
+ * which a shot pulled off their loops (0.339): name the pilot's template,
+ * whose AI flies the drone. Returns how many are listed. */
+static int MERC_PLUGIN_CALL cmd_ignore_attacks(void *ud, uint32_t L)
+{
+    (void)ud;
+    uint32_t a[2] = {L, 1};
+    int n = (int)lua_call(MF_FN_lua_gettop, 1, a);
+    uint32_t list[16] = {0};
+    for (int i = 1; i <= n && list[0] < 15u; i++) {
+        char t[72];
+        if (lua_arg_text(L, i, t, sizeof(t)) && t[0]) list[1 + list[0]++] = hash_name(t);
+    }
+    host->write_guest(host->context, 0x87B000u, list, sizeof(list));
+    char line[96];
+    snprintf(line, sizeof(line), "ignore attacks: %u template(s) take no grudge until the next level loads", list[0]);
+    host->log(host->context, line);
+    push_number(L, (double)list[0]);
+    return 1;
 }
 
 /* Foundry_AiAlert(actor): the actor's AI alert level, as the AI keeps it:
@@ -5434,6 +5459,7 @@ MERC_PLUGIN_EXPORT int MERC_PLUGIN_CALL MercenariesPlugin_Init(
         !h->add_lua_command(h->context, "Foundry_PhysicsProbe", cmd_physics_probe, NULL) ||
         !h->add_lua_command(h->context, "Foundry_ProjectilePos", cmd_projectile_pos, NULL) ||
         !h->add_lua_command(h->context, "Foundry_FindRounds", cmd_find_rounds, NULL) ||
+        !h->add_lua_command(h->context, "Foundry_IgnoreAttacks", cmd_ignore_attacks, NULL) ||
         !h->add_lua_command(h->context, "Foundry_ScriptValues", cmd_script_values, NULL) ||
         !h->add_lua_command(h->context, "Foundry_CentreWheels", cmd_centre_wheels, NULL) ||
         !h->add_lua_command(h->context, "Foundry_Log", cmd_log, NULL))
