@@ -1079,7 +1079,7 @@ static void hud_command(const char *line)
         unsigned logged = 0;
         for (unsigned i = 0; i < n; i++) {
             if (list[i].distance > 40.0f) break;
-            char line[640];
+            char line[1100];
             uint16_t flags = 0;
             host->read_guest(host->context, list[i].object + MF_OFF_WorldObject_flags, &flags, 2);
             int k = snprintf(line, sizeof(line), "probe: %s%s%s at %.1f, %.1f, %.1f (%.0f m) handle 0x%08X flags 0x%04X",
@@ -1116,6 +1116,44 @@ static void hud_command(const char *line)
                 }
                 k += snprintf(line + k, sizeof(line) - k, " actor=%08X invincible=%u ai=%08X objects=%u",
                               actor, inv & 1u, okai ? ai : 0u, same);
+                /* 0.342: a human's bullet hitbox, from the code (not seen in game):
+                 * one Havok body at actor +0x76C (Human_SetCollision 0x52130),
+                 * its shape one of four global ones chosen when it's built
+                 * (0x13C700): 37A320 the standing capsule, 37A380 a flat 20 cm
+                 * slab (built while the stance, actor +0x288, wasn't 0), 37A350
+                 * the long capsule (dead or a state), 37A2F0 unused; it follows
+                 * the actor each frame only while its proxy (actor +0x280) is in
+                 * the world (+0xA5) and has moved (+0x108), or +0x82C is set.
+                 * For Gaza's soldiers bullets passed through (0.339-0.340) */
+                uint32_t body = 0;
+                if ((strstr(line, "objectType=human") || strstr(line, "objectType=PLAYER")) &&
+                    host->read_guest(host->context, actor + 0x76Cu, &body, 4) && k < (int)sizeof(line) - 300) {
+                    uint32_t owner = 0, flags2 = 0, filter = 0, shape = 0, tfp = 0, stance = 0;
+                    uint8_t inworld = 0, moved = 0, follow = 0, disable = 0, dead = 0;
+                    float bp[3] = {0}, off[3] = {0};
+                    host->read_guest(host->context, actor + 0x288u, &stance, 4);
+                    host->read_guest(host->context, actor + 0x280u + 0xA5u, &inworld, 1);
+                    host->read_guest(host->context, actor + 0x280u + 0x108u, &moved, 1);
+                    host->read_guest(host->context, actor + 0x82Cu, &follow, 1);
+                    host->read_guest(host->context, actor + 0x6C1u, &disable, 1);
+                    host->read_guest(host->context, actor + 0x6B8u, &dead, 1);
+                    host->read_guest(host->context, actor + 0x77Cu, off, 12);
+                    if (body) {
+                        host->read_guest(host->context, body + 0xA4u, &owner, 4);
+                        host->read_guest(host->context, body + 0xB0u, &flags2, 4);
+                        host->read_guest(host->context, body + 0x28u, &filter, 4);
+                        host->read_guest(host->context, body + 0x0Cu, &shape, 4);
+                        if (host->read_guest(host->context, body + 0x14u, &tfp, 4) && tfp)
+                            host->read_guest(host->context, tfp + 0x50u, bp, 12);
+                    }
+                    const char *kind = shape == 0x37A320u ? "capsule" : shape == 0x37A380u ? "SLAB" :
+                                       shape == 0x37A350u ? "long capsule" : shape == 0x37A2F0u ? "other capsule" : "?";
+                    k += snprintf(line + k, sizeof(line) - k,
+                                  " hitbox=%08X owner_ok=%u flags=%X layer=%u shape=%08X(%s) at (%.2f, %.2f, %.2f) offset (%.2f, %.2f, %.2f)"
+                                  " stance=%u inworld=%u moved=%u follow=%u disable=%u dead=%u",
+                                  body, owner == actor, flags2, filter & 0x1Fu, shape, body ? kind : "none",
+                                  bp[0], bp[1], bp[2], off[0], off[1], off[2], stance, inworld, moved, follow, disable, dead);
+                }
             }
             host->log(host->context, line);
             logged++;
