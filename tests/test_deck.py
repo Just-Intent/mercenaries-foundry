@@ -52,7 +52,7 @@ class DeckTests(unittest.TestCase):
         # posted from the meter (a number card or a face card's contract) and on coming to the map
         meter = lua[lua.index("function foundry_DeckMeter(suit)"):]
         self.assertIn("foundry_DeckUnlock(m, suit, intel, TRUE)", meter[:meter.index("\nfunction foundry_DeckUnlock(")])
-        self.assertIn("if on == m then foundry_DeckMails(m) return end", lua)
+        self.assertIn("if on == m then foundry_DeckMails(m) foundry_DeckChapter(m) return end", lua)
         unlock = lua[lua.index("function foundry_DeckUnlock("):]
         self.assertIn("if not u or intel < u.mark then return end", unlock)
         self.assertIn("Mail_Post(u.id)", unlock)
@@ -146,6 +146,35 @@ class DeckTests(unittest.TestCase):
         self.assertIn("{ suit = 'spades', rank = 2, actor = 'gaza_card_clubs02'", lua)
         self.assertIn("Utility_WriteNumberToScribbleMemory('foundry_deck_on_' .. suit, 1)", lua)
         self.assertIn("ipairs({ 'clubs', 'diamonds', 'hearts', 'spades' })", lua)
+
+    def test_chapter_follows_the_act(self):
+        # the PDA opens on 'chapter''s page and draws its bar there only: on
+        # the map it's the act in play (clubs, then spades once the Ace of
+        # Clubs is done), and the game's chapter is back on leaving
+        from mercfoundry import luarun
+        clubs = deck.parse("deck/clubs.json", dict(DOC, until="sw_allies21"), {"gaza"})
+        spades = deck.parse("deck/spades.json", dict(DOC, suit="spades", after="sw_allies21"), {"gaza"})
+        lua = deck.script([spades, clubs])
+        self.assertEqual(luacheck.check(lua), [])
+        self.assertIn("acts = { { suit = 'clubs', after = false, till = 'sw_allies21' }, "
+                      "{ suit = 'spades', after = 'sw_allies21', till = false } }", lua)
+        mem = {"chapter": 2}
+        it = luarun.Interpreter()
+        g = it.globals
+        g["Utility_ReadNumberFromScribbleMemory"] = lambda k, *_: [mem.get(k) if not isinstance(mem.get(k), str) else None]
+        g["Utility_ReadStringFromScribbleMemory"] = lambda k, *_: [mem.get(k) if isinstance(mem.get(k), str) else None]
+        g["Utility_WriteNumberToScribbleMemory"] = lambda k, v, *_: mem.__setitem__(k, v) or []
+        g["Utility_WriteStringToScribbleMemory"] = lambda k, v, *_: mem.__setitem__(k, v) or []
+        g["Utility_EraseValueFromScribbleMemory"] = lambda k, *_: (mem.pop(k, None), [])[1]
+        it.run(lua, "deck")
+        it.call("foundry_DeckEnter", "gaza")
+        self.assertEqual(mem["chapter"], 1)                     # clubs' act: clubs' page and bar
+        mem["foundry_done_sw_allies21"] = 1
+        it.call("foundry_DeckEnter", "gaza")                    # back to free roam after the Ace of Clubs
+        self.assertEqual(mem["chapter"], 4)                     # spades' act
+        it.call("foundry_DeckLeave")
+        self.assertEqual(mem["chapter"], 2)                     # the game's own back
+        self.assertNotIn("foundry_deck_keep_chapter_set", mem)
 
     def test_map_and_free_roam_hooks(self):
         text = modbuild.map_script("gaza", {}, [], deck=True)
