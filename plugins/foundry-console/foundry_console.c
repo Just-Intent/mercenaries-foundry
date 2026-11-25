@@ -4615,6 +4615,13 @@ static int MERC_PLUGIN_CALL cmd_shop_restore(void *ud, uint32_t L)
     args[0] = hash_name(t);
     args[1] = 1;
     int ok = guest(SHOP_UNLOCK_FN, SHOP, 2, args, &c) && (int32_t)c.eax >= 0;
+    /* as an unlock does, without its popup: a store with no page yet (+0x19AC
+     * 0, as after a level load) gets its list page (0xCD6C0(1), which the
+     * restore flag skips), or the PDA showed it closed with its items in
+     * (0.314: Gaza's store after a save's return, 7 items back, tabs read 0) */
+    uint32_t page = 0, one = 1;
+    if (ok && host->read_guest(host->context, SHOP + 0x19ACu, &page, 4) && page == 0)
+        guest(0x000CD6C0u, SHOP, 1, &one, &c);
     uint32_t push[2] = {L, (uint32_t)ok};
     lua_call(MF_FN_Lua_PushBool, 2, push);
     return 1;
