@@ -170,10 +170,28 @@ def cmd_model(args):
     tris = sum(len(p.triangles) for p in pieces)
     print(f"{m.name}: {len(m.joints)} joints, {len(m.pieces)} pieces, detail levels {lods}")
     print(f"wrote {out / (m.name + '.obj')} (level {lod}: {len(pieces)} pieces, {tris} triangles)")
+    # the preview's wheels: --wheels <model>, else <name>_wheel when the data
+    # has one and the model has wheel joints (a vehicle's own wheel model,
+    # drawn by the game at each wheel_* joint; shop pictures showed none)
+    wheel = None
+    if args.preview and getattr(args, "wheels", None) != "none":
+        offsets = model.wheel_offsets(m)
+        wname = getattr(args, "wheels", None) or f"{m.name}_wheel"
+        if offsets:
+            try:
+                wm = model.decode(*model.find(arcs, wname))
+                wl = wm.lods()
+                wheel = (wm, wl[0] if wl else 0, offsets)
+                print(f"preview: {wname} drawn at {len(offsets)} wheel joints")
+            except KeyError:
+                if getattr(args, "wheels", None):
+                    sys.exit(f"no wheel model named {wname!r}")
     textures, png_files = {}, {}
     if not args.no_textures:
         from . import texture
         wanted = {p.texture for p in pieces}
+        if wheel:
+            wanted |= {p.texture for p in wheel[0].at_lod(wheel[1])}
         for arc in arcs:
             with arc.path.open("rb") as f:
                 for r in arc.records:
@@ -222,7 +240,8 @@ def cmd_model(args):
               + (f", {len(anims)} animations" if anims else "") + ")")
     if args.preview:
         png = out / f"{m.name}_preview.png"
-        png.write_bytes(model.preview_png(m, lod, damaged=args.damaged, textures=textures))
+        png.write_bytes(model.preview_png(m, lod, damaged=args.damaged, textures=textures,
+                                          extra=[wheel] if wheel else None))
         print(f"wrote {png}")
     if args.collision:
         boxes = sum(len(s.boxes) for s in m.collision)
@@ -886,6 +905,9 @@ def main(argv=None):
     s.add_argument("--lod", type=int, help="level of detail (default: most detailed)")
     s.add_argument("--damaged", action="store_true", help="show damaged body panels instead of pristine")
     s.add_argument("--preview", action="store_true", help="also write a shaded PNG preview")
+    s.add_argument("--wheels", metavar="MODEL",
+                   help="with --preview, draw this wheel model at each wheel_* joint (default: <name>_wheel "
+                        "when there is one; 'none' for no wheels)")
     s.add_argument("--no-textures", action="store_true", help="don't export textures")
     s.add_argument("--collision", action="store_true", help="also write a preview of the collision shapes")
     s.add_argument("--glb", action="store_true", help="also write a glTF (.glb) with joints, skinning and textures")

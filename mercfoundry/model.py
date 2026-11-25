@@ -311,12 +311,23 @@ def to_obj(model: Model, lod=0, texture_name=None, damaged=False) -> tuple:
     return "\n".join(obj) + "\n", "\n".join(mtl)
 
 
+def wheel_offsets(model: Model) -> list:
+    """Model-space positions of a vehicle's wheel joints (wheel_fl, wheel_rr,
+    ...): where the game draws its wheel model (geometrynameWheel), the same
+    way on both sides (retail's wheel models are symmetric about x)."""
+    tf = joint_transforms(model.joints)
+    return [tf[name_hash(j.name)][1] for j in model.joints
+            if j.name.lower().startswith("wheel_") and name_hash(j.name) in tf]
+
+
 def preview_png(model: Model, lod=0, size=512, yaw=35.0, pitch=-25.0, damaged=False,
-                textures=None, collision=False) -> bytes:
+                textures=None, collision=False, extra=None) -> bytes:
     """Shaded preview image, no dependencies.
 
     textures: optional {texture hash: (width, height, RGBA bytes)}; pieces
-    with a texture are drawn with it (nearest sample), others flat."""
+    with a texture are drawn with it (nearest sample), others flat.
+    extra: (Model, lod, [offset, ...]) more models drawn at those
+    model-space offsets: a vehicle's wheels at its wheel joints."""
     from . import png
     textures = textures or {}
     tris = []
@@ -326,6 +337,13 @@ def preview_png(model: Model, lod=0, size=512, yaw=35.0, pitch=-25.0, damaged=Fa
         tex = textures.get(p.texture)
         for t in p.triangles:
             tris.append(([p.positions[i] for i in t], [p.uvs[i] for i in t], tex))
+    for em, elod, offsets in ([] if collision else (extra or [])):
+        for p in em.at_lod(elod):
+            tex = textures.get(p.texture)
+            for o in offsets:
+                for t in p.triangles:
+                    tris.append(([tuple(a + b for a, b in zip(p.positions[i], o)) for i in t],
+                                 [p.uvs[i] for i in t], tex))
     cy, sy = math.cos(math.radians(yaw)), math.sin(math.radians(yaw))
     cp, sp = math.cos(math.radians(pitch)), math.sin(math.radians(pitch))
 
