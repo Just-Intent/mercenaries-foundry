@@ -4183,12 +4183,21 @@ static int MERC_PLUGIN_CALL cmd_find_rounds(void *ud, uint32_t L)
     if (!host->read_guest(host->context, OBJECTS, objs, sizeof(objs)) ||
         !host->read_guest(host->context, OBJECT_HANDLES, handles, sizeof(handles))) return 0;
     int seen = 0;
+    uint32_t actors[32];
+    unsigned nactors = 0;
     for (unsigned i = 0; i < OBJECT_SLOTS; i++) {
         uint32_t obj = objs[i], actor = 0;
         uint16_t flags = 0;
         if (!obj || !host->read_guest(host->context, obj + MF_OFF_WorldObject_flags, &flags, 2) || (flags & 4) ||
             !host->read_guest(host->context, obj + MF_OFF_WorldObject_actor, &actor, 4) || !actor ||
-            actor_template_hash(actor) != want || ++seen < nth) continue;
+            actor_template_hash(actor) != want) continue;
+        /* 0.335: two world objects can share one round's actor (0.334: keys
+         * 2562 and 14669695, one actor): each actor counts once */
+        unsigned dup = 0;
+        while (dup < nactors && actors[dup] != actor) dup++;
+        if (dup < nactors) continue;
+        if (nactors < 32u) actors[nactors++] = actor;
+        if (++seen < nth) continue;
         float a[3] = {0}, b[3] = {0}, wp[3] = {0};
         uint8_t flag = 0;
         host->read_guest(host->context, actor + 0x2B4u, a, 12);
@@ -4197,6 +4206,10 @@ static int MERC_PLUGIN_CALL cmd_find_rounds(void *ud, uint32_t L)
         host->read_guest(host->context, obj + WORLDOBJECT_POSITION, wp, 12);
         const int b_zero = b[0] == 0.0f && b[1] == 0.0f && b[2] == 0.0f;
         const float *pp = (flag & 8) || b_zero ? a : b;
+        /* 0.335: a flight position that isn't a number or is over 5 km from the
+         * object's (0.334: 7.6e28) gives the object's own instead */
+        for (int k = 0; k < 3; k++)
+            if (!(pp[k] == pp[k]) || fabsf(pp[k] - wp[k]) > 5000.0f) { pp = wp; break; }
         push_number(L, placed_key(i, handles[i]));
         for (int k = 0; k < 3; k++) push_number(L, pp[k]);
         static unsigned said;
@@ -4436,13 +4449,14 @@ static void fly_update(double dt)
             }
         }
         uint16_t flags = 0;
+        uint32_t actor = 0;
         host->read_guest(host->context, f->obj + MF_OFF_WorldObject_flags, &flags, 2);
-        if (!(flags & FLAG_PLAIN)) {
+        host->read_guest(host->context, f->obj + MF_OFF_WorldObject_actor, &actor, 4);
+        if (!(flags & FLAG_PLAIN) && !actor) {
             if (!f->logged) {
                 f->logged = 1;
                 char line[160];
-                snprintf(line, sizeof(line), "fly loop: %s isn't plain scenery (an actor: a prop, vehicle or person), "
-                         "so it isn't moved; place a copy of a static object", f->name);
+                snprintf(line, sizeof(line), "fly loop: %s is neither plain scenery nor has an actor, so it isn't moved", f->name);
                 host->log(host->context, line);
             }
             continue;
@@ -4453,7 +4467,33 @@ static void fly_update(double dt)
         fly_point(f, f->at, pos);
         fly_point(f, f->at + 40.0f, ahead);
         float yaw = atan2f(ahead[0] - pos[0], ahead[2] - pos[2]);
-        int ok = live_apply(f->obj, pos, yaw, 0);
+        int ok;
+        if (actor) {
+            /* 0.335: a plain object's +08 moves but what's drawn doesn't (0.333-0.334:
+             * the drones' loops ran, nothing else holds their position). An object
+             * with an actor (a prop: give the drone's map object an actor-backed
+             * template) is moved through the actor, as the game moves the things it
+             * draws: its set-position and set-yaw (vtable +0x64, +0x68) every frame */
+            uint32_t scratch = 0, size = 0;
+            ok = host->guest_scratch(host->context, &scratch, &size) && size >= 16;
+            if (ok) {
+                host->write_guest(host->context, scratch, pos, 12);
+                vcall(actor, ACTOR_VT_SET_POSITION, 1, &scratch, &ok);
+                if (ok) {
+                    uint32_t bitsyaw;
+                    memcpy(&bitsyaw, &yaw, 4);
+                    vcall(actor, ACTOR_VT_SET_YAW, 1, &bitsyaw, &ok);
+                }
+            }
+            if (!f->logged) {
+                f->logged = 1;
+                char line[160];
+                snprintf(line, sizeof(line), "fly loop: %s has an actor (%08X): moved through it", f->name, actor);
+                host->log(host->context, line);
+            }
+        } else {
+            ok = live_apply(f->obj, pos, yaw, 0);
+        }
         /* 0.333: every 10 s (12 times): where the loop is, what was asked and
          * where the object is, how often it was found again. A drone never
          * seen flying: this says whether the loop runs, the move takes and
