@@ -1146,6 +1146,26 @@ static void hud_command(const char *line)
                         if (host->read_guest(host->context, body + 0x14u, &tfp, 4) && tfp)
                             host->read_guest(host->context, tfp + 0x50u, bp, 12);
                     }
+                    /* 0.344: whether the bullet ray can find the body: it's only tested
+                     * if the broadphase returns it, so the body's world (+0x08, the
+                     * world is *0x37A3F0), its broadphase handle (+0x1C, type +0x24
+                     * must be 1) and its simulation island (+0x44: +0x29 active,
+                     * +0x24 index, -1 none). Gaza's unhittable heavy (0.343) had a
+                     * right capsule following him, yet bullets passed through */
+                    uint32_t bworld = 0, gworld = 0, bph = 0, btype = 0, island = 0, iidx = 0;
+                    uint8_t iact = 0;
+                    if (body) {
+                        host->read_guest(host->context, body + 0x08u, &bworld, 4);
+                        host->read_guest(host->context, 0x37A3F0u, &gworld, 4);
+                        host->read_guest(host->context, body + 0x1Cu, &bph, 4);
+                        host->read_guest(host->context, body + 0x24u, &btype, 4);
+                        if (host->read_guest(host->context, body + 0x44u, &island, 4) && island) {
+                            host->read_guest(host->context, island + 0x29u, &iact, 1);
+                            host->read_guest(host->context, island + 0x24u, &iidx, 4);
+                        }
+                    }
+                    k += snprintf(line + k, sizeof(line) - k, " inworld_body=%u broadphase=%08X type=%u island=%08X active=%u index=%d",
+                                  body && bworld && bworld == gworld, bph, btype, island, iact, (int32_t)iidx);
                     const char *kind = shape == 0x37A320u ? "capsule" : shape == 0x37A380u ? "SLAB" :
                                        shape == 0x37A350u ? "long capsule" : shape == 0x37A2F0u ? "other capsule" : "?";
                     k += snprintf(line + k, sizeof(line) - k,
