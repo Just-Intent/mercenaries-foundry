@@ -4361,6 +4361,77 @@ static int MERC_PLUGIN_CALL cmd_actor_template(void *ud, uint32_t L)
  * in lower case (the game's Lua has no string library); nothing if none.
  * For HQ parking's fallback: a layer's own vehicle has no template's block,
  * so the map script looks its model up in the map's own templates. */
+/* Foundry_PhysicsProbe(vehicle): where a vehicle's physics body keeps its
+ * rotation and position (0.317, for a motorbike held upright: Havok's body,
+ * not the world object, is what the physics moves). Reads the object's own
+ * rotation (+0x14, a quaternion) and position (+0x08), then looks through
+ * the vehicle (its actor, 0x1200 bytes) and everything it points to, two
+ * steps deep, for the same four floats (either sign) and the same three, and
+ * logs each place found ("physics probe: rotation at actor+X -> +Y ..."), up
+ * to 24. Call it on a vehicle that's moving and turned a little, so the
+ * numbers aren't trivial. */
+static int probe_quat_at(const float *a, const float *q)
+{
+    float d1 = 0, d2 = 0;
+    for (int k = 0; k < 4; k++) { d1 += fabsf(a[k] - q[k]); d2 += fabsf(a[k] + q[k]); }
+    return d1 < 2e-3f || d2 < 2e-3f;
+}
+
+static int MERC_PLUGIN_CALL cmd_physics_probe(void *ud, uint32_t L)
+{
+    (void)ud;
+    MercGuestCall c;
+    uint32_t args[2] = {L, 1}, obj = 0, actor = 0;
+    if (guest(MF_FN_Lua_ArgActor, 0, 2, args, &c)) obj = c.eax;
+    if (!obj || !host->read_guest(host->context, obj + MF_OFF_WorldObject_actor, &actor, 4) || !actor) {
+        host->log(host->context, "physics probe: no such vehicle");
+        return 0;
+    }
+    float pos[3], q[4];
+    host->read_guest(host->context, obj + WORLDOBJECT_POSITION, pos, 12);
+    host->read_guest(host->context, obj + 0x14u, q, 16);
+    char line[220];
+    snprintf(line, sizeof(line), "physics probe: object %08X actor %08X at (%.2f, %.2f, %.2f), rotation (%.3f, %.3f, %.3f, %.3f)",
+             obj, actor, pos[0], pos[1], pos[2], q[0], q[1], q[2], q[3]);
+    host->log(host->context, line);
+    static uint32_t a[0x1200 / 4], b[0x400 / 4], cc[0x400 / 4];
+    if (!host->read_guest(host->context, actor, a, sizeof(a))) return 0;
+    int found = 0;
+    unsigned second = 0;                          /* second-step reads, capped */
+    for (unsigned i = 0; i < 0x1200 / 4 && found < 24; i++) {
+        /* in the actor itself */
+        if (i + 4 <= 0x1200 / 4 && probe_quat_at((const float *)&a[i], q)) {
+            snprintf(line, sizeof(line), "physics probe: rotation at actor+%X", i * 4);
+            host->log(host->context, line); found++;
+        }
+        uint32_t p1 = a[i];
+        if (p1 < 0x10000u || p1 >= 0x04000000u || (p1 & 3u) || !host->read_guest(host->context, p1, b, sizeof(b))) continue;
+        for (unsigned j = 0; j + 4 <= 0x400 / 4 && found < 24; j++) {
+            const float *f = (const float *)&b[j];
+            if (probe_quat_at(f, q)) {
+                snprintf(line, sizeof(line), "physics probe: rotation at actor+%X -> %08X +%X", i * 4, p1, j * 4);
+                host->log(host->context, line); found++;
+            } else if (j + 3 <= 0x400 / 4 && fabsf(f[0] - pos[0]) < 0.05f && fabsf(f[1] - pos[1]) < 0.05f && fabsf(f[2] - pos[2]) < 0.05f) {
+                snprintf(line, sizeof(line), "physics probe: position at actor+%X -> %08X +%X", i * 4, p1, j * 4);
+                host->log(host->context, line); found++;
+            }
+            uint32_t p2 = b[j];
+            if (p2 < 0x10000u || p2 >= 0x04000000u || (p2 & 3u) || p2 == actor || p2 == obj || second >= 4000u ||
+                !host->read_guest(host->context, p2, cc, sizeof(cc))) continue;
+            second++;
+            for (unsigned k = 0; k + 4 <= 0x400 / 4 && found < 24; k++)
+                if (probe_quat_at((const float *)&cc[k], q)) {
+                    snprintf(line, sizeof(line), "physics probe: rotation at actor+%X -> %08X +%X -> %08X +%X",
+                             i * 4, p1, j * 4, p2, k * 4);
+                    host->log(host->context, line); found++;
+                }
+        }
+    }
+    if (!found) host->log(host->context, "physics probe: the rotation wasn't found within two steps of the vehicle");
+    push_number(L, (double)found);
+    return 1;
+}
+
 static int MERC_PLUGIN_CALL cmd_actor_model(void *ud, uint32_t L)
 {
     (void)ud;
@@ -4952,6 +5023,7 @@ MERC_PLUGIN_EXPORT int MERC_PLUGIN_CALL MercenariesPlugin_Init(
         !h->add_lua_command(h->context, "Foundry_ShopUnlocked", cmd_shop_unlocked, NULL) ||
         !h->add_lua_command(h->context, "Foundry_ShopRestore", cmd_shop_restore, NULL) ||
         !h->add_lua_command(h->context, "Foundry_FlyLoop", cmd_fly_loop, NULL) ||
+        !h->add_lua_command(h->context, "Foundry_PhysicsProbe", cmd_physics_probe, NULL) ||
         !h->add_lua_command(h->context, "Foundry_ScriptValues", cmd_script_values, NULL) ||
         !h->add_lua_command(h->context, "Foundry_CentreWheels", cmd_centre_wheels, NULL) ||
         !h->add_lua_command(h->context, "Foundry_Log", cmd_log, NULL))
