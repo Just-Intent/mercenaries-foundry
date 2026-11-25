@@ -4766,6 +4766,26 @@ static int MERC_PLUGIN_CALL cmd_shop_restore(void *ud, uint32_t L)
     args[0] = hash_name(t);
     args[1] = 1;
     int ok = guest(SHOP_UNLOCK_FN, SHOP, 2, args, &c) && (int32_t)c.eax >= 0;
+    /* 0.328: and in stock. The restore flag also sets the item's stock slot
+     * (+4 of its list entry) to -1, out of stock, and a tab counts only items
+     * in stock (0xC8AD0), so a store whose items all came back this way had
+     * no tab with items and showed nothing (page 0: Gaza's after every trip,
+     * "7 in the list, tabs 3 3 1", 0.327). The game's own 0xC8B60(index, 0)
+     * puts the catalogue's DefaultPrice back in the slot. */
+    if (ok) {
+        static uint32_t hashes[128], cats[128], list[128 * 3];
+        uint32_t ccount = 0, n = 0;
+        if (shop_catalogue(hashes, cats, &ccount) &&
+            host->read_guest(host->context, SHOP_LIST_COUNT, &n, 4) && n <= 128 &&
+            (!n || host->read_guest(host->context, SHOP_LIST, list, n * 12))) {
+            for (uint32_t k = 0; k < n; k++) {
+                const uint32_t idx = list[k * 3];
+                if (idx >= ccount || hashes[idx] != args[0] || (int32_t)list[k * 3 + 1] >= 0) continue;
+                uint32_t a[2] = {k, 0};
+                guest(0x000C8B60u, SHOP, 2, a, &c);
+            }
+        }
+    }
     /* as an unlock does, without its popup: a store with no page yet (+0x19AC
      * 0, as after a level load) gets its list page (0xCD6C0(1), which the
      * restore flag skips), or the PDA showed it closed with its items in
