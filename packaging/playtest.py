@@ -2,6 +2,11 @@
 
     python packaging\\playtest.py                  dist/playtest/<name>.zip
     python packaging\\playtest.py --mods "Mercenaries Gaza" "Foundry Console"
+    python packaging\\playtest.py --exe dist\\playtest\\<older>.zip --tag STABLE
+
+--exe pins the game exe (and its map) from an older package or an exe file,
+everything else as now: for playing on a port build known to run while a newer
+one is traced. The README and the name say which.
 
 Takes the port's Release folder (the launcher, the game exe and its DLLs, the
 bundled Python and toolkit) and the mods turned on in its launcher, and writes
@@ -163,6 +168,8 @@ def main():
     ap.add_argument("--release", default=str(RELEASE), help="the port's Release folder")
     ap.add_argument("--mods", nargs="+", help="mod folders to include (default: those on in the launcher)")
     ap.add_argument("--out", default=str(ROOT / "dist" / "playtest"), help="folder for the zip")
+    ap.add_argument("--exe", help="the game exe from an older playtest zip (or an exe file; its .map beside it)")
+    ap.add_argument("--tag", help="added to the package's name")
     args = ap.parse_args()
     sys.path.insert(0, str(ROOT))
     from mercfoundry import __version__
@@ -202,20 +209,40 @@ def main():
         line = next((l.strip() for l in r.stdout.splitlines() if "build cache:" in l), "")
         print(f"cache for the first launch: {line or 'not filled (the build failed: ' + r.stdout[-300:] + ')'}")
 
-    exe_hash = hashlib.sha256((release / "mercenaries_recomp.exe").read_bytes()).hexdigest()
+    pinned = {}                     # root file name -> bytes, in place of the Release folder's
+    if args.exe:
+        src = Path(args.exe)
+        if src.suffix.lower() == ".zip":
+            with zipfile.ZipFile(src) as old:
+                for f in ("mercenaries_recomp.exe", "mercenaries_recomp.map"):
+                    hit = [n for n in old.namelist() if n.split("/")[-1] == f]
+                    if hit:
+                        pinned[f] = old.read(hit[0])
+        else:
+            pinned["mercenaries_recomp.exe"] = src.read_bytes()
+            if src.with_suffix(".map").is_file():
+                pinned["mercenaries_recomp.map"] = src.with_suffix(".map").read_bytes()
+        if "mercenaries_recomp.exe" not in pinned:
+            sys.exit(f"no mercenaries_recomp.exe in {src}")
+    exe_bytes = pinned.get("mercenaries_recomp.exe") or (release / "mercenaries_recomp.exe").read_bytes()
+    exe_hash = hashlib.sha256(exe_bytes).hexdigest()
     stamp = datetime.datetime.now().strftime("%Y%m%d-%H%M")
-    name = f"Mercenaries-Foundry-Playtest-{__version__}-{stamp}"
+    name = f"Mercenaries-Foundry-Playtest-{__version__}-{stamp}" + (f"-{args.tag}" if args.tag else "")
     out = Path(args.out)
     out.mkdir(parents=True, exist_ok=True)
     path = out / f"{name}.zip"
     top = "Mercenaries Foundry Playtest"
     readme = README.format(name=name, rule="=" * (31 + len(name)), version=__version__, exe_hash=exe_hash,
                            mods=", ".join(mods) or "(none)")
+    if args.exe:
+        readme = readme.replace("Mods: ", f"Game exe pinned from {Path(args.exe).name}\nMods: ", 1)
     with zipfile.ZipFile(path, "w", zipfile.ZIP_DEFLATED, compresslevel=6) as z:
         if not (release / "Foundry Editor.cmd").is_file():      # the editor's starter, from packaging/
             z.write(ROOT / "packaging" / "Foundry Editor.cmd", f"{top}/Foundry Editor.cmd")
         for f in ROOT_FILES:
-            if (release / f).is_file():
+            if f in pinned:
+                z.writestr(f"{top}/{f}", pinned[f])
+            elif (release / f).is_file():
                 z.write(release / f, f"{top}/{f}")
         for p in sorted(release.glob("*.dll")):
             z.write(p, f"{top}/{p.name}")
@@ -248,6 +275,8 @@ def main():
                    "Collect-Logs.cmd and Freeze-Snapshot.cmd put zips here. Send the newest one.\r\n")
     print(f"wrote {path} ({path.stat().st_size / 1048576:.0f} MB)")
     print(f"mods: {', '.join(mods)}")
+    if args.exe:
+        print(f"game exe pinned from {args.exe} (sha256 {exe_hash[:8]})")
     if not hang.is_file():
         print("note: tools/hangsnap/out/hangsnap.exe not built; Freeze-Snapshot.cmd won't work", file=sys.stderr)
 
