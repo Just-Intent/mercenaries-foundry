@@ -4104,6 +4104,50 @@ static int MERC_PLUGIN_CALL cmd_find_placed(void *ud, uint32_t L)
     return 0;
 }
 
+/* Foundry_ProjectilePos(handle): where a thrown or fired round is, as its
+ * flight keeps it (0.324). Foundry_FindPlaced gives the world object's
+ * position (+0x08), which may stay at the release point while the round
+ * flies; the projectile (the object's actor) moves its own: 0x212E0, its
+ * detonation, reads +0x2B4 when its +0x2F8 has bit 8 and +0x268 otherwise,
+ * and 0x1A490 steps +0x2A8 -> +0x2B4. Gives x, y, z and that flag (1 in
+ * flight's position, 0 the other), or nothing (no such object, no actor, or
+ * a position that isn't a number or is over 2 km from the object's). The
+ * first answer for each of 8 handles is logged with both positions. From the
+ * game's code, not yet seen in game: check its log against FindPlaced's. */
+static int MERC_PLUGIN_CALL cmd_projectile_pos(void *ud, uint32_t L)
+{
+    (void)ud;
+    MercGuestCall c;
+    uint32_t args[2] = {L, 1};
+    if ((int)lua_call(MF_FN_lua_gettop, 1, args) < 1 || !guest(MF_FN_Lua_ArgNumber, 0, 2, args, &c)) return 0;
+    const uint32_t handle = (uint32_t)c.st0;
+    uint32_t obj = find_slot_object(handle), actor = 0;
+    if (!obj || !host->read_guest(host->context, obj + MF_OFF_WorldObject_actor, &actor, 4) || !actor) return 0;
+    float wp[3], a[3], b[3];
+    uint8_t flag = 0;
+    if (!host->read_guest(host->context, obj + WORLDOBJECT_POSITION, wp, 12) ||
+        !host->read_guest(host->context, actor + 0x2B4u, a, 12) || !host->read_guest(host->context, actor + 0x268u, b, 12) ||
+        !host->read_guest(host->context, actor + 0x2F8u, &flag, 1)) return 0;
+    const int flying = (flag & 8) != 0;
+    const float *p = flying ? a : b;
+    static uint32_t said[8];
+    int known = 0;
+    for (unsigned i = 0; i < 8 && !known; i++) known = said[i] == handle;
+    if (!known) {
+        for (unsigned i = 0; i < 8; i++) if (!said[i]) { said[i] = handle; break; }
+        char line[240];
+        snprintf(line, sizeof(line), "projectile pos: %u (actor %08X, flag %02X): +2B4 (%.2f, %.2f, %.2f), +268 (%.2f, %.2f, %.2f), "
+                 "the object's +08 (%.2f, %.2f, %.2f)", handle, actor, flag, a[0], a[1], a[2], b[0], b[1], b[2],
+                 wp[0], wp[1], wp[2]);
+        host->log(host->context, line);
+    }
+    for (int k = 0; k < 3; k++)
+        if (!(p[k] == p[k]) || fabsf(p[k] - wp[k]) > 2000.0f) return 0;
+    for (int k = 0; k < 3; k++) push_number(L, p[k]);
+    push_number(L, flying ? 1.0 : 0.0);
+    return 4;
+}
+
 /* Foundry_AiAlert(actor): the actor's AI alert level, as the AI keeps it:
  * 0 normal, 1 caution, 2 danger (fighting). The AI is the actor's vtable
  * +0xBC (Lua_ArgAi, as the Ai_ commands find it); its +0x20 indexes its three
@@ -5068,6 +5112,7 @@ MERC_PLUGIN_EXPORT int MERC_PLUGIN_CALL MercenariesPlugin_Init(
         !h->add_lua_command(h->context, "Foundry_ShopRestore", cmd_shop_restore, NULL) ||
         !h->add_lua_command(h->context, "Foundry_FlyLoop", cmd_fly_loop, NULL) ||
         !h->add_lua_command(h->context, "Foundry_PhysicsProbe", cmd_physics_probe, NULL) ||
+        !h->add_lua_command(h->context, "Foundry_ProjectilePos", cmd_projectile_pos, NULL) ||
         !h->add_lua_command(h->context, "Foundry_ScriptValues", cmd_script_values, NULL) ||
         !h->add_lua_command(h->context, "Foundry_CentreWheels", cmd_centre_wheels, NULL) ||
         !h->add_lua_command(h->context, "Foundry_Log", cmd_log, NULL))
