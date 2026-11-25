@@ -4445,8 +4445,11 @@ static int shop_hooked;                       /* hiding is safe only with the sa
 static int shop_catalogue(uint32_t *hashes, uint32_t *cats, uint32_t *count)
 {
     static uint32_t raw[128 * 8];
+    /* an empty list or catalogue is read as nothing: a 0-byte read is refused
+     * (the store, after a save's reload with its list empty, answered nothing
+     * for every item and stayed closed, 0.312) */
     if (!host->read_guest(host->context, SHOP_CATALOGUE_COUNT, count, 4) || *count > 128 ||
-        !host->read_guest(host->context, SHOP_CATALOGUE, raw, *count * 32)) return 0;
+        (*count && !host->read_guest(host->context, SHOP_CATALOGUE, raw, *count * 32))) return 0;
     for (uint32_t i = 0; i < *count; i++) { hashes[i] = raw[i * 8 + 2]; cats[i] = raw[i * 8 + 7]; }
     return 1;
 }
@@ -4477,7 +4480,7 @@ static void shop_hide(void)
     uint32_t ccount = 0, n = 0;
     if (!shop_catalogue(hashes, cats, &ccount) || !ccount) return;
     if (!host->read_guest(host->context, SHOP_LIST_COUNT, &n, 4) || n > 128 ||
-        !host->read_guest(host->context, SHOP_LIST, list, n * 12)) return;
+        (n && !host->read_guest(host->context, SHOP_LIST, list, n * 12))) return;
     uint32_t kept = 0, hid = 0;
     for (uint32_t k = 0; k < n; k++) {
         uint32_t idx = list[k * 3];
@@ -4512,7 +4515,7 @@ static void shop_unhide(int only_allowed)
     if (!shop_hidden_count) return;
     if (!shop_catalogue(hashes, cats, &ccount) ||
         !host->read_guest(host->context, SHOP_LIST_COUNT, &n, 4) || n > 128 ||
-        !host->read_guest(host->context, SHOP_LIST, list, n * 12)) return;
+        (n && !host->read_guest(host->context, SHOP_LIST, list, n * 12))) return;
     unsigned left = 0;
     for (unsigned i = 0; i < shop_hidden_count; i++) {
         if (n >= 128 || (only_allowed && !shop_allowed(shop_hidden[i].hash))) {
@@ -4552,7 +4555,7 @@ static int MERC_PLUGIN_CALL cmd_shop_unlocked(void *ud, uint32_t L)
     if (!lua_arg_text(L, 1, t, sizeof(t))) return 0;
     if (!shop_catalogue(hashes, cats, &ccount) ||
         !host->read_guest(host->context, SHOP_LIST_COUNT, &n, 4) || n > 128 ||
-        !host->read_guest(host->context, SHOP_LIST, list, n * 12)) {
+        (n && !host->read_guest(host->context, SHOP_LIST, list, n * 12))) {
         if (shop_unlocked_logs < 24) {
             char line[160];
             shop_unlocked_logs++;
