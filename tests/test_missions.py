@@ -389,6 +389,25 @@ class MissionTests(unittest.TestCase):
         ret = lua[lua.index("function foundry_ReturnFromContract()"):]
         self.assertIn("Event_RelativeTimer('foundry_BackOut', 'b', 5.0)", ret)
         self.assertIn("Mission_SetupPlayerRespawn(b)", lua)
+        # the return under way is marked until the player is back (a map
+        # store's unlocks wait for it: an ace's notices came before the trip)
+        self.assertIn("bFoundryReturning = 1 Event_RelativeTimer('foundry_BackOut'", ret)
+        self.assertIn("function foundry_BackIn() Cinematic_FadeIn(0.5) bFoundryReturning = nil end", lua)
+        from mercfoundry import shop, luarun
+        its = [{"weapon": "template_support_gaza_hermes", "unlock": ("after", "sw_allies21")}]
+        unlocked = []
+        it = luarun.Interpreter()
+        it.globals["Utility_ReadNumberFromScribbleMemory"] = lambda k, *_: [1 if k.startswith("foundry_done_") else None]
+        it.globals["Utility_WriteNumberToScribbleMemory"] = lambda *a: None
+        it.globals["Event_RelativeTimer"] = lambda *a: None
+        it.globals["Shop_UnlockItem"] = lambda t, *_: unlocked.append(t)
+        it.run(shop.lua("foundry_gaza_", "gaza", its), "shop")
+        it.globals["bFoundryReturning"] = 1
+        it.call("foundry_gaza_ShopUnlocks")
+        self.assertEqual(unlocked, [])                                   # held while the return is under way
+        it.globals["bFoundryReturning"] = None
+        it.call("foundry_gaza_ShopUnlocks")
+        self.assertEqual(unlocked, ["template_support_gaza_hermes"])     # then unlocked
         for bad in ("nk", {"position": [1, 2]}, 5):
             with self.assertRaises(ValueError):
                 missions.contract("sw_allies21", dict(doc, return_to=bad), "t", "d")

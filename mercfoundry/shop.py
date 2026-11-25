@@ -298,6 +298,11 @@ def lua(prefix, map_name, shop_items, open_here=False):
             # Gaza's never unlocked anything in a minute's visit)
             f"function {prefix}ShopUnlocks()\n"
             f"Event_RelativeTimer('{prefix}ShopUnlocks', 'b', 5.0)\n"
+            # a contract's return to an HQ under way (foundry_contracts'
+            # bFoundryReturning): its unlocks and their notices after the
+            # arrival, at most 30 s later (0.336)
+            f"if bFoundryReturning and ({prefix}ShopWaits or 0) < 6 then {prefix}ShopWaits = ({prefix}ShopWaits or 0) + 1 return end\n"
+            f"{prefix}ShopWaits = 0\n"
             f"if not {prefix}ShopLooked and Foundry_Log then Foundry_Log('shop: looking at the unlocks') end\n"
             f"{prefix}ShopLooked = 1\n"
             f"{checks}"
