@@ -4655,6 +4655,26 @@ static int MERC_PLUGIN_CALL cmd_physics_probe(void *ud, uint32_t L)
     snprintf(line, sizeof(line), "physics probe: object %08X actor %08X at (%.2f, %.2f, %.2f), rotation (%.3f, %.3f, %.3f, %.3f)",
              obj, actor, pos[0], pos[1], pos[2], q[0], q[1], q[2], q[3]);
     host->log(host->context, line);
+    {   /* 0.337: the rigid body as the code reads it (physics at actor+0x2C0,
+         * its body at +0x1C, the body's core at +0x3C: rotation +0x30, then
+         * likely the linear and angular velocity +0x40/+0x50, position +0xB0),
+         * beside the object's own, so one ride says whether it's the state to
+         * correct for a bike held upright */
+        uint32_t body = 0, core = 0;
+        float cq[4] = {0}, cv[4] = {0}, cw[4] = {0}, cp[3] = {0};
+        if (host->read_guest(host->context, actor + 0x2C0u + 0x1Cu, &body, 4) && body &&
+            host->read_guest(host->context, body + 0x3Cu, &core, 4) && core) {
+            host->read_guest(host->context, core + 0x30u, cq, 16);
+            host->read_guest(host->context, core + 0x40u, cv, 16);
+            host->read_guest(host->context, core + 0x50u, cw, 16);
+            host->read_guest(host->context, core + 0xB0u, cp, 12);
+        }
+        char l2[300];
+        snprintf(l2, sizeof(l2), "physics probe: body %08X core %08X: rotation +30 (%.3f, %.3f, %.3f, %.3f), +40 (%.2f, %.2f, %.2f), "
+                 "+50 (%.2f, %.2f, %.2f), position +B0 (%.2f, %.2f, %.2f)", body, core, cq[0], cq[1], cq[2], cq[3],
+                 cv[0], cv[1], cv[2], cw[0], cw[1], cw[2], cp[0], cp[1], cp[2]);
+        host->log(host->context, l2);
+    }
     static uint32_t a[0x1200 / 4], b[0x400 / 4], cc[0x400 / 4];
     if (!host->read_guest(host->context, actor, a, sizeof(a))) return 0;
     int found = 0;
