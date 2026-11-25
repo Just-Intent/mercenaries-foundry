@@ -4052,9 +4052,27 @@ static void push_number(uint32_t L, double v)
     lua_call(MF_FN_lua_pushnumber, 3, w);
 }
 
+/* 0.333: the key Foundry_FindPlaced gives a script, and the commands take:
+ * the game's Lua numbers are single floats (24 bits), and a handle such as
+ * 496650665 came back rounded, so nothing matched it again (Gaza's pager
+ * rounds were new on every look, ProjectilePos answered nothing). The key is
+ * the object's slot (14 bits) and the low 10 bits of its handle, under 2^24:
+ * exact in a float, and a slot reused by another object doesn't match. */
+static double placed_key(unsigned slot, uint32_t handle)
+{
+    return (double)(slot + OBJECT_SLOTS * (handle & 0x3FFu));
+}
+
 static uint32_t find_slot_object(uint32_t handle)
 {
     static uint32_t objs[OBJECT_SLOTS], handles[OBJECT_SLOTS];
+    if (handle && handle < OBJECT_SLOTS * 0x400u) {
+        const uint32_t slot = handle % OBJECT_SLOTS, gen = handle / OBJECT_SLOTS;
+        uint32_t o = 0, h = 0;
+        if (!host->read_guest(host->context, OBJECTS + 4u * slot, &o, 4) ||
+            !host->read_guest(host->context, OBJECT_HANDLES + 4u * slot, &h, 4)) return 0;
+        return o && (h & 0x3FFu) == gen ? o : 0;
+    }
     if (!handle || !host->read_guest(host->context, OBJECTS, objs, sizeof(objs)) ||
         !host->read_guest(host->context, OBJECT_HANDLES, handles, sizeof(handles))) return 0;
     for (unsigned i = 0; i < OBJECT_SLOTS; i++)
@@ -4097,7 +4115,7 @@ static int MERC_PLUGIN_CALL cmd_find_placed(void *ud, uint32_t L)
         if (_stricmp(m, model) != 0 || ++seen < want) continue;
         float pos[3];
         memcpy(pos, head + WORLDOBJECT_POSITION, 12);
-        push_number(L, (double)handles[i]);
+        push_number(L, placed_key(i, handles[i]));   /* 0.333: a key a float holds */
         for (int k = 0; k < 3; k++) push_number(L, pos[k]);
         return 4;
     }
@@ -4224,6 +4242,8 @@ typedef struct {
     int n, logged;
     float pts[3 * FLY_POINTS], len[FLY_POINTS], total, at, speed;
     double look;                 /* seconds until the object is looked for (or checked) again */
+    double report;               /* 0.333: seconds until its next status line */
+    unsigned finds, reports;
 } Flyer;
 static Flyer flyers[FLY_MAX];
 static unsigned flyer_count;
@@ -4250,6 +4270,7 @@ static void fly_update(double dt)
             if (!f->obj) {
                 f->obj = live_find(f->name, "-", 0, NULL);
                 if (f->obj) {
+                    f->finds++;
                     /* 0.331: the handle the name table gave (World_ObjectFromHandle's
                      * kind), not the object's own +handle field: 0.310 kept that one,
                      * the per-frame check below never matched it, and each drone
@@ -4306,6 +4327,20 @@ static void fly_update(double dt)
         fly_point(f, f->at + 40.0f, ahead);
         float yaw = atan2f(ahead[0] - pos[0], ahead[2] - pos[2]);
         int ok = live_apply(f->obj, pos, yaw, 0);
+        /* 0.333: every 10 s (12 times): where the loop is, what was asked and
+         * where the object is, how often it was found again. A drone never
+         * seen flying: this says whether the loop runs, the move takes and
+         * it only isn't drawn there, or it keeps starting over */
+        if ((f->report -= dt) <= 0 && f->reports < 12u) {
+            f->report = 10.0;
+            f->reports++;
+            float got[3] = {0};
+            host->read_guest(host->context, f->obj + WORLDOBJECT_POSITION, got, 12);
+            char line[220];
+            snprintf(line, sizeof(line), "fly loop: %s %u: %.0f of %.0f m round, asked (%.1f, %.1f, %.1f), it's at (%.1f, %.1f, %.1f), found %u time(s)",
+                     f->name, f->reports, f->at, f->total, pos[0], pos[1], pos[2], got[0], got[1], got[2], f->finds);
+            host->log(host->context, line);
+        }
         if (f->logged < 2) {
             /* once: did the move take (the object's own position after it) */
             float got[3] = {0};
