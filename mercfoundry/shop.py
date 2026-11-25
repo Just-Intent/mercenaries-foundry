@@ -250,6 +250,11 @@ def lua(prefix, map_name, shop_items, open_here=False):
         rows.append((it["weapon"], cond))
     names = ", ".join(_lua_str(w) for w, _ in rows)
     checks = "".join(f"if {c} then {prefix}ShopUnlock({_lua_str(w)}) end\n" for w, c in rows)
+    # 0.331: what this save unlocked before, back in the list at once (the
+    # first look is 2 s in, and a trip's store looked empty until then)
+    restores = "".join(f"if Utility_ReadNumberFromScribbleMemory({_lua_str('foundry_shop_' + w)}) and "
+                       f"Foundry_ShopUnlocked and Foundry_ShopUnlocked({_lua_str(w)}) == false then "
+                       f"Foundry_ShopRestore({_lua_str(w)}) end\n" for w, _ in rows)
     return (f"-- The map's own store (maps json \"shop\", mercfoundry/shop.py): only its\n"
             f"-- items in the PDA shop here (Foundry Console), unlocked as their rules say.\n"
             f"-- Whether an item is unlocked is asked of the shop each time (Foundry\n"
@@ -282,6 +287,7 @@ def lua(prefix, map_name, shop_items, open_here=False):
             f"function {prefix}Shop()\n"
             f"if Foundry_MapShop then Foundry_MapShop({names}) end\n"
             + (f"if Foundry_MapShopOpen then Foundry_MapShopOpen() end\n" if open_here else "") +
+            f"if Foundry_ShopRestore then\n{restores}end\n" +
             # first look 2 s in: run now, before the save's list is read back,
             # every item looked locked, and each Shop_UnlockItem queued the
             # game's "new shop item" notice (0xC8560, up to 8), all shown with

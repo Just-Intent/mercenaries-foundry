@@ -90,6 +90,12 @@ class ShopTest(unittest.TestCase):
         # unlocked as often as the shop's own list lacks it (a load replaces the list)
         self.assertIn("foundry_gaza_ShopUnlock('template_support_gaza_hermes')", lua)
         self.assertIn("if Foundry_ShopUnlocked then have = Foundry_ShopUnlocked(t) end", lua)
+        # what the save unlocked before is restored as Shop() runs, not 2 s in
+        # (a trip's store looked empty until the first look)
+        body = lua[lua.index("function foundry_gaza_Shop()"):]
+        body = body[:body.index("Event_RelativeTimer")]
+        self.assertIn("Foundry_ShopRestore('template_support_gaza_hermes')", body)
+        self.assertIn("Utility_ReadNumberFromScribbleMemory('foundry_shop_template_support_gaza_hermes')", body)
         from mercfoundry import luacheck
         self.assertEqual(luacheck.check(lua), [])
         with self.assertRaises(ValueError):

@@ -4242,13 +4242,22 @@ static void fly_update(double dt)
         f->look -= dt;
         if (f->look <= 0) {
             /* found yet, and still the same object (its handle) */
-            uint32_t h = 0;
-            if (f->obj && (!host->read_guest(host->context, f->obj + MF_OFF_WorldObject_handle, &h, 4) || h != f->handle))
-                f->obj = 0;
             if (!f->obj) {
                 f->obj = live_find(f->name, "-", 0, NULL);
                 if (f->obj) {
-                    host->read_guest(host->context, f->obj + MF_OFF_WorldObject_handle, &f->handle, 4);
+                    /* 0.331: the handle the name table gave (World_ObjectFromHandle's
+                     * kind), not the object's own +handle field: 0.310 kept that one,
+                     * the per-frame check below never matched it, and each drone
+                     * was dropped, found again and put back at its nearest point
+                     * every frame (Gaza's drones hung in the air) */
+                    MercGuestCall hc;
+                    const uint32_t want = hash_name(f->name);
+                    f->handle = 0;
+                    for (unsigned j = 0; j < NAME_SLOTS && !f->handle; j++)
+                        if (name_keys[j] == want && guest(MF_FN_World_ObjectFromHandle, 0, 1, &name_handles[j], &hc) &&
+                            hc.eax == f->obj)
+                            f->handle = name_handles[j];
+                    if (!f->handle) { f->obj = 0; f->look = 1.0; continue; }
                     /* start where it stands: the nearest point of the loop */
                     float pos[3] = {0}, best = 1e30f;
                     host->read_guest(host->context, f->obj + WORLDOBJECT_POSITION, pos, 12);
@@ -4550,6 +4559,7 @@ static int MERC_PLUGIN_CALL cmd_spawn_template(void *ud, uint32_t L)
 #define SHOP_MAP_MAX 64
 static uint32_t shop_map[SHOP_MAP_MAX];
 static unsigned shop_map_count;
+#define SHOP_NOTICE_LIST 0x87BF80u   /* count + 31 hashes the port lets 0xC8560 queue (0.331) */
 static int shop_map_on;                       /* this level named its store */
 typedef struct { uint32_t entry[3], hash; } ShopHidden;
 static ShopHidden shop_hidden[128];
@@ -4756,14 +4766,35 @@ static int MERC_PLUGIN_CALL cmd_shop_unlocked(void *ud, uint32_t L)
  * unlocked: each level load after the first showed the same popups again
  * (0.305, Gaza's settlers contracts). True if the item is in the list after. */
 #define SHOP_UNLOCK_FN 0x000CDA60u
+/* 0.331: the items restored on this level, kept in the list and in stock
+ * every half second (shop_restore_poll): a trip's load empties the game's
+ * list and its read-back may come after the map's script restored them, so
+ * the store showed nothing for the first seconds after a trip (Gaza's,
+ * looked at 5-10 s in, 0.330). Forgotten as a level loads. */
+#define SHOP_WANT_MAX 32
+static uint32_t shop_want[SHOP_WANT_MAX];
+static unsigned shop_want_count;
+static int shop_restore_hash(uint32_t hash);
 static int MERC_PLUGIN_CALL cmd_shop_restore(void *ud, uint32_t L)
 {
     char t[72];
-    MercGuestCall c;
-    uint32_t args[2];
     (void)ud;
     if (!lua_arg_text(L, 1, t, sizeof(t))) return 0;
-    args[0] = hash_name(t);
+    const uint32_t h = hash_name(t);
+    unsigned w = 0;
+    while (w < shop_want_count && shop_want[w] != h) w++;
+    if (w == shop_want_count && shop_want_count < SHOP_WANT_MAX) shop_want[shop_want_count++] = h;
+    int ok = shop_restore_hash(h);
+    uint32_t push[2] = {L, (uint32_t)ok};
+    lua_call(MF_FN_Lua_PushBool, 2, push);
+    return 1;
+}
+
+static int shop_restore_hash(uint32_t hash)
+{
+    MercGuestCall c;
+    uint32_t args[2];
+    args[0] = hash;
     args[1] = 1;
     int ok = guest(SHOP_UNLOCK_FN, SHOP, 2, args, &c) && (int32_t)c.eax >= 0;
     /* 0.328: and in stock. The restore flag also sets the item's stock slot
@@ -4793,9 +4824,39 @@ static int MERC_PLUGIN_CALL cmd_shop_restore(void *ud, uint32_t L)
     uint32_t page = 0, one = 1;
     if (ok && host->read_guest(host->context, SHOP + 0x19ACu, &page, 4) && page == 0)
         guest(0x000CD6C0u, SHOP, 1, &one, &c);
-    uint32_t push[2] = {L, (uint32_t)ok};
-    lua_call(MF_FN_Lua_PushBool, 2, push);
-    return 1;
+    return ok;
+}
+
+/* every half second: each item restored on this level back in the list if
+ * the game's read-back dropped it, and back in stock if it came back out */
+static void shop_restore_poll(void)
+{
+    static uint32_t hashes[128], cats[128], list[128 * 3];
+    static unsigned said;
+    uint32_t ccount = 0, n = 0;
+    if (!shop_want_count || shop_saving || !shop_catalogue(hashes, cats, &ccount) ||
+        !host->read_guest(host->context, SHOP_LIST_COUNT, &n, 4) || n > 128 ||
+        (n && !host->read_guest(host->context, SHOP_LIST, list, n * 12))) return;
+    for (unsigned w = 0; w < shop_want_count; w++) {
+        int at = -1, hidden = 0;
+        for (uint32_t k = 0; k < n && at < 0; k++)
+            if (list[k * 3] < ccount && hashes[list[k * 3]] == shop_want[w]) at = (int)k;
+        for (unsigned i = 0; i < shop_hidden_count && !hidden; i++) hidden = shop_hidden[i].hash == shop_want[w];
+        if (hidden) continue;
+        if (at < 0) {
+            shop_restore_hash(shop_want[w]);
+            if (said < 16u) {
+                said++;
+                char line[120];
+                snprintf(line, sizeof(line), "map shop: %08X back in the list again (the game's list came back without it)", shop_want[w]);
+                host->log(host->context, line);
+            }
+        } else if ((int32_t)list[at * 3 + 1] < 0) {
+            MercGuestCall c;
+            uint32_t a[2] = {(uint32_t)at, 0};
+            guest(0x000C8B60u, SHOP, 2, a, &c);
+        }
+    }
 }
 
 /* Foundry_MapShopOpen(): the PDA shop open on this map whatever the game's
@@ -4849,6 +4910,7 @@ static void shop_poll(double dt)
     shop_timer = 0;
     shop_unhide(1);
     shop_hide();
+    shop_restore_poll();
     int empty_logged = shop_empty_logged;
     uint32_t n = 1;
     host->read_guest(host->context, SHOP_LIST_COUNT, &n, 4);
@@ -4887,6 +4949,8 @@ static void shop_level_reset(void)
     shop_hidden_count = 0;
     shop_map_on = 0;
     shop_map_count = 0;
+    shop_want_count = 0;
+    { uint32_t z = 0; host->write_guest(host->context, SHOP_NOTICE_LIST, &z, 4); }   /* every notice again (0.331) */
     shop_timer = 0;
     shop_empty_logged = 0;                     /* each level says so again */
     shop_unlocked_logs = 0;
@@ -4904,6 +4968,15 @@ static int MERC_PLUGIN_CALL cmd_map_shop(void *ud, uint32_t L)
         if (lua_arg_text(L, i, t, sizeof(t)) && t[0]) shop_map[shop_map_count++] = hash_name(t);
     }
     shop_map_on = 1;
+    {   /* 0.331: the port's 0xC8560 queues a "new item" notice only for these
+         * (count, then up to 31 hashes at 0x87BF80): another map's or the
+         * game's item unlocked here (a contract's own reward) showed its
+         * notice blank before the plugin's half-second pass could drop it */
+        uint32_t list[32] = {0};
+        list[0] = shop_map_count < 31u ? shop_map_count : 31u;
+        for (uint32_t i = 0; i < list[0]; i++) list[1 + i] = shop_map[i];
+        host->write_guest(host->context, SHOP_NOTICE_LIST, list, sizeof(list));
+    }
     char line[96];
     snprintf(line, sizeof(line), "map shop: this map's store sells %u items (the rest hidden here)", shop_map_count);
     host->log(host->context, line);
