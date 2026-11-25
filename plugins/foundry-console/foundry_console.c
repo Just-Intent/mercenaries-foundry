@@ -1097,6 +1097,26 @@ static void hud_command(const char *line)
                 read_text(c.eax, value, sizeof(value));
                 if (value[0]) k += snprintf(line + k, sizeof(line) - k, " %s=%s", props[p], value);
             }
+            /* 0.340: for an actor, what decides whether it can be hurt and how it
+             * answers: the invincible bit Actor_IsInvincible reads (actor +0x124
+             * bit 0, 0x115E50), its AI (vtable +0xBC, as Lua_ArgAi finds it) and
+             * how many object slots point at the same actor (0.339's probe of
+             * Gaza's unshootable Grove soldiers showed nothing else apart) */
+            uint32_t actor = 0;
+            if (host->read_guest(host->context, list[i].object + MF_OFF_WorldObject_actor, &actor, 4) && actor &&
+                k < (int)sizeof(line) - 80) {
+                uint8_t inv = 0;
+                int okai = 0;
+                host->read_guest(host->context, actor + 0x124u, &inv, 1);
+                const uint32_t ai = vcall(actor, 0xBC, 0, NULL, &okai);
+                unsigned same = 0;
+                for (unsigned j = 0; j < n; j++) {
+                    uint32_t aj = 0;
+                    if (host->read_guest(host->context, list[j].object + MF_OFF_WorldObject_actor, &aj, 4) && aj == actor) same++;
+                }
+                k += snprintf(line + k, sizeof(line) - k, " actor=%08X invincible=%u ai=%08X objects=%u",
+                              actor, inv & 1u, okai ? ai : 0u, same);
+            }
             host->log(host->context, line);
             logged++;
         }
