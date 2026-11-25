@@ -1166,6 +1166,21 @@ static void hud_command(const char *line)
                     }
                     k += snprintf(line + k, sizeof(line) - k, " inworld_body=%u broadphase=%08X type=%u island=%08X active=%u index=%d",
                                   body && bworld && bworld == gworld, bph, btype, island, iact, (int32_t)iidx);
+                    /* 0.347: the body's +0xB8 link, through which a round's ignore
+                     * chain (the shooter's body and those linked to it, 0x12B6F0)
+                     * and the per-frame move (0x12C200) walk: a soldier's body in
+                     * the player's chain would be skipped by the player's rounds
+                     * (no impact at all) while splash still kills him. The chain
+                     * is walked from this body, up to 12 links */
+                    if (body && k < (int)sizeof(line) - 160) {
+                        uint32_t at = body, chain[12];
+                        unsigned nc = 0;
+                        while (nc < 12u && host->read_guest(host->context, at + 0xB8u, &at, 4) && at && at != body)
+                            chain[nc++] = at;
+                        k += snprintf(line + k, sizeof(line) - k, " linked=%u:", nc);
+                        for (unsigned c = 0; c < nc && k < (int)sizeof(line) - 12; c++)
+                            k += snprintf(line + k, sizeof(line) - k, " %08X", chain[c]);
+                    }
                     const char *kind = shape == 0x37A320u ? "capsule" : shape == 0x37A380u ? "SLAB" :
                                        shape == 0x37A350u ? "long capsule" : shape == 0x37A2F0u ? "other capsule" : "?";
                     k += snprintf(line + k, sizeof(line) - k,
