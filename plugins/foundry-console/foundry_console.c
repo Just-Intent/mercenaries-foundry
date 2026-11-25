@@ -4110,7 +4110,8 @@ static int MERC_PLUGIN_CALL cmd_find_placed(void *ud, uint32_t L)
  * flies; the projectile (the object's actor) moves its own: 0x212E0, its
  * detonation, reads +0x2B4 when its +0x2F8 has bit 8 and +0x268 otherwise,
  * and 0x1A490 steps +0x2A8 -> +0x2B4. Gives x, y, z and that flag (1 in
- * flight's position, 0 the other), or nothing (no such object, no actor, or
+ * flight's position, 0 the other; +2B4 too while +268 is still zero), then
+ * +2B4's x, y, z (0.332), or nothing (no such object, no actor, or
  * a position that isn't a number or is over 2 km from the object's). The
  * first answer for each of 8 handles is logged with both positions. From the
  * game's code, not yet seen in game: check its log against FindPlaced's. */
@@ -4129,7 +4130,10 @@ static int MERC_PLUGIN_CALL cmd_projectile_pos(void *ud, uint32_t L)
         !host->read_guest(host->context, actor + 0x2B4u, a, 12) || !host->read_guest(host->context, actor + 0x268u, b, 12) ||
         !host->read_guest(host->context, actor + 0x2F8u, &flag, 1)) return 0;
     const int flying = (flag & 8) != 0;
-    const float *p = flying ? a : b;
+    /* 0.332: +268 is zero on a round's first frames (Gaza's pager, flag 00):
+     * then +2B4, which is already away from the release point */
+    const int b_zero = b[0] == 0.0f && b[1] == 0.0f && b[2] == 0.0f;
+    const float *p = flying || b_zero ? a : b;
     static uint32_t said[8];
     int known = 0;
     for (unsigned i = 0; i < 8 && !known; i++) known = said[i] == handle;
@@ -4145,7 +4149,8 @@ static int MERC_PLUGIN_CALL cmd_projectile_pos(void *ud, uint32_t L)
         if (!(p[k] == p[k]) || fabsf(p[k] - wp[k]) > 2000.0f) return 0;
     for (int k = 0; k < 3; k++) push_number(L, p[k]);
     push_number(L, flying ? 1.0 : 0.0);
-    return 4;
+    for (int k = 0; k < 3; k++) push_number(L, a[k]);   /* 0.332: +2B4 as well */
+    return 7;
 }
 
 /* Foundry_AiAlert(actor): the actor's AI alert level, as the AI keeps it:
