@@ -3048,9 +3048,9 @@ def _new_animtables(data, folder, result):
         spec = json.loads(f.read_text(encoding="utf-8"))
         if not isinstance(spec, dict):
             raise ValueError(f"{where}: give {{\"base\": <table>, \"fallback\": <table>, \"add\": {{<table>: [handles]}}}}")
-        unknown = set(spec) - {"base", "fallback", "add", "set"}
+        unknown = set(spec) - {"base", "fallback", "add", "set", "remove"}
         if unknown:
-            raise ValueError(f"{where}: unknown keys {', '.join(sorted(unknown))} (base, fallback, add, set)")
+            raise ValueError(f"{where}: unknown keys {', '.join(sorted(unknown))} (base, fallback, add, set, remove)")
 
         def table(n, what):
             hit = tables.get(name_hash(str(n)))
@@ -3140,6 +3140,26 @@ def _new_animtables(data, folder, result):
                                            "priority": val.get("priority", 40), "flags": str(val.get("flags", "0x5"))})
             clips_added.add(val["anim"])
             n_set += 1
+        # "remove": [<handle or pattern>, ...]: those handles gone from every
+        # set, so the game plays nothing for them (with no "fallback"), as a
+        # table that never had them: a motorbike's rider on small_class's
+        # get-in and get-out clips without its door opening and closing
+        # (nk_veh_jeepmgun's table has no door handles; 0.345)
+        remove = spec.get("remove") or []
+        if isinstance(remove, str):
+            remove = [remove]
+        if not isinstance(remove, list) or not all(isinstance(x, str) and x for x in remove):
+            raise ValueError(f"{where}: \"remove\" is [<handle or pattern>, ...]")
+        n_removed = 0
+        for pat in remove:
+            hit = 0
+            for st in doc["sets"]:
+                keep = [e for e in st["entries"] if not fnmatch.fnmatch(e["handle"].lower(), pat.lower())]
+                hit += len(st["entries"]) - len(keep)
+                st["entries"] = keep
+            if not hit:
+                raise ValueError(f"{where}: \"remove\": {base} has no handle matching {pat!r}")
+            n_removed += hit
         data.new("assets.dsk", key, animtable.ANIMTABLE, animtable.from_json(doc))
         # loaded where the base is: in the template layer every level loads
         # (LEVEL_TEMPLATE_LAYERS: template_humans has the people's tables)
@@ -3171,6 +3191,7 @@ def _new_animtables(data, folder, result):
                               + (f" falling back on {fallback}" if fallback else "")
                               + (f", {added} entries added from {', '.join(add)}" if added else "")
                               + (f", {n_set} handles set" if n_set else "")
+                              + (f", {n_removed} entries removed" if n_removed else "")
                               + (f"; loads with {next(n for n in LEVEL_TEMPLATE_LAYERS if name_hash(n) == level[0][1].key)} on every level" if level else f"; loads where {base} does ({lists} load lists)"))
         if not lists:
             result.warnings.append(f"{where}: no load list loads {base}, so nothing loads {name}")

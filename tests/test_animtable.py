@@ -161,6 +161,18 @@ class NewClipModTests(unittest.TestCase):
             entries = {e["handle"]: e for e in got["sets"][0]["entries"]}
             self.assertEqual((entries["lb_run"]["anim"], entries["lb_run"]["priority"]), ("dig_loop", 40))
             self.assertEqual((entries["fb_new"]["anim"], entries["fb_new"]["flags"]), ("dig_loop", "0x1"))
+            # "remove": handles gone from every set (a bike's rider without the door clips)
+            (d / "proj" / "animtables" / "my_guy.new.json").write_text(json.dumps(
+                {"base": "guy_table", "remove": ["lb_*"]}))
+            result = modbuild.build(d / "proj", d / "data", d / "out3")
+            got = animtable.to_json({r.key: dsk.Archive(d / "out3" / "assets.dsk").read(r)
+                                     for r in dsk.Archive(d / "out3" / "assets.dsk").records}[name_hash("my_guy")])
+            self.assertFalse(any(e["handle"].startswith("lb_") for s in got["sets"] for e in s["entries"]))
+            self.assertTrue(any("entries removed" in c for c in result.changes))
+            (d / "proj" / "animtables" / "my_guy.new.json").write_text(json.dumps(
+                {"base": "guy_table", "remove": ["fb_no_such_*"]}))
+            with self.assertRaises(ValueError):
+                modbuild.build(d / "proj", d / "data", d / "out4")
 
     def test_new_name_clash_is_an_error(self):
         with tempfile.TemporaryDirectory() as tmp:
