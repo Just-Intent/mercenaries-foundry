@@ -4546,6 +4546,33 @@ static void shop_cat_add(uint32_t cat, int by)
     host->write_guest(host->context, SHOP_CAT_COUNTS + 4 * cat, &n, 4);
 }
 
+/* The game's "new shop item" notices (0xC8560: up to 8 template hashes at
+ * +0xE37C of the PDA display object [0x34ABC8+0x24], count at +0xE378): one
+ * queued for an item hidden on this map is dropped (0.322). Gaza's first
+ * Settlers contract unlocked a game item at its end (the retail slot's own
+ * reward), hidden here, and its notice showed blank before the map's own. */
+static void shop_drop_hidden_notices(void)
+{
+    uint32_t pda = 0, n = 0, q[8];
+    if (!shop_hidden_count || !host->read_guest(host->context, SHOP + 0x24u, &pda, 4) || !pda ||
+        !host->read_guest(host->context, pda + 0xE378u, &n, 4) || !n || n > 8u ||
+        !host->read_guest(host->context, pda + 0xE37Cu, q, n * 4)) return;
+    uint32_t kept = 0;
+    for (uint32_t i = 0; i < n; i++) {
+        int hidden = 0;
+        for (unsigned k = 0; k < shop_hidden_count && !hidden; k++) hidden = shop_hidden[k].hash == q[i];
+        if (!hidden) { q[kept++] = q[i]; continue; }
+        const char *name = name_for_hash(q[i]);
+        char line[160];
+        snprintf(line, sizeof(line), "map shop: the \"new item\" notice for %s (%08X) dropped: it's hidden on this map",
+                 name ? name : "an item", q[i]);
+        host->log(host->context, line);
+    }
+    if (kept == n) return;
+    host->write_guest(host->context, pda + 0xE37Cu, q, kept * 4);
+    host->write_guest(host->context, pda + 0xE378u, &kept, 4);
+}
+
 static void shop_hide(void)
 {
     static uint32_t hashes[128], cats[128], list[128 * 3];
@@ -4568,14 +4595,22 @@ static void shop_hide(void)
         shop_cat_add(cats[idx], -1);
         hid++;
     }
-    if (!hid) return;
+    if (!hid) { shop_drop_hidden_notices(); return; }
     host->write_guest(host->context, SHOP_LIST, list, kept * 12);
     host->write_guest(host->context, SHOP_LIST_COUNT, &kept, 4);
     if (!shop_saving) {
-        char line[96];
-        snprintf(line, sizeof(line), "map shop: %u items hidden on this map (%u shown)", hid, kept);
+        char line[200], names[120] = "";
+        int used = 0;
+        for (unsigned i = shop_hidden_count - hid, m = 0; i < shop_hidden_count && m < 3u && used < (int)sizeof(names) - 2; i++, m++) {
+            const char *nm = name_for_hash(shop_hidden[i].hash);
+            used += nm ? snprintf(names + used, sizeof(names) - used, "%s%s", m ? ", " : "", nm)
+                       : snprintf(names + used, sizeof(names) - used, "%s%08X", m ? ", " : "", shop_hidden[i].hash);
+        }
+        snprintf(line, sizeof(line), "map shop: %u items hidden on this map (%u shown): %s%s", hid, kept, names,
+                 hid > 3u ? ", ..." : "");
         host->log(host->context, line);
     }
+    shop_drop_hidden_notices();
 }
 
 /* all hidden entries back in the list, or (only_allowed) those allowed now:
