@@ -350,8 +350,11 @@ def add_game_squads(doc, squads):
 LAYER_KINDS = ("world", "encounter", "path", "lineregion", "region")
 # Properties that name a model the object draws: its own, its ruin, its
 # wheels, a helicopter's break-up pieces (geometryNameRuinA/B, with their
-# nodeNameRuinA/B). A model one names must load wherever the object does.
-MODEL_PROPERTIES = ("geometryfile", "geometrynameruined", "geometrynamewheel", "geometrynameruina", "geometrynameruinb")
+# nodeNameRuinA/B), a weapon's thrown round (GeometryFileDependent: the
+# model its projectile draws; Gaza's thrown pager was in no list, 0.323).
+# A model one names must load wherever the object does.
+MODEL_PROPERTIES = ("geometryfile", "geometrynameruined", "geometrynamewheel", "geometrynameruina", "geometrynameruinb",
+                    "geometryfiledependent")
 
 
 def parse_list(text):
