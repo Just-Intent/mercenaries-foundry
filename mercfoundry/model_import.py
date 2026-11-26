@@ -646,6 +646,7 @@ def import_pieces(model_record: bytes, segments_record: bytes, objs: list,
                 report.collision_boxes_moved += len(moved)
             new_items[where] = (b"cshp", body)
         wanted = []  # (piece joint, centre, half) in that joint's space
+        big = []     # pieces whose box is a solid block, metres across on every side
         for k, plan in enumerate(plans):
             if plan[0] is not None or not new_locals[k]:
                 continue
@@ -659,6 +660,14 @@ def import_pieces(model_record: bytes, segments_record: bytes, objs: list,
             centre3 = tuple((lo3[a] + hi3[a]) / 2 for a in range(3))
             half3 = tuple(max((hi3[a] - lo3[a]) / 2, 0.01) for a in range(3))
             wanted.append((plan[2], centre3, half3))
+            def on_face(q):
+                return any(min(abs(q[a] - lo3[a]), abs(q[a] - hi3[a])) <= max(0.15, 0.1 * half3[a]) for a in range(3))
+            if min(half3) > 0.75 and sum(map(on_face, pts)) < 0.6 * len(pts):
+                # 0.350: a piece's box is solid, and most of the piece isn't on
+                # its faces: a crown of leaves, a tent's slopes or a building's
+                # open shell made one block that stopped bullets and the player
+                # metres from anything drawn (Gaza's olive trees)
+                big.append((plan[1].name, tuple(round(2 * h, 1) for h in half3)))
 
         def into(target):
             """Boxes re-expressed in the target joint's space (rows = axes)."""
@@ -675,6 +684,15 @@ def import_pieces(model_record: bytes, segments_record: bytes, objs: list,
                 out.append((c, half3, tuple(rows)))
             return out
 
+        if big:
+            big.sort(key=lambda b: -b[1][0] * b[1][1] * b[1][2])
+            report.warnings.append(
+                f"{len(big)} piece{'s' if len(big) != 1 else ''} got a solid collision box "
+                + ", ".join(f"{n} {x} x {y} x {z} m" for n, (x, y, z) in big[:4])
+                + (" ..." if len(big) > 4 else "")
+                + ": bullets and the player stop at the box, not at what's drawn. For a building, rocks or "
+                  "a hollow shape use \"collision\": \"mesh\"; for a tree \"collision\": \"base\" (the base's "
+                  "trunk) or \"nocoll\" in the leaves' piece name")
         if wanted:
             where = next((k for k, (t, _) in enumerate(new_items) if t == b"cshp"), None)
             materials = [sh.material for sh in model.collision]

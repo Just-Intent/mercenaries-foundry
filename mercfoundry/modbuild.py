@@ -4359,7 +4359,8 @@ def _new_models(data, folder, result):
                                  if report.edited or report.kept else "")
                               + f" ({len(empty.pieces) - len(in_file)} of the base's pieces left out)"
                               + (", without the base's shadow" if dropped_shadow else ""))
-        result.warnings += [f"model {name}: {w}" for w in report.warnings]
+        result.warnings += [f"model {name}: {w}" for w in report.warnings
+                            if not ((vehicle or spec_doc.get("collision") in ("base", "mesh")) and "solid collision box" in w)]
     return made
 
 

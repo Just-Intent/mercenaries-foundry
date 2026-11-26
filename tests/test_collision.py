@@ -145,6 +145,24 @@ class ImportCollisionTests(unittest.TestCase):
         tris = m2.collision_triangles()
         self.assertAlmostEqual(max(v[0] for t in tris for v in t), 6.0, places=3)
 
+    def test_solid_box_round_a_scattered_piece_is_warned(self):
+        # 0.350: a crown of leaves (points spread through its box) made one
+        # solid block; a box-shaped piece (every point on a face) is fine
+        obj, _ = model.to_obj(self.m, 0)
+        lines = obj.splitlines()
+        nv = sum(1 for l in lines if l.startswith("v "))
+        pts = [(5, 0, 0), (8, 0, 0), (5, 3, 0), (5, 0, 3), (8, 3, 3)] + [(6.5, 1.5, 1.5), (6, 1, 2), (7, 2, 1), (6.2, 1.8, 1.1)] * 2
+        lines += ["o leaves", "usemtl tex"] + [f"v {-x} {y} {-z}" for x, y, z in pts]
+        lines += [f"f {nv + i + 1} {nv + i + 2} {nv + i + 3}" for i in range(0, len(pts) - 2, 3)]
+        nm, ns, rep = mi.import_obj(self.mr, self.sr, "\n".join(lines) + "\n")
+        self.assertEqual(rep.collision_boxes, 1)
+        self.assertTrue(any("solid collision box leaves 3.0 x 3.0 x 3.0 m" in w for w in rep.warnings), rep.warnings)
+        cube = [(5, 0, 0), (8, 0, 0), (5, 3, 0), (5, 0, 3), (8, 3, 3), (8, 3, 0), (8, 0, 3), (5, 3, 3)]
+        lines = obj.splitlines() + ["o block", "usemtl tex"] + [f"v {-x} {y} {-z}" for x, y, z in cube]
+        lines += [f"f {nv + 1} {nv + 2} {nv + 3}", f"f {nv + 4} {nv + 5} {nv + 6}", f"f {nv + 6} {nv + 7} {nv + 8}"]
+        nm, ns, rep = mi.import_obj(self.mr, self.sr, "\n".join(lines) + "\n")
+        self.assertFalse(any("solid collision box" in w for w in rep.warnings), rep.warnings)
+
     def test_collision_can_be_turned_off(self):
         nm, ns, rep = mi.import_obj(self.mr, self.sr, self.obj_with(["new_arm"]), collision=False)
         self.assertEqual(rep.collision_boxes, 0)
