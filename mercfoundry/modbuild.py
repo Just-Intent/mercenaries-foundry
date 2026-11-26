@@ -3378,6 +3378,15 @@ def map_script(name, doc, layers, pilots=(), contacts=False, extra=(), hqs=None,
     from .missions import _lua_str, travel_lua
     lines = [f"-- {name}: written by mercfoundry from maps/{name}.json (scripts/{name}.lua replaces it)",
              "function ScriptInit()",
+             # 0.364: the player's money back. Retail's maps call
+             # Utility_LoadPlayerData in global's ScriptInit, which sets it from
+             # the script value PlayerMoney (0x189490; Utility_SavePlayerData
+             # and every save write it); a new map never did, so on Gaza the
+             # player kept a new actor's $0 after a load or a trip. Only the
+             # money: the rest of the player data holds the faction relations,
+             # which the map's own moods swap
+             "local nFoundryMoney = Utility_ReadNumberFromScribbleMemory('PlayerMoney')",
+             "if nFoundryMoney then Player_SetMoney(nFoundryMoney) end   -- the player's money, as retail's maps restore it",
              "Debug_EnableCallStack(false)",
              "bDebugOutput = false",
              "bHudOutput = false",

@@ -66,6 +66,7 @@ class Game:
         self.stubbed = {}
         self.errors = []
         self.shop = set()           # the PDA shop's unlocked list
+        self.money = 0.0            # the player's (0.364: a level load builds a new player with none)
         self.popups = []            # "new support item" notices, in order
         self.pda = {}               # the card keys the PDA was built from
 
@@ -149,7 +150,9 @@ class Game:
             # numbers the scripts do sums with (the low end of a random range)
             "Utility_GetRandomFloat": lambda lo=0.0, hi=1.0, *a: (float(lo or 0),),
             "Utility_GetRandomInt": lambda lo=0.0, hi=1.0, *a: (float(lo or 0),),
-            "Player_GetMoney": lambda *a: (0.0,),
+            "Player_GetMoney": lambda *a: (self.money,),
+            "Player_SetMoney": lambda v=0.0, *a: (setattr(self, "money", float(v or 0)), ())[1],
+            "Player_AdjustMoney": lambda v=0.0, *a: (setattr(self, "money", self.money + float(v or 0)), ())[1],
             "Actor_GetPosition": lambda *a: (0.0, 0.0, 0.0),
             "Actor_GetYaw": lambda *a: (0.0,),
             "Location_GetPosition": lambda *a: (0.0, 0.0, 0.0),
@@ -166,10 +169,15 @@ class Game:
 
     def save_player_data(self):
         self.scribble["__playerdata_shop"] = " ".join(sorted(self.shop))
+        # the money as the game keeps it: script value PlayerMoney (0x189490 reads it)
+        self.scribble["PlayerMoney"] = "%f" % self.money
         for f in MOOD_FACTIONS:
             self.scribble[f"__playerdata_{f}"] = "%f" % self.relations.get((f, "prokat"), 0.0)
 
     def load_player_data(self):
+        money = self.scribble.get("PlayerMoney")
+        if money is not None:
+            self.money = float(money)
         shop = self.scribble.get("__playerdata_shop")
         if shop is not None:
             self.shop = set(shop.split())
@@ -209,6 +217,7 @@ class Game:
         self.level = m
         self.log.append(f"[sim] level {m}")
         self.timers = []
+        self.money = 0.0            # a new player: its money comes back only from PlayerMoney
         self.shop = set()           # a level load empties the list (the save's restore, or the
                                     # level's own unlocks, fill it again)
         self.lua = Interpreter()

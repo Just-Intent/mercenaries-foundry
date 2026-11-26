@@ -94,9 +94,13 @@ class GameSimTests(unittest.TestCase):
         isle0 = {k: 0.0 for k in SW_MOODS}
         g.load_level("sw"); g.advance(5)
         self.where("sw", SW_MOODS, sw_intel)
+        g.money = 1500.0
         g.travel("isle"); g.advance(5)
         # its own moods, and every suit empty there (not SW's hearts)
         self.where("isle", isle0, {s: 0.0 for s in sw_intel})
+        # 0.364: one wallet: the money came along (a new map restores PlayerMoney)
+        self.assertEqual(g.money, 1500.0)
+        g.money = 2750.0
         g.relations[("china", "prokat")] = -0.8
         g.scribble["clubs2status"] = "killed"
         g.scribble["iCurrentIntelclubs"] = "%f" % 2
@@ -107,8 +111,11 @@ class GameSimTests(unittest.TestCase):
         self.where("sw", SW_MOODS, sw_intel)
         self.assertEqual(g.card("clubs", 2), None)
         # the save made there: it wakes on SW, goes back, and has its own
+        self.assertEqual(g.money, 2750.0)
+        g.money = 99.0
         g.load_save(saved); g.advance(10)
         self.where("isle", isle1, isle_intel)
+        self.assertEqual(g.money, 2750.0)   # the save's money, not a new player's $0
         self.assertEqual(g.card("clubs", 5), None)
         g.load_save(g.save()); g.advance(10)
         self.where("isle", isle1, isle_intel)
