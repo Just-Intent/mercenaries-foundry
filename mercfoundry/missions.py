@@ -2564,7 +2564,8 @@ function {P}HqUnpark(f)
 Utility_WriteStringToScribbleMemory('foundry_hq_park_' .. f, '')
 end
 -- Each level load (free roam or a contract): a vehicle kept by {P}HqPark
--- comes back at its HQ's parking spot, 2 s in (the world around it loaded).
+-- comes back at its HQ's parking spot, 10 s in (the world around it loaded:
+-- 0.373, a helicopter spawned 2 s in sat 2.6 m up on nothing for good).
 function {P}HqParked()
 for f, h in {P}Hq do
 local t = h.park and Utility_ReadStringFromScribbleMemory('foundry_hq_park_' .. f)
@@ -2578,7 +2579,7 @@ end
 end
 end
 function {P}HqParkedSoon()
-Event_RelativeTimer('{P}HqParked', 'b', 2.0)
+Event_RelativeTimer('{P}HqParked', 'b', 10.0)
 end
 function {P}HqArm()
 if not {P}HqCarWatch then
