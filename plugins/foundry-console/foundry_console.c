@@ -108,6 +108,7 @@ static void ground_probe_poll(double dt);
 static void maptemplate_poll(double dt);
 static void any_captive_poll(double dt);
 static void shop_poll(double dt);
+static void upright_update(double dt);
 static void shop_level_reset(void);
 static int MERC_PLUGIN_CALL cmd_sample(void *ud, uint32_t L);
 static int MERC_PLUGIN_CALL cmd_label(void *ud, uint32_t L);
@@ -1461,6 +1462,7 @@ static int MERC_PLUGIN_CALL on_update(void *ud, const MercPluginUpdate *u)
     if (sample_playing) heap_watch(u->wall_delta_seconds);
     if (sample_playing) pool_watch(u->wall_delta_seconds);
     if (sample_playing) fly_update(u->wall_delta_seconds);
+    if (sample_playing) upright_update(u->wall_delta_seconds);
     live_update(u->wall_delta_seconds);
     maptex_poll(u->wall_delta_seconds);
     maptext_poll(u->wall_delta_seconds);
@@ -3630,6 +3632,176 @@ static void scribble_report(char *line, size_t size)
              : used > 16384u ? " (past retail's 16 KB: the port packs them into the save)" : "");
 }
 
+/* Foundry_KeepUpright(template, strength, lean) (0.349): every vehicle
+ * spawned from that template is held at no roll, so a motorbike can stand on
+ * its two wheels in line without outrigger wheels. Read from Gaza's rides
+ * (0.337 probe): the physics body is at actor+0x2C0 +0x1C, its core at
+ * +0x3C, with the rotation quaternion (x, y, z, w) at core+0x30, the linear
+ * velocity at +0x40 and the angular velocity at +0x50 (world axes, rad/s),
+ * position +0xB0; the world object copies the core's rotation. Each frame
+ * the roll part of the angular velocity (about the body's forward axis) is
+ * replaced by a rate that turns the body's up toward the wanted up; pitch
+ * and yaw are left to the wheels. strength 0..1 is how much of that
+ * replacement is made each frame (1 holds hard; 0 stops the hold); lean
+ * 0..1 tilts the wanted up into a turn by that share of the physical lean
+ * (v x yaw rate / g), at most 30 degrees. Looked for within 250 m of the
+ * player twice a second. Returns how many templates are held. */
+#define UPRIGHT_MAX 8
+#define UPRIGHT_TRACK 32
+typedef struct { uint32_t hash; float strength, lean; } UprightRule;
+typedef struct { uint32_t obj, actor; int rule; } UprightTrack;
+static void push_number(uint32_t L, double v);
+static UprightRule upright[UPRIGHT_MAX];
+static unsigned upright_count;
+static UprightTrack upright_track[UPRIGHT_TRACK];
+static unsigned upright_tracked;
+static double upright_rescan;
+static uint32_t upright_objects[OBJECT_SLOTS];
+
+static void qrot(const float *q, const float *v, float *out)
+{
+    /* v' = q v q*, q = (x, y, z, w) */
+    const float x = q[0], y = q[1], z = q[2], w = q[3];
+    const float tx = 2.0f * (y * v[2] - z * v[1]), ty = 2.0f * (z * v[0] - x * v[2]), tz = 2.0f * (x * v[1] - y * v[0]);
+    out[0] = v[0] + w * tx + (y * tz - z * ty);
+    out[1] = v[1] + w * ty + (z * tx - x * tz);
+    out[2] = v[2] + w * tz + (x * ty - y * tx);
+}
+
+static float v3dot(const float *a, const float *b) { return a[0] * b[0] + a[1] * b[1] + a[2] * b[2]; }
+static void v3cross(const float *a, const float *b, float *o)
+{
+    o[0] = a[1] * b[2] - a[2] * b[1]; o[1] = a[2] * b[0] - a[0] * b[2]; o[2] = a[0] * b[1] - a[1] * b[0];
+}
+static int v3norm(float *a)
+{
+    const float n = sqrtf(v3dot(a, a));
+    if (!(n > 1e-5f)) return 0;
+    a[0] /= n; a[1] /= n; a[2] /= n;
+    return 1;
+}
+
+static void upright_scan(void)
+{
+    upright_tracked = 0;
+    uint32_t player = find_player();
+    float m[16];
+    if (!player || !host->read_guest(host->context, player + MF_OFF_Actor_transform, m, sizeof(m)) ||
+        !host->read_guest(host->context, OBJECTS, upright_objects, sizeof(upright_objects))) return;
+    static uint32_t blocks[0x1000], hashes[0x1000];
+    uint32_t want[UPRIGHT_MAX] = {0};
+    if (!host->read_guest(host->context, MF_VAR_g_TemplateTable + 8, blocks, sizeof(blocks)) ||
+        !host->read_guest(host->context, MF_VAR_g_TemplateTable + 0x4008, hashes, sizeof(hashes))) return;
+    int any = 0;
+    for (unsigned r = 0; r < upright_count; r++)
+        for (unsigned i = 0; i < 0x1000; i++)
+            if (upright[r].strength > 0 && hashes[i] == upright[r].hash) { want[r] = blocks[i]; any |= blocks[i] != 0; break; }
+    if (!any) return;
+    for (unsigned i = 0; i < OBJECT_SLOTS && upright_tracked < UPRIGHT_TRACK; i++) {
+        const uint32_t obj = upright_objects[i];
+        unsigned char head[0x34];
+        uint32_t block = 0, actor = 0;
+        if (!obj || !host->read_guest(host->context, obj, head, sizeof(head))) continue;
+        uint16_t flags;
+        float pos[3];
+        memcpy(&flags, head + MF_OFF_WorldObject_flags, 2);
+        if (!(flags & 1) || (flags & 4)) continue;
+        memcpy(pos, head + WORLDOBJECT_POSITION, 12);
+        const float dx = pos[0] - m[12], dz = pos[2] - m[14];
+        if (!(dx * dx + dz * dz <= 250.0f * 250.0f)) continue;
+        if (!host->read_guest(host->context, obj + MF_OFF_WorldObject_template, &block, 4) || !block) continue;
+        for (unsigned r = 0; r < upright_count; r++)
+            if (want[r] && want[r] == block &&
+                host->read_guest(host->context, obj + MF_OFF_WorldObject_actor, &actor, 4) && actor) {
+                upright_track[upright_tracked++] = (UprightTrack){obj, actor, (int)r};
+                break;
+            }
+    }
+}
+
+static void upright_update(double dt)
+{
+    if (!upright_count) return;
+    if ((upright_rescan -= dt) <= 0) { upright_rescan = 0.5; upright_scan(); }
+    for (unsigned t = 0; t < upright_tracked; t++) {
+        const UprightTrack *k = &upright_track[t];
+        const UprightRule *r = &upright[k->rule];
+        uint32_t actor = 0, body = 0, core = 0;
+        if (!host->read_guest(host->context, k->obj + MF_OFF_WorldObject_actor, &actor, 4) || actor != k->actor ||
+            !host->read_guest(host->context, actor + 0x2C0u + 0x1Cu, &body, 4) || !body ||
+            body < 0x10000u || body >= 0x04000000u ||
+            !host->read_guest(host->context, body + 0x3Cu, &core, 4) || !core || core < 0x10000u || core >= 0x04000000u)
+            continue;
+        float q[4], v[4], w[4];
+        if (!host->read_guest(host->context, core + 0x30u, q, 16) || !host->read_guest(host->context, core + 0x40u, v, 12) ||
+            !host->read_guest(host->context, core + 0x50u, w, 12)) continue;
+        const float qn = sqrtf(q[0] * q[0] + q[1] * q[1] + q[2] * q[2] + q[3] * q[3]);
+        if (!(qn > 0.9f && qn < 1.1f)) continue;
+        static const float Y[3] = {0, 1, 0}, Z[3] = {0, 0, 1};
+        float up[3], f[3], want[3] = {0, 1, 0};
+        qrot(q, Y, up);
+        qrot(q, Z, f);
+        if (!v3norm(f)) continue;
+        if (r->lean > 0) {
+            /* centripetal acceleration a = (0, yaw rate, 0) x v, over g */
+            const float a[3] = {w[1] * v[2], 0.0f, -w[1] * v[0]};
+            float t2 = r->lean / 9.81f, ax = a[0] * t2, az = a[2] * t2;
+            const float mag = sqrtf(ax * ax + az * az), cap = 0.577f;    /* tan 30 */
+            if (mag > cap) { ax *= cap / mag; az *= cap / mag; }
+            want[0] = ax; want[2] = az;
+            v3norm(want);
+        }
+        /* up and wanted up, in the plane across the forward axis */
+        float u_p[3], d_p[3], c[3];
+        const float uf = v3dot(up, f), df = v3dot(want, f);
+        for (int i = 0; i < 3; i++) { u_p[i] = up[i] - f[i] * uf; d_p[i] = want[i] - f[i] * df; }
+        if (!v3norm(u_p) || !v3norm(d_p)) continue;
+        v3cross(u_p, d_p, c);
+        const float angle = atan2f(v3dot(f, c), v3dot(u_p, d_p));
+        float rate = 10.0f * angle;                            /* 1/s: a tenth of a second to come upright */
+        if (rate > 4.0f) rate = 4.0f;
+        if (rate < -4.0f) rate = -4.0f;
+        const float now = v3dot(w, f), s = r->strength > 1 ? 1.0f : r->strength;
+        const float add = (rate - now) * s;
+        for (int i = 0; i < 3; i++) w[i] += f[i] * add;
+        host->write_guest(host->context, core + 0x50u, w, 12);
+    }
+}
+
+static int MERC_PLUGIN_CALL cmd_keep_upright(void *ud, uint32_t L)
+{
+    char name[96], line[220];
+    MercGuestCall c;
+    (void)ud;
+    if (!lua_arg_text(L, 1, name, sizeof(name)) || !name[0]) return 0;
+    uint32_t args[2] = {L, 1};
+    const int top = (int)lua_call(MF_FN_lua_gettop, 1, args);
+    float strength = 1.0f, lean = 0.0f;
+    args[1] = 2;
+    if (top >= 2 && guest(MF_FN_Lua_ArgNumber, 0, 2, args, &c)) strength = (float)c.st0;
+    args[1] = 3;
+    if (top >= 3 && guest(MF_FN_Lua_ArgNumber, 0, 2, args, &c)) lean = (float)c.st0;
+    if (!(strength >= 0)) strength = 0;
+    if (!(lean >= 0)) lean = 0;
+    if (lean > 1) lean = 1;
+    const uint32_t hash = hash_name(name);
+    unsigned i;
+    for (i = 0; i < upright_count && upright[i].hash != hash; i++) {}
+    if (i == upright_count) {
+        if (upright_count == UPRIGHT_MAX) return 0;
+        upright_count++;
+    }
+    upright[i] = (UprightRule){hash, strength, lean};
+    upright_rescan = 0;
+    unsigned held = 0;
+    for (unsigned k = 0; k < upright_count; k++) held += upright[k].strength > 0;
+    snprintf(line, sizeof(line), "keep upright: %s held at strength %.2f, lean %.2f (%u template%s held)",
+             name, (double)strength, (double)lean, held, held == 1 ? "" : "s");
+    host->log(host->context, line);
+    push_number(L, (double)held);
+    return 1;
+}
+
 /* Foundry_CentreWheels(model, ...): vehicles whose wheel model
  * (geometryNameWheel) is one of these draw their wheels at x 0 in the
  * vehicle's frame, so a motorbike's pair of physics wheels draws as one tyre
@@ -5555,6 +5727,7 @@ MERC_PLUGIN_EXPORT int MERC_PLUGIN_CALL MercenariesPlugin_Init(
         !h->add_lua_command(h->context, "Foundry_IgnoreAttacks", cmd_ignore_attacks, NULL) ||
         !h->add_lua_command(h->context, "Foundry_ScriptValues", cmd_script_values, NULL) ||
         !h->add_lua_command(h->context, "Foundry_CentreWheels", cmd_centre_wheels, NULL) ||
+        !h->add_lua_command(h->context, "Foundry_KeepUpright", cmd_keep_upright, NULL) ||
         !h->add_lua_command(h->context, "Foundry_Log", cmd_log, NULL))
         h->log(h->context, "script commands unavailable; Foundry_TrafficZone, Foundry_Range, Foundry_Sample, "
                            "Foundry_Label, Foundry_SetHandling and Foundry_MapText may not exist");
