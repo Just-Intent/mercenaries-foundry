@@ -3645,7 +3645,9 @@ static void scribble_report(char *line, size_t size)
  * replacement is made each frame (1 holds hard; 0 stops the hold); lean
  * 0..1 tilts the wanted up into a turn by that share of the physical lean
  * (v x yaw rate / g), at most 30 degrees. Looked for within 250 m of the
- * player twice a second. Returns how many templates are held. */
+ * player twice a second. The name is a template's or a model's (0.355: a
+ * placed vehicle matches by the model it draws). Returns how many names are
+ * held. */
 #define UPRIGHT_MAX 8
 #define UPRIGHT_TRACK 32
 typedef struct { uint32_t hash; float strength, lean; } UprightRule;
@@ -3693,9 +3695,11 @@ static void upright_scan(void)
     if (!host->read_guest(host->context, MF_VAR_g_TemplateTable + 8, blocks, sizeof(blocks)) ||
         !host->read_guest(host->context, MF_VAR_g_TemplateTable + 0x4008, hashes, sizeof(hashes))) return;
     int any = 0;
-    for (unsigned r = 0; r < upright_count; r++)
+    for (unsigned r = 0; r < upright_count; r++) {
+        any |= upright[r].strength > 0;
         for (unsigned i = 0; i < 0x1000; i++)
-            if (upright[r].strength > 0 && hashes[i] == upright[r].hash) { want[r] = blocks[i]; any |= blocks[i] != 0; break; }
+            if (upright[r].strength > 0 && hashes[i] == upright[r].hash) { want[r] = blocks[i]; break; }
+    }
     if (!any) return;
     for (unsigned i = 0; i < OBJECT_SLOTS && upright_tracked < UPRIGHT_TRACK; i++) {
         const uint32_t obj = upright_objects[i];
@@ -3709,13 +3713,31 @@ static void upright_scan(void)
         memcpy(pos, head + WORLDOBJECT_POSITION, 12);
         const float dx = pos[0] - m[12], dz = pos[2] - m[14];
         if (!(dx * dx + dz * dz <= 250.0f * 250.0f)) continue;
-        if (!host->read_guest(host->context, obj + MF_OFF_WorldObject_template, &block, 4) || !block) continue;
+        uint32_t vt = 0;
+        if (!host->read_guest(host->context, obj + MF_OFF_WorldObject_actor, &actor, 4) || !actor ||
+            !host->read_guest(host->context, actor, &vt, 4) || vt != ACTOR_VT_WHEELED) continue;
+        host->read_guest(host->context, obj + MF_OFF_WorldObject_template, &block, 4);
+        /* 0.355: a placed vehicle (a layer's own object, Gaza's
+         * gaza_moto_test2) has a property block of its own, not its
+         * template's, so 0.349-0.354 held nothing: the name also matches the
+         * model the vehicle draws (its GeometryFile) */
+        char model[64];
+        uint32_t handle = 0;
+        memcpy(&handle, head + MF_OFF_WorldObject_handle, 4);
+        object_model(obj, handle, model, sizeof(model));
+        const uint32_t mh = model[0] ? hash_name(model) : 0;
         for (unsigned r = 0; r < upright_count; r++)
-            if (want[r] && want[r] == block &&
-                host->read_guest(host->context, obj + MF_OFF_WorldObject_actor, &actor, 4) && actor) {
+            if (upright[r].strength > 0 && ((want[r] && want[r] == block) || (mh && mh == upright[r].hash))) {
                 upright_track[upright_tracked++] = (UprightTrack){obj, actor, (int)r};
                 break;
             }
+    }
+    static unsigned told;
+    if (upright_tracked && told != upright_tracked && told < 50u) {
+        char line[120];
+        snprintf(line, sizeof(line), "keep upright: holding %u vehicle%s", upright_tracked, upright_tracked == 1 ? "" : "s");
+        host->log(host->context, line);
+        told = upright_tracked;
     }
 }
 
