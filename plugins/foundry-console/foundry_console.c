@@ -5005,7 +5005,7 @@ static int probe_quat_at(const float *a, const float *q)
  * place kept. For the bike's pillion SMG with nobody on the gunner seat: the
  * map's script asks ActorVehicle_GetRiderList(bike, false, true, false) and
  * calls this. Returns true. */
-#define HIDE_MAX 16
+#define HIDE_MAX 48
 typedef struct { uint32_t obj, actor, index; } HiddenJoint;
 static HiddenJoint hidden_joints[HIDE_MAX];
 static unsigned hidden_count;
@@ -5078,8 +5078,8 @@ static int MERC_PLUGIN_CALL cmd_hide_joint(void *ud, uint32_t L)
  * seats as ActorVehicle_GetRiderList (0x117970) reads them: the vehicle's
  * vtable +0x208 gives its rider set, +0x8C9 (a byte) its seat count,
  * 0x163590(seat) the rider in a seat (none: 0), the rider's +0x768 -> +0x114
- * its seat's kind (1 driver, 2 gunner). Up to 4 models. Returns true. */
-#define UNSEATED_MAX 4
+ * its seat's kind (1 driver, 2 gunner). Up to 8 models (0.370; 4 before), 48 hidden joints. Returns true. */
+#define UNSEATED_MAX 8
 typedef struct { uint32_t model, index; int kind; } UnseatedRule;    /* kind: 2 gunner, 3 passenger, 0 any */
 static UnseatedRule unseated[UNSEATED_MAX];
 static unsigned unseated_count;
