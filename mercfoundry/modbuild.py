@@ -3151,9 +3151,22 @@ def _new_animtables(data, folder, result):
                     or not set(val) <= {"anim", "priority", "flags"}:
                 raise ValueError(f"{where}: \"set\" {handle}: give a clip, or {{\"anim\", \"priority\", \"flags\"}}")
             hit = False
+            # 0.362: "<set>/<handle>" touches that set alone (a bike's gunner
+            # holding its SMG while the driver's fb_idle keeps the bars); a
+            # set that doesn't have the handle gets it added
+            only, name_ = None, str(handle)
+            if "/" in name_:
+                only, name_ = name_.split("/", 1)
+                if not only or not name_:
+                    raise ValueError(f"{where}: \"set\" {handle}: \"<set>/<handle>\"")
+                if not any(st["name"].lower() == only.lower() for st in doc["sets"]):
+                    raise ValueError(f"{where}: \"set\" {handle}: the table has no set {only!r} "
+                                     f"(it has {', '.join(st['name'] for st in doc['sets'])})")
             for st in doc["sets"]:
+                if only is not None and st["name"].lower() != only.lower():
+                    continue
                 for e in st["entries"]:
-                    if e["handle"].lower() == str(handle).lower():
+                    if e["handle"].lower() == name_.lower():
                         e.pop("variants", None)
                         e.pop("meaning", None)
                         e["anim"] = val["anim"]
@@ -3162,11 +3175,12 @@ def _new_animtables(data, folder, result):
                                 e[k] = val[k]
                         hit = True
             if not hit:
-                default = next((s for s in doc["sets"] if s["name"].lower() == "default"), None)
+                want_set = only or "default"
+                default = next((s for s in doc["sets"] if s["name"].lower() == want_set.lower()), None)
                 if default is None:
                     default = {"name": "default", "entries": []}
                     doc["sets"].insert(0, default)
-                default["entries"].append({"handle": str(handle), "anim": val["anim"],
+                default["entries"].append({"handle": name_, "anim": val["anim"],
                                            "priority": val.get("priority", 40), "flags": str(val.get("flags", "0x5"))})
             clips_added.add(val["anim"])
             n_set += 1

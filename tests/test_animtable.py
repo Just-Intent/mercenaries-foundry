@@ -174,6 +174,32 @@ class NewClipModTests(unittest.TestCase):
             with self.assertRaises(ValueError):
                 modbuild.build(d / "proj", d / "data", d / "out4")
 
+    def test_set_one_set_only(self):
+        # 0.362: "<set>/<handle>" changes that set alone (a bike's gunner)
+        with tempfile.TemporaryDirectory() as tmp:
+            d = Path(tmp)
+            (d / "data").mkdir()
+            def aset(name):
+                return chunk(b"aset", chunk(b"NAME", name.encode() + b"\0") + chunk(b"SIZE", struct.pack("<I", 1))
+                             + entry("fb_idle", "sit_" + name))
+            veh = chunk(b"ucfb", chunk(b"atbl", chunk(b"NAME", b"veh\0") + chunk(b"SIZE", struct.pack("<2I", 0, 2))
+                                       + aset("driver") + aset("gunner")))
+            build_dsk(d / "data" / "assets.dsk", [(name_hash("veh"), animtable.ANIMTABLE, veh),
+                                                  (name_hash("template_humans"), aidata.LIST, b"\n[animtable]\n\nload veh\n")])
+            modbuild.new_project(d / "proj")
+            (d / "proj" / "animtables" / "my_veh.new.json").write_text(json.dumps(
+                {"base": "veh", "set": {"gunner/fb_idle": "hold_smg", "gunner/ub_fire_up": "fire_up"}}))
+            modbuild.build(d / "proj", d / "data", d / "out")
+            got = animtable.to_json({r.key: dsk.Archive(d / "out" / "assets.dsk").read(r)
+                                     for r in dsk.Archive(d / "out" / "assets.dsk").records}[name_hash("my_veh")])
+            sets = {s["name"]: {e["handle"]: e["anim"] for e in s["entries"]} for s in got["sets"]}
+            self.assertEqual(sets["driver"], {"fb_idle": "sit_driver"})
+            self.assertEqual(sets["gunner"], {"fb_idle": "hold_smg", "ub_fire_up": "fire_up"})
+            (d / "proj" / "animtables" / "my_veh.new.json").write_text(json.dumps(
+                {"base": "veh", "set": {"passenger/fb_idle": "x"}}))
+            with self.assertRaisesRegex(ValueError, "no set 'passenger'"):
+                modbuild.build(d / "proj", d / "data", d / "out2")
+
     def test_new_name_clash_is_an_error(self):
         with tempfile.TemporaryDirectory() as tmp:
             d = Path(tmp)
