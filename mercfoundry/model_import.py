@@ -59,11 +59,17 @@ def template_piece(pieces, texture):
         if not solid or solid[0] is pieces[0]:
             return pieces[0]
         return max(solid, key=lambda p: len(getattr(p, "positions", ()) or ()))
+    # 0.357: counted by the words that say how it's drawn, not the joint and
+    # panel words (1, 2) every piece has its own: counting whole materials,
+    # each was one of a kind and the first won (civ_veh_bus's one opaque
+    # pane, so Gaza's bus glass was opaque)
+    def how(p):
+        return tuple(w for i, w in enumerate(p.material) if i not in (1, 2))
     counts = {}
     for p in same:
-        counts[tuple(p.material)] = counts.get(tuple(p.material), 0) + 1
+        counts[how(p)] = counts.get(how(p), 0) + 1
     best = max(counts.values())
-    return next(p for p in same if counts[tuple(p.material)] == best)
+    return next(p for p in same if counts[how(p)] == best)
 
 
 SHINE = 0x20       # MTRL word 6: word 4 names a second (reflection) texture over the piece's own

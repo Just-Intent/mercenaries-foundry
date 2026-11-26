@@ -185,6 +185,15 @@ class ImportCollisionTests(unittest.TestCase):
         self.assertLess(max(abs(v) for v in fresh[0] + fresh[1]), 10)
         self.assertAlmostEqual(fresh[1][0], 6.0, places=3)
 
+    def test_template_is_the_usual_material_across_joints(self):
+        # 0.357: civ_veh_bus's first pane is opaque (0x100), the rest
+        # translucent (0x101), each on its own joint: the new glass copies 0x101
+        from types import SimpleNamespace as P
+        panes = [P(texture=5, material=(9, 100, 100, 5, 0, 0x100, 0x21)),
+                 P(texture=5, material=(9, 101, 101, 5, 0, 0x101, 0x21)),
+                 P(texture=5, material=(9, 102, 102, 5, 0, 0x101, 0x21))]
+        self.assertEqual(mi.template_piece(panes, 5).material[5], 0x101)
+
     def test_collision_can_be_turned_off(self):
         nm, ns, rep = mi.import_obj(self.mr, self.sr, self.obj_with(["new_arm"]), collision=False)
         self.assertEqual(rep.collision_boxes, 0)
