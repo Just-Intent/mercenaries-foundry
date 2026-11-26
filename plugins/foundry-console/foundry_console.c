@@ -3715,7 +3715,9 @@ static void upright_scan(void)
         if (!(dx * dx + dz * dz <= 250.0f * 250.0f)) continue;
         uint32_t vt = 0;
         if (!host->read_guest(host->context, obj + MF_OFF_WorldObject_actor, &actor, 4) || !actor ||
-            !host->read_guest(host->context, actor, &vt, 4) || vt != ACTOR_VT_WHEELED) continue;
+            !host->read_guest(host->context, actor, &vt, 4) || (vt != ACTOR_VT_WHEELED && vt != 0x2E1968u)) continue;
+        /* 0.366: Gaza's bikes and every car there are vtable 002E1968 (the
+         * wheel log), not 0x2E16D0: 0.355-0.365 held none of them */
         host->read_guest(host->context, obj + MF_OFF_WorldObject_template, &block, 4);
         /* 0.355: a placed vehicle (a layer's own object, Gaza's
          * gaza_moto_test2) has a property block of its own, not its
