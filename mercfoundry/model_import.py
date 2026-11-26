@@ -11,6 +11,7 @@ the quantization box has to grow.
 Importing an unedited export returns the original records unchanged.
 """
 import math
+import fnmatch
 import re
 import struct
 from dataclasses import dataclass, field
@@ -292,19 +293,21 @@ class Report:
 
 def import_obj(model_record: bytes, segments_record: bytes, obj_text: str,
                lod: int = 0, damaged: bool = False, material_hash=None,
-               collision: bool = True) -> tuple:
+               collision: bool = True, no_collision=()) -> tuple:
     """Return (model record, segments record, Report).
 
     material_hash: maps an OBJ material name to a texture hash; default
     accepts 8-digit hex or hashes the name."""
     return import_pieces(model_record, segments_record, parse_obj(obj_text), lod, damaged,
-                         material_hash, collision)
+                         material_hash, collision, no_collision=no_collision)
 
 
 def import_pieces(model_record: bytes, segments_record: bytes, objs: list,
                   lod: int = 0, damaged: bool = False, material_hash=None,
-                  collision: bool = True, report=None) -> tuple:
-    """Like import_obj, from already-read pieces (ObjPiece, in model space)."""
+                  collision: bool = True, report=None, no_collision=()) -> tuple:
+    """Like import_obj, from already-read pieces (ObjPiece, in model space).
+    no_collision: piece-name patterns (fnmatch, any case) that get no box,
+    as "nocoll" in a piece's name does."""
     def default_hash(n):
         n = re.sub(r"\.\d{3}$", "", n)  # Blender's duplicate suffix
         return int(n, 16) if re.fullmatch(r"[0-9A-Fa-f]{8}", n) else name_hash(n)
@@ -647,10 +650,13 @@ def import_pieces(model_record: bytes, segments_record: bytes, objs: list,
             new_items[where] = (b"cshp", body)
         wanted = []  # (piece joint, centre, half) in that joint's space
         big = []     # pieces whose box is a solid block, metres across on every side
+        nocoll_used = set()
         for k, plan in enumerate(plans):
             if plan[0] is not None or not new_locals[k]:
                 continue
-            if "nocoll" in plan[1].name.lower():
+            if "nocoll" in plan[1].name.lower() or any(
+                    fnmatch.fnmatchcase(plan[1].name.lower(), p.lower()) for p in no_collision):
+                nocoll_used.add(plan[1].name)
                 continue  # decoration: no collision wanted
             if plan[5] & 0x10000:
                 continue  # skinned (a character's): it bends with the body, a box wouldn't
@@ -684,6 +690,9 @@ def import_pieces(model_record: bytes, segments_record: bytes, objs: list,
                 out.append((c, half3, tuple(rows)))
             return out
 
+        for p in no_collision:
+            if not any(fnmatch.fnmatchcase(n.lower(), p.lower()) for n in nocoll_used):
+                report.warnings.append(f"\"nocoll\": {p!r} matches no new piece")
         if big:
             big.sort(key=lambda b: -b[1][0] * b[1][1] * b[1][2])
             report.warnings.append(

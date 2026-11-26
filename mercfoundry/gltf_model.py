@@ -425,7 +425,7 @@ def guess_view(model, pieces):
 
 
 def import_gltf(model_record, segments_record, path, lod=None, damaged=None, material_hash=None,
-                collision=True):
+                collision=True, no_collision=()):
     """Return (model record, segments record, Report), like import_obj.
     lod/damaged default to what the file records, else a best guess from
     the piece names in it."""
@@ -445,4 +445,4 @@ def import_gltf(model_record, segments_record, path, lod=None, damaged=None, mat
             damaged = guessed
     report = model_import.Report(warnings=list(warnings))
     return model_import.import_pieces(model_record, segments_record, pieces, lod, bool(damaged),
-                                      material_hash, collision, report=report)
+                                      material_hash, collision, report=report, no_collision=no_collision)

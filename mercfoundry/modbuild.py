@@ -34,6 +34,8 @@ Project layout (every part optional):
                           "joints": {<joint>: [x, y, z]} moves joints (from
                           their parent; pieces bound to them follow): a
                           vehicle's seat, dock points and wheels;
+                          "nocoll": ["rooftop*", "net"] gives those pieces
+                          no collision box (as "nocoll" in a piece's name);
                           "centre_line": true on a wheel model draws the
                           wheels of vehicles using it at x 0 (a motorbike)
     animations/*.glb|.gltf   clips replace the game animations with the same
@@ -4295,6 +4297,13 @@ def _new_models(data, folder, result):
             raise ValueError(f"{where}: no models/{name}.glb (or .gltf, .obj) with its pieces")
         f = files[0]
         a, recs = src
+        # 0.352: "nocoll": ["rooftop*", "net"]: those pieces get no box (as
+        # "nocoll" in a piece's name), without editing the file
+        nocoll = spec_doc.get("nocoll") or []
+        if isinstance(nocoll, str):
+            nocoll = [nocoll]
+        if not isinstance(nocoll, list) or not all(isinstance(p, str) for p in nocoll):
+            raise ValueError(f"{where}: \"nocoll\" is a list of piece names (wildcards allowed)")
         mr = model.renamed(data.archive(a).read(recs[model.MODEL]), name)
         dropped_shadow = not keep_shadow and model.has_shadow(mr)
         if dropped_shadow:
@@ -4307,10 +4316,11 @@ def _new_models(data, folder, result):
         if f.suffix.lower() == ".obj":
             text = f.read_text(encoding="utf-8", errors="replace")
             lod, damaged = _obj_settings(text)
-            nm, ns, report = model_import.import_obj(mr, sr, text, lod, damaged)
+            nm, ns, report = model_import.import_obj(mr, sr, text, lod, damaged, no_collision=nocoll)
         else:
             from . import gltf_model
-            nm, ns, report = gltf_model.import_gltf(mr, sr, f, material_hash=_glb_textures(data, name, f, result))
+            nm, ns, report = gltf_model.import_gltf(mr, sr, f, material_hash=_glb_textures(data, name, f, result),
+                                                    no_collision=nocoll)
         # the base's pieces the file didn't take over (other levels of detail
         # or damage states the import left alone) go too; originals stay
         # first, in order, the file's new pieces after them

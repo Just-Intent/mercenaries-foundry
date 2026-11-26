@@ -163,6 +163,14 @@ class ImportCollisionTests(unittest.TestCase):
         nm, ns, rep = mi.import_obj(self.mr, self.sr, "\n".join(lines) + "\n")
         self.assertFalse(any("solid collision box" in w for w in rep.warnings), rep.warnings)
 
+    def test_nocoll_patterns_name_pieces_without_a_box(self):
+        # 0.352: "nocoll" in models/<name>.new.json, without renaming pieces
+        nm, ns, rep = mi.import_obj(self.mr, self.sr, self.obj_with(["new_arm", "rooftop0"]), no_collision=["Rooftop*"])
+        self.assertEqual(rep.collision_boxes, 1)
+        nm, ns, rep = mi.import_obj(self.mr, self.sr, self.obj_with(["new_arm"]), no_collision=["net"])
+        self.assertEqual(rep.collision_boxes, 1)
+        self.assertTrue(any("'net' matches no new piece" in w for w in rep.warnings), rep.warnings)
+
     def test_collision_can_be_turned_off(self):
         nm, ns, rep = mi.import_obj(self.mr, self.sr, self.obj_with(["new_arm"]), collision=False)
         self.assertEqual(rep.collision_boxes, 0)
