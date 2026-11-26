@@ -3736,6 +3736,11 @@ static void upright_scan(void)
         memcpy(&handle, head + MF_OFF_WorldObject_handle, 4);
         object_model(obj, handle, model, sizeof(model));
         const uint32_t mh = model[0] ? hash_name(model) : 0;
+        /* 0.372: an object can sit in two slots (the 1150 log held 00585270
+         * twice a frame, twice the strength): each held once */
+        int dup = 0;
+        for (unsigned d = 0; d < upright_tracked && !dup; d++) dup = upright_track[d].obj == obj;
+        if (dup) continue;
         for (unsigned r = 0; r < upright_count; r++)
             if (upright[r].strength > 0 && ((want[r] && want[r] == block) || (mh && mh == upright[r].hash))) {
                 upright_track[upright_tracked++] = (UprightTrack){obj, actor, (int)r};
