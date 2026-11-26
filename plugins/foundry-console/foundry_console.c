@@ -3645,12 +3645,15 @@ static void scribble_report(char *line, size_t size)
  * replacement is made each frame (1 holds hard; 0 stops the hold); lean
  * 0..1 tilts the wanted up into a turn by that share of the physical lean
  * (v x yaw rate / g), at most 30 degrees. Looked for within 250 m of the
- * player twice a second. The name is a template's or a model's (0.355: a
+ * player twice a second. An optional fourth argument (0.367), degrees left
+ * free: within that much of the wanted roll nothing is done (the bike leans
+ * as its physics makes it), past it only the excess is corrected, a catch
+ * against falling over. The name is a template's or a model's (0.355: a
  * placed vehicle matches by the model it draws). Returns how many names are
  * held. */
 #define UPRIGHT_MAX 8
 #define UPRIGHT_TRACK 32
-typedef struct { uint32_t hash; float strength, lean; } UprightRule;
+typedef struct { uint32_t hash; float strength, lean, free; } UprightRule;   /* free: radians left alone (0.367) */
 typedef struct { uint32_t obj, actor; int rule; } UprightTrack;
 static void push_number(uint32_t L, double v);
 static UprightRule upright[UPRIGHT_MAX];
@@ -3786,13 +3789,25 @@ static void upright_update(double dt)
         if (!v3norm(u_p) || !v3norm(d_p)) continue;
         v3cross(u_p, d_p, c);
         const float angle = atan2f(v3dot(f, c), v3dot(u_p, d_p));
-        float rate = 10.0f * angle;                            /* 1/s: a tenth of a second to come upright */
+        /* 0.367: a catch, not a hold: within "free" of the wanted roll the
+         * bike leans as its physics lets it (the user liked the unheld
+         * bike's lean, only not its falls); past it, only the excess is
+         * corrected */
+        float excess = angle;
+        int act = 1;
+        if (r->free > 0) {
+            if (fabsf(angle) <= r->free) act = 0;
+            else excess = angle > 0 ? angle - r->free : angle + r->free;
+        }
+        float rate = 10.0f * excess;                           /* 1/s: a tenth of a second to come back */
         if (rate > 4.0f) rate = 4.0f;
         if (rate < -4.0f) rate = -4.0f;
         const float now = v3dot(w, f), s = r->strength > 1 ? 1.0f : r->strength;
-        const float add = (rate - now) * s;
-        for (int i = 0; i < 3; i++) w[i] += f[i] * add;
-        host->write_guest(host->context, core + 0x50u, w, 12);
+        const float add = act ? (rate - now) * s : 0.0f;
+        if (act) {
+            for (int i = 0; i < 3; i++) w[i] += f[i] * add;
+            host->write_guest(host->context, core + 0x50u, w, 12);
+        }
         /* 0.353: twice a second for the first held vehicle, to see what the
          * hold does on a ride (Gaza's two-wheel test turned badly) */
         static unsigned said;
@@ -3818,11 +3833,15 @@ static int MERC_PLUGIN_CALL cmd_keep_upright(void *ud, uint32_t L)
     if (!lua_arg_text(L, 1, name, sizeof(name)) || !name[0]) return 0;
     uint32_t args[2] = {L, 1};
     const int top = (int)lua_call(MF_FN_lua_gettop, 1, args);
-    float strength = 1.0f, lean = 0.0f;
+    float strength = 1.0f, lean = 0.0f, free_deg = 0.0f;
     args[1] = 2;
     if (top >= 2 && guest(MF_FN_Lua_ArgNumber, 0, 2, args, &c)) strength = (float)c.st0;
     args[1] = 3;
     if (top >= 3 && guest(MF_FN_Lua_ArgNumber, 0, 2, args, &c)) lean = (float)c.st0;
+    args[1] = 4;
+    if (top >= 4 && guest(MF_FN_Lua_ArgNumber, 0, 2, args, &c)) free_deg = (float)c.st0;
+    if (!(free_deg >= 0)) free_deg = 0;
+    if (free_deg > 80) free_deg = 80;
     if (!(strength >= 0)) strength = 0;
     if (!(lean >= 0)) lean = 0;
     if (lean > 1) lean = 1;
@@ -3833,12 +3852,12 @@ static int MERC_PLUGIN_CALL cmd_keep_upright(void *ud, uint32_t L)
         if (upright_count == UPRIGHT_MAX) return 0;
         upright_count++;
     }
-    upright[i] = (UprightRule){hash, strength, lean};
+    upright[i] = (UprightRule){hash, strength, lean, free_deg * 0.0174533f};
     upright_rescan = 0;
     unsigned held = 0;
     for (unsigned k = 0; k < upright_count; k++) held += upright[k].strength > 0;
-    snprintf(line, sizeof(line), "keep upright: %s held at strength %.2f, lean %.2f (%u template%s held)",
-             name, (double)strength, (double)lean, held, held == 1 ? "" : "s");
+    snprintf(line, sizeof(line), "keep upright: %s held at strength %.2f, lean %.2f, free %.0f degrees (%u name%s held)",
+             name, (double)strength, (double)lean, (double)free_deg, held, held == 1 ? "" : "s");
     host->log(host->context, line);
     push_number(L, (double)held);
     return 1;
