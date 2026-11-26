@@ -3745,6 +3745,10 @@ static void upright_update(double dt)
 {
     if (!upright_count) return;
     if ((upright_rescan -= dt) <= 0) { upright_rescan = 0.5; upright_scan(); }
+    /* 0.365: the status line for every held vehicle (0.353-0.364: the first only) */
+    static double since;
+    const int tick = (since += dt) >= 0.5;
+    if (tick) since = 0;
     for (unsigned t = 0; t < upright_tracked; t++) {
         const UprightTrack *k = &upright_track[t];
         const UprightRule *r = &upright[k->rule];
@@ -3789,10 +3793,8 @@ static void upright_update(double dt)
         host->write_guest(host->context, core + 0x50u, w, 12);
         /* 0.353: twice a second for the first held vehicle, to see what the
          * hold does on a ride (Gaza's two-wheel test turned badly) */
-        static double since;
         static unsigned said;
-        if (t == 0 && (since += dt) >= 0.5 && said < 1200u) {
-            since = 0;
+        if (tick && said < 2000u) {
             said++;
             float vy[3] = {-f[0] * f[1], 1.0f - f[1] * f[1], -f[2] * f[1]}, rc[3];   /* world up across f */
             float roll = 0;
@@ -4966,6 +4968,89 @@ static int probe_quat_at(const float *a, const float *q)
     return d1 < 2e-3f || d2 < 2e-3f;
 }
 
+/* Foundry_VectorProbe(vehicle, x, y, z) (0.365): where a vehicle keeps a
+ * point given in its model's space (a joint's place, e.g. barrel_a's), as
+ * it is and turned into the world by the object's place and rotation: the
+ * actor (0x1400 bytes), the object, and what they point to, two steps deep,
+ * searched for the three floats (within 1 cm), up to 30 places logged. For
+ * hiding the bike's pillion SMG while nobody is on the gunner seat: the
+ * drawn node of barrel_a is what to find. */
+static int probe_vec_at(const float *a, const float *v)
+{
+    return fabsf(a[0] - v[0]) < 0.01f && fabsf(a[1] - v[1]) < 0.01f && fabsf(a[2] - v[2]) < 0.01f;
+}
+
+static int MERC_PLUGIN_CALL cmd_vector_probe(void *ud, uint32_t L)
+{
+    (void)ud;
+    MercGuestCall c;
+    uint32_t args[2] = {L, 1}, obj = 0, actor = 0;
+    if (guest(MF_FN_Lua_ArgActor, 0, 2, args, &c)) obj = c.eax;
+    float local[3] = {0, 0, 0};
+    for (int k = 0; k < 3; k++) {
+        args[1] = (uint32_t)(2 + k);
+        if (guest(MF_FN_Lua_ArgNumber, 0, 2, args, &c)) local[k] = (float)c.st0;
+    }
+    if (!obj || !host->read_guest(host->context, obj + MF_OFF_WorldObject_actor, &actor, 4) || !actor) {
+        host->log(host->context, "vector probe: no such object");
+        return 0;
+    }
+    float pos[3], q[4], world[3];
+    host->read_guest(host->context, obj + WORLDOBJECT_POSITION, pos, 12);
+    host->read_guest(host->context, obj + 0x14u, q, 16);
+    qrot(q, local, world);
+    for (int k = 0; k < 3; k++) world[k] += pos[k];
+    char line[240];
+    snprintf(line, sizeof(line), "vector probe: object %08X actor %08X, (%.2f, %.2f, %.2f) in the model is (%.2f, %.2f, %.2f) in the world",
+             obj, actor, local[0], local[1], local[2], world[0], world[1], world[2]);
+    host->log(host->context, line);
+    static uint32_t a[0x1400 / 4], b[0x400 / 4], cc[0x400 / 4];
+    const uint32_t roots[2] = {actor, obj};
+    int found = 0;
+    unsigned second = 0;
+    for (unsigned r = 0; r < 2 && found < 30; r++) {
+        const uint32_t root = roots[r];
+        const unsigned size = r ? 0x400u : 0x1400u;
+        if (!host->read_guest(host->context, root, a, size)) continue;
+        for (unsigned i = 0; i < size / 4 && found < 30; i++) {
+            if (i + 3 <= size / 4) {
+                const float *f = (const float *)&a[i];
+                const char *kind = probe_vec_at(f, local) ? "model" : probe_vec_at(f, world) ? "world" : NULL;
+                if (kind) {
+                    snprintf(line, sizeof(line), "vector probe: %s point at %s+%X", kind, r ? "object" : "actor", i * 4);
+                    host->log(host->context, line); found++;
+                }
+            }
+            uint32_t p1 = a[i];
+            if (p1 < 0x10000u || p1 >= 0x04000000u || (p1 & 3u) || !host->read_guest(host->context, p1, b, sizeof(b))) continue;
+            for (unsigned j = 0; j + 3 <= 0x400 / 4 && found < 30; j++) {
+                const float *f = (const float *)&b[j];
+                const char *kind = probe_vec_at(f, local) ? "model" : probe_vec_at(f, world) ? "world" : NULL;
+                if (kind) {
+                    snprintf(line, sizeof(line), "vector probe: %s point at %s+%X -> %08X +%X", kind, r ? "object" : "actor", i * 4, p1, j * 4);
+                    host->log(host->context, line); found++;
+                }
+                uint32_t p2 = b[j];
+                if (p2 < 0x10000u || p2 >= 0x04000000u || (p2 & 3u) || p2 == actor || p2 == obj || second >= 6000u ||
+                    !host->read_guest(host->context, p2, cc, sizeof(cc))) continue;
+                second++;
+                for (unsigned k = 0; k + 3 <= 0x400 / 4 && found < 30; k++) {
+                    const float *g = (const float *)&cc[k];
+                    const char *kind2 = probe_vec_at(g, local) ? "model" : probe_vec_at(g, world) ? "world" : NULL;
+                    if (kind2) {
+                        snprintf(line, sizeof(line), "vector probe: %s point at %s+%X -> %08X +%X -> %08X +%X",
+                                 kind2, r ? "object" : "actor", i * 4, p1, j * 4, p2, k * 4);
+                        host->log(host->context, line); found++;
+                    }
+                }
+            }
+        }
+    }
+    if (!found) host->log(host->context, "vector probe: the point wasn't found within two steps");
+    push_number(L, (double)found);
+    return 1;
+}
+
 static int MERC_PLUGIN_CALL cmd_physics_probe(void *ud, uint32_t L)
 {
     (void)ud;
@@ -5760,6 +5845,7 @@ MERC_PLUGIN_EXPORT int MERC_PLUGIN_CALL MercenariesPlugin_Init(
         !h->add_lua_command(h->context, "Foundry_ShopRestore", cmd_shop_restore, NULL) ||
         !h->add_lua_command(h->context, "Foundry_FlyLoop", cmd_fly_loop, NULL) ||
         !h->add_lua_command(h->context, "Foundry_PhysicsProbe", cmd_physics_probe, NULL) ||
+        !h->add_lua_command(h->context, "Foundry_VectorProbe", cmd_vector_probe, NULL) ||
         !h->add_lua_command(h->context, "Foundry_ProjectilePos", cmd_projectile_pos, NULL) ||
         !h->add_lua_command(h->context, "Foundry_FindRounds", cmd_find_rounds, NULL) ||
         !h->add_lua_command(h->context, "Foundry_IgnoreAttacks", cmd_ignore_attacks, NULL) ||
