@@ -96,6 +96,7 @@ Script commands it adds, for the Lua box or any script:
   `Foundry_MoveObject(handle, x, y, z, yaw?)` moves one (degrees); true if it
   could.
   `Foundry_RemoveObject(handle)` takes one away; true if it could.
+- `Foundry_HideJoint(vehicle, joint, hide)` (0.368): draws that vehicle's joint (by its index in the model's skeleton; a jeep's barrel_a is 5) and the pieces on it shrunk to a point while hide is true, on that vehicle only
 - `Foundry_KeepUpright('<template or model>', strength, lean, free)`: free (degrees, 0.367) leaves the roll alone within that much of the wanted one and corrects only past it, a catch against falling; every vehicle of that template within 250 m holds its roll at zero (strength 0..1, default 1; 0 stops it), leaning into turns by `lean` (0..1) of the physical lean, at most 30 degrees; for a motorbike on two wheels in line. Up to 8 templates; returns how many are held
 - `Foundry_CentreWheels('<wheel model>', ...)`: vehicles whose geometryNameWheel is one of these (up to 15)
   draw their wheels on their centre line (x 0), as one tyre per axle that still spins and steers (a motorbike on a

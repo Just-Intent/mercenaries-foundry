@@ -109,6 +109,8 @@ static void maptemplate_poll(double dt);
 static void any_captive_poll(double dt);
 static void shop_poll(double dt);
 static void upright_update(double dt);
+static void hide_joints_update(void);
+static unsigned hidden_count;
 static void shop_level_reset(void);
 static int MERC_PLUGIN_CALL cmd_sample(void *ud, uint32_t L);
 static int MERC_PLUGIN_CALL cmd_label(void *ud, uint32_t L);
@@ -1463,6 +1465,7 @@ static int MERC_PLUGIN_CALL on_update(void *ud, const MercPluginUpdate *u)
     if (sample_playing) pool_watch(u->wall_delta_seconds);
     if (sample_playing) fly_update(u->wall_delta_seconds);
     if (sample_playing) upright_update(u->wall_delta_seconds);
+    if (sample_playing && hidden_count) hide_joints_update();
     live_update(u->wall_delta_seconds);
     maptex_poll(u->wall_delta_seconds);
     maptext_poll(u->wall_delta_seconds);
@@ -4989,6 +4992,83 @@ static int probe_quat_at(const float *a, const float *q)
     return d1 < 2e-3f || d2 < 2e-3f;
 }
 
+/* Foundry_HideJoint(vehicle, joint, hide) (0.368): draws a vehicle's joint
+ * (and the pieces on it) shrunk to a point, on that vehicle only, while
+ * hide is true; false shows it again. joint is the joint's index in the
+ * model's skeleton (0 the root; a jeep's barrel_a is 5). Found by Gaza's
+ * vector probes: each vehicle's actor +0x60 points to its own table of
+ * joint matrices in the model's space, 0x40 bytes a joint (three axes, then
+ * the place at +0x30; barrel_a's place at +0x170), which its pieces are
+ * drawn with. Each frame the joint's axes are scaled to a thousandth, its
+ * place kept. For the bike's pillion SMG with nobody on the gunner seat: the
+ * map's script asks ActorVehicle_GetRiderList(bike, false, true, false) and
+ * calls this. Returns true. */
+#define HIDE_MAX 16
+typedef struct { uint32_t obj, actor, index; } HiddenJoint;
+static HiddenJoint hidden_joints[HIDE_MAX];
+static unsigned hidden_count;
+
+static void hide_joints_update(void)
+{
+    for (unsigned i = 0; i < hidden_count;) {
+        HiddenJoint *h = &hidden_joints[i];
+        uint32_t actor = 0, table = 0;
+        if (!host->read_guest(host->context, h->obj + MF_OFF_WorldObject_actor, &actor, 4) || actor != h->actor ||
+            !host->read_guest(host->context, actor + 0x60u, &table, 4) || table < 0x10000u || table >= 0x04000000u) {
+            hidden_joints[i] = hidden_joints[--hidden_count];     /* the vehicle is gone */
+            continue;
+        }
+        float m[12];
+        const uint32_t at = table + 0x40u * h->index;
+        if (host->read_guest(host->context, at, m, sizeof(m))) {
+            const float len = sqrtf(m[0] * m[0] + m[1] * m[1] + m[2] * m[2]);
+            if (len > 0.01f) {                       /* the game built it again: shrink it */
+                for (int k = 0; k < 12; k++) m[k] *= 0.001f;
+                host->write_guest(host->context, at, m, sizeof(m));
+            }
+        }
+        i++;
+    }
+}
+
+static int MERC_PLUGIN_CALL cmd_hide_joint(void *ud, uint32_t L)
+{
+    (void)ud;
+    MercGuestCall c;
+    uint32_t args[2] = {L, 1}, obj = 0, actor = 0;
+    if (guest(MF_FN_Lua_ArgActor, 0, 2, args, &c)) obj = c.eax;
+    args[1] = 2;
+    const int index = guest(MF_FN_Lua_ArgNumber, 0, 2, args, &c) ? (int)c.st0 : -1;
+    args[1] = 3;
+    const int hide = (int)lua_call(MF_FN_lua_gettop, 1, args) < 3 || lua_call(MF_FN_Lua_ArgBool, 2, args) != 0;
+    if (!obj || index < 0 || index > 255 ||
+        !host->read_guest(host->context, obj + MF_OFF_WorldObject_actor, &actor, 4) || !actor) return 0;
+    unsigned i;
+    for (i = 0; i < hidden_count && !(hidden_joints[i].obj == obj && hidden_joints[i].index == (uint32_t)index); i++) {}
+    if (hide && i == hidden_count) {
+        if (hidden_count == HIDE_MAX) return 0;
+        hidden_joints[hidden_count++] = (HiddenJoint){obj, actor, (uint32_t)index};
+        hide_joints_update();
+    } else if (!hide && i < hidden_count) {
+        hidden_joints[i] = hidden_joints[--hidden_count];
+        /* the game builds the joint again on its next frame */
+    }
+    static unsigned said;
+    if (said++ < 40u) {
+        uint32_t table = 0;
+        float m[16] = {0};
+        host->read_guest(host->context, actor + 0x60u, &table, 4);
+        if (table) host->read_guest(host->context, table + 0x40u * (uint32_t)index, m, sizeof(m));
+        char line[260];
+        snprintf(line, sizeof(line), "hide joint: object %08X joint %d %s (table %08X; axis x (%.3f, %.3f, %.3f), place (%.2f, %.2f, %.2f))",
+                 obj, index, hide ? "hidden" : "shown", table, m[0], m[1], m[2], m[12], m[13], m[14]);
+        host->log(host->context, line);
+    }
+    uint32_t push[2] = {L, 1};
+    lua_call(MF_FN_Lua_PushBool, 2, push);
+    return 1;
+}
+
 /* Foundry_VectorProbe(vehicle, x, y, z) (0.365): where a vehicle keeps a
  * point given in its model's space (a joint's place, e.g. barrel_a's), as
  * it is and turned into the world by the object's place and rotation: the
@@ -5867,6 +5947,7 @@ MERC_PLUGIN_EXPORT int MERC_PLUGIN_CALL MercenariesPlugin_Init(
         !h->add_lua_command(h->context, "Foundry_FlyLoop", cmd_fly_loop, NULL) ||
         !h->add_lua_command(h->context, "Foundry_PhysicsProbe", cmd_physics_probe, NULL) ||
         !h->add_lua_command(h->context, "Foundry_VectorProbe", cmd_vector_probe, NULL) ||
+        !h->add_lua_command(h->context, "Foundry_HideJoint", cmd_hide_joint, NULL) ||
         !h->add_lua_command(h->context, "Foundry_ProjectilePos", cmd_projectile_pos, NULL) ||
         !h->add_lua_command(h->context, "Foundry_FindRounds", cmd_find_rounds, NULL) ||
         !h->add_lua_command(h->context, "Foundry_IgnoreAttacks", cmd_ignore_attacks, NULL) ||
