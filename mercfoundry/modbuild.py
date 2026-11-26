@@ -4316,11 +4316,12 @@ def _new_models(data, folder, result):
         if f.suffix.lower() == ".obj":
             text = f.read_text(encoding="utf-8", errors="replace")
             lod, damaged = _obj_settings(text)
-            nm, ns, report = model_import.import_obj(mr, sr, text, lod, damaged, no_collision=nocoll)
+            nm, ns, report = model_import.import_obj(mr, sr, text, lod, damaged, no_collision=nocoll,
+                                                     fresh_bounds=True)
         else:
             from . import gltf_model
             nm, ns, report = gltf_model.import_gltf(mr, sr, f, material_hash=_glb_textures(data, name, f, result),
-                                                    no_collision=nocoll)
+                                                    no_collision=nocoll, fresh_bounds=True)
         # the base's pieces the file didn't take over (other levels of detail
         # or damage states the import left alone) go too; originals stay
         # first, in order, the file's new pieces after them

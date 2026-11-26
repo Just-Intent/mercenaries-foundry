@@ -3765,6 +3765,22 @@ static void upright_update(double dt)
         const float add = (rate - now) * s;
         for (int i = 0; i < 3; i++) w[i] += f[i] * add;
         host->write_guest(host->context, core + 0x50u, w, 12);
+        /* 0.353: twice a second for the first held vehicle, to see what the
+         * hold does on a ride (Gaza's two-wheel test turned badly) */
+        static double since;
+        static unsigned said;
+        if (t == 0 && (since += dt) >= 0.5 && said < 1200u) {
+            since = 0;
+            said++;
+            float vy[3] = {-f[0] * f[1], 1.0f - f[1] * f[1], -f[2] * f[1]}, rc[3];   /* world up across f */
+            float roll = 0;
+            if (v3norm(vy)) { v3cross(vy, u_p, rc); roll = atan2f(v3dot(f, rc), v3dot(vy, u_p)); }
+            char line[260];
+            snprintf(line, sizeof(line), "keep upright: %08X speed %.1f m/s, yaw rate %.2f, roll %.1f deg (wanted %.1f), "
+                     "roll rate %.2f -> %.2f, pitch %.1f deg", k->obj, sqrtf(v[0] * v[0] + v[2] * v[2]), w[1],
+                     roll * 57.2958f, (roll + angle) * 57.2958f, now, now + add, asinf(f[1] > 1 ? 1 : f[1] < -1 ? -1 : f[1]) * 57.2958f);
+            host->log(host->context, line);
+        }
     }
 }
 

@@ -293,21 +293,23 @@ class Report:
 
 def import_obj(model_record: bytes, segments_record: bytes, obj_text: str,
                lod: int = 0, damaged: bool = False, material_hash=None,
-               collision: bool = True, no_collision=()) -> tuple:
+               collision: bool = True, no_collision=(), fresh_bounds: bool = False) -> tuple:
     """Return (model record, segments record, Report).
 
     material_hash: maps an OBJ material name to a texture hash; default
     accepts 8-digit hex or hashes the name."""
     return import_pieces(model_record, segments_record, parse_obj(obj_text), lod, damaged,
-                         material_hash, collision, no_collision=no_collision)
+                         material_hash, collision, no_collision=no_collision, fresh_bounds=fresh_bounds)
 
 
 def import_pieces(model_record: bytes, segments_record: bytes, objs: list,
                   lod: int = 0, damaged: bool = False, material_hash=None,
-                  collision: bool = True, report=None, no_collision=()) -> tuple:
+                  collision: bool = True, report=None, no_collision=(), fresh_bounds: bool = False) -> tuple:
     """Like import_obj, from already-read pieces (ObjPiece, in model space).
     no_collision: piece-name patterns (fnmatch, any case) that get no box,
-    as "nocoll" in a piece's name does."""
+    as "nocoll" in a piece's name does. fresh_bounds: the model's bounds are
+    the imported pieces' alone (a new model whose base pieces all go), not
+    grown from the base's."""
     def default_hash(n):
         n = re.sub(r"\.\d{3}$", "", n)  # Blender's duplicate suffix
         return int(n, 16) if re.fullmatch(r"[0-9A-Fa-f]{8}", n) else name_hash(n)
@@ -758,6 +760,10 @@ def import_pieces(model_record: bytes, segments_record: bytes, objs: list,
     struct.pack_into("<H", info, 2, pieces_now)
     struct.pack_into("<6f", info, 8, *nlo, *nhi)
     mins, maxs = bounds[0:3], bounds[3:6]
+    if fresh_bounds and any(plan[1].positions for plan in plans):
+        # 0.353: a new model kept its base's bounds (gaza_moto the Daewoo's
+        # 2.3 x 1.7 x 4.5 m), which the game takes for the thing's size
+        mins, maxs = [float("inf")] * 3, [float("-inf")] * 3
     for k, plan in enumerate(plans):
         for p in plan[1].positions:
             for a in range(3):

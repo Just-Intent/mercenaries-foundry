@@ -171,6 +171,20 @@ class ImportCollisionTests(unittest.TestCase):
         self.assertEqual(rep.collision_boxes, 1)
         self.assertTrue(any("'net' matches no new piece" in w for w in rep.warnings), rep.warnings)
 
+    def test_fresh_bounds_are_the_pieces_alone(self):
+        # 0.353: a new model kept its base's bounds (the bike the Daewoo's)
+        body, pads = ucfb.unwrap(self.mr, b"modl", with_pad=True)
+        items, last = ucfb.split(body)
+        info = bytearray(dict(items)[b"INFO"])
+        struct.pack_into("<6f", info, 32, -50, -50, -50, 50, 50, 50)
+        big = ucfb.wrap(b"modl", ucfb.pack_children([(t, bytes(info) if t == b"INFO" else b) for t, b in items], last), pads)
+        text = self.obj_with(["new_arm"])
+        grown = model.decode(*mi.import_obj(big, self.sr, text)[:2]).bounds
+        fresh = model.decode(*mi.import_obj(big, self.sr, text, fresh_bounds=True)[:2]).bounds
+        self.assertEqual(tuple(grown[0]), (-50, -50, -50))
+        self.assertLess(max(abs(v) for v in fresh[0] + fresh[1]), 10)
+        self.assertAlmostEqual(fresh[1][0], 6.0, places=3)
+
     def test_collision_can_be_turned_off(self):
         nm, ns, rep = mi.import_obj(self.mr, self.sr, self.obj_with(["new_arm"]), collision=False)
         self.assertEqual(rep.collision_boxes, 0)
