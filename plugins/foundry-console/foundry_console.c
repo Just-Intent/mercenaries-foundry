@@ -110,6 +110,7 @@ static void any_captive_poll(double dt);
 static void shop_poll(double dt);
 static void upright_update(double dt);
 static void hide_joints_update(void);
+static void unseated_poll(double dt);
 static unsigned hidden_count;
 static void shop_level_reset(void);
 static int MERC_PLUGIN_CALL cmd_sample(void *ud, uint32_t L);
@@ -1465,6 +1466,7 @@ static int MERC_PLUGIN_CALL on_update(void *ud, const MercPluginUpdate *u)
     if (sample_playing) pool_watch(u->wall_delta_seconds);
     if (sample_playing) fly_update(u->wall_delta_seconds);
     if (sample_playing) upright_update(u->wall_delta_seconds);
+    if (sample_playing) unseated_poll(u->wall_delta_seconds);
     if (sample_playing && hidden_count) hide_joints_update();
     live_update(u->wall_delta_seconds);
     maptex_poll(u->wall_delta_seconds);
@@ -5069,6 +5071,110 @@ static int MERC_PLUGIN_CALL cmd_hide_joint(void *ud, uint32_t L)
     return 1;
 }
 
+/* Foundry_HideJointUnseated(model, joint, kind) (0.369): every vehicle
+ * drawing that model (within 300 m of the player, looked at four times a
+ * second) has the joint hidden as Foundry_HideJoint does while no rider of
+ * that kind is aboard: "gunner" (the default), "passenger" or "any". The
+ * seats as ActorVehicle_GetRiderList (0x117970) reads them: the vehicle's
+ * vtable +0x208 gives its rider set, +0x8C9 (a byte) its seat count,
+ * 0x163590(seat) the rider in a seat (none: 0), the rider's +0x768 -> +0x114
+ * its seat's kind (1 driver, 2 gunner). Up to 4 models. Returns true. */
+#define UNSEATED_MAX 4
+typedef struct { uint32_t model, index; int kind; } UnseatedRule;    /* kind: 2 gunner, 3 passenger, 0 any */
+static UnseatedRule unseated[UNSEATED_MAX];
+static unsigned unseated_count;
+static double unseated_timer;
+
+static int vehicle_has_rider(uint32_t actor, int kind)
+{
+    int ok = 0;
+    const uint32_t set = vcall(actor, 0x208, 0, NULL, &ok);
+    if (!ok || set < 0x10000u || set >= 0x04000000u) return 0;
+    uint8_t seats = 0;
+    host->read_guest(host->context, set + 0x8C9u, &seats, 1);
+    for (uint32_t i = 0; i < seats && i < 16u; i++) {
+        MercGuestCall c;
+        uint32_t rider = 0, info = 0, k = 0;
+        if (!guest(0x00163590u, set, 1, &i, &c)) continue;
+        rider = c.eax;
+        if (rider < 0x10000u || rider >= 0x04000000u) continue;
+        if (!host->read_guest(host->context, rider + 0x768u, &info, 4) || info < 0x10000u || info >= 0x04000000u ||
+            !host->read_guest(host->context, info + 0x114u, &k, 4)) continue;
+        if (kind == 0 || (kind == 2 && k == 2u) || (kind == 3 && k != 1u && k != 2u)) return 1;
+    }
+    return 0;
+}
+
+static void unseated_poll(double dt)
+{
+    if (!unseated_count || (unseated_timer += dt) < 0.25) return;
+    unseated_timer = 0;
+    uint32_t player = find_player();
+    float m[16];
+    static uint32_t objs[OBJECT_SLOTS];
+    if (!player || !host->read_guest(host->context, player + MF_OFF_Actor_transform, m, sizeof(m)) ||
+        !host->read_guest(host->context, OBJECTS, objs, sizeof(objs))) return;
+    for (unsigned i = 0; i < OBJECT_SLOTS; i++) {
+        const uint32_t obj = objs[i];
+        unsigned char head[0x34];
+        uint32_t actor = 0, vt = 0, handle = 0;
+        if (!obj || !host->read_guest(host->context, obj, head, sizeof(head))) continue;
+        uint16_t flags;
+        float pos[3];
+        memcpy(&flags, head + MF_OFF_WorldObject_flags, 2);
+        if (!(flags & 1) || (flags & 4)) continue;
+        memcpy(pos, head + WORLDOBJECT_POSITION, 12);
+        const float dx = pos[0] - m[12], dz = pos[2] - m[14];
+        if (!(dx * dx + dz * dz <= 300.0f * 300.0f)) continue;
+        if (!host->read_guest(host->context, obj + MF_OFF_WorldObject_actor, &actor, 4) || !actor ||
+            !host->read_guest(host->context, actor, &vt, 4) || (vt != ACTOR_VT_WHEELED && vt != 0x2E1968u)) continue;
+        char model[64];
+        memcpy(&handle, head + MF_OFF_WorldObject_handle, 4);
+        object_model(obj, handle, model, sizeof(model));
+        if (!model[0]) continue;
+        const uint32_t mh = hash_name(model);
+        for (unsigned r = 0; r < unseated_count; r++) {
+            if (unseated[r].model != mh) continue;
+            const int hide = !vehicle_has_rider(actor, unseated[r].kind);
+            unsigned j;
+            for (j = 0; j < hidden_count && !(hidden_joints[j].obj == obj && hidden_joints[j].index == unseated[r].index); j++) {}
+            if (hide && j == hidden_count && hidden_count < HIDE_MAX)
+                hidden_joints[hidden_count++] = (HiddenJoint){obj, actor, unseated[r].index};
+            else if (!hide && j < hidden_count)
+                hidden_joints[j] = hidden_joints[--hidden_count];
+        }
+    }
+}
+
+static int MERC_PLUGIN_CALL cmd_hide_joint_unseated(void *ud, uint32_t L)
+{
+    (void)ud;
+    char model[96], kind_text[32] = "gunner";
+    MercGuestCall c;
+    if (!lua_arg_text(L, 1, model, sizeof(model)) || !model[0]) return 0;
+    uint32_t args[2] = {L, 2};
+    const int index = guest(MF_FN_Lua_ArgNumber, 0, 2, args, &c) ? (int)c.st0 : -1;
+    if (index < 0 || index > 255) return 0;
+    lua_arg_text(L, 3, kind_text, sizeof(kind_text));
+    const int kind = !_stricmp(kind_text, "any") ? 0 : !_stricmp(kind_text, "passenger") ? 3 : 2;
+    const uint32_t mh = hash_name(model);
+    unsigned i;
+    for (i = 0; i < unseated_count && !(unseated[i].model == mh && unseated[i].index == (uint32_t)index); i++) {}
+    if (i == unseated_count) {
+        if (unseated_count == UNSEATED_MAX) return 0;
+        unseated_count++;
+    }
+    unseated[i] = (UnseatedRule){mh, (uint32_t)index, kind};
+    unseated_timer = 1.0;
+    char line[200];
+    snprintf(line, sizeof(line), "hide joint unseated: %s joint %d hidden while no %s is aboard", model, index,
+             kind == 0 ? "rider" : kind == 3 ? "passenger" : "gunner");
+    host->log(host->context, line);
+    uint32_t push[2] = {L, 1};
+    lua_call(MF_FN_Lua_PushBool, 2, push);
+    return 1;
+}
+
 /* Foundry_VectorProbe(vehicle, x, y, z) (0.365): where a vehicle keeps a
  * point given in its model's space (a joint's place, e.g. barrel_a's), as
  * it is and turned into the world by the object's place and rotation: the
@@ -5948,6 +6054,7 @@ MERC_PLUGIN_EXPORT int MERC_PLUGIN_CALL MercenariesPlugin_Init(
         !h->add_lua_command(h->context, "Foundry_PhysicsProbe", cmd_physics_probe, NULL) ||
         !h->add_lua_command(h->context, "Foundry_VectorProbe", cmd_vector_probe, NULL) ||
         !h->add_lua_command(h->context, "Foundry_HideJoint", cmd_hide_joint, NULL) ||
+        !h->add_lua_command(h->context, "Foundry_HideJointUnseated", cmd_hide_joint_unseated, NULL) ||
         !h->add_lua_command(h->context, "Foundry_ProjectilePos", cmd_projectile_pos, NULL) ||
         !h->add_lua_command(h->context, "Foundry_FindRounds", cmd_find_rounds, NULL) ||
         !h->add_lua_command(h->context, "Foundry_IgnoreAttacks", cmd_ignore_attacks, NULL) ||
