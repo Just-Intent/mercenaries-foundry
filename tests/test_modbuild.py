@@ -679,6 +679,20 @@ class ModBuildTests(unittest.TestCase):
         recs = {r.kind: arc.read(r) for r in arc.records if r.key == name_hash("guy")}
         self.assertNotIn(name_hash("tex"), model.texture_hashes(recs[model.SEGMENTS]))
         self.assertEqual(self.records("streamed.dsk")[(name_hash("sample"), model.SEGMENTS)], self.sr)
+        # 0.356: "locked": true also puts it in locked.dsk (retail's vehicles
+        # are in both), as the build ends: the glb's edit included
+        build(self.data / "locked.dsk", [(name_hash("other"), model.MODEL, self.mr)])
+        self.write("models/guy.new.json", json.dumps({"base": "sample", "copy": True, "textures": {"tex": "tex2"},
+                                                      "locked": True}))
+        result = modbuild.build(self.project, self.data, self.out)
+        self.assertIn("model guy: also in locked.dsk", result.changes)
+        locked = dsk.Archive(self.out / "locked.dsk")
+        lrecs = {r.kind: locked.read(r) for r in locked.records if r.key == name_hash("guy")}
+        arc = dsk.Archive(self.out / "streamed.dsk")
+        srecs = {r.kind: arc.read(r) for r in arc.records if r.key == name_hash("guy")}
+        self.assertEqual(lrecs, srecs)
+        (self.data / "locked.dsk").unlink()
+        self.write("models/guy.new.json", json.dumps({"base": "sample", "copy": True, "textures": {"tex": "tex2"}}))
         (self.project / "models" / "guy.glb").unlink()
         for spec, msg in (({"base": "sample", "copy": True, "textures": {"nope": "tex2"}}, "doesn't draw a texture named 'nope'"),
                           ({"base": "sample", "copy": True, "textures": {"tex": "missing"}}, "no texture named 'missing'")):

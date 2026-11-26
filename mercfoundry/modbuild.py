@@ -36,6 +36,8 @@ Project layout (every part optional):
                           vehicle's seat, dock points and wheels;
                           "nocoll": ["rooftop*", "net"] gives those pieces
                           no collision box (as "nocoll" in a piece's name);
+                          "locked": true also puts it in locked.dsk
+                          (always loaded), where retail keeps its vehicles;
                           "centre_line": true on a wheel model draws the
                           wheels of vehicles using it at x 0 (a motorbike)
     animations/*.glb|.gltf   clips replace the game animations with the same
@@ -810,6 +812,32 @@ def _seated_allies_chair(data):
             data.new("streamed.dsk", key, model.SEGMENTS, data.current(a, seg))
             return
     raise ValueError("the game data has no allieshq_chair (retail's allies HQ chair) to seat")
+
+
+def _also_locked(data, key, mr, sr, spec_doc, where, result, name):
+    """models/<name>.new.json "locked": true (0.356) also puts the new model in
+    locked.dsk, as retail keeps every vehicle and every moving prop (657
+    models: aircraft, cars, gates, fences, lamps, debris) in locked.dsk beside
+    streamed.dsk. Gaza's extraction Black Hawk, a copy of allies_veh_blackhawk
+    in streamed.dsk alone, hovered 3-5 m over a physics body that sat on the
+    ground. Locked models stay loaded: use it for what moves."""
+    want = spec_doc.get("locked", False)
+    if want not in (True, False):
+        raise ValueError(f"{where}: \"locked\" is true or false")
+    if not want:
+        return
+    if not (data.dir / "locked.dsk").exists():
+        raise ValueError(f"{where}: \"locked\": the game data has no locked.dsk")
+    # the records as the build ends (a copy's later edits included): _write_locked
+    data.locked_models = getattr(data, "locked_models", {})
+    data.locked_models[key] = name
+    result.changes.append(f"model {name}: also in locked.dsk")
+
+
+def _write_locked(data):
+    for key in getattr(data, "locked_models", {}):
+        data.add.setdefault("locked.dsk", []).extend(
+            [(key, kind, data.find_added(key, kind)) for kind in (model.MODEL, model.SEGMENTS)])
 
 
 def model_word_follows(inst):
@@ -4358,6 +4386,7 @@ def _new_models(data, folder, result):
         nm, moved = _move_joints(nm, ns, spec_doc, where)
         data.new("streamed.dsk", key, model.MODEL, nm)
         data.new("streamed.dsk", key, model.SEGMENTS, ns)
+        _also_locked(data, key, nm, ns, spec_doc, where, result, name)
         made.add(name.lower())
         if moved:
             result.changes.append(f"model {name}: joints moved ({', '.join(moved)})")
@@ -4498,6 +4527,7 @@ def _copy_model(data, name, base, src, spec_doc, where, keep_shadow, result):
     mr, moved = _move_joints(mr, sr, spec_doc, where)
     data.new("streamed.dsk", key, model.MODEL, mr)
     data.new("streamed.dsk", key, model.SEGMENTS, sr)
+    _also_locked(data, key, mr, sr, spec_doc, where, result, name)
     if moved:
         result.changes.append(f"model {name}: joints moved ({', '.join(moved)})")
     textures_ = []
@@ -5212,6 +5242,7 @@ def build(projects, data_dir, out_dir, name=None, description=None) -> Result:
     data.project = "Foundry"
     sounds.finish(data, result)
     result.warnings += [f"conflict: {c}" for c in data.conflicts]
+    _write_locked(data)
     names = sorted(set(data.replace) | set(data.add))
     names = [n for n in names if data.replace.get(n) or data.add.get(n)]
     out.mkdir(parents=True, exist_ok=True)
