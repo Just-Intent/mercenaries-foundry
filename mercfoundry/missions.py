@@ -3575,6 +3575,142 @@ def layers_script(layers, pilots=(), arrive=False, welcome=(), deck=False, relat
     return text
 
 
+def tunnels(where, map_name, doc):
+    """A new map's tunnels (maps json "tunnels": [{name, ends: [two {position,
+    heading?, prompt?, question?, arrive?, blip?, template?}], after?, marker?,
+    title?}]): two-way travel on the same map, on foot. Each end is an object
+    (retail's invisible usable cube unless "template" names another, a
+    smuggler, say) the player uses; a yes fades out, puts them at the other
+    end ("arrive", else 2 m out of its mouth along its heading) facing its
+    heading, and fades in. Until the contract "after" is done (its id) neither
+    end is offered or marked. "marker" (default true): the travel pilots'
+    marker (GPS, PDA map and world) at both ends once open; an end's "blip"
+    is the icon, GoS or GoN (retail's pilots': south, north; default GoS for
+    the first end, GoN for the second). Returns rows for tunnels_lua."""
+    out = []
+    for k, t in enumerate(doc.get("tunnels") or [], 1):
+        w = f"{where}: tunnels {k}"
+        name = str(t.get("name") or f"tunnel{k}").lower()
+        if not re.fullmatch(r"[a-z0-9_]+", name):
+            raise ValueError(f"{w}: \"name\" is letters, digits and _, not {name!r}")
+        ends = t.get("ends") or []
+        if len(ends) != 2:
+            raise ValueError(f"{w}: \"ends\" is two ends, not {len(ends)}")
+        title = str(t.get("title") or "Tunnel")
+        rows = []
+        for e_i, e in enumerate(ends):
+            pos = [float(v) for v in e.get("position") or []]
+            if len(pos) != 3:
+                raise ValueError(f"{w}: end {e_i + 1}: \"position\" is [x, y, z]")
+            h = float(e.get("heading") or 0)
+            if e.get("arrive"):
+                arrive = [float(v) for v in e["arrive"]]
+                if len(arrive) != 3:
+                    raise ValueError(f"{w}: end {e_i + 1}: \"arrive\" is [x, y, z]")
+            else:
+                r = math.radians(h)
+                arrive = [pos[0] + 2.0 * math.sin(r), pos[1] + 0.3, pos[2] + 2.0 * math.cos(r)]
+            blip = str(e.get("blip") or ("GoS" if e_i == 0 else "GoN"))
+            if blip not in ("GoS", "GoN"):
+                raise ValueError(f"{w}: end {e_i + 1}: \"blip\" is GoS or GoN, not {blip!r}")
+            rows.append({"actor": f"foundry_tunnel_{map_name.lower()}_{name}_{e_i + 1}", "position": pos,
+                         "heading": h, "arrive": [round(v, 2) for v in arrive],
+                         "prompt": str(e.get("prompt") or "Go through the tunnel"),
+                         "question": str(e.get("question") or "Go through the tunnel?"),
+                         "blip": blip, "template": e.get("template")})
+        out.append({"name": name, "title": title, "after": t.get("after"),
+                    "marker": t.get("marker", True) is not False, "ends": rows})
+    return out
+
+
+def tunnels_lua(prefix, rows):
+    """Lua for a map's tunnels (tunnels()): {prefix}Arm() offers and marks
+    the open ends (each load and each return to free roam: a contract done
+    since opens its tunnel), retrying while an end's layer hasn't brought it."""
+    P = prefix
+    lines = [f"{P}List = {{"]
+    for t in rows:
+        a, b = t["ends"]
+        for me, other in ((a, b), (b, a)):
+            x, y, z = other["arrive"]
+            lines.append("{ actor = %s, prompt = %s, title = %s, question = %s, after = %s, marker = %s, blip = %s, "
+                         "tx = %.2f, ty = %.2f, tz = %.2f, th = %.1f }," % (
+                             _lua_str(me["actor"]), _lua_str(me["prompt"]), _lua_str(t["title"]),
+                             _lua_str(me["question"]), _lua_str(t["after"]) if t["after"] else "nil",
+                             "TRUE" if t["marker"] else "FALSE", _lua_str(me["blip"]), x, y, z,
+                             player_yaw(other["heading"])))
+    lines.append("}")
+    n = len(rows) * 2
+    body = f"""if not {P}Armed then {P}Armed = {{}} end
+{P}Waits = 0
+function {P}Open(t)
+return not t.after or Utility_ReadNumberFromScribbleMemory('foundry_done_' .. t.after)
+end
+function {P}Arm()
+local waiting = false
+for i, t in {P}List do
+if {P}Open(t) then
+if Utility_DoesActorExist(t.actor) then
+local iActor = Utility_GetActorAsInt(t.actor)
+if {P}Armed[t.actor] ~= iActor then
+{P}Armed[t.actor] = iActor
+Actor_EnableScriptedUse(t.actor, TRUE, t.prompt)
+Event_ActorUsed('{P}Ask' .. i, 'b', t.actor)
+end
+if t.marker then
+-- the travel pilots' marker (global's ObjectifyTeleportPilot)
+Objective_SetShortDescription(t.actor, t.prompt)
+Objective_SetType(t.actor, 'OBJECTIVE_TYPE_SECONDARY')
+Objective_SetTargetActor(t.actor, t.actor, '', 'TARGET_TYPE_OBJECTIVE_SECONDARY', t.blip, TRUE, TRUE, TRUE, nil, TRUE, TRUE)
+end
+else
+waiting = true   -- its layer hasn't brought it yet
+end
+end
+end
+if waiting and {P}Waits < 15 then
+{P}Waits = {P}Waits + 1
+Event_RelativeTimer('{P}Arm', 'b', 1.0)
+else
+{P}Waits = 0
+end
+end
+function {P}Again()
+{P}Arm()
+end
+function {P}Ask(i)
+local t = {P}List[i]
+{P}Armed[t.actor] = nil   -- used: offered again after
+if Utility_GetActorsVehicle('player0') then
+Ui_PrintHudMessage('On foot only')
+Event_RelativeTimer('{P}Again', 'b', 1.0)
+return
+end
+{P}Going = i
+Utility_QuestionBox(t.title, t.question, true, '{P}Go', '{P}Again')
+end
+function {P}Go()
+Cinematic_FadeOut(0.5)
+Event_RelativeTimer('{P}Through', 'b', 0.6)
+end
+function {P}Through()
+local t = {P}List[{P}Going]
+if t then
+Actor_SetPosition('player0', t.tx, t.ty, t.tz)
+Actor_SetYaw('player0', t.th)
+end
+Event_RelativeTimer('{P}Out', 'b', 0.5)
+end
+function {P}Out()
+Cinematic_FadeIn(0.5)
+{P}Arm()
+end
+"""
+    for i in range(1, n + 1):
+        body += f"function {P}Ask{i}()\n{P}Ask({i})\nend\n"
+    return "\n".join(lines) + "\n" + body
+
+
 def travel_lua(prefix, pilots, by_map=True, deck=False):
     """Lua for travel pilots: characters you use to go to another map (as
     retail's quadrant pilot: a question, then Utility_SavePlayerData and

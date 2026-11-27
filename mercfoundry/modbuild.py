@@ -1609,6 +1609,18 @@ def _travel_pilots(data, folder, result):
             data.travel_arrive = True
             result.changes.append(f"travel pilot {actor}: on {name}, takes you back to {to.upper()}"
                                   + (" (beside the pilot there)" if brought.get(to) else ""))
+        # tunnels ("tunnels", 0.384): each end in a layer of its own that
+        # loads with the map, like the pilots
+        tun = missions.tunnels(f"maps/{f.name}", name, mdoc)
+        for t in tun:
+            for e in t["ends"]:
+                out.append((e["actor"], name, {"from": e["template"] or EXIT_TEMPLATE, "name": e["actor"],
+                                               "position": e["position"], "yaw": e["heading"]}))
+            result.changes.append(f"tunnel {t['name']} on {name}: both ways"
+                                  + (f", open after {t['after']}" if t["after"] else ""))
+        if tun:
+            data.new_map_tunnels = getattr(data, "new_map_tunnels", {})
+            data.new_map_tunnels[name] = tun
         # HQ interiors ("interiors"): each faction's guard, the way in, in a
         # layer of its own that loads with the map, like the pilots.
         inside = missions.interiors(f"maps/{f.name}", name, mdoc)
@@ -3396,7 +3408,8 @@ def _gates_lua(G, gates):
     return "\n".join(out) + "\n"
 
 
-def map_script(name, doc, layers, pilots=(), contacts=False, extra=(), hqs=None, inside=None, deck=False, gates=None):
+def map_script(name, doc, layers, pilots=(), contacts=False, extra=(), hqs=None, inside=None, deck=False, gates=None,
+               tunnels=()):
     """A new map's master script (run as the map loads): blank's set-up, its
     layers, where the player arrives, a message, and its travel pilots
     (missions.travel_lua) armed. extra: scripts (maps json "scripts") loaded
@@ -3453,6 +3466,9 @@ def map_script(name, doc, layers, pilots=(), contacts=False, extra=(), hqs=None,
     hq = []                       # free roam here: the HQ flags and interiors
     if gates:
         hq.append(f"{G}Gates()")
+    if tunnels:
+        # each load and each return to free roam: a contract done opens its tunnel
+        hq.append(f"foundry_{name.lower()}_TunnelArm()")
     if hqs:
         hq.append(f"foundry_{name.lower()}_HqFlags()")
     if inside:
@@ -3511,6 +3527,9 @@ def map_script(name, doc, layers, pilots=(), contacts=False, extra=(), hqs=None,
         text += _gates_lua(G, mine)
     if pilots:
         text += travel_lua(prefix, list(pilots), by_map=False, deck=deck)
+    if tunnels:
+        from .missions import tunnels_lua
+        text += tunnels_lua(f"foundry_{name.lower()}_Tunnel", list(tunnels))
     if contacts:
         text += funcs
     if hqs:
@@ -3797,6 +3816,7 @@ def _apply_maps(data, folder, result):
                     f" (and {len(tnames) - listed} they name: {', '.join(tnames[listed:])})" if len(tnames) > listed else ""))
         layers = getattr(data, "new_map_layers", {}).get(name.lower(), [])
         pilots = getattr(data, "new_map_pilots", {}).get(name.lower(), [])
+        tunnels = getattr(data, "new_map_tunnels", {}).get(name.lower(), [])
         played = getattr(data, "map_missions", {}).get(name.lower(), [])
         contacts = name.lower() in getattr(data, "contract_maps", set()) or bool(played)
         hqs = missions.hq_flags(where, mdoc["hqs"]) if mdoc.get("hqs") else None
@@ -3889,15 +3909,17 @@ def _apply_maps(data, folder, result):
                 data.replace_added(key, name_hash("list"), text.encode("latin-1"))
         if not any(r.key == key for _, r in data.records(SCRIPT)) and data.find_added(key, SCRIPT) is None:
             if mdoc.get("start") or mdoc.get("message") or mdoc.get("weather") or layers or pilots or contacts or extra \
+                    or tunnels \
                     or hqs or inside or deck or mdoc.get("any_captive") or mdoc.get("relations") \
                     or mdoc.get("collateral_fines") is False or mdoc.get("shop_url"):
                 source = map_script(name, mdoc, layers, pilots, contacts, extra, hqs, inside, deck=deck,
-                                    gates=getattr(data, "layer_gates", {}))
+                                    gates=getattr(data, "layer_gates", {}), tunnels=tunnels)
                 made.append("script (" + ", ".join(
                     (["where you arrive"] if (mdoc.get("start") or {}).get("position") else [])
                     + ([f"loads {', '.join(layers)}"] if layers else [])
                     + (["a message"] if mdoc.get("message") else [])
                     + (["a pilot back"] if pilots else [])
+                    + ([f"tunnels {', '.join(t['name'] for t in tunnels)}"] if tunnels else [])
                     + ([f"missions {', '.join(played)}" if played else "contracts"] if contacts else [])
                     + ([f"runs {', '.join(extra)}"] if extra else [])
                     + ([f"HQ flags for {', '.join(hqs)}"] if hqs else [])

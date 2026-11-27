@@ -1021,6 +1021,28 @@ class TravelTests(unittest.TestCase):
         self.assertIn("ax = 1.00, ay = 2.00, az = 3.00, ah = 180.0", lua)
         self.assertIn("Utility_ResetToBaseLayerOnly(t.to)", lua)
 
+    def test_tunnel_both_ways_after_a_contract(self):
+        from mercfoundry import luacheck
+        doc = {"tunnels": [{"name": "gaza_tunnel", "after": "sw_allies21", "ends": [
+            {"position": [0, 10, 100], "heading": 0, "question": "To Rafah?"},
+            {"position": [5, 12, -900], "heading": 90, "arrive": [6, 12, -900], "question": "To the north?"}]}]}
+        rows = missions.tunnels("maps/isle.json", "isle", doc)
+        a, b = rows[0]["ends"]
+        self.assertEqual(a["actor"], "foundry_tunnel_isle_gaza_tunnel_1")
+        self.assertEqual(a["arrive"], [0.0, 10.3, 102.0])            # 2 m out of its mouth along +z
+        self.assertEqual((a["blip"], b["blip"]), ("GoS", "GoN"))
+        lua = missions.tunnels_lua("foundry_isle_Tunnel", rows)
+        self.assertEqual(luacheck.check(lua), [])
+        # end 1 takes the player to end 2's place, facing its heading (player yaw = heading + 180)
+        self.assertIn("question = 'To Rafah?', after = 'sw_allies21', marker = TRUE, blip = 'GoS', "
+                      "tx = 6.00, ty = 12.00, tz = -900.00, th = 270.0", lua)
+        self.assertIn("tx = 0.00, ty = 10.30, tz = 102.00, th = 180.0", lua)
+        self.assertIn("Utility_ReadNumberFromScribbleMemory('foundry_done_' .. t.after)", lua)
+        self.assertIn("function foundry_isle_TunnelAsk2()", lua)
+        self.assertIn("'TARGET_TYPE_OBJECTIVE_SECONDARY', t.blip", lua)
+        with self.assertRaises(ValueError):
+            missions.tunnels("maps/isle.json", "isle", {"tunnels": [{"ends": [{"position": [0, 0, 0]}]}]})
+
 
 class NewMapMissionTests(unittest.TestCase):
     def test_contract_takes_the_player_to_the_new_map(self):
