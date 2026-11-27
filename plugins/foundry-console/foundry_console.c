@@ -5160,7 +5160,7 @@ static void unseated_poll(double dt)
         const uint32_t mh = hash_name(model);
         for (unsigned r = 0; r < unseated_count; r++) {
             if (unseated[r].model != mh) continue;
-            const int hide = !vehicle_has_rider(actor, unseated[r].kind);
+            const int hide = unseated[r].kind == 4 || !vehicle_has_rider(actor, unseated[r].kind);   /* 4: always (0.378) */
             unsigned j;
             for (j = 0; j < hidden_count && !(hidden_joints[j].obj == obj && hidden_joints[j].index == unseated[r].index); j++) {}
             if (hide && j == hidden_count && hidden_count < HIDE_MAX)
@@ -5181,7 +5181,8 @@ static int MERC_PLUGIN_CALL cmd_hide_joint_unseated(void *ud, uint32_t L)
     const int index = guest(MF_FN_Lua_ArgNumber, 0, 2, args, &c) ? (int)c.st0 : -1;
     if (index < 0 || index > 255) return 0;
     lua_arg_text(L, 3, kind_text, sizeof(kind_text));
-    const int kind = !_stricmp(kind_text, "any") ? 0 : !_stricmp(kind_text, "passenger") ? 3 : 2;
+    const int kind = !_stricmp(kind_text, "any") ? 0 : !_stricmp(kind_text, "passenger") ? 3 :
+                     !_stricmp(kind_text, "always") ? 4 : 2;
     const uint32_t mh = hash_name(model);
     unsigned i;
     for (i = 0; i < unseated_count && !(unseated[i].model == mh && unseated[i].index == (uint32_t)index); i++) {}
@@ -5192,7 +5193,8 @@ static int MERC_PLUGIN_CALL cmd_hide_joint_unseated(void *ud, uint32_t L)
     unseated[i] = (UnseatedRule){mh, (uint32_t)index, kind};
     unseated_timer = 1.0;
     char line[200];
-    snprintf(line, sizeof(line), "hide joint unseated: %s joint %d hidden while no %s is aboard", model, index,
+    snprintf(line, sizeof(line), kind == 4 ? "hide joint unseated: %s joint %d hidden always%.0s" :
+             "hide joint unseated: %s joint %d hidden while no %s is aboard", model, index,
              kind == 0 ? "rider" : kind == 3 ? "passenger" : "gunner");
     host->log(host->context, line);
     uint32_t push[2] = {L, 1};
