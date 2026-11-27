@@ -1663,36 +1663,175 @@ def mark_zones(plan, strip):
     return out
 
 
-def lay_out(plan, strip, dens, blocked, ground, open_at, paint_urban, side, ox, oz, kit=KIT, log=print):
+class Frame:
+    """A turned frame (as Strip's own): frame(x, z) and unframe(fx, fz)
+    between map metres and the frame's, turned rot radians."""
+
+    def __init__(self, rot):
+        self.rot = rot
+        self.rc, self.rs = math.cos(rot), math.sin(rot)
+
+    def unframe(self, fx, fz):
+        return fx * self.rc - fz * self.rs, fx * self.rs + fz * self.rc
+
+    def frame(self, x, z):
+        return x * self.rc + z * self.rs, -x * self.rs + z * self.rc
+
+
+class Regions:
+    """The ground between the drawn roads (and inside the strip's outline):
+    each piece a region, with the way its bounding roads run. label[i] is the
+    region of paint cell i (0: a road, the outline or outside); angle[k] the
+    region's frame turn (radians, mod 90 degrees); cells[k] its cell count."""
+
+    def __init__(self, label, angle, cells, side, ox, oz):
+        self.label, self.angle, self.cells = label, angle, cells
+        self.side, self.ox, self.oz = side, ox, oz
+
+    def at(self, x, z):
+        c, r = int(round((x - self.ox) / SPACING)), int(round((z - self.oz) / SPACING))
+        if not (0 <= c < self.side and 0 <= r < self.side):
+            return 0
+        return self.label[r * self.side + c]
+
+
+def road_regions(strip, roads, side, ox, oz):
+    """Regions (the faces of the road network): roads [(class, [(x, z)])] are
+    drawn at their span (at least 10 m across, so no region leaks through a
+    diagonal), with the strip's outline, on the paint grid; the cells between
+    are joined into regions (4-neighbours). Each region's turn is the main way
+    of the roads and outline round it (their directions averaged at 4 times
+    the angle, so roads at right angles agree)."""
+    from array import array
+    n = side * side
+    wall = bytearray(n)
+    ang = array("f", bytes(4 * n))
+
+    def draw(pts, width):
+        r = max(width / 2, 5.0)
+        for (xa, za), (xb, zb) in zip(pts, pts[1:]):
+            dx, dz = xb - xa, zb - za
+            ll = dx * dx + dz * dz
+            if ll < 1e-6:
+                continue
+            a = math.atan2(dz, dx)
+            c0 = max(0, int((min(xa, xb) - r - ox) / SPACING))
+            c1 = min(side - 1, int(math.ceil((max(xa, xb) + r - ox) / SPACING)))
+            r0 = max(0, int((min(za, zb) - r - oz) / SPACING))
+            r1 = min(side - 1, int(math.ceil((max(za, zb) + r - oz) / SPACING)))
+            for row in range(r0, r1 + 1):
+                z = oz + row * SPACING
+                for c in range(c0, c1 + 1):
+                    x = ox + c * SPACING
+                    t = max(0.0, min(1.0, ((x - xa) * dx + (z - za) * dz) / ll))
+                    if math.hypot(x - xa - t * dx, z - za - t * dz) <= r:
+                        i = row * side + c
+                        wall[i] = 1
+                        ang[i] = a
+    for k, pts in roads:
+        draw(pts, ROADS[k][1] if k in ROADS else 10.0)
+    inner = bytearray(n)
+    if strip.outline:
+        fill_polygon(inner, side, strip.outline, 1, SPACING, ox, oz)
+        draw(strip.outline + strip.outline[:1], 10.0)
+    label = array("i", bytes(4 * n))
+    cells = [0]
+    for start in range(n):
+        if label[start] or wall[start] or not inner[start]:
+            continue
+        k = len(cells)
+        label[start] = k
+        stack, count = [start], 0
+        while stack:
+            i = stack.pop()
+            count += 1
+            r, c = divmod(i, side)
+            for j, ok in ((i - 1, c > 0), (i + 1, c < side - 1), (i - side, r > 0), (i + side, r < side - 1)):
+                if ok and not label[j] and not wall[j] and inner[j]:
+                    label[j] = k
+                    stack.append(j)
+        cells.append(count)
+    sx = [0.0] * len(cells)
+    sz = [0.0] * len(cells)
+    for i in range(n):
+        if not wall[i]:
+            continue
+        r, c = divmod(i, side)
+        a4 = 4.0 * ang[i]
+        ca, sa = math.cos(a4), math.sin(a4)
+        for j, ok in ((i - 1, c > 0), (i + 1, c < side - 1), (i - side, r > 0), (i + side, r < side - 1)):
+            if ok and label[j]:
+                sx[label[j]] += ca
+                sz[label[j]] += sa
+    angle = [math.atan2(sz[k], sx[k]) / 4.0 if (sx[k] or sz[k]) else strip.rot for k in range(len(cells))]
+    return Regions(label, angle, cells, side, ox, oz)
+
+
+def _grid_blocks(strip, fx0, fx1, fz0, fz1, frame, seed, keep):
+    """Blocks of a grid in a frame, over [fx0, fx1] x [fz0, fz1] (frame
+    metres): columns 72-104 m wide, rows 84-140 m long, as the town grid.
+    keep(map x, map z) says whether a block centred there is laid. Yields
+    (rect in the frame, col, row, centre in the map)."""
+    x, col = fx0, 0
+    while x < fx1:
+        cr = random.Random(seed + col * 7919 + 17)
+        w = cr.uniform(72.0, 104.0)
+        base_l = cr.uniform(84.0, 140.0)
+        z, row = fz0 - (cr.uniform(0.0, base_l) if seed == 0 else 0.0), 0
+        while z < fz1:
+            l = base_l * cr.uniform(0.8, 1.2)
+            rect = (x, z, x + w, z + l)
+            z += l
+            row += 1
+            mx, mz = frame.unframe((rect[0] + rect[2]) / 2, (rect[1] + rect[3]) / 2)
+            if keep(mx, mz):
+                yield rect, col, row, (mx, mz)
+        x += w
+        col += 1
+
+
+def lay_out(plan, strip, dens, blocked, ground, open_at, paint_urban, side, ox, oz, kit=KIT, log=print,
+            regions=None, blocks_out=None):
     """Buildings for a strip's towns, laid out in blocks (see above).
     blocked(x, z): no building may touch the point; open_at(x, z): open land
     (no building centred there).  Paints streets and block ground into
     paint_urban.  Returns encounter objects (biggest priority first)."""
     th = dict(DENSITY, **plan.get("density", {}))
-    zones = mark_zones(plan, strip)
-    fo = [strip.frame(x, z) for x, z in strip.outline]
-    fx0, fx1 = min(p[0] for p in fo), max(p[0] for p in fo)
-    fz0, fz1 = min(p[1] for p in fo), max(p[1] for p in fo)
+    # the marks in map metres (a frame's turn keeps distances)
+    zones = [(m, *strip.unframe(px, pz)) for m, px, pz in mark_zones(plan, strip)]
     cands, cells, styles = [], [], {}
-    x, col = fx0, 0
-    while x < fx1:
-        cr = random.Random(col * 7919 + 17)
-        w = cr.uniform(72.0, 104.0)
-        base_l = cr.uniform(84.0, 140.0)
-        z, row = fz0 - cr.uniform(0.0, base_l), 0
-        while z < fz1:
-            l = base_l * cr.uniform(0.8, 1.2)
-            bx0, bz0, bx1, bz1 = x, z, x + w, z + l
-            z += l
-            row += 1
-            cx, cz = (bx0 + bx1) / 2, (bz0 + bz1) / 2
-            mx, mz = strip.unframe(cx, cz)
-            if not strip.contains_map(mx, mz):
-                continue
+    # (frame, region or 0, seed, frame bounds, keep)
+    grids = []
+    if regions is None:
+        # one grid in the strip's own frame
+        fo = [strip.frame(x, z) for x, z in strip.outline]
+        grids.append((strip, 0, 0, (min(p[0] for p in fo), max(p[0] for p in fo), min(p[1] for p in fo),
+                                    max(p[1] for p in fo)), strip.contains_map))
+    else:
+        # 0.385 ("blocks": "roads"): a grid in each region between the roads,
+        # turned to the roads round it, from the region's own edge
+        lo = {}
+        for i, k in enumerate(regions.label):
+            if k and regions.cells[k] * SPACING * SPACING >= 1500.0:
+                r, c = divmod(i, side)
+                x, z = ox + c * SPACING, oz + r * SPACING
+                f = lo.get(k)
+                fr = f[0] if f else Frame(regions.angle[k])
+                u, v = fr.frame(x, z)
+                if f is None:
+                    lo[k] = [fr, u, u, v, v]
+                else:
+                    f[1], f[2], f[3], f[4] = min(f[1], u), max(f[2], u), min(f[3], v), max(f[4], v)
+        for k, (fr, u0, u1, v0, v1) in sorted(lo.items()):
+            h = SPACING / 2
+            grids.append((fr, k, k * 1000003, (u0 - h, u1 + h, v0 - h, v1 + h),
+                          (lambda kk: (lambda x, z: regions.at(x, z) == kk))(k)))
+    for frame, region, seed, (fx0, fx1, fz0, fz1), keep in grids:
+        for (bx0, bz0, bx1, bz1), col, row, (mx, mz) in _grid_blocks(strip, fx0, fx1, fz0, fz1, frame, seed, keep):
             share, floors, sheds = dens.at(mx, mz)
             style = style_of(share, floors, sheds, th)
             for m, px, pz in zones:
-                if m.get("style") and math.hypot(cx - px, cz - pz) <= float(m.get("radius", 150)):
+                if m.get("style") and math.hypot(mx - px, mz - pz) <= float(m.get("radius", 150)):
                     style = m["style"]
                     break
             if style is None:
@@ -1701,12 +1840,15 @@ def lay_out(plan, strip, dens, blocked, ground, open_at, paint_urban, side, ox, 
             st = STYLES[style]
             h = st["street"] / 2
             if style != "sparse":
-                cells.append(((bx0, bz0, bx1, bz1), h))
-            rnd = random.Random((col * 100003 + row) * 31 + 7)
+                cells.append(((bx0, bz0, bx1, bz1), h, frame))
+            if blocks_out is not None:
+                blocks_out.append({"outline": [[round(v, 2) for v in frame.unframe(a, b)]
+                                               for a, b in ((bx0, bz0), (bx1, bz0), (bx1, bz1), (bx0, bz1))],
+                                   "style": style, "region": region, "street": st["street"],
+                                   "turn": round(math.degrees(frame.rot), 2)})
+            rnd = random.Random(((col * 100003 + row) * 31 + 7) ^ seed)
             for b in fill_block(bx0 + h, bz0 + h, bx1 - h, bz1 - h, style, share, rnd, kit):
-                cands.append((PRIORITY[style], rnd.random(), style, b))
-        x += w
-        col += 1
+                cands.append((PRIORITY[style], rnd.random(), style, b, frame, region))
 
     # Streets and block ground, painted by each paint point's real distance
     # from the block's edges, fading over "street_feather" metres: the town
@@ -1719,15 +1861,15 @@ def lay_out(plan, strip, dens, blocked, ground, open_at, paint_urban, side, ox, 
     def ramp(d):                               # 0 at -feather, 1 at +feather, smooth
         t = min(1.0, max(0.0, (d + feather) / (2 * feather)))
         return t * t * (3 - 2 * t)
-    for (x0, z0, x1, z1), h in cells:
-        corners = [strip.unframe(*p) for p in ((x0, z0), (x1, z0), (x1, z1), (x0, z1))]
+    for (x0, z0, x1, z1), h, frame in cells:
+        corners = [frame.unframe(*p) for p in ((x0, z0), (x1, z0), (x1, z1), (x0, z1))]
         c0 = max(0, int((min(p[0] for p in corners) - feather - ox) / SPACING))
         c1 = min(side - 1, int((max(p[0] for p in corners) + feather - ox) / SPACING) + 1)
         r0 = max(0, int((min(p[1] for p in corners) - feather - oz) / SPACING))
         r1 = min(side - 1, int((max(p[1] for p in corners) + feather - oz) / SPACING) + 1)
         for r in range(r0, r1 + 1):
             for c in range(c0, c1 + 1):
-                fx, fz = strip.frame(ox + c * SPACING, oz + r * SPACING)
+                fx, fz = frame.frame(ox + c * SPACING, oz + r * SPACING)
                 d_out = min(fx - x0, x1 - fx, fz - z0, z1 - fz)          # inside the cell, metres
                 if d_out < -feather:
                     continue
@@ -1744,14 +1886,16 @@ def lay_out(plan, strip, dens, blocked, ground, open_at, paint_urban, side, ox, 
     # buried on a slope); "low" (the default) on the lowest
     seat = max if plan.get("seat") == "high" else min
     objects, dropped, built = [], {"clear": 0, "open": 0, "slope": 0, "over": 0}, {}
-    rot = math.degrees(strip.rot)
-    for _, _, style, b in cands:
+    for _, _, style, b, frame, region in cands:
+        rot = math.degrees(frame.rot)
         if limit is not None and len(objects) >= limit:
             dropped["over"] += 1
             continue
         for kind, model, cx, cz, ex, ez, ang in alternatives(b, STYLES[style]["kinds"], kit):
-            pts = [strip.unframe(cx + u * ex / 2, cz + v * ez / 2) for u in (-1, 0, 1) for v in (-1, 0, 1)]
-            if not any(blocked(px, pz) for px, pz in pts):
+            pts = [frame.unframe(cx + u * ex / 2, cz + v * ez / 2) for u in (-1, 0, 1) for v in (-1, 0, 1)]
+            # in its own region: not over a road into the next
+            if not any(blocked(px, pz) for px, pz in pts) and (
+                    not region or all(regions.at(px, pz) == region for px, pz in pts)):
                 break
         else:
             dropped["clear"] += 1
@@ -1840,7 +1984,7 @@ def flatten_towns(plan, strip, dens, hm, sea, grid, base):
             hm[r][c] = h
 
 
-def _lay_out_strip(plan, strip, dens, roads, mine, hm, ground, side, ox, oz, base, log, kit=KIT):
+def _lay_out_strip(plan, strip, dens, roads, mine, hm, ground, side, ox, oz, base, log, kit=KIT, blocks_out=None):
     """lay_out() with what keeps buildings away: main roads, the border, the
     beach and sea, plazas at marks, and open land from OSM."""
     blocked = bytearray(side * side)
@@ -1877,7 +2021,14 @@ def _lay_out_strip(plan, strip, dens, roads, mine, hm, ground, side, ox, oz, bas
 
     def open_at(x, z):
         return any(at(mine[k], x, z) >= 128 for k in ("green", "farm", "scrub"))
-    objects = lay_out(plan, strip, dens, is_blocked, ground, open_at, mine["urban"], side, ox, oz, kit=kit, log=log)
+    regions = None
+    if plan.get("blocks", "grid") == "roads":
+        regions = road_regions(strip, roads, side, ox, oz)
+        log(f"blocks: {sum(1 for n in regions.cells[1:] if n * SPACING * SPACING >= 1500.0)} regions between the roads")
+    elif plan.get("blocks", "grid") != "grid":
+        raise ValueError(f"plan \"blocks\": grid or roads, not {plan['blocks']!r}")
+    objects = lay_out(plan, strip, dens, is_blocked, ground, open_at, mine["urban"], side, ox, oz, kit=kit, log=log,
+                      regions=regions, blocks_out=blocks_out)
     for i in range(side * side):              # plazas: open paved squares
         if plazas[i]:
             mine["urban"][i] = 255
@@ -2868,6 +3019,7 @@ def _build(plan, mod, extra, extra_roads, log):
     base = float(plan.get("base", 20.0))
     kit, plant_kit, geometry = load_kit(plan, mod, log)
     plants, camps, harbour, parked = [], [], [], []
+    town_blocks = []            # the laid-out towns' blocks, for gis/<map>.blocks.json
     start = None
     if mp.exists():
         start = (json.loads(mp.read_text(encoding="utf-8")).get("start") or {}).get("position")
@@ -2919,7 +3071,7 @@ def _build(plan, mod, extra, extra_roads, log):
             # the plan's own roads (0.383) inside this place, kept clear as OSM's are
             place_roads += [(k, piece) for k, pts in extra_roads for piece in clip_line(pts, inside)]
             laid = _lay_out_strip(plan, place, dens, [r for r in place_roads if r[0] in keep or r[0].startswith("plan_road_")],
-                                  mine, hm, ground, side, ox, oz, base, log, kit=kit)
+                                  mine, hm, ground, side, ox, oz, base, log, kit=kit, blocks_out=town_blocks)
             trnd = random.Random(int(plan.get("seed", 1)) + 3)
             add_mosques(plan, laid, kit, plant_kit, trnd, log)
             apply_timeline(plan, place, laid, kit, plant_kit, trnd, log)
@@ -3051,6 +3203,12 @@ def _build(plan, mod, extra, extra_roads, log):
         if k not in road_classes and laid is None:        # laid-out towns have their own streets
             paint_line(paint["urban"], side, pts, ROADS[k][1] * 0.4, 255, SPACING, ox, oz)
     road_docs += extra
+    if town_blocks:
+        # the blocks the towns were laid out in (map metres), for a mod's own
+        # tools (alleys, say): each one's outline, style, street width, region
+        # between the roads (0: the strip's grid) and turn in degrees
+        (mod / "gis" / f"{name}.blocks.json").write_text(
+            json.dumps({"map": name, "blocks": plan.get("blocks", "grid"), "list": town_blocks}) + "\n", encoding="utf-8")
     # empty textures and decals: the copied map's own roads go
     (tdir / f"{name}.decals.json").write_text(json.dumps({"textures": [], "decals": [], "roads": road_docs}, indent=1) + "\n",
                                               encoding="utf-8")

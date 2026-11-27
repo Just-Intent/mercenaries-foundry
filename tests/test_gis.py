@@ -373,6 +373,41 @@ class LayoutTest(unittest.TestCase):
                 if near:
                     self.assertFalse(_overlap(rects[i], rects[j]), (objs[i], objs[j]))
 
+    def test_blocks_follow_the_roads(self):
+        s = strip(rotate=45, along=[[-2, 600], [0, 0], [2, -600]], across=0.6)
+        ring = [(31.49, 34.43), (31.49, 34.47), (31.51, 34.47), (31.51, 34.43), (31.49, 34.43)]
+        s.prepare(self.elev, [ring])
+        dens = gis.Density(s)
+        dens.at_world = lambda a, c: (0.3, 2.0, 0.0)
+        g = gis.Grid(256)
+        side = 257
+        # a road at 30 degrees through the middle of the map (not the strip's 45)
+        t = math.radians(30)
+        road = [(-1200 * math.cos(t), -1200 * math.sin(t)), (1200 * math.cos(t), 1200 * math.sin(t))]
+        regions = gis.road_regions(s, [("primary", road)], side, g.x0, g.z0)
+        big = [k for k in range(1, len(regions.cells)) if regions.cells[k] > 200]
+        self.assertGreaterEqual(len(big), 2)                        # the strip cut in two by the road
+        for k in big:                                               # each turned to the road, mod 90
+            d = (math.degrees(regions.angle[k]) - 30) % 90
+            self.assertLess(min(d, 90 - d), 12, (k, math.degrees(regions.angle[k])))
+        self.assertEqual(regions.at(*road[0]), 0)                   # the road itself is no region
+        mid = (0.0, 0.0)
+        self.assertEqual(regions.at(*mid), 0)
+
+        def blocked(x, z):
+            return regions.at(x, z) == 0
+        ground = gis.Ground([[20.0] * 256 for _ in range(256)], g)
+        paint = bytearray(side * side)
+        blocks = []
+        objs = gis.lay_out({"marks": [], "max_buildings": None}, s, dens, blocked, ground, lambda x, z: False, paint,
+                           side, g.x0, g.z0, log=lambda *a: None, regions=regions, blocks_out=blocks)
+        self.assertGreater(len(objs), 20)
+        self.assertTrue(blocks and all(len(b["outline"]) == 4 for b in blocks))
+        for o in objs:                                              # every corner in one region, off the road
+            ks = {regions.at(x, z) for x, z in o["_rect"]}
+            self.assertEqual(len(ks), 1)
+            self.assertNotIn(0, ks)
+
 
 class SeaZoneTest(unittest.TestCase):
     def test_zone_covers_sea_to_the_shore(self):
