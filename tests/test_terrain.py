@@ -365,6 +365,25 @@ class DecalTests(unittest.TestCase):
         self.assertEqual(tex[cell(4, 0)], "dirt")           # nearer the second's centre line
         self.assertEqual(tex[cell(-12, 4)], "asphalt")      # nearer the first's
 
+    def test_narrow_road_unbroken_and_inside_a_wide_one(self):
+        # a 4 m alley at a slant: a decal under every point of its line
+        road = {"texture": "alley", "points": [[-60, -23], [60, 31]], "span": 4}
+        cells = {tuple(e["cell"]) for e in terrain_decals.road_decals(road, SIZE, 8.0)}
+        half = SIZE * 8 / 2
+        cell = lambda x, z: (int((x + half) // 8), int((z + half - 8) // 8))
+        for i in range(0, 61):
+            t = i / 60
+            x, z = -60 + 120 * t, -23 + 54 * t
+            self.assertIn(cell(x, z), cells, (x, z))
+        # a 9 m street along a 26 m road, 3 m off its line: the wide road keeps its middle
+        chunks = decal_chunks()
+        doc = {"roads": [{"texture": "wide", "points": [[-60, 0], [60, 0]], "span": 26},
+                         {"texture": "narrow", "points": [[-60, 3], [60, 3]], "span": 9}]}
+        replace, n = terrain_decals.apply(chunks, doc)
+        tex = {tuple(d["cell"]): d["texture"] for d in terrain_decals.export({**chunks, **replace})["decals"]}
+        for x in range(-40, 41, 8):
+            self.assertEqual(tex[cell(x, 4)], "wide", x)
+
     def test_junction_pieces(self):
         # where roads of a family with junction textures meet square: the
         # game's cross and T pieces over the strips' overlap, as retail lays

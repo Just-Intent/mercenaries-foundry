@@ -49,6 +49,12 @@ MAX_PER_PATCH = 64      # retail's most, one per cell of an 8 x 8 patch; past it
 EXTRA = b"\0\xff\xff\xff\xff"   # bytes 3..7 of every retail decal
 CORNERS = ((1, 0), (1, 1), (0, 0), (0, 1))   # (dz, dx) of each stored corner
 MARGIN = 0.21      # share of a road texture's width that's see-through at each side (retail u: -497..2553)
+# A road narrower than this (m) also takes every cell its centre line
+# passes through (0.386): kept by the cell's centre alone, a road under a
+# cell's diagonal wide (11.3 m) showed in patches (Gaza: a 4 m alley missing
+# under 43% of its line, a 7 m track 14%). Only the line's cells, not all
+# its band touches: that took 50,708 cells on Gaza, past the map's 32,767
+NARROW = 12.0
 
 
 def _s8(v):
@@ -129,6 +135,15 @@ def road_decals(road, size, spacing):
         return best
 
     reach = span / 2
+    line_cells = set()
+    if span < NARROW:
+        # the cells the centre line crosses (sampled every spacing / 16)
+        step = spacing / 16
+        for ax, az, dx, dz, length, _ in segs:
+            for i in range(int(length / step) + 1):
+                t = min(length, i * step)
+                line_cells.add((int(math.floor((ax + dx * t + ox) / spacing)),
+                                int(math.floor((az + dz * t + oz) / spacing))))
     edge = span * MARGIN
     xs = [x for x, _ in pts]
     zs = [z for _, z in pts]
@@ -139,7 +154,7 @@ def road_decals(road, size, spacing):
         for c in range(c0, c1):
             cx, cz = (c + 0.5) * spacing - ox, (r + 0.5) * spacing - oz
             dist, along, _ = project(cx, cz)
-            if dist > reach or not 0 <= along <= total:
+            if (dist > reach and (c, r) not in line_cells) or not 0 <= along <= total:
                 continue
             uv = []
             for dz, dx in CORNERS:
@@ -149,7 +164,7 @@ def road_decals(road, size, spacing):
                 d = max(-span / 2 - edge, min(span / 2 + edge, d))
                 uv.append([d / span * 2048 + 1024, s / span * 2048])
             shift = math.floor(min(v for _, v in uv) / 2048) * 2048   # keep v small: the texture repeats every 2048
-            out.append({"cell": [c, r], "texture": road["texture"], "_dist": dist,
+            out.append({"cell": [c, r], "texture": road["texture"], "_dist": dist, "_room": span / 2 - dist,
                         "uv": [[int(round(u)), int(round(v - shift))] for u, v in uv]})
     return out
 
@@ -447,10 +462,17 @@ def apply(chunks, doc):
         for e in road_decals(road, size, spacing):
             k = tuple(int(v) for v in e["cell"])
             covered.setdefault(k, set()).add(n)
-            if k not in laid or e["_dist"] <= laid[k]["_dist"]:      # crossing roads: the nearer centre line
+            # 0.386: the road with the most room from the cell's centre to its
+            # band's edge (span / 2 - distance), so a wide road keeps its own
+            # middle against a narrow one running inside or beside it (a 9 m
+            # street's strip, with its see-through sides, was a hole in a 26 m
+            # road); equal room: the nearer centre line (crossing roads)
+            o = laid.get(k)
+            if o is None or (e["_room"], -e["_dist"]) >= (o["_room"], -o["_dist"]):
                 laid[k] = e
     for e in laid.values():
         e.pop("_dist", None)
+        e.pop("_room", None)
     # junctions: the game's T, cross and corner pieces over where roads meet
     # ("junctions": false keeps the straight roads crossing as they lay)
     if doc.get("roads") and doc.get("junctions", True):
