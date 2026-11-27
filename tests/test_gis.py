@@ -482,6 +482,22 @@ class BuildTest(unittest.TestCase):
             c, r = int(round(g.col(100))), int(round(g.row(100)))
             self.assertEqual(rgba[(r * w + c) * 4], 255)
             self.assertTrue((mod / "gis" / "town.preview.png").exists())
+            decals = json.loads((mod / "terrain" / "town.decals.json").read_text(encoding="utf-8"))["roads"]
+            self.assertEqual([r["span"] for r in decals], [gis.ROADS["primary"][1]])
+            # "road_spans" narrows a class; "roads_file" adds a road tool's roads
+            (mod / "gis" / "links.json").write_text(json.dumps({"links": [
+                {"texture": "sw_decal_road_straightalpha", "span": 9.0, "points": [[0, -100], [0, 100]]}]}),
+                encoding="utf-8")
+            plan["road_spans"] = {"primary": 12}
+            plan["roads_file"] = "gis/links.json"
+            out = gis.build(plan, mod, log=lambda *a: None)
+            self.assertEqual(out["roads"], 2)
+            decals = json.loads((mod / "terrain" / "town.decals.json").read_text(encoding="utf-8"))["roads"]
+            self.assertEqual([r["span"] for r in decals], [12.0, 9.0])
+            self.assertEqual(gis.ROADS["primary"][1], 30.0)          # the built-in span after the build
+            plan["road_spans"] = {"lane": 3}
+            with self.assertRaises(ValueError):
+                gis.build(plan, mod, log=lambda *a: None)
 
 
 if __name__ == "__main__":

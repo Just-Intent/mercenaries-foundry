@@ -2775,8 +2775,59 @@ def place_plants(plan, strip, landcover, ground, hm, base, roads, buildings, urb
     return out
 
 
+def plan_roads(plan, mod):
+    """The plan's own decal roads: "roads" (decal road documents: texture,
+    span, points in map metres) and those in "roads_file" (a json file in the
+    mod with them under "links" or "roads", as a road tool writes them)."""
+    docs = list(plan.get("roads") or [])
+    rf = plan.get("roads_file")
+    if rf:
+        f = Path(mod) / rf
+        if not f.exists():
+            raise ValueError(f"plan \"roads_file\": {rf} isn't in the mod")
+        d = json.loads(f.read_text(encoding="utf-8"))
+        more = d if isinstance(d, list) else (d.get("links") or d.get("roads") or [])
+        docs += [r for r in more if isinstance(r, dict) and len(r.get("points") or []) >= 2]
+    return docs
+
+
+def road_spans(plan):
+    """ROADS with the plan's "road_spans" ({class: metres}) over the built-in
+    spans: a narrower class costs fewer decal cells (a map holds 32,767)."""
+    out = dict(ROADS)
+    for k, v in (plan.get("road_spans") or {}).items():
+        if k not in ROADS:
+            raise ValueError(f"plan \"road_spans\": {k!r} isn't a road class ({', '.join(ROAD_ORDER)})")
+        v = float(v)
+        if not 2.0 <= v <= 60.0:
+            raise ValueError(f"plan \"road_spans\": {k}: {v} m isn't between 2 and 60")
+        out[k] = (ROADS[k][0], v)
+    return out
+
+
 def build(plan, mod, log=print):
-    """Write the plan's terrain, roads, buildings and sea into a mod folder."""
+    """Write the plan's terrain, roads, buildings and sea into a mod folder.
+    The plan's "road_spans" hold for the whole build (the decals and every
+    clearance from them), and its own roads ("roads", "roads_file") keep
+    buildings, camps, plants and parked cars off them as OSM's do."""
+    global ROADS
+    saved = ROADS
+    spans = road_spans(plan)
+    extra = plan_roads(plan, mod)
+    # each extra road a class of its own for the clearances (its own span)
+    ROADS = dict(spans)
+    extra_roads = []
+    for i, r in enumerate(extra):
+        k = f"plan_road_{i}"
+        ROADS[k] = (str(r.get("texture") or "sw_decal_road_straight"), float(r.get("span") or 22.0))
+        extra_roads.append((k, [(float(x), float(z)) for x, z in r["points"]]))
+    try:
+        return _build(plan, mod, extra, extra_roads, log)
+    finally:
+        ROADS = saved
+
+
+def _build(plan, mod, extra, extra_roads, log):
     mod = Path(mod)
     g = plan["grid"]
     name = plan["map"].lower()
@@ -2865,8 +2916,10 @@ def build(plan, mod, log=print):
         if layout:
             flatten_towns(plan, place, dens, hm, sea, g, base)
             keep = set(plan.get("decal_roads", ROAD_ORDER))
-            laid = _lay_out_strip(plan, place, dens, [r for r in place_roads if r[0] in keep], mine, hm, ground, side, ox, oz,
-                                  base, log, kit=kit)
+            # the plan's own roads (0.383) inside this place, kept clear as OSM's are
+            place_roads += [(k, piece) for k, pts in extra_roads for piece in clip_line(pts, inside)]
+            laid = _lay_out_strip(plan, place, dens, [r for r in place_roads if r[0] in keep or r[0].startswith("plan_road_")],
+                                  mine, hm, ground, side, ox, oz, base, log, kit=kit)
             trnd = random.Random(int(plan.get("seed", 1)) + 3)
             add_mosques(plan, laid, kit, plant_kit, trnd, log)
             apply_timeline(plan, place, laid, kit, plant_kit, trnd, log)
@@ -2997,7 +3050,7 @@ def build(plan, mod, log=print):
     for k, pts in roads:
         if k not in road_classes and laid is None:        # laid-out towns have their own streets
             paint_line(paint["urban"], side, pts, ROADS[k][1] * 0.4, 255, SPACING, ox, oz)
-    road_docs += plan.get("roads", [])
+    road_docs += extra
     # empty textures and decals: the copied map's own roads go
     (tdir / f"{name}.decals.json").write_text(json.dumps({"textures": [], "decals": [], "roads": road_docs}, indent=1) + "\n",
                                               encoding="utf-8")
