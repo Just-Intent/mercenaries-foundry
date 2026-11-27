@@ -1105,6 +1105,20 @@ class MapTextureLoadTests(unittest.TestCase):
         self.assertEqual(data.added[(name_hash("isle"), name_hash("list"))],
                          b"\n[texture]\n\nload nk_tt_dirt\nload nw_tt_snow\n")
 
+    def test_decal_textures_set_their_detail(self):
+        class FakeData:
+            files = {"DATAxbox/TEST/isle_XBOX.ini": b"layerDetail 15 2\nlayerDetail 16 1\nlayerDetail 17 1\nlayerDetail 18 1\n"}
+        data = FakeData()
+        modbuild.detail_given["isle"] = {18}          # maps json "detail" gave 18
+        try:
+            got = modbuild._decal_detail(data, "isle", ["gaza_decal_track", "sw_decal_road_straight", "farm_grass"])
+        finally:
+            modbuild.detail_given.pop("isle")
+        self.assertEqual(got, ["16 rock", "17 concrete"])     # 18 as given
+        self.assertEqual(data.files["DATAxbox/TEST/isle_XBOX.ini"],
+                         b"layerDetail 15 2\nlayerDetail 16 2\nlayerDetail 17 1\nlayerDetail 18 1\n")
+        # a map whose config the build didn't write: left alone
+        self.assertEqual(modbuild._decal_detail(data, "other", ["gaza_decal_track"]), [])
 
 class RotationRuleTests(unittest.TestCase):
     def test_rule_rotation_replaces_the_whole_rotation(self):

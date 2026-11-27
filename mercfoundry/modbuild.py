@@ -2846,6 +2846,35 @@ def _detail_for_texture(name):
     return 2
 
 
+# new maps whose Xbox config _map_detail wrote: map name -> the slots its
+# maps json "detail" gave (the rest of 16-31 follow the decal textures)
+detail_given = {}
+
+
+def _decal_detail(data, name, textures):
+    """A new map's layerDetail for its decal slots (16 + the decal texture's
+    index) from each texture's name (0.382: a dirt track drew concrete's
+    detail), where its maps json "detail" didn't give one."""
+    given = detail_given.get(name.lower())
+    if given is None:
+        return []
+    path = next((k for k in data.files if k.lower().endswith(f"/{name.lower()}_xbox.ini")), None)
+    if path is None:
+        return []
+    text = data.files[path].decode("latin-1")
+    set_ = []
+    for i, t in enumerate(textures[:16]):
+        slot = 16 + i
+        if not t or slot in given:
+            continue
+        kind = _detail_for_texture(t)
+        text, n = re.subn(rf"(?im)^(\s*layerDetail\s+{slot}\s+)\d+", lambda m: m.group(1) + str(kind), text)
+        if n:
+            set_.append(f"{slot} {DETAIL_TYPES[kind]}")
+    data.files[path] = text.encode("latin-1")
+    return set_
+
+
 def _map_detail(folder, name, mdoc, where, xbox_text, made):
     """The new map's Xbox config with detailType and layerDetail lines: from
     maps json "detail" ({slot: grass|concrete|rock|snow}), else, when the
@@ -2875,6 +2904,9 @@ def _map_detail(folder, name, mdoc, where, xbox_text, made):
     block = "".join(f"detailType {i} {t}{nl}" for i, t in enumerate(DETAIL_TEXTURES)) + nl + \
         "".join(f"layerDetail {s} {slots[s]}{nl}" for s in range(32))
     made.append("terrain detail (" + ", ".join(f"{s} {DETAIL_TYPES[slots[s]]}" for s in sorted(layers) or [0]) + ")")
+    # the decal slots (16-31) not given: the terrain step sets them from the
+    # decal textures' names once their order is known (_decal_detail)
+    detail_given[name.lower()] = {int(k) for k in (given or {})}
     return block + nl + text
 
 
@@ -4084,10 +4116,20 @@ def _apply_terrain(data, folder, result):
                 doc = json.loads(job["decals"].read_text(encoding="utf-8"))
                 decal_replace, count = terrain_decals.apply({**chunks, **replace}, doc)
                 replace.update(decal_replace)
+                # the game's textures, ones added so far (the mod's own textures/*.png)
                 known = {rec.key for _, rec in data.records(name_hash("Texture"))}
-                for t in terrain_decals.export({**chunks, **replace})["textures"]:
+                known |= {k for k, kind, _ in data.added() if kind == name_hash("Texture")}
+                dtex = terrain_decals.export({**chunks, **replace})["textures"]
+                for t in dtex:
                     if t and name_hash(t) not in known:
-                        result.warnings.append(f"terrain/{job['decals'].name}: no game texture named {t!r}")
+                        result.warnings.append(f"terrain/{job['decals'].name}: no texture named {t!r} in the game or the mod")
+                # 0.382: on the map's load list, as ground layers' are (a
+                # texture another map's decals use, or the mod's own, isn't
+                # loaded with the map otherwise)
+                _load_textures_with_map(data, name, [t for t in dtex if t])
+                detail = _decal_detail(data, name, dtex)
+                if detail:
+                    notes.append("decal detail (" + ", ".join(detail) + ")")
                 roads = len(doc.get("roads", []))
                 notes.append(f"{count} decals" + (f" ({roads} road{'s' if roads != 1 else ''} laid)" if roads else ""))
             if "lighting" in job:
