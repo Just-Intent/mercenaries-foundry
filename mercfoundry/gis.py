@@ -80,8 +80,11 @@ LANDUSE = {
 ROADS = {
     "motorway": ("sw_decal_road_straight", 34.0), "trunk": ("sw_decal_road_straight", 32.0),
     "primary": ("sw_decal_road_straight", 30.0), "secondary": ("sw_decal_road_straight", 26.0),
-    "tertiary": ("sw_decal_road_straightalpha", 22.0),
+    "tertiary": ("sw_decal_road_straight", 22.0),
 }
+# (0.387: tertiary drew sw_decal_road_straightalpha, retail's road-end fade:
+# transparent at v 0 to opaque at 1 and speckled, it faded out and in every
+# span along a street; junction_texture maps either to the same T and cross)
 ROAD_ORDER = ["motorway", "trunk", "primary", "secondary", "tertiary"]
 # Smaller streets are painted on the ground (urban layer) at this width: as
 # decals they'd fill most of a city's cells (a map holds 32767 decals; SW,
