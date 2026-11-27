@@ -110,6 +110,7 @@ static void any_captive_poll(double dt);
 static void shop_poll(double dt);
 static void upright_update(double dt);
 static void hide_joints_update(void);
+static void hide_joints_publish(void);
 static void unseated_poll(double dt);
 static unsigned hidden_count;
 static void shop_level_reset(void);
@@ -1468,6 +1469,7 @@ static int MERC_PLUGIN_CALL on_update(void *ud, const MercPluginUpdate *u)
     if (sample_playing) upright_update(u->wall_delta_seconds);
     if (sample_playing) unseated_poll(u->wall_delta_seconds);
     if (sample_playing && hidden_count) hide_joints_update();
+    if (sample_playing) hide_joints_publish();
     live_update(u->wall_delta_seconds);
     maptex_poll(u->wall_delta_seconds);
     maptext_poll(u->wall_delta_seconds);
@@ -4204,6 +4206,11 @@ static void MERC_PLUGIN_CALL level_load_before(void *ud, MercHookContext *c)
         host->log(host->context, line);
     }
     maptemplate_restore();
+    {   /* 0.377: no hidden joints across a level load (the port's list at
+         * 0x87B400 names actors that are about to go) */
+        uint32_t zero = 0;
+        host->write_guest(host->context, 0x87B400u, &zero, 4);
+    }
     shop_level_reset();
     shop_url_restore();
     tcount_timer = 0;
@@ -5014,6 +5021,19 @@ static int probe_quat_at(const float *a, const float *q)
 typedef struct { uint32_t obj, actor, index; } HiddenJoint;
 static HiddenJoint hidden_joints[HIDE_MAX];
 static unsigned hidden_count;
+
+static void hide_joints_publish(void)
+{
+    /* 0.377: the list for the port, which shrinks them again right after the
+     * game composes a pose (a turret's chain is composed after this update) */
+    uint32_t list[1 + 2 * HIDE_MAX];
+    list[0] = hidden_count;
+    for (unsigned i = 0; i < hidden_count; i++) {
+        list[1 + 2 * i] = hidden_joints[i].actor;
+        list[2 + 2 * i] = hidden_joints[i].index;
+    }
+    host->write_guest(host->context, 0x87B400u, list, 4u * (1u + 2u * hidden_count));
+}
 
 static void hide_joints_update(void)
 {
