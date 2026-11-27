@@ -4957,7 +4957,8 @@ static int MERC_PLUGIN_CALL cmd_remove_object(void *ud, uint32_t L)
  * block (WorldObject +template), so it's found in g_TemplateTable's blocks.
  * Foundry_SpawnTemplate(template, name, x, y, z): spawns a template (a
  * name, or "0x<hash>" from Foundry_ActorTemplate) under a new name, facing
- * +z (Actor_SetYaw after); true if it spawned. For an HQ's parking spot:
+ * +z (Actor_SetYaw after); true if it spawned (false, and nothing done,
+ * for a template not loaded: 0.380). For an HQ's parking spot:
  * the vehicle the player went in with, after a contract reloads the level. */
 static int MERC_PLUGIN_CALL cmd_actor_template(void *ud, uint32_t L)
 {
@@ -5396,6 +5397,15 @@ static int MERC_PLUGIN_CALL cmd_spawn_template(void *ud, uint32_t L)
         uint32_t hash = (tmpl[0] == '0' && (tmpl[1] == 'x' || tmpl[1] == 'X')) ? (uint32_t)strtoul(tmpl + 2, NULL, 16)
                                                                               : hash_name(tmpl);
         uint32_t scratch, size;
+        if (hash) {
+            /* 0.380: only a loaded template (HQ parking tries the _empty
+             * variant first, which not every vehicle has) */
+            static uint32_t hashes[0x1000];
+            int loaded = 0;
+            if (host->read_guest(host->context, MF_VAR_g_TemplateTable + 0x4008, hashes, sizeof(hashes)))
+                for (unsigned i = 0; i < 0x1000 && !loaded; i++) loaded = hashes[i] == hash;
+            if (!loaded) hash = 0;
+        }
         if (hash && host->guest_scratch(host->context, &scratch, &size) && size >= 160) {
             float m[16] = {1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, pos[0], pos[1], pos[2], 1};
             host->write_guest(host->context, scratch, m, sizeof(m));

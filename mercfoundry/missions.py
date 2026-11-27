@@ -2538,8 +2538,9 @@ end
 -- world; this room is on the map). Taking a contract reloads the level and
 -- the vehicle with it: its template (Foundry_ActorTemplate) is kept in the
 -- save's scribble memory (foundry_hq_park_<faction>) and {P}HqParked spawns
--- it there again once the level has loaded. Walking out without a reload
--- forgets it (the vehicle is still there). Damage and ammo aren't kept.
+-- it there again on each level load. The memory is kept (0.380: a contract
+-- restart, or the free roam after it, spawns it again) until the player
+-- drives off in it or it is destroyed. Damage and ammo aren't kept.
 function {P}HqPark(h)
 local car = {P}HqCar
 if not h.park or not car or not Utility_DoesActorExist(car) then return end
@@ -2557,29 +2558,96 @@ if not t and Foundry_ActorModel then
 local m = Foundry_ActorModel(car)
 if m then t = {P}HqParkModels[m] end
 end
-if t and {P}HqIn then Utility_WriteStringToScribbleMemory('foundry_hq_park_' .. {P}HqIn, t) end
+if t and {P}HqIn then
+Utility_WriteStringToScribbleMemory('foundry_hq_park_' .. {P}HqIn, t)
+-- this level's vehicle stands for the memory until the player takes it
+{P}HqParkWant[{P}HqIn] = {{ a = car }}
+{P}HqParkPollOn()
+end
 {P}HqTrace('parked the vehicle (' .. (t or 'template not known') .. ')')
 end
 function {P}HqUnpark(f)
 Utility_WriteStringToScribbleMemory('foundry_hq_park_' .. f, '')
 end
 -- Each level load (free roam or a contract): a vehicle kept by {P}HqPark
--- comes back at its HQ's parking spot, 10 s in (the world around it loaded:
--- 0.373, a helicopter spawned 2 s in sat 2.6 m up on nothing for good).
-function {P}HqParked()
+-- comes back at its HQ's parking spot (0.380) once the player is within
+-- 250 m of it, and 10 s in at the soonest: spawned far off during a load, a
+-- helicopter sat up on its collision boxes for good (the console spawn, made
+-- near the player, landed). The template's _empty variant is used where the
+-- game has one, so no driver comes with it. {P}HqParkWant[faction] is the
+-- template still to spawn, or the vehicle standing for the memory; the
+-- memory goes once the player drives off in that vehicle or it is gone.
+{P}HqParkWant = {{}}
+function {P}HqParkedSoon()
 for f, h in {P}Hq do
 local t = h.park and Utility_ReadStringFromScribbleMemory('foundry_hq_park_' .. f)
-if t and t ~= '' and Foundry_SpawnTemplate then
-{P}HqUnpark(f)
-local name = 'foundry_hq_parked_' .. f
-if not Utility_DoesActorExist(name) and Foundry_SpawnTemplate(t, name, h.park[1], h.park[2] + 0.5, h.park[3]) then
-if Utility_DoesActorExist(name) then Actor_SetYaw(name, h.park[4]) end
+if t and t ~= '' then {P}HqParkWant[f] = t end
 end
-end
-end
-end
-function {P}HqParkedSoon()
+{P}HqParkPoll = 1
 Event_RelativeTimer('{P}HqParked', 'b', 10.0)
+end
+function {P}HqParkPollOn()
+if not {P}HqParkPoll then
+{P}HqParkPoll = 1
+Event_RelativeTimer('{P}HqParked', 'b', 2.0)
+end
+end
+function {P}HqParkSpawn(f, t)
+local h = {P}Hq[f]
+local name = 'foundry_hq_parked_' .. f
+if Utility_DoesActorExist(name) then return name end
+-- (a template already _empty, or a 0x<hash>, makes a name not loaded,
+-- which Foundry_SpawnTemplate turns down)
+local e = t .. '_empty'
+if Foundry_SpawnTemplate(e, name, h.park[1], h.park[2] + 0.5, h.park[3]) and Utility_DoesActorExist(name) then
+{P}HqTrace('restored the parked vehicle (' .. e .. ')')
+elseif Foundry_SpawnTemplate(t, name, h.park[1], h.park[2] + 0.5, h.park[3]) and Utility_DoesActorExist(name) then
+{P}HqTrace('restored the parked vehicle (' .. t .. ')')
+else
+return nil
+end
+Actor_SetYaw(name, h.park[4])
+return name
+end
+function {P}HqParked()
+{P}HqParkPoll = nil
+if not Foundry_SpawnTemplate then return end
+local px, py, pz = Actor_GetPosition('player0')
+local v = Utility_GetActorsVehicle('player0')
+local vx, vy, vz = nil, nil, nil
+if v then vx, vy, vz = Actor_GetPosition(v) end
+local more = nil
+for f, w in {P}HqParkWant do
+local h = {P}Hq[f]
+if type(w) == 'string' then
+local dx, dz = 0, 0
+if px then dx, dz = px - h.park[1], pz - h.park[3] end
+if px and dx * dx + dz * dz < 62500 then
+local name = {P}HqParkSpawn(f, w)
+if name then {P}HqParkWant[f] = {{ a = name }} end
+end
+more = 1
+elseif not Utility_DoesActorExist(w.a) then
+{P}HqUnpark(f)
+{P}HqParkWant[f] = nil
+else
+local nx, ny, nz = Actor_GetPosition(w.a)
+if vx and nx and (vx - nx) * (vx - nx) + (vz - nz) * (vz - nz) < 1 then
+local dx, dz = nx - h.park[1], nz - h.park[3]
+-- driven 15 m from the spot: taken
+if dx * dx + dz * dz > 225 then
+{P}HqUnpark(f)
+{P}HqParkWant[f] = nil
+{P}HqTrace('the parked vehicle was taken')
+else
+more = 1
+end
+else
+more = 1
+end
+end
+end
+if more then {P}HqParkPollOn() end
 end
 function {P}HqArm()
 if not {P}HqCarWatch then
@@ -3210,7 +3278,8 @@ local h = {P}Hq[f]
 local b = {P}HqBack
 if b and b[1] then Actor_SetPosition('player0', b[1], b[2], b[3]) end
 {P}HqRelease()
-{P}HqUnpark(f)   -- out the way they came: the vehicle is still parked
+-- out the way they came: the vehicle is still parked, and remembered
+-- until the player drives off in it ({P}HqParked)
 {P}HqIn = nil
 {P}HqOnly = nil
 Cinematic_FadeIn(0.5)
