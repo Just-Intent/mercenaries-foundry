@@ -665,8 +665,7 @@ class Scene:
         table.append({"texture": base["texture"], "scale": float(scale if scale is not None else base["scale"]),
                       "axis": int(axis if axis is not None else base["axis"])})
         p = self.mod / "terrain" / f"{map_name.lower()}.layers.json"
-        p.parent.mkdir(parents=True, exist_ok=True)
-        p.write_text(json.dumps({"layers": table}, indent=1) + "\n", encoding="utf-8")
+        terrain_paint.write_table(p, table)
         self._forget_terrain(map_name)
         return {"file": f"terrain/{p.name}", "layers": table}
 
@@ -690,9 +689,9 @@ class Scene:
         return terrain_paint.layer_count(terrain.tern_chunks(_terrain_bytes(data, rec)))
 
     def _write_layer_table(self, map_name, table):
+        from .. import terrain_paint
         p = self.mod / "terrain" / f"{map_name.lower()}.layers.json"
-        p.parent.mkdir(parents=True, exist_ok=True)
-        p.write_text(json.dumps({"layers": table}, indent=1) + "\n", encoding="utf-8")
+        terrain_paint.write_table(p, table)
         self._forget_terrain(map_name)
         return f"terrain/{p.name}"
 

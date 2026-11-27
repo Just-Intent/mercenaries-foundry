@@ -42,7 +42,7 @@ import urllib.parse
 import urllib.request
 from pathlib import Path
 
-from . import png
+from . import png, terrain_paint
 
 SPACING = 8.0
 STEP = 0.3499999940395355
@@ -3191,7 +3191,9 @@ def _build(plan, mod, extra, extra_roads, log):
         raise ValueError(f"plan \"textures\": no layer {sorted(unknown)} (layers: {[l['key'] for l in LAYERS]})")
     layers = [dict(l, texture=swap.get(l["key"], l["texture"])) for l in LAYERS]
     table = [{"texture": l["texture"], "scale": l["scale"], "axis": 0} for l in layers]
-    (tdir / f"{name}.layers.json").write_text(json.dumps({"layers": table}, indent=1) + "\n", encoding="utf-8")
+    # the file's other keys are kept; plan "max_patch_layers" sets that one
+    terrain_paint.write_table(tdir / f"{name}.layers.json", table,
+                              max_patch_layers=plan.get("max_patch_layers"))
     for old in tdir.glob(f"{name}.layer*.png"):
         old.unlink()
     for i, l in enumerate(layers):

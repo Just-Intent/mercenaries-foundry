@@ -4085,9 +4085,14 @@ def _apply_terrain(data, folder, result):
                         replace[b"COLR"] = colr
                 notes.append(f"{changed} height samples changed; {note}")
             if "table" in job or "layers" in job:
-                table = None
+                table = most = None
                 if "table" in job:
-                    table = json.loads(job["table"].read_text(encoding="utf-8"))["layers"]
+                    table_doc = json.loads(job["table"].read_text(encoding="utf-8"))
+                    table = table_doc["layers"]
+                    # 0.388: at most this many layers a patch (4: one pass)
+                    most = table_doc.get("max_patch_layers")
+                    if most is not None and (not isinstance(most, int) or isinstance(most, bool) or most < 1):
+                        raise ValueError(f"terrain/{job['table'].name}: max_patch_layers is a whole number of 1 or more")
                     # the game's textures, ones added so far, and the mod's own textures/*.png
                     known = {rec.key for _, rec in data.records(name_hash("Texture"))}
                     known |= {k for k, kind, _ in data.added() if kind == name_hash("Texture")}
@@ -4122,11 +4127,13 @@ def _apply_terrain(data, folder, result):
                     if base_img is not None and cur_img is not None and len(base_img) == len(img) == len(cur_img):
                         img = bytes(m if m != b else c for m, b, c in zip(img, base_img, cur_img))
                     images[index] = img
-                paint, patches = terrain_paint.apply({**chunks, **replace}, images, table)
+                paint, patches = terrain_paint.apply({**chunks, **replace}, images, table, most)
                 replace.update(paint)
                 if table is not None:
                     notes.append(f"{len(table)} layers in the table")
-                if images:
+                if most:
+                    notes.append(f"at most {most} layers a patch")
+                if images or most:
                     notes.append(f"{patches} patches repainted")
                     heavy = sum(1 for p in terrain_layers.decode_ptch(replace.get(b"PTCH", chunks[b"PTCH"]))
                                 if bin(p.layer_mask).count("1") > terrain_paint.RETAIL_MAX_PATCH_LAYERS)

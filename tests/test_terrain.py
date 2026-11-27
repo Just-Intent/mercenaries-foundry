@@ -213,6 +213,45 @@ class TerrainTests(unittest.TestCase):
         patches = terrain_layers.decode_ptch(replace[b"PTCH"])
         self.assertTrue(all(p.layers == [4] for p in patches))
 
+    def test_max_patch_layers(self):
+        # 0.388: six layers over a patch; capped at four, the two giving the
+        # least colour go and their share goes to the kept ones, bottom opaque
+        windows = {0: [255] * 81, 1: [255] * 40 + [0] * 41, 2: [36] * 81,
+                   3: [109] * 81, 4: [0] * 80 + [36], 5: [182] * 81}
+        layers = sorted(windows)
+        keep, new = terrain_paint.cap_layers(windows, layers, 4)
+        self.assertEqual(keep, [0, 1, 3, 5])           # 2 is faint under 3 and 5; 4 is a speck
+        self.assertEqual(new[0], [255] * 81)           # the bottom layer
+        before = terrain_paint.visible(windows, layers)
+        after = terrain_paint.visible(new, keep)
+        for v in (0, 80):
+            self.assertAlmostEqual(sum(after[l][v] for l in keep), 1.0, places=2)
+            # the top layer keeps (about) its own share
+            self.assertAlmostEqual(after[5][v], before[5][v], delta=0.03)
+        mask, _ = terrain_paint.patch_alpha(windows, 4)
+        self.assertEqual(mask, 0b101011)
+        self.assertEqual(terrain_paint.patch_alpha(windows)[0], 0b111111)
+        # in a map: a crowded patch is re-encoded though its paint didn't change
+        rec = tern_record(sample_units(), paint=painted_chunks())
+        chunks = terrain.tern_chunks(rec)
+        table = terrain_paint.layer_table(chunks) + [{"texture": t, "scale": 16, "axis": 0} for t in "abcd"]
+        w = SIZE + 1
+        images = {l: bytes([255 if l == 0 else 109] * (w * w)) for l in range(6)}
+        replace, _ = terrain_paint.apply(chunks, images, table)
+        chunks = {**chunks, **replace}
+        self.assertTrue(all(len(p.layers) == 6 for p in terrain_layers.decode_ptch(chunks[b"PTCH"])))
+        replace, n = terrain_paint.apply(chunks, most=4)
+        self.assertEqual(n, (SIZE // 8) ** 2)
+        self.assertTrue(all(len(p.layers) == 4 for p in terrain_layers.decode_ptch(replace[b"PTCH"])))
+
+    def test_layer_table_keeps_other_keys(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            p = Path(tmp) / "t" / "sw.layers.json"
+            terrain_paint.write_table(p, [{"texture": "a", "scale": 16, "axis": 0}], max_patch_layers=4)
+            terrain_paint.write_table(p, [{"texture": "b", "scale": 8, "axis": 0}])
+            doc = json.loads(p.read_text(encoding="utf-8"))
+            self.assertEqual(doc, {"layers": [{"texture": "b", "scale": 8, "axis": 0}], "max_patch_layers": 4})
+
     def test_new_layer(self):
         chunks = terrain.tern_chunks(tern_record(sample_units(), paint=painted_chunks()))
         table = terrain_paint.layer_table(chunks) + [{"texture": "sand", "scale": 8, "axis": 0}]

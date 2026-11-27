@@ -58,6 +58,24 @@ def layer_table(chunks):
              "axis": axis[k] if k < len(axis) else 0} for k in range(n)]
 
 
+def write_table(path, table, **keys):
+    """Write a mod's terrain/<map>.layers.json with this layer table, keeping
+    the file's other keys ("max_patch_layers") and setting `keys` (None
+    leaves a key as it is)."""
+    import json
+    doc = {}
+    try:
+        old = json.loads(path.read_text(encoding="utf-8"))
+        if isinstance(old, dict):
+            doc = old
+    except (OSError, ValueError):
+        pass
+    doc["layers"] = table
+    doc.update({k: v for k, v in keys.items() if v is not None})
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(doc, indent=1) + "\n", encoding="utf-8")
+
+
 def _owner(v, side):
     """(patch, index) that a vertex row/column v takes its value from."""
     p = min(v // tl.PATCH, side - 1)
@@ -129,11 +147,58 @@ def _alph_blobs(data, patches):
     return out
 
 
-def patch_alpha(windows):
+def visible(windows, layers):
+    """{layer: [81 weights 0..1]}: how much of each vertex's colour each layer
+    gives, drawn bottom to top (a layer's opacity times what the layers above
+    it let through)."""
+    out = {l: [0.0] * tl.VERTS ** 2 for l in layers}
+    for n in range(tl.VERTS ** 2):
+        through = 1.0
+        for l in reversed(layers):
+            a = tl.ALPHA_TABLE[LEVEL[windows[l][n]]] / 255
+            out[l][n] = a * through
+            through *= 1 - a
+    return out
+
+
+def cap_layers(windows, layers, most):
+    """(kept layers, new windows) for a patch that uses more than `most`
+    layers (0.388): the layers giving the least colour over the patch's whole
+    9 x 9 window (border vertices included, so neighbours sharing an edge tend
+    to drop the same ones) are dropped, and each vertex's colour is shared out
+    again among the kept layers in proportion to what they gave.  The bottom
+    kept layer is opaque, as the game's base layer is."""
+    if len(layers) <= most:
+        return layers, windows
+    w = visible(windows, layers)
+    strength = {l: sum(w[l]) for l in layers}
+    keep = sorted(sorted(layers, key=lambda l: (-strength[l], l))[:most])
+    best = max(keep, key=lambda l: (strength[l], -l))
+    new = {l: [0] * tl.VERTS ** 2 for l in keep}
+    for n in range(tl.VERTS ** 2):
+        share = {l: w[l][n] for l in keep}
+        if sum(share.values()) <= 0:
+            share = {best: 1.0}         # only dropped layers here: the strongest kept one
+        left = sum(share.values())
+        for k, l in enumerate(reversed(keep)):      # top down: opacity = share of what's left
+            if k == len(keep) - 1:
+                a = 1.0
+            else:
+                a = share.get(l, 0.0) / left if left > 1e-9 else 0.0
+            left -= share.get(l, 0.0)
+            new[l][n] = max(0, min(255, round(a * 255)))
+    return keep, new
+
+
+def patch_alpha(windows, most=None):
     """(layer mask, ALPH data unpacked: 45 bytes a layer, or b"" for one
     layer or none) for one patch from each layer's 9 x 9 opacities
-    ({layer: [81 values, row by row]}), as the build writes it."""
+    ({layer: [81 values, row by row]}), as the build writes it.  most: the
+    most layers a patch keeps (cap_layers), or None for all."""
     layers = [l for l in sorted(windows) if any(LEVEL[v] for v in windows[l])]
+    if most:
+        layers, windows = cap_layers(windows, layers, most)
+        layers = [l for l in layers if any(LEVEL[v] for v in windows[l])]
     grids = encode_patch(windows, layers) if len(layers) > 1 else {}
     # A layer that draws no cell (hidden under opaque paint) is left out:
     # the game draws a patch in passes of four layers, and a pass that draws
@@ -149,12 +214,15 @@ def patch_alpha(windows):
     return mask, raw
 
 
-def apply(chunks, images=None, table=None):
+def apply(chunks, images=None, table=None, most=None):
     """New tern chunk bodies for painted layers.
 
     images: {layer: bytes (w * w opacity)} replacing those layers' images
     (others keep theirs).  table: a new layer_table() list (textures, scale,
-    axis; may add layers up to 16).  Returns (replace, patches changed)."""
+    axis; may add layers up to 16).  most: the most layers a patch keeps
+    (layers.json "max_patch_layers"; 4 draws every patch in one pass); a patch
+    over it is re-encoded even if its paint didn't change.  Returns (replace,
+    patches changed)."""
     images = images or {}
     side = _side(chunks)
     w = side * tl.PATCH + 1
@@ -194,7 +262,7 @@ def apply(chunks, images=None, table=None):
             raise ValueError(f"layer {l} doesn't exist (the map has {count}; add it to the layer table first)")
         if len(img) != w * w:
             raise ValueError(f"layer images must be {w} x {w} pixels")
-    if not images:
+    if not images and not most:
         return replace, 0
     _, old = layer_images(chunks)
     patches = tl.decode_ptch(chunks[b"PTCH"])
@@ -209,14 +277,15 @@ def apply(chunks, images=None, table=None):
                 return [img[(py * tl.PATCH + j) * w + px * tl.PATCH + i]
                         for j in range(tl.VERTS) for i in range(tl.VERTS)]
 
-            if not any(window(img) != window(old.get(l, bytes(w * w))) for l, img in images.items()):
+            crowded = bool(most) and len(p.layers) > most
+            if not crowded and not any(window(img) != window(old.get(l, bytes(w * w))) for l, img in images.items()):
                 new_patches.append(p)
                 if n in blobs:
                     alph += blobs[n]
                 continue
             changed += 1
             windows = {l: window(images[l] if l in images else old.get(l, bytes(w * w))) for l in range(count)}
-            mask, raw = patch_alpha(windows)
+            mask, raw = patch_alpha(windows, most)
             new_patches.append(tl.Patch(mask, p.decal_count))
             if raw:
                 alph += tl.pack_blob(raw)
