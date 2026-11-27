@@ -4958,7 +4958,9 @@ static int MERC_PLUGIN_CALL cmd_remove_object(void *ud, uint32_t L)
  * Foundry_SpawnTemplate(template, name, x, y, z): spawns a template (a
  * name, or "0x<hash>" from Foundry_ActorTemplate) under a new name, facing
  * +z (Actor_SetYaw after); true if it spawned (false, and nothing done,
- * for a template not loaded: 0.380). For an HQ's parking spot:
+ * for a template not loaded: 0.380). Foundry_SpawnTemplate(template, name,
+ * x, y, z, 1): the same with no one aboard (its RiderOccupant_a..g and
+ * DriverSeatOccupant "none", 0.381). For an HQ's parking spot:
  * the vehicle the player went in with, after a contract reloads the level. */
 static int MERC_PLUGIN_CALL cmd_actor_template(void *ud, uint32_t L)
 {
@@ -5406,16 +5408,47 @@ static int MERC_PLUGIN_CALL cmd_spawn_template(void *ud, uint32_t L)
                 for (unsigned i = 0; i < 0x1000 && !loaded; i++) loaded = hashes[i] == hash;
             if (!loaded) hash = 0;
         }
-        if (hash && host->guest_scratch(host->context, &scratch, &size) && size >= 160) {
+        /* 0.381: a sixth argument true spawns it with no one aboard (HQ
+         * parking: the player's vehicle came back with its template's pilot) */
+        int empty = 0;
+        {
+            uint32_t a[2] = {L, 1};
+            if ((int)lua_call(MF_FN_lua_gettop, 1, a) >= 6) {
+                uint32_t b6[2] = {L, 6};
+                if (guest(MF_FN_Lua_ArgNumber, 0, 2, b6, &c)) empty = c.st0 != 0.0;
+            }
+        }
+        if (hash && host->guest_scratch(host->context, &scratch, &size) && size >= 0x200) {
             float m[16] = {1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, pos[0], pos[1], pos[2], 1};
             host->write_guest(host->context, scratch, m, sizeof(m));
             host->write_guest(host->context, scratch + 64, name, strlen(name) + 1);
-            uint32_t args[5] = {hash, scratch + 64, scratch, 0, 0};
+            uint32_t list = 0;
+            if (empty) {
+                /* the spawn's own properties over the template's, as the port's
+                 * F9 spawn sets them: a list (int16 count, then 8-byte key hash
+                 * and value pairs) built by 0x1EB010, each property made by
+                 * 0x1EAFB0 (key, value text) and added by 0x1EB080 */
+                const uint32_t prop = scratch + 0x80, key = scratch + 0x90, val = scratch + 0xC0;
+                list = scratch + 0x100;
+                guest(0x1EB010u, list, 0, NULL, &c);
+                host->write_guest(host->context, val, "none", 5);
+                for (unsigned k = 0; k < 8; k++) {
+                    char kt[32];
+                    if (k == 7) snprintf(kt, sizeof(kt), "DriverSeatOccupant");
+                    else snprintf(kt, sizeof(kt), "RiderOccupant_%c", 'a' + k);
+                    host->write_guest(host->context, key, kt, strlen(kt) + 1);
+                    uint32_t ctor[2] = {key, val};
+                    guest(0x1EAFB0u, prop, 2, ctor, &c);
+                    uint32_t add[1] = {prop};
+                    guest(0x1EB080u, list, 1, add, &c);
+                }
+            }
+            uint32_t args[5] = {hash, scratch + 64, scratch, list, 0};
             ok = guest(MF_FN_Spawner_SpawnTemplate, MF_VAR_g_Spawner, 5, args, &c) && c.eax;
         }
         char line[200];
-        snprintf(line, sizeof(line), "spawn template: %s as %s at %.1f, %.1f, %.1f%s", tmpl, name, pos[0], pos[1],
-                 pos[2], ok ? "" : " failed");
+        snprintf(line, sizeof(line), "spawn template: %s as %s at %.1f, %.1f, %.1f%s%s", tmpl, name, pos[0], pos[1],
+                 pos[2], empty ? ", empty" : "", ok ? "" : " failed");
         host->log(host->context, line);
     }
     uint32_t args[2] = {L, (uint32_t)ok};

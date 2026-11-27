@@ -2574,7 +2574,7 @@ end
 -- 250 m of it, and 10 s in at the soonest: spawned far off during a load, a
 -- helicopter sat up on its collision boxes for good (the console spawn, made
 -- near the player, landed). The template's _empty variant is used where the
--- game has one, so no driver comes with it. {P}HqParkWant[faction] is the
+-- game has one, and it is spawned with no one aboard. {P}HqParkWant[faction] is the
 -- template still to spawn, or the vehicle standing for the memory; the
 -- memory goes once the player drives off in that vehicle or it is gone.
 {P}HqParkWant = {{}}
@@ -2599,9 +2599,11 @@ if Utility_DoesActorExist(name) then return name end
 -- (a template already _empty, or a 0x<hash>, makes a name not loaded,
 -- which Foundry_SpawnTemplate turns down)
 local e = t .. '_empty'
-if Foundry_SpawnTemplate(e, name, h.park[1], h.park[2] + 0.5, h.park[3]) and Utility_DoesActorExist(name) then
+-- 0.381: and no one aboard either way (an Apache has no _empty template and
+-- came back with its pilot); a Foundry Console before 0.381 ignores the 1
+if Foundry_SpawnTemplate(e, name, h.park[1], h.park[2] + 0.5, h.park[3], 1) and Utility_DoesActorExist(name) then
 {P}HqTrace('restored the parked vehicle (' .. e .. ')')
-elseif Foundry_SpawnTemplate(t, name, h.park[1], h.park[2] + 0.5, h.park[3]) and Utility_DoesActorExist(name) then
+elseif Foundry_SpawnTemplate(t, name, h.park[1], h.park[2] + 0.5, h.park[3], 1) and Utility_DoesActorExist(name) then
 {P}HqTrace('restored the parked vehicle (' .. t .. ')')
 else
 return nil
