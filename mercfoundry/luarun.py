@@ -550,6 +550,8 @@ class Interpreter:
         g.update({"pairs": lua_pairs, "next": lua_next, "ipairs": lua_ipairs, "tostring": lua_tostring,
                   "tonumber": lua_tonumber, "type": lua_type, "assert": lua_assert, "unpack": lua_unpack,
                   "error": lua_error, "print": lambda *a: (),
+                  # the globals (0.397: retail's challenge framework looks its callbacks up there)
+                  "getfenv": lambda *a: (LuaTable(self.globals),),
                   "table": LuaTable({"insert": tinsert, "remove": tremove, "getn": tgetn, "concat": tconcat})})
 
     # -- calls

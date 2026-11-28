@@ -985,6 +985,50 @@ as retail's deck. Shape:
   `foundry_deck_<map>_*`), and free roam on SW or NW puts the game's back.
   So the map's clubs don't count for retail's clubs, nor the other way.
 
+**Side contracts** (0.397), retail's challenges (the $ icons), on a mod's new
+map, run by retail's own framework (challenge.lua and its race, destroy,
+deliver and homerun modules): one file each, `challenges/<id>.json` (`<id>`:
+lower-case letters, digits, `_`):
+
+```json
+{"map": "gaza", "type": "race", "title": "Coast Road Run", "description": "...",
+ "goals": ["..."], "rules": ["Stay in the vehicle."], "bonuses": [],
+ "starter": {"template": "template_hamas_technical_empty", "position": [x, y, z], "heading": 90},
+ "reward": 5000, "faction": {"mafia": 20}, "honor_attitude": false,
+ "levels": [150, 120, 100], "time": 150,
+ "checkpoints": [[x, y, z], ...], "laps": 1, "radius": 10}
+```
+
+- The starter is spawned as retail's: a vehicle is entered, a person talked
+  to, a prop examined, then the question box (title, description, goals,
+  rules, bonuses, reward, faction rewards). Starters out of sight recycle.
+- `"reward"`: money, or `{"per_level": n, "max_level"?}` (level times n).
+  `"levels"`: per level, the time (race, deliver, destroy) or distance
+  (homerun) to beat; beating it moves the level on (`<map>_challenge_<id>_Level`).
+  Without levels (or past them) the record is the goal (a race's best time,
+  starting at `"time"`), and a new one pays.
+- `"faction"`: mood gained on winning (retail's `tFactionImprove`, about 20).
+  `"honor_attitude"`: not offered while the starter's faction is hostile.
+  `"dependent"`: actors that must be alive. `"spawns"`: `[{"template",
+  "position", "heading"?}]` spawned with the starter (a bulldozer for a
+  homerun).
+- race: `"checkpoints"`, `"laps"`, `"radius"` (how near a checkpoint counts).
+- destroy: `"targets": {"template", "positions"}` (spawned at the start)
+  and/or `"kinds": {model: count}` (any of those models), `"time"`,
+  `"blip"` (car, human, ...).
+- deliver: `"to"` (`{"position", "heading"?}`), `"radius"`, `"time"`,
+  `"object": {"template", "position"}` (else the starter vehicle itself),
+  `"get_out"`.
+- homerun: `"time"`, `"to"` (the measuring point; else where the prop starts),
+  `"closest"` (closest instead of farthest), `"area": {"position", "radius"}`.
+- The build writes `<map>_challenge` (retail's quadrant script shape), one
+  script each (`<map>_challenge_<id>`, whose name keeps its records apart from
+  SW's) and a layer of its locations (copies of loc_playerstart). Free roam
+  on the map sets them up a second in, as global's SetupChallenges; a
+  contract (which reloads the map) has none, and a contract giver won't
+  start a contract while one runs. `mod sim` starts, wins and loses each.
+  Not yet: taxi, a destroy's time added per kill.
+
 **A mission map** (0.395), as retail's ace contracts have: `maps/<name>.json`
 `"like": "<main map>"` (another of the mod's new maps) makes a map for its
 contracts only. It shares the main map's `"template_overrides"`,

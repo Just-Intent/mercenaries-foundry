@@ -156,6 +156,7 @@ class Game:
             "Actor_GetPosition": lambda *a: (0.0, 0.0, 0.0),
             "Actor_GetYaw": lambda *a: (0.0,),
             "Location_GetPosition": lambda *a: (0.0, 0.0, 0.0),
+            "Location_GetYaw": lambda *a: (0.0,),
             "Utility_GetStringById": lambda *a: ("",),
             "Utility_MathFloor": lambda v=0.0, *a: (float(int(v or 0) // 1),),
         })
@@ -325,6 +326,50 @@ class Game:
 
     def card(self, suit, rank):
         return self.scribble.get(f"{suit}{rank}status")
+
+
+def side_contracts(scripts, new_map):
+    """0.397: each side contract (challenges/*.json, listed in the map's
+    <map>_challenge) started as the framework starts it: its script in a Lua
+    state of its own, ScriptInit with the player in a vehicle (the starter),
+    then won and lost. Returns (problems, report lines)."""
+    import re
+    src = scripts.get(name_hash(f"{new_map}_challenge"))
+    if src is None:
+        return [], []
+    problems, report = [], []
+    for name in re.findall(r"sChallengeScriptName = '([^']+)'", src):
+        g = Game(scripts)
+        g.lua = Interpreter()
+        g._install(g.lua)
+        g.lua.globals.update({
+            "Utility_GetActorsVehicle": lambda *a: ("sim_vehicle",),
+            "Actor_GetType": lambda *a: ("TYPE_VEHICLE_CAR",),
+            "Global_GetValue": lambda *a: ("sim_starter",),
+            # its own locations (the names its script gives), the vehicle and the starter
+            "Utility_DoesActorExist": (lambda known: (lambda n=None, *a: (str(n) in known,)))(
+                set(re.findall(r"'(%s_[A-Za-z0-9_]+)'" % re.escape(name),
+                               scripts.get(name_hash(name), "") or "")) | {"sim_vehicle", "sim_starter", "player0"}),
+            "Utility_GetTerrainHeightAtXZ": lambda *a: (0.0,),
+            "Utility_GetDistanceBetweenActors": lambda *a: (0.0,),
+            "Actor_GetHitPoints": lambda *a: (100.0,),
+            "Actor_GetMaxHitPoints": lambda *a: (100.0,),
+        })
+        try:
+            g.run_script(name)
+        except LuaError as e:
+            g.errors.append(f"{name}: {e}")
+        g._call("ScriptInit")
+        if not g.errors:
+            from .luarun import LuaTable
+            g._call("OnComplete", LuaTable({"bNewRecordAcheived": True, "fDistance": 1000.0,
+                                            "bNewFarthestDistanceRecordAcheived": True,
+                                            "bNewClosestDistanceRecordAcheived": True}))
+            g._call("OnFail")
+        bad = [e for e in g.errors]
+        report.append(("ok  " if not bad else "BAD ") + f"side contract {name}: started, won, lost")
+        problems += [f"{name}: {e}" for e in bad]
+    return problems, report
 
 
 def round_trip(scripts, new_map, sw_moods=None):

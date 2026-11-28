@@ -1348,6 +1348,17 @@ def _apply_encounters(data, folder, result):
                 "objects": [{"from": c.get("template") or f"template_{faction}_bouncer",
                              "name": _ms.contact_actor(mf.stem.lower()),
                              "position": [float(v) for v in c["position"]], "yaw": float(c.get("heading", 0))}]}))
+    # 0.397: side contracts (challenges/<id>.json): their locations' layers
+    from . import challenges as _chal
+    new_maps_ = {f.stem.lower() for f in (folder / "maps").glob("*.json")} if (folder / "maps").is_dir() else set()
+    data.challenges = getattr(data, "challenges", [])
+    cdir = folder / "challenges"
+    for cf in sorted(cdir.glob("*.json")) if cdir.is_dir() else []:
+        ch = _chal.parse(f"challenges/{cf.name}", cf.stem.lower(), json.loads(cf.read_text(encoding="utf-8")), new_maps_)
+        if any(o["name"] == ch["name"] for o in data.challenges):
+            raise ValueError(f"challenges/{cf.name}: {ch['name']} twice")
+        data.challenges.append(ch)
+        givers.append(_chal.layer(ch))
     if not files and not givers and not any((folder / "maps").glob("*.json")):
         return                  # (maps: their travel pilots and HQ guards are layers too)
     archives = [data.archive(n) for n in ARCHIVES if (data.dir / n).exists()]
@@ -1518,8 +1529,9 @@ def _apply_encounters(data, folder, result):
         else:                    # on a mod's new map: its own script loads it
             data.new_map_layers = getattr(data, "new_map_layers", {})
             data.new_map_layers.setdefault(doc["map"].lower(), []).append(layer)
-        result.changes.append(f"layer {layer}: the mission giver, a copy of {doc['objects'][0]['from']} "
-                              f"(loads with the {doc['map']} map in free roam)")
+        what = (f"side contract {layer}'s {len(doc['objects'])} locations" if "_challenge_" in layer
+                else f"the mission giver, a copy of {doc['objects'][0]['from']}")
+        result.changes.append(f"layer {layer}: {what} (loads with the {doc['map']} map in free roam)")
     # Travel pilots for the mod's new maps (maps/<name>.json "travel" and
     # "return"): each in a layer of its own that loads with its map.
     for layer, map_, obj in _travel_pilots(data, folder, result):
@@ -3523,7 +3535,7 @@ def _gates_lua(G, gates):
 
 
 def map_script(name, doc, layers, pilots=(), contacts=False, extra=(), hqs=None, inside=None, deck=False, gates=None,
-               back=None, back_in=False,
+               back=None, back_in=False, challenges=False,
                tunnels=()):
     """A new map's master script (run as the map loads): blank's set-up, its
     layers, where the player arrives, a message, and its travel pilots
@@ -3609,6 +3621,9 @@ def map_script(name, doc, layers, pilots=(), contacts=False, extra=(), hqs=None,
         # a "like" map keeps the other's moods (0.395): one set of moods for both
         mood_map = (doc.get("_like") or {}).get("name") or name.lower()
         lines.insert(lines.index("Debug_EnableCallStack(false)"), f"foundry_MoodsEnter({_lua_str(mood_map)}, {start_t})")
+    if challenges:
+        # 0.397: side contracts a moment after free roam starts, as global's SetupChallenges
+        hq.append(f"Event_RelativeTimer('foundry_{name.lower()}_Challenges', 'b', 1.0)")
     if deck:
         hq += ["Utility_LoadUtilityScript('foundry_deck')",
                f"foundry_DeckEnter({_lua_str(name.lower())})",
@@ -3637,6 +3652,9 @@ def map_script(name, doc, layers, pilots=(), contacts=False, extra=(), hqs=None,
     if back_in:
         from .missions import back_in_lua
         text += back_in_lua(f"foundry_{name.lower()}_")
+    if challenges:
+        from .challenges import free_roam_lua
+        text += free_roam_lua(name.lower())
     if moods is not None:
         text += MOODS_LUA
     text += (f"function {hud_on}()\n"
@@ -4055,15 +4073,46 @@ def _apply_maps(data, folder, result):
                 for e in extra:
                     text = missions.add_to_list(text, "script", e)
                 data.replace_added(key, name_hash("list"), text.encode("latin-1"))
+        # 0.397: its side contracts: <map>_challenge, one script each, the
+        # framework's scripts in its list, its texts
+        from . import challenges as _chal
+        chs = [c for c in getattr(data, "challenges", []) if c["map"] == name.lower()]
+        if chs:
+            qname = f"{name.lower()}_challenge"
+            if any(r.key == name_hash(qname) for _, r in data.records(SCRIPT)):
+                raise ValueError(f"{where}: the game already has a script named {qname}")
+            data.new("assets.dsk", name_hash(qname), SCRIPT, script.encode(script.new(qname, _chal.quadrant_script(name.lower(), chs))))
+            for c in chs:
+                if any(r.key == name_hash(c["name"]) for _, r in data.records(SCRIPT)):
+                    raise ValueError(f"challenges/{c['id']}.json: the game already has a script named {c['name']}")
+                data.new("assets.dsk", name_hash(c["name"]), SCRIPT, script.encode(script.new(c["name"], _chal.challenge_script(c))))
+                _set_strings(data, _chal.strings(c))
+            lbody = data.find_added(key, name_hash("list"))
+            if lbody is not None:
+                text = lbody.decode("latin-1")
+                for s_ in list(_chal.SCRIPTS) + sorted({_chal.TYPE_SCRIPTS[c["type"]] for c in chs}) + [qname] + \
+                        [c["name"] for c in chs]:
+                    text = missions.add_to_list(text, "script", s_)
+                data.replace_added(key, name_hash("list"), text.encode("latin-1"))
+            made.append(f"{len(chs)} side contracts ({', '.join(c['id'] + ' ' + c['type'] for c in chs)}) in {qname}")
+            # their templates: the game's or this map's copies
+            by_name_c, _ = _world_index(data, [data.archive(n) for n in ARCHIVES if (data.dir / n).exists()])
+            for c in chs:
+                for t in [c["starter"][0]] + [t for t, _ in c["spawns"]] + \
+                        ([c["targets"][0]] if c.get("targets") else []) + ([c["object"][0]] if c.get("object") else []):
+                    if t.lower() not in own_copies and not by_name_c.get(t.lower()):
+                        raise ValueError(f"challenges/{c['id']}.json: no template {t!r} (a game template, or one of "
+                                         f"{where}'s \"templates\" copies)")
         if not any(r.key == key for _, r in data.records(SCRIPT)) and data.find_added(key, SCRIPT) is None:
-            if mdoc.get("start") or mdoc.get("message") or mdoc.get("weather") or layers or pilots or contacts or extra \
+            if mdoc.get("start") or mdoc.get("message") or mdoc.get("weather") or layers or pilots or contacts or extra or chs \
                     or tunnels or name.lower() in getattr(data, "map_backs_in", set()) or mdoc.get("_like") \
                     or hqs or inside or deck or mdoc.get("any_captive") or mdoc.get("relations") \
                     or mdoc.get("collateral_fines") is False or mdoc.get("shop_url"):
                 back = _after_mission(where, name.lower(), mdoc)
                 source = map_script(name, mdoc, layers, pilots, contacts, extra, hqs, inside, deck=deck,
                                     gates=getattr(data, "layer_gates", {}), tunnels=tunnels, back=back,
-                                    back_in=name.lower() in getattr(data, "map_backs_in", set()))
+                                    back_in=name.lower() in getattr(data, "map_backs_in", set()),
+                                    challenges=bool(chs))
                 if back:
                     made.append(f"after a contract here: back to {back[0]}")
                 made.append("script (" + ", ".join(

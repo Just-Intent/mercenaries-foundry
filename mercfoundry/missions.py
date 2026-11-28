@@ -4692,6 +4692,10 @@ def contracts_script(contracts, insertions=()):
             out += [
                 f"function foundry_Use_{c['id']}()",
                 f"tFoundryArmed[{_lua(contact_actor(c['id']))}] = nil   -- re-armed when the player comes out",
+                # 0.397: not while a side contract (retail's challenge) runs
+                "if Utility_ReadNumberFromScribbleMemory('challenge_accepted') then "
+                "Ui_PrintHudMessage('Finish the side contract first') "
+                "Event_RelativeTimer('foundry_SetupContracts', 'b', 3.0) return end",
                 f"if {enter} then {enter}({_lua(c['interior'])}, {_lua(c['id'])}, "
                 f"{_lua(contact_actor(c['id']))}) end",
                 "end"]
@@ -4699,6 +4703,10 @@ def contracts_script(contracts, insertions=()):
             out += [
                 f"function foundry_Use_{c['id']}()",
                 f"tFoundryArmed[{_lua(contact_actor(c['id']))}] = nil   -- used: re-armed if the player says no",
+                # 0.397: not while a side contract (retail's challenge) runs
+                "if Utility_ReadNumberFromScribbleMemory('challenge_accepted') then "
+                "Ui_PrintHudMessage('Finish the side contract first') "
+                "Event_RelativeTimer('foundry_SetupContracts', 'b', 3.0) return end",
                 f"Utility_QuestionBox(Utility_GetStringById({_lua(c['title_key'])}), "
                 f"Utility_GetStringById({_lua(c['description_key'])}), true, "
                 f"'foundry_Start_{c['id']}', 'foundry_SetupContracts')",

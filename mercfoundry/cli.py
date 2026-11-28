@@ -284,8 +284,11 @@ def cmd_mod_new(args):
 
 def cmd_mod_sim(args):
     """mod sim: gamesim.round_trip on a build's scripts."""
-    from .gamesim import built_scripts, round_trip
-    problems, report = round_trip(built_scripts(args.out), args.map.lower())
+    from .gamesim import built_scripts, round_trip, side_contracts
+    scripts = built_scripts(args.out)
+    problems, report = round_trip(scripts, args.map.lower())
+    p2, r2 = side_contracts(scripts, args.map.lower())
+    problems, report = problems + p2, report + r2
     for line in report:
         print(line)
     for p in problems:
