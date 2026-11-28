@@ -468,6 +468,7 @@
       </div>
       <div id="terrain-paint-row" hidden>
         <label class="field">Texture layer <select id="terrain-layer"></select></label>
+        <label class="check" title="The game draws higher layers over lower ones: painting also takes the layers above away by as much, so the painted texture shows clean"><input id="terrain-cover" type="checkbox" checked> Cover the layers above</label>
         <label class="field">Add a texture <input id="terrain-newlayer" type="text" list="ground-textures" spellcheck="false"
           placeholder="any map's ground texture"></label>
         <datalist id="ground-textures"></datalist>

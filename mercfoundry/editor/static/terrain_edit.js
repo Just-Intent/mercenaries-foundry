@@ -136,12 +136,25 @@ export function createTerrainEditor(ctx) {
     if (!g) return status('Ground textures are still loading', true);
     const rate = st.strength * 400 * dt;                       // opacity steps a second at full strength
     const base = st.layer * g.w * g.w;
+    const per = g.w * g.w, layers = g.layers.length;
     for (const [i, w] of near(at[0], at[2], st.radius, g.w, g.w)) {
       const k = base + i;
       if (!st.stroke.paint.has(k)) st.stroke.paint.set(k, g.paint[k]);
       const d = rate * w;
       g.paint[k] = Math.max(0, Math.min(255, Math.round(g.paint[k] + (st.tool === 'paint' ? d : -d))));
       st.painted.add(k);
+      // Painting also wears away the layers above it, by as much: the game
+      // draws them over this one, so a lower layer painted at full strength
+      // still showed their speckle through it ("fuzzy spray paint").
+      if (st.tool === 'paint' && st.coverAbove !== false) {
+        for (let L = st.layer + 1; L < layers; L++) {
+          const ka = L * per + i;
+          if (!g.paint[ka]) continue;
+          if (!st.stroke.paint.has(ka)) st.stroke.paint.set(ka, g.paint[ka]);
+          g.paint[ka] = Math.max(0, Math.round(g.paint[ka] - d));
+          st.painted.add(ka);
+        }
+      }
     }
     st.paintDirty = true;
   }
@@ -428,6 +441,7 @@ export function createTerrainEditor(ctx) {
   $('terrain-mode').onclick = () => setOn(!st.on);
   for (const tool of TOOLS) $(`terrain-${tool}`).onclick = () => setTool(tool);
   $('terrain-layer').onchange = (e) => { st.layer = +e.target.value; };
+  $('terrain-cover').onchange = (e) => { st.coverAbove = e.target.checked; };
   $('terrain-radius').oninput = (e) => { st.radius = +e.target.value; $('terrain-radius-v').textContent = `${st.radius} m`; };
   $('terrain-strength').oninput = (e) => { st.strength = +e.target.value / 100; $('terrain-strength-v').textContent = `${e.target.value}%`; };
   $('terrain-undo').onclick = undo;
