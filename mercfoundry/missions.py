@@ -899,6 +899,8 @@ table.insert(tFoundryLog, line)
 if table.getn(tFoundryLog) > 8 then table.remove(tFoundryLog, 1) end   -- short, as retail's scribble strings are
 -- (only what retail scripts use: the game's Lua has no string library)
 Utility_WriteStringToScribbleMemory('foundry_log', '{asset_id}: ' .. table.concat(tFoundryLog, ' | '))
+-- 0.392: and to the plugin log (Foundry Console's), in the playtest's logs
+if Foundry_Log then Foundry_Log('mission {asset_id} ' .. line) end
 if bFoundryDebug then util_ObjMsgPrint{{ sMsg = '[{asset_id}] ' .. line, sType = 'GENERAL' }} end
 end
 function foundry_Log()
@@ -1773,6 +1775,7 @@ end
 -- which pays the objective's "alive" extra.
 function foundry_Verified(sActor, bKilled)
 local o = tFoundryVerify[sActor]
+foundry_Note('verified ' .. tostring(sActor) .. (bKilled and ' (killed)' or ' (alive)') .. (o and '' or ': no objective'))
 if not o or o.done then return end
 if not bKilled and o.alive then iFoundryEarned = iFoundryEarned + o.alive end
 if o.rank then foundry_CardVerified(o, bKilled) end
@@ -3835,6 +3838,12 @@ def map_mission_lua(map_name, free_roam=()):
 function {P}ResumeLit()
 Cinematic_FadeIn(0.5)
 end
+-- 0.392: what the contract start got to, in scribble memory (foundry_MapStart())
+-- and the plugin log
+function {P}Said(s)
+Utility_WriteStringToScribbleMemory('foundry_map_start', s)
+if Foundry_Log then Foundry_Log('map {map_name}: ' .. s) end
+end
 function {P}Mission()
 local pm = Utility_ReadStringFromScribbleMemory('foundry_play_map')
 if not pm and Utility_ReadStringFromScribbleMemory('foundry_retry_map') == {_lua(map_name)}
@@ -3845,14 +3854,14 @@ and Utility_ReadStringFromScribbleMemory('SkipTo_Faction') and Utility_ReadNumbe
 pm = {_lua(map_name)}
 Utility_WriteStringToScribbleMemory('foundry_play_map', pm)
 Utility_WriteStringToScribbleMemory('foundry_play_arc', Utility_ReadStringFromScribbleMemory('foundry_retry_arc'))
-Utility_WriteStringToScribbleMemory('foundry_map_start', 'retrying the contract on ' .. pm)
+{P}Said('retrying the contract on ' .. pm)
 end
 if pm ~= {_lua(map_name)} then return false end
 local f = Utility_ReadStringFromScribbleMemory('SkipTo_Faction')
 local n = Utility_ReadNumberFromScribbleMemory('SkipTo_MissionNumber')
 if not f or not n then return false end
 -- where the start got to, for Foundry Console (foundry_MapStart())
-Utility_WriteStringToScribbleMemory('foundry_map_start', 'began ' .. f .. ' ' .. n)
+{P}Said('began ' .. f .. ' ' .. n)
 Utility_LoadUtilityScript('util_debug')
 Utility_LoadUtilityScript('util_misc')
 Utility_LoadUtilityScript('gameflow')
@@ -3864,7 +3873,7 @@ gameflow_GenericInit()
 local q = Utility_ReadStringFromScribbleMemory('foundry_play_arc')
 local tArcs = util_GetMissionArcTable()
 if not q or not tArcs[f] or not tArcs[f][q] then
-Utility_WriteStringToScribbleMemory('foundry_map_start', 'no ' .. f .. ' arc for ' .. (q or 'no map'))
+{P}Said('no ' .. f .. ' arc for ' .. (q or 'no map'))
 Ui_PrintHudMessage('Mercenaries Foundry: no ' .. f .. ' arc for that contract, so it does not start')
 Utility_EraseValueFromScribbleMemory('SkipTo_Faction')
 Utility_EraseValueFromScribbleMemory('SkipTo_MissionNumber')
@@ -3885,17 +3894,23 @@ end
 local a = n and util_MissionSeqNumToMissionAssetNum(q, f, n)
 if not a then
 -- not in the arc util_misc has: nothing to run, so free roam
-Utility_WriteStringToScribbleMemory('foundry_map_start', 'not in the ' .. f .. ' ' .. q .. ' arc')
+{P}Said('not in the ' .. f .. ' ' .. q .. ' arc')
 Ui_PrintHudMessage('Mercenaries Foundry: that contract is not in the ' .. f .. ' ' .. q .. ' arc')
 Utility_EraseValueFromScribbleMemory('mission_accepted')
 return false
 end
 util_DefaultSupport()
+-- 0.392: the contracts script into this (the master script's) Lua state
+-- now, while the level's scripts are all there: loaded only when the
+-- mission closed (FreeRoam), it once defined nothing (Gaza playtest:
+-- foundry_ReturnFromContract a nil value after sw_china25, twice)
+Utility_LoadUtilityScript('foundry_contracts')
+if not foundry_ReturnFromContract then {P}Said('foundry_contracts did not load before the contract') end
 Utility_WriteStringToScribbleMemory('full_mission_id', q .. '_' .. f .. n)
-Utility_WriteStringToScribbleMemory('foundry_map_start', 'running ' .. q .. '_' .. f .. a)
+{P}Said('running ' .. q .. '_' .. f .. a)
 local ok = Utility_RunLuaScript({_lua(P + 'FreeRoam')}, q .. '_' .. f .. a)
 -- (only noted: what it gives back when it works isn't known yet)
-Utility_WriteStringToScribbleMemory('foundry_map_start', 'ran ' .. q .. '_' .. f .. a .. ': ' .. tostring(ok))
+{P}Said('ran ' .. q .. '_' .. f .. a .. ': ' .. tostring(ok))
 return true
 end
 function foundry_MapStart()
@@ -3912,8 +3927,9 @@ Utility_EraseValueFromScribbleMemory('foundry_play_arc')
 -- its own maps' levels; foundry_LoadMapLayers on SW or NW sends it back)
 Utility_WriteStringToScribbleMemory('foundry_free_map', {_lua(map_name)})
 Utility_LoadUtilityScript('foundry_contracts')
-foundry_ReturnFromContract()
-foundry_SetupContracts()
+-- 0.392: noted, not an error that stops free roam, if it still isn't there
+if foundry_ReturnFromContract then foundry_ReturnFromContract() else {P}Said('free roam: foundry_contracts not loaded, the contract not settled') end
+if foundry_SetupContracts then foundry_SetupContracts() end
 {"".join(l + chr(10) for l in free_roam)}end
 """
     return start, funcs

@@ -615,6 +615,8 @@ class MissionTests(unittest.TestCase):
         self.assertIn("bFoundryDebug = false", lua)
         self.assertIn("Utility_WriteStringToScribbleMemory('foundry_log', 'sw_allies11: ' .. table.concat(tFoundryLog, ' | '))", lua)
         self.assertIn("if table.getn(tFoundryLog) > 8 then table.remove(tFoundryLog, 1) end", lua)
+        # 0.392: each step also in the plugin log (the playtest's plugins.log)
+        self.assertIn("if Foundry_Log then Foundry_Log('mission sw_allies11 ' .. line) end", lua)
         # only Lua the game's scripts use: string.len stopped sw_china9's start (its Lua has no string library)
         self.assertNotIn("string.", lua.replace("tostring", ""))
         self.assertIn("if bFoundryDebug then util_ObjMsgPrint{ sMsg = '[sw_allies11] ' .. line, sType = 'GENERAL' } end", lua)
@@ -1119,5 +1121,16 @@ class NewMapMissionTests(unittest.TestCase):
         self.assertLess(funcs.index("if not q or not tArcs[f] or not tArcs[f][q] then"),
                         funcs.index("util_MissionAssetNumToMissionSeqNum("))
         free = funcs[funcs.index("function foundry_isle_FreeRoam()"):]
+        # 0.392: foundry_contracts is in the master script's state before the
+        # mission runs (loaded only at its close, it once defined nothing),
+        # and a missing one is noted, not an error that stops free roam
+        mission = funcs[funcs.index("function foundry_isle_Mission()"):funcs.index("function foundry_isle_FreeRoam()")]
+        self.assertLess(mission.index("Utility_LoadUtilityScript('foundry_contracts')"), mission.index("Utility_RunLuaScript("))
+        self.assertIn("if foundry_ReturnFromContract then foundry_ReturnFromContract() else foundry_isle_Said(", free)
+        self.assertIn("if foundry_SetupContracts then foundry_SetupContracts() end", free)
+        self.assertNotIn("\nfoundry_ReturnFromContract()\n", free)
+        # the start notes go to scribble memory and the plugin log
+        self.assertIn("if Foundry_Log then Foundry_Log('map isle: ' .. s) end", funcs)
+        self.assertIn("foundry_isle_Said('running ' .. q .. '_' .. f .. a)", funcs)
         self.assertIn("Utility_WriteStringToScribbleMemory('SkipTo_Map', 'isle')", free)
         self.assertIn("Utility_EraseValueFromScribbleMemory('foundry_play_arc')", free)

@@ -1332,7 +1332,7 @@ class MapScriptTests(unittest.TestCase):
         inside = self._interiors()
         text = modbuild.map_script("gaza", {}, [], contacts=True, inside=inside)
         free = text[text.index("function foundry_gaza_FreeRoam()"):]
-        self.assertIn("foundry_SetupContracts()\nfoundry_gaza_HqArm()\nend", free)
+        self.assertIn("if foundry_SetupContracts then foundry_SetupContracts() end\nfoundry_gaza_HqArm()\nend", free)
         doc = {"title": "Tunnel job", "map": "gaza",
                "contact": {"interior": "allies", "briefing": [{"speaker": "Chief", "text": "Find the tunnel."}]}}
         c, _ = missions.contract("sw_allies12", doc, "t.key", "d.key")
