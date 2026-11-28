@@ -210,14 +210,16 @@ def _lua_str(s):
 
 
 OBJECTIVE_TYPES = ("destroy", "goto", "escort", "deliver", "subdue", "hold", "use", "verify", "fast", "defend",
-                   "collect", "kill")
+                   "collect", "kill", "board")
 # A verify objective's marker on its targets (retail's blipType: the card suits
 # are the Deck of 52's).
 VERIFY_BLIPS = ("human", "scope", "blip", "clubs", "diamond", "hearts", "spades")
 FAIL_TYPES = ("dies", "timer", "leave", "alarm", "spotted", "hostile", "escapes")
 # Squad orders (retail's own commands): attack the player, hold, move to one
 # of the encounter's point sets, close in on the player, or walk a path.
-ORDER_TYPES = ("attack", "hold", "move", "close", "path")
+ORDER_TYPES = ("attack", "hold", "move", "close", "path", "follow", "board", "exit", "strike")
+# 0.394: the seats "board" takes (retail's Ai_CommandQueue(rider, 'Operate', vehicle, seat))
+BOARD_SEATS = ("passenger", "driver", "gunner")
 FAIL_TEXT = {"dies": "A target you had to protect was killed.", "timer": "You ran out of time.",
              "leave": "You left the mission area.", "escort": "Everyone you were escorting was killed.",
              "deliver": "The vehicle was destroyed.", "subdue": "The target was killed.",
@@ -439,7 +441,7 @@ def objectives_script(asset_id, doc, squad_members, layers=(), zone_centre=None)
                 head += f", reveal = 'zone', rzone = {_lua_str(when[1])}"
             elif when[0] in ("dead", "near"):
                 head += f", reveal = '{when[0]}'" + squad_after(when)
-        if kind in ("destroy", "escort", "subdue", "use", "verify"):
+        if kind in ("destroy", "escort", "subdue", "use", "verify", "board"):
             targets = list(o.get("targets") or [])
             if o.get("squad"):
                 targets += squad_members(o["squad"])
@@ -457,7 +459,7 @@ def objectives_script(asset_id, doc, squad_members, layers=(), zone_centre=None)
                                      f"target{'s' if len(targets) > 1 else ''}), not {o['need']!r}")
                 if need < len(targets):
                     row += f", need = {need}"
-            if kind in ("subdue", "use"):
+            if kind in ("subdue", "use", "board"):
                 row += f", lost = {_lua_str(escort_lost_key(asset_id, i))}"     # killed / destroyed instead
             if kind == "subdue" and o.get("extract"):
                 row += ", extract = true"                                       # done when flown out
@@ -749,10 +751,23 @@ def objectives_script(asset_id, doc, squad_members, layers=(), zone_centre=None)
         act = o.get("do")
         if act not in ORDER_TYPES:
             raise ValueError(f"{what}: \"do\" is one of {', '.join(ORDER_TYPES)}, not {act!r}")
-        enc, _, sq = str(o.get("squad") or "").rpartition(":")
-        if not enc or not sq:
-            raise ValueError(f"{what}: \"squad\" is \"encounter:squad\"")
-        members = squad_members(o["squad"])         # (and its layer loads with the script)
+        # 0.394: "targets" (named actors: placed vehicles, people) instead of a squad
+        named = [str(t) for t in (o.get("targets") or [])]
+        if o.get("targets") is not None and (not isinstance(o["targets"], list) or not named
+                                            or not all(re.fullmatch(r"[A-Za-z0-9_\-]+", t) for t in named)):
+            raise ValueError(f"{what}: \"targets\" is a list of actor names")
+        if named and o.get("squad"):
+            raise ValueError(f"{what}: give \"squad\" or \"targets\", not both")
+        if named:
+            enc = sq = ""
+            members = named
+            if act in ("move", "close"):
+                raise ValueError(f"{what}: \"{act}\" is a squad order (Squad_Command): give \"squad\"")
+        else:
+            enc, _, sq = str(o.get("squad") or "").rpartition(":")
+            if not enc or not sq:
+                raise ValueError(f"{what}: \"squad\" is \"encounter:squad\" (or \"targets\": [names])")
+            members = squad_members(o["squad"])         # (and its layer loads with the script)
         when = when_of(o.get("when"), len(objs), what)
         row = f"when = '{when[0]}'"
         if when[0] in ("starts", "done"):
@@ -763,10 +778,16 @@ def objectives_script(asset_id, doc, squad_members, layers=(), zone_centre=None)
             row += f", zone = {_lua_str(when[1])}"
             if zone_centre:
                 zone_centre(when[1])
-        wave = wave_of.get((enc.lower(), sq.lower()))
-        if wave:
-            enc = wave[0]            # its own layer's copy of the encounter; given once it's there
-        row += f", act = '{act}', enc = {_lua_str(enc)}, squad = {_lua_str(sq)}"
+        if named:
+            # named objects of a wave ("waves" "objects"): given once their layer is up
+            layers = sorted({arrives[n] for n in named if n in arrives})
+            wave = ("", layers[0]) if layers else None
+            row += f", act = '{act}', enc = false, squad = {_lua_str(', '.join(named))}"
+        else:
+            wave = wave_of.get((enc.lower(), sq.lower()))
+            if wave:
+                enc = wave[0]            # its own layer's copy of the encounter; given once it's there
+            row += f", act = '{act}', enc = {_lua_str(enc)}, squad = {_lua_str(sq)}"
         if wave:
             row += f", wave = {_lua_str(wave[1])}"
         if act in ("move", "path"):
@@ -774,6 +795,36 @@ def objectives_script(asset_id, doc, squad_members, layers=(), zone_centre=None)
                 raise ValueError(f"{what}: \"{act}\" needs \"to\" (a point set letter, or a path's name)")
             row += f", to = {_lua_str(o['to'])}"
         if act == "path":
+            speed = o.get("speed", 1.0)
+            if not isinstance(speed, (int, float)) or isinstance(speed, bool) or not 0 < speed <= 4:
+                raise ValueError(f"{what}: \"speed\" is 0 to 4 (1: the actor's normal pace)")
+            # (a string, as the path order always gave it: '1.0', tried in game)
+            row += f", speed = '{float(speed):.2g}'".replace("'1'", "'1.0'") + (", oneway = true" if o.get("oneway") else "")
+        if act == "follow":
+            target = str(o.get("target") or "player0")
+            if not re.fullmatch(r"[A-Za-z0-9_\-]+", target):
+                raise ValueError(f"{what}: \"target\" is the actor to follow (default player0)")
+            row += f", target = {_lua_str(target)}"
+        if act == "board":
+            if not o.get("vehicle") or not re.fullmatch(r"[A-Za-z0-9_\-]+", str(o["vehicle"])):
+                raise ValueError(f"{what}: \"board\" needs \"vehicle\" (its name)")
+            seat = str(o.get("seat") or "passenger").lower()
+            if seat not in BOARD_SEATS:
+                raise ValueError(f"{what}: \"seat\" is one of {', '.join(BOARD_SEATS)}")
+            row += f", vehicle = {_lua_str(o['vehicle'])}, seat = '{seat}'"
+        if act == "strike":
+            spacing = o.get("spacing", 1.0)
+            if not isinstance(spacing, (int, float)) or isinstance(spacing, bool) or spacing < 0:
+                raise ValueError(f"{what}: \"spacing\" is seconds between the blasts")
+            cb = f"foundry_Strike{k}"
+            later_cbs.append(f"function {cb}() foundry_StrikeStep(tFoundryOrders[{k}]) end")
+            row += f", spacing = {float(spacing):g}, scb = '{cb}'"
+        faction = o.get("faction")
+        if faction is not None:
+            if not isinstance(faction, str) or not re.fullmatch(r"[A-Za-z]+", faction):
+                raise ValueError(f"{what}: \"faction\" is a faction name (allies, china, mafia, sk, nk, civ...)")
+            row += f", faction = {_lua_str(faction.lower())}"
+        if act in ("path", "follow", "board", "exit", "strike") or named or faction is not None:
             row += f", members = {{ {', '.join(_lua_str(m) for m in members)} }}"
         row += delay_of(o, what, "tFoundryOrders", "foundry_Order", k, "O")
         orders.append(f"{{ {row} }}")
@@ -1156,15 +1207,44 @@ return
 end
 o.given = true
 if o.wave and not tFoundryWaveUp[o.wave] then o.pending = true return end   -- not there yet
-foundry_Note('order ' .. o.act .. ' to ' .. o.enc .. ':' .. o.squad)
-if o.act == 'attack' then Squad_Command(o.enc, o.squad, 'Attack', 'player0', 'hiPri')
-elseif o.act == 'hold' then Squad_Command(o.enc, o.squad, 'Wait', 'hiPri')
+foundry_Note('order ' .. o.act .. ' to ' .. (o.enc and (o.enc .. ':') or '') .. o.squad)
+-- 0.394: "faction": its members change sides first (retail's Ai_SetFaction), so
+-- a friendly party can turn on the player without costing that faction's mood
+if o.faction then
+for j, a in ipairs(o.members) do if Utility_DoesActorExist(a) then Ai_SetFaction(a, o.faction) end end
+end
+if o.act == 'attack' and o.enc then Squad_Command(o.enc, o.squad, 'Attack', 'player0', 'hiPri')
+elseif o.act == 'hold' and o.enc then Squad_Command(o.enc, o.squad, 'Wait', 'hiPri')
 elseif o.act == 'move' then Squad_Command(o.enc, o.squad, 'TacticalMove', o.to, 'hiPri')
 elseif o.act == 'close' then Squad_Command(o.enc, o.squad, 'MoveToActor', 'player0', 1.0, 1, 'hiPri')
-elseif o.act == 'path' then
+elseif o.act == 'strike' then
+o.i = 0
+foundry_StrikeStep(o)
+else
 for j, a in ipairs(o.members) do
-if Utility_DoesActorExist(a) then Ai_CommandQueue(a, 'PathMove', o.to, '1.0', 'hiPri') end
+if Utility_DoesActorExist(a) then
+if o.act == 'attack' then Ai_CommandQueue(a, 'Attack', 'player0', 'hiPri')
+elseif o.act == 'hold' then Ai_CommandQueue(a, 'Wait', 'hiPri')
+-- a vehicle takes it itself, its crew driving or flying (retail's convoys and helicopters)
+elseif o.act == 'path' and o.oneway then Ai_CommandQueue(a, 'PathMove', o.to, o.speed, 'oneway', 'hiPri')
+elseif o.act == 'path' then Ai_CommandQueue(a, 'PathMove', o.to, o.speed, 'hiPri')
+elseif o.act == 'follow' then Ai_CommandQueue(a, 'Follow', o.target, 'hiPri')
+elseif o.act == 'board' then Ai_CommandQueue(a, 'Operate', o.vehicle, o.seat, 'hiPri')
+elseif o.act == 'exit' then Ai_Command(a, 'Exit', 'hiPri')
 end
+end
+end
+end
+end
+-- A strike (0.394): each target blown up in turn, "spacing" seconds apart
+-- (retail's Actor_KillWithMortar: the explosion, then it's destroyed).
+function foundry_StrikeStep(o)
+o.i = o.i + 1
+local a = o.members[o.i]
+if not a then return end
+if Utility_DoesActorExist(a) then Actor_KillWithMortar(a) end
+if o.members[o.i + 1] then
+if o.spacing > 0 then Event_RelativeTimer(o.scb, 'b', o.spacing) else foundry_StrikeStep(o) end
 end
 end
 function foundry_Say(r)
@@ -1271,7 +1351,7 @@ local w = tFoundryWatch[Utility_GetActorAsInt(aActor)]
 if not w then return end
 if w.kind == 'escort' then foundry_EscortLost(w, aActor)
 elseif w.kind == 'defend' then foundry_DefendLost(w)
-elseif w.kind == 'deliver' then if not w.done then foundry_Fail(w.lost) end
+elseif w.kind == 'deliver' or w.kind == 'board' then if not w.done then foundry_Fail(w.lost) end
 elseif not w.off then foundry_Fail(w.reason) end
 end
 function foundry_TimeUp(hDisplay, eState)
@@ -1357,6 +1437,12 @@ if o.hud then HUD_RemoveTrayDisplay(o.hud) o.hud = nil end
 foundry_Done(o)
 end
 
+-- Board: one of them is aboard (0.394).
+function foundry_Boarded(aActor, bIn)
+local o = tFoundryWatch[Utility_GetActorAsInt(aActor)]
+if not o or o.kind ~= 'board' or o.done or not bIn then return end
+foundry_TargetDown(aActor, true, o.name)
+end
 -- Deliver: the vehicle is in the zone.
 function foundry_Delivered(aActor, boundaryName)
 local o = tFoundryWatch[Utility_GetActorAsInt(aActor)]
@@ -1482,6 +1568,16 @@ Objective_SetType(o.name, sObjType)
 Objective_SetTargetVector(o.name, o.zone, o.text, sTargetType, 'location', o.x, o.y, o.z, true, true, false)
 end
 Event_ActorInBoundary('foundry_HoldIn', 'b', 'player0', o.zone, true)
+elseif o.kind == 'board' then
+-- 0.394: done when each is aboard a vehicle (retail's Event_AiIsPassenger);
+-- one killed first fails it
+for j, a in ipairs(o.targets) do
+tFoundryWatch[Utility_GetActorAsInt(a)] = o
+Event_AiIsPassenger('foundry_Boarded', 'b', a, TRUE)
+Event_ActorHitPointsLessThan('foundry_Died', 'b', a, 1)
+end
+util_ObjMsgPrint{{ sMsg = o.text, sType = sMsg .. 'ADD', vIdx = iIdx,
+                  tCounter = {{ vCurr = 0, vLim = table.getn(o.targets) }}, sObjective = o.name }}
 elseif o.kind == 'deliver' then
 tFoundryWatch[Utility_GetActorAsInt(o.vehicle)] = o
 util_ObjMsgPrint{{ sMsg = o.text, sType = sMsg .. 'ADD', vIdx = iIdx, sObjective = o.name }}

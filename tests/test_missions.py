@@ -211,7 +211,7 @@ class MissionTests(unittest.TestCase):
                       "zone = 'dropoff', x = 1.00, y = 2.00, z = 3.00, lost = 'sw.allies11.obj.foundry2.lost' }", lua)
         self.assertIn("Objective_SetTargetActor(o.name, o.vehicle, o.text, sTargetType, 'blip', true, true, true)", lua)
         self.assertIn("Event_ActorInBoundary('foundry_Delivered', 'b', o.vehicle, o.zone, true)", lua)
-        self.assertIn("elseif w.kind == 'deliver' then if not w.done then foundry_Fail(w.lost) end", lua)
+        self.assertIn("elseif w.kind == 'deliver' or w.kind == 'board' then if not w.done then foundry_Fail(w.lost) end", lua)
         self.assertNotIn("#", lua.split("\n", 1)[1])
         strings, _, _ = missions.text_plan("sw_allies11", doc, "SW_Allies11")
         self.assertEqual(strings["sw.allies11.obj.foundry2.lost"], "The vehicle was destroyed.")
@@ -815,6 +815,57 @@ class MissionTests(unittest.TestCase):
         self.assertIn("foundry_Waves('start')\nfoundry_Radio('start')", lua)
         self.assertNotIn("#", lua.split("\n", 1)[1])
 
+    def test_convoys_wingmen_boarding_and_strikes(self):
+        # 0.394: orders to named actors (placed crewed vehicles), follow, board,
+        # exit, a one-way path, a party that changes sides, and strikes
+        from mercfoundry import luacheck
+        doc = {"objectives": [{"type": "goto", "text": "A", "zone": "a"},
+                              {"type": "board", "text": "Get them in", "squad": "camp:Captives"}],
+               "orders": [{"when": "start", "targets": ["idf_apache1", "idf_apache2"], "do": "follow"},
+                          {"when": "start", "targets": ["pij_truck1"], "do": "follow", "target": "pij_transport"},
+                          {"when": "starts:2", "squad": "camp:Captives", "do": "board", "vehicle": "pij_transport"},
+                          {"when": "start", "targets": ["idf_officer"], "do": "board", "vehicle": "pij_transport", "seat": "passenger"},
+                          {"when": "done:1", "targets": ["idf_officer"], "do": "exit"},
+                          {"when": "done:1", "targets": ["idf_namer"], "do": "path", "to": "corridor", "oneway": True, "speed": 0.6},
+                          {"when": "done:2", "squad": "camp:Meet", "do": "attack", "faction": "nk"},
+                          {"when": "done:2", "targets": ["idf_humvee1"], "do": "attack", "faction": "nk"},
+                          {"when": "done:2", "targets": ["barracks1", "jammer"], "do": "strike", "delay": 4, "spacing": 1.5}]}
+        members = {"camp:Captives": ["C1", "C2"], "camp:Meet": ["M1"]}
+        lua = missions.objectives_script("sw_china30", doc, lambda squad: members[squad])
+        self.assertEqual(luacheck.check(lua), [])
+        self.assertIn("act = 'follow', enc = false, squad = 'idf_apache1, idf_apache2', target = 'player0', "
+                      "members = { 'idf_apache1', 'idf_apache2' }", lua)
+        self.assertIn("target = 'pij_transport'", lua)
+        self.assertIn("act = 'board', enc = 'camp', squad = 'Captives', vehicle = 'pij_transport', seat = 'passenger', "
+                      "members = { 'C1', 'C2' }", lua)
+        self.assertIn("to = 'corridor', speed = '0.6', oneway = true", lua)
+        self.assertIn("act = 'attack', enc = 'camp', squad = 'Meet', faction = 'nk', members = { 'M1' }", lua)
+        self.assertIn("act = 'strike', enc = false, squad = 'barracks1, jammer', spacing = 1.5, scb = 'foundry_Strike9', "
+                      "members = { 'barracks1', 'jammer' }, delay = 4", lua)
+        self.assertIn("function foundry_Strike9() foundry_StrikeStep(tFoundryOrders[9]) end", lua)
+        # retail's calls
+        for call in ("Ai_SetFaction(a, o.faction)", "Ai_CommandQueue(a, 'Follow', o.target, 'hiPri')",
+                     "Ai_CommandQueue(a, 'Operate', o.vehicle, o.seat, 'hiPri')", "Ai_Command(a, 'Exit', 'hiPri')",
+                     "Ai_CommandQueue(a, 'PathMove', o.to, o.speed, 'oneway', 'hiPri')",
+                     "Ai_CommandQueue(a, 'Attack', 'player0', 'hiPri')", "Actor_KillWithMortar(a)",
+                     "Event_AiIsPassenger('foundry_Boarded', 'b', a, TRUE)"):
+            self.assertIn(call, lua)
+        # the side change comes before the command
+        order = lua[lua.index("function foundry_Order(o)"):]
+        self.assertLess(order.index("Ai_SetFaction(a, o.faction)"), order.index("Squad_Command(o.enc, o.squad, 'Attack'"))
+        self.assertIn("{ kind = 'board', name = 'foundry2', key = 'sw.china30.obj.foundry2', targets = { 'C1', 'C2' }, "
+                      "lost = 'sw.china30.obj.foundry2.lost' }", lua)
+        for bad in ({"targets": ["a"], "squad": "camp:Meet", "do": "attack"},
+                    {"targets": ["a"], "do": "move", "to": "B"},
+                    {"targets": ["a"], "do": "board"},
+                    {"targets": ["a"], "do": "board", "vehicle": "v", "seat": "roof"},
+                    {"targets": ["a"], "do": "path", "to": "p", "speed": 9},
+                    {"targets": ["a"], "do": "attack", "faction": "the idf"},
+                    {"targets": [], "do": "attack"}):
+            with self.assertRaises(ValueError, msg=bad):
+                missions.objectives_script("sw_china30", {"objectives": doc["objectives"][:1], "orders": [bad]},
+                                           lambda squad: members[squad])
+
     def test_squad_orders(self):
         doc = {"objectives": [{"type": "goto", "text": "A", "zone": "a"}],
                "orders": [{"when": "start", "squad": "camp:Guards", "do": "hold"},
@@ -827,13 +878,13 @@ class MissionTests(unittest.TestCase):
         self.assertIn("{ when = 'start', act = 'hold', enc = 'camp', squad = 'Guards' }", lua)
         self.assertIn("{ when = 'done', after = 'foundry1', act = 'attack', enc = 'camp', squad = 'Guards' }", lua)
         self.assertIn("{ when = 'zone', zone = 'ridge', act = 'path', enc = 'camp', squad = 'Patrol', to = 'foundry_path1', "
-                      "members = { 'P1' } }", lua)
+                      "speed = '1.0', members = { 'P1' } }", lua)
         # retail's own verbs
         self.assertIn("Squad_Command(o.enc, o.squad, 'Attack', 'player0', 'hiPri')", lua)
         self.assertIn("Squad_Command(o.enc, o.squad, 'Wait', 'hiPri')", lua)
         self.assertIn("Squad_Command(o.enc, o.squad, 'TacticalMove', o.to, 'hiPri')", lua)
         self.assertIn("Squad_Command(o.enc, o.squad, 'MoveToActor', 'player0', 1.0, 1, 'hiPri')", lua)
-        self.assertIn("Ai_CommandQueue(a, 'PathMove', o.to, '1.0', 'hiPri')", lua)
+        self.assertIn("Ai_CommandQueue(a, 'PathMove', o.to, o.speed, 'hiPri')", lua)
         self.assertIn("foundry_Orders('start')", lua)
         self.assertIn("foundry_Orders('done', o.name)", lua)
         self.assertNotIn("#", lua.split("\n", 1)[1])
