@@ -3905,15 +3905,18 @@ def _DECK_BEFORE_LOAD(to):
             f"if {to} == 'sw' or {to} == 'nw' then foundry_DeckLeave() else foundry_DeckEnter({to}) end"]
 
 
-def map_mission_lua(map_name, free_roam=()):
+def map_mission_lua(map_name, free_roam=(), back=None):
     """Lua for a mod's new map's master script: free roam there with the mod's
     contracts (foundry_contracts: its placed givers), and a mission played
     there, started as global's InitializeMap and LoadMission start one
     (SkipTo_* from the contract; the arc map stays SkipTo_Map). When the
     mission's script closes (done, or failed and not retried), the game calls
     back foundry_<map>_FreeRoam, as global's LoadNoMissionState. free_roam:
-    more calls FreeRoam makes (the HQ flags and interiors). Returns
-    (start lines for ScriptInit, functions)."""
+    more calls FreeRoam makes (the HQ flags and interiors). back: (map,
+    {faction: (x, y, z, yaw)}, default) for a mission map ("like", 0.395):
+    its FreeRoam settles the contract and goes back to that map, where
+    foundry_<map>_BackIn puts the player. Returns (start lines for
+    ScriptInit, functions)."""
     P = f"foundry_{map_name}_"
     # Free roam here: a contract SkipTo_* left behind (a failed contract's
     # Retry pair, the contract not restarted) is cleared, or the next map
@@ -4013,8 +4016,8 @@ end
 function foundry_MapStart()
 return Utility_ReadStringFromScribbleMemory('foundry_map_start') or 'no contract start on a new map yet'
 end
-function {P}FreeRoam()
-if Utility_ReadStringFromScribbleMemory('foundry_play_arc') then
+{_back_lua(P, back) if back else ""}function {P}FreeRoam()
+{f"if {P}Back() then return end" + chr(10) if back else ""}if Utility_ReadStringFromScribbleMemory('foundry_play_arc') then
 -- back from a mission played here: this map's free roam again
 Utility_WriteStringToScribbleMemory('SkipTo_Map', {_lua(map_name)})
 end
@@ -4030,6 +4033,78 @@ if foundry_SetupContracts then foundry_SetupContracts() end
 {"".join(l + chr(10) for l in free_roam)}end
 """
     return start, funcs
+
+
+def _back_lua(P, back):
+    """A mission map's way back (0.395): the contract settled, then the other
+    map, at the contract's faction's HQ respawn there (or the default)."""
+    to, by, default = back
+
+    def row(v):
+        return "{ %.2f, %.2f, %.2f, %.1f }" % v
+    table = ", ".join(f"{f} = {row(v)}" for f, v in sorted(by.items()))
+    return f"""-- A mission map (maps json "like"): no free roam here. A contract played
+-- here closing (done, failed, abandoned) settles, then the player goes back
+-- to {to} (its HQ respawn for the contract's faction), as retail's aces put
+-- you back on the main map. A retry restarts it here (Mission(), above).
+{P}tBack = {{ {table} }}
+{P}tBackDefault = {row(default) if default else "nil"}
+function {P}Back()
+local f = Utility_ReadStringFromScribbleMemory('foundry_active_faction')
+Utility_EraseValueFromScribbleMemory('foundry_play_map')
+Utility_EraseValueFromScribbleMemory('foundry_play_arc')
+Utility_LoadUtilityScript('foundry_contracts')
+if foundry_ReturnFromContract then foundry_ReturnFromContract() else {P}Said('back: foundry_contracts not loaded, the contract not settled') end
+local at = (f and {P}tBack[f]) or {P}tBackDefault
+if at then
+Utility_WriteNumberToScribbleMemory('foundry_back_x', at[1])
+Utility_WriteNumberToScribbleMemory('foundry_back_y', at[2])
+Utility_WriteNumberToScribbleMemory('foundry_back_z', at[3])
+Utility_WriteNumberToScribbleMemory('foundry_back_h', at[4])
+end
+Utility_WriteStringToScribbleMemory('foundry_free_map', {_lua(to)})
+{P}Said('contract closed: back to ' .. {_lua(to)} .. ' (' .. tostring(f) .. ')')
+Cinematic_FadeOut(0.5)
+Event_RelativeTimer({_lua(P + 'BackGo')}, 'b', 0.6)
+return true
+end
+function {P}BackGo()
+Utility_ResetToBaseLayerOnly({_lua(to)})
+end
+"""
+
+
+def back_in_lua(P):
+    """The map a mission map goes back to (0.395): the player where it said,
+    after free roam's own placing (made again at 2 s), black until then."""
+    return f"""-- Back from a contract on a mission map of this one: where it said.
+function {P}BackIn()
+local x = Utility_ReadNumberFromScribbleMemory('foundry_back_x')
+if not x then return end
+{P}tBackAt = {{ x, Utility_ReadNumberFromScribbleMemory('foundry_back_y'),
+Utility_ReadNumberFromScribbleMemory('foundry_back_z'), Utility_ReadNumberFromScribbleMemory('foundry_back_h') }}
+Utility_EraseValueFromScribbleMemory('foundry_back_x')
+Utility_EraseValueFromScribbleMemory('foundry_back_y')
+Utility_EraseValueFromScribbleMemory('foundry_back_z')
+Utility_EraseValueFromScribbleMemory('foundry_back_h')
+Actor_SetPosition('player0', {P}tBackAt[1], {P}tBackAt[2], {P}tBackAt[3])
+if {P}tBackAt[4] then Actor_SetYaw('player0', {P}tBackAt[4]) end
+Cinematic_FadeOut(0)
+Event_RelativeTimer('{P}BackInNow', 'b', 0.5)
+Event_RelativeTimer('{P}BackInLast', 'b', 2.0)
+end
+function {P}BackInNow()
+if {P}tBackAt then
+Actor_SetPosition('player0', {P}tBackAt[1], {P}tBackAt[2], {P}tBackAt[3])
+if {P}tBackAt[4] then Actor_SetYaw('player0', {P}tBackAt[4]) end
+end
+end
+function {P}BackInLast()
+{P}BackInNow()
+{P}tBackAt = nil
+Cinematic_FadeIn(0.5)
+end
+"""
 
 
 ARRIVE_LUA = """-- Back from another map: put the player where the pilot that brought them
@@ -4258,7 +4333,12 @@ def contract(asset_id, doc, title_key, description_key):
         # with "position": a giver placed on the map takes the player into the
         # room, which briefs only this contract (retail's ace bouncer); without,
         # the HQ guard's way in briefs the interior's contracts in turn
-    return {"id": asset_id, "map": (play_map(asset_id, doc) if c.get("position") or interior else None) or map_,
+    giver_map = str(c.get("map") or "").lower() or None
+    if giver_map is not None and not re.fullmatch(r"[a-z0-9_]+", giver_map):
+        raise ValueError("\"contact\" \"map\" is the map the giver is on (its HQ interior, or where it's placed)")
+    return {"id": asset_id,
+            # 0.395: "contact" "map": the giver on another map than it's played on
+            "map": giver_map or (play_map(asset_id, doc) if c.get("position") or interior else None) or map_,
             "faction": faction, "number": number,
             "repeatable": bool(doc.get("repeatable", False)),
             "template": c.get("template", f"template_{faction}_bouncer"),

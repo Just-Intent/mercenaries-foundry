@@ -985,6 +985,25 @@ as retail's deck. Shape:
   `foundry_deck_<map>_*`), and free roam on SW or NW puts the game's back.
   So the map's clubs don't count for retail's clubs, nor the other way.
 
+**A mission map** (0.395), as retail's ace contracts have: `maps/<name>.json`
+`"like": "<main map>"` (another of the mod's new maps) makes a map for its
+contracts only. It shares the main map's `"template_overrides"`,
+`"hud_textures"`, `"relations"`, `"own_moods"` (the same moods, not a set of
+its own), `"collateral_fines"` and `"any_captive"` (its own settings win),
+loads the main map's template copies (`<main>_templates`) and everything the
+main map's load list loads, and shows its texts (so an ace verified there
+shows the deck's own name and bio). A mission with `"map": "<mission map>"`
+is played there; its giver says where it stands with `"contact"` `"map":
+"<main map>"` (in an HQ interior there, or placed there). When the contract
+closes (done, failed, abandoned) the player goes back to the main map, at
+the contract's faction's `"hq_respawn"` there (else its `"medevac"`, else
+its `"start"`); `"after_mission": {"to"?, "position"?, "heading"?}` sets
+another place. A retry restarts it on the mission map, and there's no free
+roam there. A deck file with no `"map"` is the main map's. The map's name
+can't be a layer's (`encounters/<name>.json`). Dark underground: its
+`sky/<map>.json` (`"seasons": {"all": {...}}` on a copy of blank) and
+`terrain/<map>.lighting.json`.
+
 ## Not yet
 
 - Undo for making a new map; the history covers objects, paths, zones, squads, missions,

@@ -399,6 +399,12 @@ def _write_map_text(data, result):
     from . import missions
     have = {r.key for _, r in data.records(texture.TEXTURE)} | \
         {k for k, kind, _ in data.added() if kind == texture.TEXTURE}
+    # 0.395: a "like" map shows the other's texts too (its deck's cards: an
+    # ace verified there shows the map's own name and bio), its own winning
+    texts = getattr(data, "map_text", {})
+    for child, parent in getattr(data, "map_likes", {}).items():
+        if parent in texts:
+            texts[child] = {**texts[parent], **texts.get(child, {})}
     for m, pairs in sorted(getattr(data, "map_text", {}).items()):
         name = f"foundry_maptext_{m}"
         hud = getattr(data, "map_hud", {}).get(m, {})
@@ -460,6 +466,29 @@ def _write_map_text(data, result):
 
 
 SHOP_URL_MAX = 23      # the game's "http://www.menace.ru/%s" and its terminator: 24 bytes
+
+
+def _write_like_lists(data, result):
+    """After every step: a "like" map's load list loads what the other map's
+    loads (models, textures, scripts, animations...), all but its terrain and
+    layers, so its templates' and HUD art's assets are in (0.395)."""
+    from . import encounters, missions
+    skip = {k.lower() for k in encounters.LAYER_KINDS} | {"terrain"}
+    for child, parent in sorted(getattr(data, "map_likes", {}).items()):
+        pbody, cbody = data.find_added(name_hash(parent), name_hash("list")), data.find_added(name_hash(child), name_hash("list"))
+        if pbody is None or cbody is None:
+            continue
+        text = cbody.decode("latin-1")
+        n = 0
+        for kind, names in encounters.parse_list(pbody.decode("latin-1")).items():
+            if kind.lower() in skip:
+                continue
+            for nm in names:
+                new = missions.add_to_list(text, kind, nm)
+                n += new != text
+                text = new
+        data.replace_added(name_hash(child), name_hash("list"), text.encode("latin-1"))
+        result.changes.append(f"maps/{child}.json: like {parent}: {n} of {parent}'s loads added to its load list")
 
 
 def _write_map_templates(data, result):
@@ -729,6 +758,76 @@ def check_spawn_points(medevac, hq_respawn, where):
             raise ValueError(f"{where}: \"hq_respawn\": a faction is one of {', '.join(missions.HQ_FACTIONS)}")
         checked(spot, f"\"hq_respawn\" {f}")
     return hq_respawn
+
+
+# 0.395: maps json "like": <another of the mod's new maps>: a mission map of
+# that one's (retail's ace contracts' maps), sharing these of its settings
+# (its own given win) and its template copies (<like>_templates, loaded
+# there); its load list loads what the other's does, its moods are the
+# other's, and a contract played there goes back to the other after
+# ("after_mission").
+LIKE_KEYS = ("template_overrides", "hud_textures", "relations", "own_moods", "collateral_fines", "any_captive")
+
+
+def _map_doc(path):
+    """A maps/<name>.json, with "like"'s settings filled in ("_like": that
+    map's doc)."""
+    doc = json.loads(path.read_text(encoding="utf-8"))
+    like = doc.get("like")
+    if like is None or not isinstance(doc, dict):
+        return doc
+    where = f"maps/{path.name}"
+    if not isinstance(like, str) or not re.fullmatch(r"[A-Za-z0-9_]+", like) or like.lower() == path.stem.lower():
+        raise ValueError(f"{where}: \"like\" names another of the mod's new maps (maps/<name>.json)")
+    pf = next((f for f in path.parent.glob("*.json") if f.stem.lower() == like.lower()), None)
+    if pf is None:
+        raise ValueError(f"{where}: \"like\": no maps/{like}.json in the mod")
+    parent = json.loads(pf.read_text(encoding="utf-8"))
+    if parent.get("like"):
+        raise ValueError(f"{where}: \"like\": {like} is itself \"like\" another map; name that one")
+    out = dict(doc)
+    for k in LIKE_KEYS:
+        if k not in out and k in parent:
+            out[k] = parent[k]
+    out["_like"] = {"name": pf.stem.lower(), "doc": parent}
+    return out
+
+
+def _after_mission(where, name, doc):
+    """(map, {faction: (x, y, z, yaw)}, default) for a "like" map's
+    "after_mission": where a contract played there sends the player when it
+    closes (done, failed, abandoned). Default: the other map, at the
+    contract's faction's "hq_respawn" there (its "return_to" HQ, as retail's
+    aces put you back on the main map), else its "medevac" or "start"."""
+    from .missions import player_yaw
+    like = doc.get("_like")
+    am = doc.get("after_mission")
+    if not like and not am:
+        return None
+    if am is not None and not isinstance(am, dict):
+        raise ValueError(f"{where}: \"after_mission\" is {{\"to\"?, \"position\"?, \"heading\"?}}")
+    am = am or {}
+    to = str(am.get("to") or (like or {}).get("name") or "").lower()
+    if not to:
+        raise ValueError(f"{where}: \"after_mission\" needs \"to\" (a map), or give the map \"like\"")
+    pdoc = (like or {}).get("doc") if like and like["name"] == to else {}
+
+    def spot(v):
+        pos = [float(x) for x in (v or {}).get("position") or []]
+        if len(pos) != 3:
+            return None
+        return (*pos, player_yaw((v or {}).get("heading")))
+    by = {}
+    for f, v in ((pdoc or {}).get("hq_respawn") or {}).items():
+        at = spot(v)
+        if at:
+            by[str(f).lower()] = at
+    default = spot(am) or spot((pdoc or {}).get("medevac")) or spot((pdoc or {}).get("start"))
+    if am.get("position"):
+        by = {}                      # one place for every contract
+    if not default and not by:
+        raise ValueError(f"{where}: \"after_mission\": give \"position\" (where on {to} the player goes back to)")
+    return to, by, default
 
 
 def _move_player_start(body, medevac, where, hq_respawn=None):
@@ -1242,6 +1341,8 @@ def _apply_encounters(data, folder, result):
             from . import missions as _ms
             map_, faction, _ = _ms.parse_id(mf.stem.lower())
             map_ = _ms.play_map(mf.stem.lower(), mdoc) or map_        # played on a new map: it stands there
+            if c.get("map"):
+                map_ = str(c["map"]).lower()                           # 0.395: or on the map its "contact" names
             givers.append((f"{mf.stem.lower()}_giver", {
                 "map": map_.upper(), "load": "map",
                 "objects": [{"from": c.get("template") or f"template_{faction}_bouncer",
@@ -1261,7 +1362,7 @@ def _apply_encounters(data, folder, result):
     aliases = {}
     for mf in sorted((folder / "maps").glob("*.json")) if (folder / "maps").is_dir() else []:
         try:
-            tdoc = json.loads(mf.read_text(encoding="utf-8"))
+            tdoc = _map_doc(mf)
         except ValueError:
             continue
         for t in tdoc.get("templates") or []:
@@ -1509,7 +1610,7 @@ def _edge_walls(data, folder, result):
     out = []
     mdir = folder / "maps"
     for mf in sorted(mdir.glob("*.json")) if mdir.is_dir() else []:
-        mdoc = json.loads(mf.read_text(encoding="utf-8"))
+        mdoc = _map_doc(mf)
         edge = mdoc.get("edge", "wall")
         if edge in (False, "none", "open"):
             continue
@@ -1566,7 +1667,7 @@ def _travel_pilots(data, folder, result):
     out = []
     for f in sorted(mdir.glob("*.json")) if mdir.is_dir() else []:
         name = f.stem.lower()
-        mdoc = json.loads(f.read_text(encoding="utf-8"))
+        mdoc = _map_doc(f)
         title = str(mdoc.get("title") or name.capitalize())
         brought = {}
         for k, t in enumerate(mdoc.get("travel") or [], 1):
@@ -3422,6 +3523,7 @@ def _gates_lua(G, gates):
 
 
 def map_script(name, doc, layers, pilots=(), contacts=False, extra=(), hqs=None, inside=None, deck=False, gates=None,
+               back=None, back_in=False,
                tunnels=()):
     """A new map's master script (run as the map loads): blank's set-up, its
     layers, where the player arrives, a message, and its travel pilots
@@ -3466,6 +3568,9 @@ def map_script(name, doc, layers, pilots=(), contacts=False, extra=(), hqs=None,
         x, y, z = (float(v) for v in start["position"])
         lines.append(f"Actor_SetPosition('player0', {x:.2f}, {y:.2f}, {z:.2f})")
         lines.append(f"Actor_SetYaw('player0', {__import__('mercfoundry.missions', fromlist=['player_yaw']).player_yaw(start.get('heading')):.1f})")
+    if back_in:
+        # 0.395: back from a contract on a "like" map of this one: where it said
+        lines.append(f"foundry_{name.lower()}_BackIn()")
     if doc.get("message"):
         lines.append(f"Ui_PrintHudMessage({_lua_str(str(doc['message']))})")
     if doc.get("weather"):
@@ -3477,7 +3582,8 @@ def map_script(name, doc, layers, pilots=(), contacts=False, extra=(), hqs=None,
     if pilots:
         lines.append(f"{prefix}Arm()")
     hq = []                       # free roam here: the HQ flags and interiors
-    if gates:
+    # (only for gates on this map's own layers: their function is written only then)
+    if any(l.lower() in gates for l in layers):
         hq.append(f"{G}Gates()")
     if tunnels:
         # each load and each return to free roam: a contract done opens its tunnel
@@ -3500,14 +3606,16 @@ def map_script(name, doc, layers, pilots=(), contacts=False, extra=(), hqs=None,
         # first thing: the map's own moods in the game's slots (every load, a
         # contract's too; nothing happens if they're in already)
         start_t = "{ " + ", ".join(f"{f} = {v}" for f, v in sorted(moods.items())) + " }" if moods else "nil"
-        lines.insert(lines.index("Debug_EnableCallStack(false)"), f"foundry_MoodsEnter({_lua_str(name.lower())}, {start_t})")
+        # a "like" map keeps the other's moods (0.395): one set of moods for both
+        mood_map = (doc.get("_like") or {}).get("name") or name.lower()
+        lines.insert(lines.index("Debug_EnableCallStack(false)"), f"foundry_MoodsEnter({_lua_str(mood_map)}, {start_t})")
     if deck:
         hq += ["Utility_LoadUtilityScript('foundry_deck')",
                f"foundry_DeckEnter({_lua_str(name.lower())})",
                f"foundry_DeckArm({_lua_str(name.lower())})"]
     if contacts:                  # a mission played here, else free roam with its contacts
         from .missions import map_mission_lua
-        start, funcs = map_mission_lua(name.lower(), hq)
+        start, funcs = map_mission_lua(name.lower(), hq, back=back)
         lines += start
     else:
         lines += hq
@@ -3526,6 +3634,9 @@ def map_script(name, doc, layers, pilots=(), contacts=False, extra=(), hqs=None,
         lines.append(f"foundry_{name.lower()}_Relations()")
     lines += [f"Event_RelativeTimer('{hud_on}', 'b', 1.0)", f"Event_RelativeTimer('{hud_on}', 'b', 3.0)"]
     text = "\n".join(lines + ["end", ""])
+    if back_in:
+        from .missions import back_in_lua
+        text += back_in_lua(f"foundry_{name.lower()}_")
     if moods is not None:
         text += MOODS_LUA
     text += (f"function {hud_on}()\n"
@@ -3583,6 +3694,14 @@ def _apply_maps(data, folder, result):
     zones to its own lineregion record (the game makes water only there)."""
     from . import missions, sky
     mdir = folder / "maps"
+    # 0.395: the maps a "like" map's contracts come back to
+    backs_in = set()
+    for f in sorted(mdir.glob("*.json")) if mdir.is_dir() else []:
+        d_ = _map_doc(f)
+        am = _after_mission(f"maps/{f.name}", f.stem.lower(), d_)
+        if am:
+            backs_in.add(am[0])
+    data.map_backs_in = backs_in
     for f in sorted(mdir.glob("*.json")) if mdir.is_dir() else []:
         name = f.stem
         where = f"maps/{f.name}"
@@ -3592,7 +3711,10 @@ def _apply_maps(data, folder, result):
         if any(r.key == key for _, r in data.records(name_hash("Terrain"))) or \
                 data.find_added(key, name_hash("Terrain")) is not None:
             raise ValueError(f"{where}: there's already a map named {name!r}")
-        mdoc = json.loads(f.read_text(encoding="utf-8"))
+        if (folder / "encounters" / f"{name}.json").is_file():
+            raise ValueError(f"{where}: encounters/{name}.json is a layer of that name already: a map and a "
+                             f"layer can't share a name (both are world records)")
+        mdoc = _map_doc(f)
         data.new_map_names = getattr(data, "new_map_names", []) + [name]
         src = str(mdoc.get("from") or "blank")
         # What else it loads: everything a free-roam map's list loads but that
@@ -3742,6 +3864,19 @@ def _apply_maps(data, folder, result):
             raise ValueError(f"{where}: \"template_overrides\" is {{<game template>: {{<property>: value}} or <template>}}")
         templates_wanted = list(mdoc.get("templates") or [])
         own_copies = {str(t.get("as")).lower() for t in templates_wanted if isinstance(t, dict) and t.get("as")}
+        like_ = mdoc.get("_like")
+        if like_:
+            like_t = [t for t in like_["doc"].get("templates") or [] if isinstance(t, dict)]
+            own_copies |= {str(t.get("as")).lower() for t in like_t if t.get("as")}
+            data.map_likes = getattr(data, "map_likes", {})
+            data.map_likes[name.lower()] = like_["name"]
+            if like_["doc"].get("templates"):
+                # its template copies: the other map's layer, loaded here too
+                data.new_map_layers = getattr(data, "new_map_layers", {})
+                data.new_map_layers.setdefault(name.lower(), []).insert(0, f"{like_['name']}_templates")
+                made.append(f"like {like_['name']}: its templates ({like_['name']}_templates), "
+                            f"{', '.join(k for k in LIKE_KEYS if k in mdoc and k not in json.loads(f.read_text(encoding='utf-8')))}"
+                            f", its load list and moods")
         # "shop": the map's own store, each item two template copies (shop.py);
         # the catalogue, texts and load lists after every step (_write_shops)
         from . import shop as _shop
@@ -3922,11 +4057,15 @@ def _apply_maps(data, folder, result):
                 data.replace_added(key, name_hash("list"), text.encode("latin-1"))
         if not any(r.key == key for _, r in data.records(SCRIPT)) and data.find_added(key, SCRIPT) is None:
             if mdoc.get("start") or mdoc.get("message") or mdoc.get("weather") or layers or pilots or contacts or extra \
-                    or tunnels \
+                    or tunnels or name.lower() in getattr(data, "map_backs_in", set()) or mdoc.get("_like") \
                     or hqs or inside or deck or mdoc.get("any_captive") or mdoc.get("relations") \
                     or mdoc.get("collateral_fines") is False or mdoc.get("shop_url"):
+                back = _after_mission(where, name.lower(), mdoc)
                 source = map_script(name, mdoc, layers, pilots, contacts, extra, hqs, inside, deck=deck,
-                                    gates=getattr(data, "layer_gates", {}), tunnels=tunnels)
+                                    gates=getattr(data, "layer_gates", {}), tunnels=tunnels, back=back,
+                                    back_in=name.lower() in getattr(data, "map_backs_in", set()))
+                if back:
+                    made.append(f"after a contract here: back to {back[0]}")
                 made.append("script (" + ", ".join(
                     (["where you arrive"] if (mdoc.get("start") or {}).get("position") else [])
                     + ([f"loads {', '.join(layers)}"] if layers else [])
@@ -5319,7 +5458,7 @@ def build(projects, data_dir, out_dir, name=None, description=None) -> Result:
                 mdir = Path(project) / "maps"
                 for mf in sorted(mdir.glob("*.json")) if mdir.is_dir() else []:
                     try:
-                        mdoc_ = json.loads(mf.read_text(encoding="utf-8"))
+                        mdoc_ = _map_doc(mf)
                         rel = _missions.map_relations(f"maps/{mf.name}", mdoc_)
                         own = _missions.own_moods(f"maps/{mf.name}", mdoc_) is not None
                     except (ValueError, json.JSONDecodeError):
@@ -5349,6 +5488,7 @@ def build(projects, data_dir, out_dir, name=None, description=None) -> Result:
     _usable_chairs(data, result)
     _write_map_text(data, result)
     _write_map_templates(data, result)
+    _write_like_lists(data, result)
     _write_shops(data, result)
     _check_lua(data, result)
     _check_new_scripts(data, result)

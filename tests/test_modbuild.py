@@ -1227,6 +1227,59 @@ class AmbienceTests(unittest.TestCase):
 
 
 class MapScriptTests(unittest.TestCase):
+    def test_mission_map_like_another(self):
+        # 0.395: an ace's mission map ("like" the main map): the main map's
+        # settings, templates, moods and texts; a contract there goes back after
+        from mercfoundry import deck, luacheck, missions
+        with tempfile.TemporaryDirectory() as tmp:
+            mdir = Path(tmp) / "maps"
+            mdir.mkdir()
+            main = {"from": "blank", "hud_textures": {"a": "b"}, "own_moods": {"allies": 0}, "templates": [
+                        {"template": "template_x", "as": "template_gaza_x"}],
+                    "template_overrides": {"template_y": "template_gaza_x"}, "shop": {"items": []},
+                    "hq_respawn": {"allies": {"position": [1, 2, 3], "heading": 90}},
+                    "medevac": {"position": [4, 5, 6], "heading": 0}}
+            (mdir / "gaza.json").write_text(json.dumps(main))
+            (mdir / "gaza_ace.json").write_text(json.dumps({"from": "blank", "like": "gaza", "collateral_fines": True}))
+            doc = modbuild._map_doc(mdir / "gaza_ace.json")
+            self.assertEqual(doc["hud_textures"], {"a": "b"})
+            self.assertEqual(doc["template_overrides"], {"template_y": "template_gaza_x"})
+            self.assertTrue(doc["collateral_fines"])                     # its own wins
+            self.assertNotIn("shop", doc)                                # only LIKE_KEYS
+            self.assertNotIn("templates", doc)                           # loaded as gaza_templates instead
+            self.assertEqual(doc["_like"]["name"], "gaza")
+            to, by, default = modbuild._after_mission("maps/gaza_ace.json", "gaza_ace", doc)
+            self.assertEqual((to, by["allies"][:3], default[:3]), ("gaza", (1.0, 2.0, 3.0), (4.0, 5.0, 6.0)))
+            # a deck with no "map": the main map, not the mission map
+            d = deck.parse("deck/clubs.json", {"suit": "clubs", "cards": [{"card": "A", "name": "x"}]},
+                           {"gaza", "gaza_ace"}, Path(tmp))
+            self.assertEqual(d["map"], "gaza")
+            for bad in ({"like": "gaza_ace"}, {"like": "nowhere"}, {"like": 3}):
+                (mdir / "bad.json").write_text(json.dumps(bad))
+                with self.assertRaises(ValueError):
+                    modbuild._map_doc(mdir / "bad.json")
+            # the mission map: the main map's moods, a back trip in its FreeRoam
+            back = ("gaza", by, default)
+            text = modbuild.map_script("gaza_ace", doc, [], contacts=True, back=back)
+            self.assertEqual(luacheck.check(text), [])
+            self.assertIn("foundry_MoodsEnter('gaza', ", text)
+            free = text[text.index("function foundry_gaza_ace_FreeRoam()"):]
+            self.assertTrue(free.startswith("function foundry_gaza_ace_FreeRoam()\nif foundry_gaza_ace_Back() then return end"))
+            b = text[text.index("function foundry_gaza_ace_Back()"):]
+            self.assertLess(b.index("local f = Utility_ReadStringFromScribbleMemory('foundry_active_faction')"),
+                            b.index("foundry_ReturnFromContract()"))       # read before it's settled (and erased)
+            self.assertIn("Utility_ResetToBaseLayerOnly('gaza')", text)
+            self.assertIn("foundry_gaza_ace_tBack = { allies = { 1.00, 2.00, 3.00, ", text)
+            # the main map puts the player there when they're back
+            main_text = modbuild.map_script("gaza", dict(main, start={"position": [9, 9, 9]}), [], back_in=True)
+            self.assertEqual(luacheck.check(main_text), [])
+            self.assertLess(main_text.index("Actor_SetPosition('player0', 9.00, 9.00, 9.00)"),
+                            main_text.index("foundry_gaza_BackIn()"))
+            self.assertIn("Utility_ReadNumberFromScribbleMemory('foundry_back_x')", main_text)
+        # the giver on the main map's HQ interior, the contract played on the mission map
+        c, _ = missions.contract("sw_allies21", {"map": "gaza_ace", "contact": {"interior": "allies", "map": "gaza"}}, "t", "d")
+        self.assertEqual((c["map"], c["play"]), ("gaza", "gaza_ace"))
+
     def test_weather_on_arrival(self):
         # a new map can force one of the weather presets as the player arrives
         # (the one on in the map they came from otherwise stays)

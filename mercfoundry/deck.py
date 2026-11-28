@@ -60,6 +60,19 @@ def parse(where, doc, new_maps, mod_folder=None):
     if suit not in SUITS:
         raise ValueError(f"{where}: \"suit\" is one of {', '.join(SUITS)}")
     m = doc.get("map")
+    if m is None and len(new_maps) > 1 and mod_folder is not None:
+        # a mission map ("like" another, 0.395) isn't a deck's: the one other map is
+        import json as _json
+        own = set()
+        for n in new_maps:
+            p = mod_folder / "maps" / f"{n}.json"
+            try:
+                if not _json.loads(p.read_text(encoding="utf-8")).get("like"):
+                    own.add(n)
+            except (OSError, ValueError, AttributeError):
+                own.add(n)
+        if len(own) == 1:
+            m = next(iter(own))
     if m is None:
         if len(new_maps) != 1:
             raise ValueError(f"{where}: give \"map\" (the new map this deck is on)")
