@@ -1020,14 +1020,27 @@ lower-case letters, digits, `_`):
   `"object": {"template", "position"}` (else the starter vehicle itself),
   `"get_out"`.
 - homerun: `"time"`, `"to"` (the measuring point; else where the prop starts),
-  `"closest"` (closest instead of farthest), `"area": {"position", "radius"}`.
+  `"closest"` (closest instead of farthest), `"area": {"position", "radius"}`,
+  `"object": {"template", "position"}` (0.398: a thrown object of its own,
+  as retail's Hammer Toss; the starter, a helicopter, is the vehicle, and the
+  object's spawn point is where it's measured from unless `"to"` says).
+- deliver with no `"object"` (0.398): the starter itself is delivered, a
+  vehicle driven there or a person carried as a passenger (retail's Press
+  Photo Op; the player may start on foot).
+- taxi (0.398): `"districts": [{"name", "centre", "radius", "fares": [[x, y, z]...],
+  "destinations": [...], "riders"?: [templates]}]` (two or more), `"max_fares"`,
+  `"fare_distance"`, `"pay_per_metre"`, `"metres_per_second"`, `"top_speed"`.
+  Retail's taxi module (a copy, `<map>_foundry_taxi`, that takes the
+  districts' names and any car) gives fares in the district the player is
+  in; the district is set from its centre and radius, as the tour guide's
+  region is on NW.
 - The build writes `<map>_challenge` (retail's quadrant script shape), one
   script each (`<map>_challenge_<id>`, whose name keeps its records apart from
   SW's) and a layer of its locations (copies of loc_playerstart). Free roam
   on the map sets them up a second in, as global's SetupChallenges; a
   contract (which reloads the map) has none, and a contract giver won't
   start a contract while one runs. `mod sim` starts, wins and loses each.
-  Not yet: taxi, a destroy's time added per kill.
+  Not yet: a destroy's time added per kill, race checkpoint poles.
 
 **A mission map** (0.395), as retail's ace contracts have: `maps/<name>.json`
 `"like": "<main map>"` (another of the mod's new maps) makes a map for its

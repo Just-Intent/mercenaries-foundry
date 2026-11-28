@@ -4087,11 +4087,21 @@ def _apply_maps(data, folder, result):
                     raise ValueError(f"challenges/{c['id']}.json: the game already has a script named {c['name']}")
                 data.new("assets.dsk", name_hash(c["name"]), SCRIPT, script.encode(script.new(c["name"], _chal.challenge_script(c))))
                 _set_strings(data, _chal.strings(c))
+            extra_s = []
+            if any(c["type"] == "taxi" for c in chs):
+                # 0.398: retail's challenge_taxi, patched for this map's districts
+                thit = [(a_, r_) for a_, r_ in data.records(SCRIPT) if r_.key == name_hash("challenge_taxi")]
+                if not thit:
+                    raise ValueError(f"{where}: a taxi side contract needs the game's challenge_taxi script")
+                tname = _chal.taxi_module(name.lower())
+                data.new("assets.dsk", name_hash(tname), SCRIPT, script.encode(script.new(
+                    tname, _chal.taxi_script(script.decode(data.current(*thit[0])).source))))
+                extra_s.append(tname)
             lbody = data.find_added(key, name_hash("list"))
             if lbody is not None:
                 text = lbody.decode("latin-1")
                 for s_ in list(_chal.SCRIPTS) + sorted({_chal.TYPE_SCRIPTS[c["type"]] for c in chs}) + [qname] + \
-                        [c["name"] for c in chs]:
+                        extra_s + [c["name"] for c in chs]:
                     text = missions.add_to_list(text, "script", s_)
                 data.replace_added(key, name_hash("list"), text.encode("latin-1"))
             made.append(f"{len(chs)} side contracts ({', '.join(c['id'] + ' ' + c['type'] for c in chs)}) in {qname}")
@@ -4099,7 +4109,8 @@ def _apply_maps(data, folder, result):
             by_name_c, _ = _world_index(data, [data.archive(n) for n in ARCHIVES if (data.dir / n).exists()])
             for c in chs:
                 for t in [c["starter"][0]] + [t for t, _ in c["spawns"]] + \
-                        ([c["targets"][0]] if c.get("targets") else []) + ([c["object"][0]] if c.get("object") else []):
+                        ([c["targets"][0]] if c.get("targets") else []) + ([c["object"][0]] if c.get("object") else []) + \
+                        [r for d in c.get("districts") or [] for r in d["riders"]]:
                     if t.lower() not in own_copies and not by_name_c.get(t.lower()):
                         raise ValueError(f"challenges/{c['id']}.json: no template {t!r} (a game template, or one of "
                                          f"{where}'s \"templates\" copies)")

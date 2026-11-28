@@ -37,10 +37,33 @@ the framework when free roam starts there. Records and levels are under
 
 import re
 
-TYPES = ("race", "destroy", "deliver", "homerun")
-SCRIPTS = ("challenge", "challenge_tools", "challenge_common", "util_misc", "util_debug", "spawn", "table")
+TYPES = ("race", "destroy", "deliver", "homerun", "taxi")
+SCRIPTS = ("challenge", "challenge_tools", "challenge_common", "util_misc", "util_debug", "spawn", "table",
+           # a passenger deliver and the taxi carry their rider with retail's deliver objective
+           "hud", "mission", "mission_objective", "mission_objectivedeliver")
 TYPE_SCRIPTS = {"race": "challenge_race", "destroy": "challenge_destroy", "deliver": "challenge_deliver",
-                "homerun": "challenge_homerun"}
+                "homerun": "challenge_homerun", "taxi": "challenge_taxi"}
+# 0.398: the taxi runs a copy of retail's challenge_taxi (taxi_script), whose
+# district labels and car speeds are its own table's, not retail's NW ones
+TAXI_RIDERS = ("template_gaza_civ_civilian01", "template_gaza_civ_civilian02", "template_gaza_civ_civilian03")
+
+
+def taxi_module(map_name):
+    return f"{map_name}_foundry_taxi"
+
+
+def taxi_script(retail_source):
+    """retail's challenge_taxi, patched for a mod's districts: the labels of
+    its districts (tPOI2MapLabel) come from the challenge's table when it
+    gives them, and a car not in its speed table (a mod's copy) gets the
+    challenge's top speed instead of stopping on a nil."""
+    a = "tPOI2MapLabel = {"
+    b = "Debug_Assert( sPlayersVehicleODF ~= nil"
+    if retail_source.count(a) != 1 or retail_source.count(b) != 1:
+        raise ValueError("the game's challenge_taxi isn't the one the toolkit knows (its label table or speed check moved)")
+    src = retail_source.replace(a, "tPOI2MapLabel = tTaxi.tPOI2MapLabel or {")
+    return src.replace(b, "if sPlayersVehicleODF == nil then sPlayersVehicleODF = 'foundry_any' "
+                          "tODF2MaxSpeed.foundry_any = tTaxi.nMaxSpeed or 40 end\n" + b)
 LOCATION = "loc_playerstart"          # a location object to copy (retail's maps all have one)
 BLIPS = ("blip", "car", "human", "boat", "plane", "helicopter")
 
@@ -163,8 +186,38 @@ def parse(where, cid, doc, new_maps):
                              "starter vehicle itself is delivered)")
         c["object"] = (str(o["template"]), _spot(o, f"{where}: \"object\"")) if o else None
         c["get_out"] = bool(doc.get("get_out"))
+    elif kind == "taxi":
+        ds = doc.get("districts") or []
+        if not isinstance(ds, list) or len(ds) < 2:
+            raise ValueError(f"{where}: a taxi needs \"districts\": two or more [{{\"name\", \"centre\", "
+                             "\"radius\", \"fares\", \"destinations\", \"riders\"?}}]")
+        c["districts"] = []
+        for i, d in enumerate(ds, 1):
+            w = f"{where}: district {i}"
+            if not isinstance(d, dict) or not d.get("name"):
+                raise ValueError(f"{w}: needs \"name\" (shown as a fare's destination)")
+            fares = [_xyz(p, f"{w}: a fare") for p in d.get("fares") or []]
+            dests = [_xyz(p, f"{w}: a destination") for p in d.get("destinations") or []]
+            if not fares or not dests:
+                raise ValueError(f"{w}: give \"fares\" (where riders wait) and \"destinations\" (where they go)")
+            c["districts"].append({"name": str(d["name"]), "centre": _xyz(d.get("centre"), f"{w}: \"centre\""),
+                                   "radius": _num(d.get("radius", 250), f"{w}: \"radius\"", 10),
+                                   "fares": fares, "dests": dests,
+                                   "riders": [str(t) for t in d.get("riders") or TAXI_RIDERS]})
+        c["max_fares"] = int(_num(doc.get("max_fares", 7), f"{where}: \"max_fares\"", 1))
+        c["fare_distance"] = _num(doc.get("fare_distance", 350), f"{where}: \"fare_distance\"", 10)
+        c["pay_per_metre"] = _num(doc.get("pay_per_metre", 15), f"{where}: \"pay_per_metre\"")
+        c["metres_per_second"] = _num(doc.get("metres_per_second", 13), f"{where}: \"metres_per_second\"", 1)
+        c["top_speed"] = _num(doc.get("top_speed", 40), f"{where}: \"top_speed\"", 1)
     elif kind == "homerun":
         c["to"] = _spot(doc.get("to"), f"{where}: \"to\"") if doc.get("to") is not None else None
+        # 0.398: a thrown object of its own (retail's Hammer Toss: the starter's a
+        # helicopter, the measured object spawns): {"template", "position"}
+        o = doc.get("object")
+        if o is not None and (not isinstance(o, dict) or not o.get("template")):
+            raise ValueError(f"{where}: \"object\" is {{\"template\", \"position\", \"heading\"?}} (the thing "
+                             "measured; left out: the starter prop)")
+        c["object"] = (str(o["template"]), _spot(o, f"{where}: \"object\"")) if o else None
         c["closest"] = bool(doc.get("closest"))
         a = doc.get("area")
         c["area"] = (_spot(a, f"{where}: \"area\""), _num(a.get("radius"), f"{where}: \"area\" \"radius\"", 1)) \
@@ -195,9 +248,17 @@ def layer(c):
         add("dest", c["to"])
         if c["object"]:
             add("object", c["object"][1])
+    elif c["type"] == "taxi":
+        for n, d in enumerate(c["districts"], 1):
+            for i, p in enumerate(d["fares"], 1):
+                add(f"d{n}_fare{i}", (*p, 0.0))
+            for i, p in enumerate(d["dests"], 1):
+                add(f"d{n}_dest{i}", (*p, 0.0))
     elif c["type"] == "homerun":
         if c["to"]:
             add("point", c["to"])
+        if c["object"]:
+            add("object", c["object"][1])
         if c["area"]:
             add("area", c["area"][0])
     return c["name"], {"map": c["map"].upper(), "load": "map", "objects": objs}
@@ -214,6 +275,8 @@ def strings(c):
     for what in ("goals", "rules", "bonuses"):
         for i, t in enumerate(c[what], 1):
             out[f"challenge.{c['map']}.{c['id']}.{what}{i}"] = t
+    for n, d in enumerate(c.get("districts") or [], 1):
+        out[f"challenge.{c['map']}.{c['id']}.district{n}"] = d["name"]
     return out
 
 
@@ -221,7 +284,7 @@ def _helpers(c):
     """Lua both scripts use: the level (scribble <name>_Level) and the goal."""
     P, N = c["prefix"], c["name"]
     lv = ", ".join(f"{v:g}" for v in c["levels"])
-    stat = {"race": "BestTime", "deliver": "BestTime", "destroy": "BestTime",
+    stat = {"race": "BestTime", "deliver": "BestTime", "destroy": "BestTime", "taxi": "BestTime",
             "homerun": "ClosestDistance" if c.get("closest") else "FarthestDistance"}[c["type"]]
     default = "nil" if c["type"] == "homerun" else f"{c['time']:g}"
     return f"""{P}tLevels = {{ {lv} }}
@@ -392,17 +455,26 @@ function OnComplete(tData) {P}Won(tData.bNewRecordAcheived) end
                    f"g_sObject = challenge_GenerateUniqueName({_lua(N + '_object')})\n"
                    f"Mission_Spawn({_lua(c['object'][0])}, g_sObject, x, y, z, Location_GetYaw({_lua(loc(c, 'object'))}))\n")
         else:
-            obj = "g_sObject = Global_GetValue('sChallengeStarterName')   -- the starter vehicle itself\n"
+            # the starter itself: a vehicle driven there, or (0.398) a person
+            # carried there as retail's Press Photo Op (no vehicle of the player's)
+            obj = "g_sObject = Global_GetValue('sChallengeStarterName')   -- the starter itself\n"
         body = f"""function ScriptInit()
 Debug_EnableCallStack(false)
 Utility_LoadUtilityScript('challenge_tools')
 Utility_LoadUtilityScript('challenge_deliver')
 Utility_LoadUtilityScript('util_misc')
+Utility_LoadUtilityScript('mission')
+Utility_LoadUtilityScript('mission_objective')
+Utility_LoadUtilityScript('mission_objectivedeliver')
+-- on foot (a person's the starter): no vehicle of the player's, as retail's Press Photo Op
 local v = Utility_GetActorsVehicle('player0')
-if not v or Actor_GetType(v) == 'TYPE_VEHICLE_HUMAN_PLAYER' then Utility_CloseThisScript() return end
+if v and Actor_GetType(v) == 'TYPE_VEHICLE_HUMAN_PLAYER' then v = nil end
 {obj}challenge_DeliverInit{{
 {common}guidVehicle = v,
 sDeliverObjectName = g_sObject,
+bDeliverObjectMarkInGPS = true, bDeliverObjectMarkInPDA = true, bDeliverObjectMarkInWorld = true,
+bDestMarkInGPS = true, bDestMarkInPDA = true, bDestMarkInWorld = true,
+bFailOnPlayerDeath = true,
 sDestLocationName = {_lua(loc(c, 'dest'))},
 fDestLocationRadius = {c['radius']:g},
 bDeliverObjectMustExitVehicle = {'true' if c['get_out'] else 'false'},
@@ -439,21 +511,99 @@ fTimeLimitInSeconds = {P}Goal()
 end
 function OnComplete(tData) {P}Won(true) end
 """
+    elif t == "taxi":
+        ids = [f"{c['prefix']}_d{n}" for n in range(1, len(c["districts"]) + 1)]
+        fare = ",\n".join(f"{i} = {{ {', '.join(_lua(loc(c, f'd{n}_fare{k}')) for k in range(1, len(d['fares']) + 1))} }}"
+                          for n, (i, d) in enumerate(zip(ids, c["districts"]), 1))
+        dest = ",\n".join(f"{i} = {{ {', '.join('{ sDestination = ' + _lua(loc(c, f'd{n}_dest{k}')) + ' }' for k in range(1, len(d['dests']) + 1))} }}"
+                          for n, (i, d) in enumerate(zip(ids, c["districts"]), 1))
+        poi = ",\n".join(f"{i} = {{ {', '.join(_lua(j) for j in ids)} }}" for i in ids)
+        rider = ",\n".join(f"{i} = {{ {', '.join(_lua(r) for r in d['riders'])} }}" for i, d in zip(ids, c["districts"]))
+        key = f"challenge.{c['map']}.{c['id']}.district"
+        label = ",\n".join(f"{i} = {{ {_lua(key + str(n))} }}" for n, i in enumerate(ids, 1))
+        watch = "".join(
+            f"function {P}In{n}() Utility_WriteStringToScribbleMemory('tourguide_current_poi', {_lua(i)}) "
+            f"Event_ActorToVectorProximity({_lua(P + 'Out' + str(n))}, 'b', 'player0', {d['centre'][0]:.2f}, "
+            f"{d['centre'][1]:.2f}, {d['centre'][2]:.2f}, {d['radius']:g}, false, false) end\n"
+            f"function {P}Out{n}() if Utility_ReadStringFromScribbleMemory('tourguide_current_poi') == {_lua(i)} then "
+            f"Utility_WriteStringToScribbleMemory('tourguide_current_poi', 'none') end "
+            f"Event_ActorToVectorProximity({_lua(P + 'In' + str(n))}, 'b', 'player0', {d['centre'][0]:.2f}, "
+            f"{d['centre'][1]:.2f}, {d['centre'][2]:.2f}, {d['radius']:g}, true, false) end\n"
+            for n, (i, d) in enumerate(zip(ids, c["districts"]), 1))
+        arm = "".join(f"{P}Out{n}()\n" for n in range(1, len(ids) + 1))
+        body = f"""-- The districts (retail's taxi gives fares in tourguide_current_poi, the
+-- tour guide's region; this map's districts by their centre and radius)
+{watch}function ScriptInit()
+Debug_EnableCallStack(false)
+Utility_LoadUtilityScript({_lua(taxi_module(c['map']))})
+local v = Utility_GetActorsVehicle('player0')
+if not v or Actor_GetType(v) == 'TYPE_VEHICLE_HUMAN_PLAYER' then Utility_CloseThisScript() return end
+Utility_WriteStringToScribbleMemory('tourguide_current_poi', 'none')
+{arm}Taxi_Init{{
+sChallengeName = {_lua(N)},
+sChallengeDisplayNameKey = {_lua(k['title'])},
+nMaxActiveFares = {c['max_fares']},
+nReward = 0,
+nCreateFareDistance = {c['fare_distance']:g},
+nDistance2ValueMultiplier = {c['pay_per_metre']:g},
+nDistance2TimeDivisor = {c['metres_per_second']:g},
+nSpeedThreshold = 0.75,
+nMaxSpeed = {c['top_speed']:g},
+guidPlayersVehicle = v,
+funcOnReadyToShutDown = ScriptDeinit,
+funcOnComplete = OnComplete, funcOnFail = OnFail, funcOnQuit = OnQuit,
+tPOI2Fare = {{
+{fare}
+}},
+tPOI2Dest = {{
+{dest}
+}},
+tPOI2POI = {{
+{poi}
+}},
+tPOI2Rider = {{
+{rider}
+}},
+tPOI2MapLabel = {{
+{label}
+}}
+}}
+end
+function OnComplete() {P}Won(true) end
+function ScriptDeinit()
+Utility_WriteStringToScribbleMemory('tourguide_current_poi', 'none')
+Utility_CloseThisScript()
+end
+"""
     else:
         point = f"sMeasuringPointActor = {_lua(loc(c, 'point'))},\n" if c["to"] else ""
         area = (f"tAreaConstraintArgs = {{ sLocationName = {_lua(loc(c, 'area'))}, fRadius = {c['area'][1]:g}, "
                 f"bUseXz = true, bFailOnExit = true, fBufferSeconds = 5 }},\n" if c["area"] else "")
         cmp = "<" if c["closest"] else ">"
         rec = "bNewClosestDistanceRecordAcheived" if c["closest"] else "bNewFarthestDistanceRecordAcheived"
+        if c["object"]:
+            # retail's Hammer Toss: the object spawns at its point, which is
+            # also where it's measured from unless "to" says; the starter's the vehicle
+            prop = (f"local tSpawned = challenge_Spawn({_lua(N)}, {{ {_lua(c['object'][0])} }}, "
+                    f"{{ {_lua(loc(c, 'object'))} }}, {{ nil }})\n"
+                    f"g_sObject = tSpawned and tSpawned[1]\n"
+                    f"if not g_sObject then Utility_CloseThisScript() return end\n"
+                    f"local sProp = g_sObject\n"
+                    f"local vVehicle = Utility_GetActor(sStarter)\n")
+            if not c["to"]:
+                point = f"sMeasuringPointActor = {_lua(loc(c, 'object'))},\n"
+        else:
+            prop = "local sProp = sStarter\nlocal vVehicle = Utility_GetActorsVehicle('player0')\n"
         body = f"""function ScriptInit()
 Debug_EnableCallStack(false)
 Utility_LoadUtilityScript('challenge_tools')
+Utility_LoadUtilityScript('challenge_common')
 Utility_LoadUtilityScript('challenge_homerun')
-local sProp = Global_GetValue('sChallengeStarterName')
-if not sProp then Utility_CloseThisScript() return end
-challenge_HomerunInit{{
+local sStarter = Global_GetValue('sChallengeStarterName')
+if not sStarter then Utility_CloseThisScript() return end
+{prop}challenge_HomerunInit{{
 {common}sPropName = sProp,
-guidVehicle = Utility_GetActorsVehicle('player0'),
+guidVehicle = vVehicle,
 {point}{area}bTrackFarthestDistanceStat = {'false' if c['closest'] else 'true'},
 bTrackClosestDistanceStat = {'true' if c['closest'] else 'false'},
 fTimeLimitInSeconds = {c['time']:g}
@@ -468,6 +618,8 @@ else
 end
 end
 """
+    if t == "homerun" and c["object"]:
+        body += "function ScriptDeinit()\nif g_sObject and Utility_DoesActorExist(g_sObject) then Actor_Remove(g_sObject) end\nUtility_CloseThisScript()\nend\n"
     if "function ScriptDeinit()" not in body:
         body += "function ScriptDeinit()\nUtility_CloseThisScript()\nend\n"
     return head + body

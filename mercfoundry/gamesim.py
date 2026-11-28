@@ -157,6 +157,8 @@ class Game:
             "Actor_GetYaw": lambda *a: (0.0,),
             "Location_GetPosition": lambda *a: (0.0, 0.0, 0.0),
             "Location_GetYaw": lambda *a: (0.0,),
+            "Mission_GetTime": lambda *a: (self.time,),
+            "Utility_SecondsToClock": lambda v=0.0, *a: ("%d:%02d" % divmod(int(v or 0), 60),),
             "Utility_GetStringById": lambda *a: ("",),
             "Utility_MathFloor": lambda v=0.0, *a: (float(int(v or 0) // 1),),
         })

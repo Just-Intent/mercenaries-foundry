@@ -73,12 +73,44 @@ class ChallengeTests(unittest.TestCase):
         self.assertIn("tTargetOdfs = { 'rockettruck' },\ntiTargetOdfQuotas = { 2 },", hs)
         self.assertIn("Utility_WriteNumberToScribbleMemory('gaza_challenge_hunt_Level', i + 1)", hs)
         ds = challenges.challenge_script(cs[1])
-        self.assertIn("g_sObject = Global_GetValue('sChallengeStarterName')   -- the starter vehicle itself", ds)
+        self.assertIn("g_sObject = Global_GetValue('sChallengeStarterName')   -- the starter itself", ds)
         self.assertIn("bDeliverObjectMustExitVehicle = true", ds)
+        # 0.398: a person starter is carried as a passenger (retail's Press Photo Op): on foot is fine
+        self.assertIn("if v and Actor_GetType(v) == 'TYPE_VEHICLE_HUMAN_PLAYER' then v = nil end", ds)
+        self.assertNotIn("Utility_CloseThisScript() return end\ng_sObject", ds)
         ps = challenges.challenge_script(cs[2])
         self.assertIn("if tReturns.fDistance > g then", ps)
         self.assertIn("tAreaConstraintArgs = { sLocationName = 'gaza_challenge_push_area', fRadius = 80", ps)
         self.assertIn("challenge_Init('gaza', iChapter)", challenges.free_roam_lua("gaza"))
+        # 0.398: a homerun's own thrown object (retail's Hammer Toss), the starter its vehicle
+        toss = challenges.parse("challenges/toss.json", "toss", {
+            "map": "gaza", "type": "homerun", "starter": {"template": "t_heli", "position": [0, 0, 0]},
+            "object": {"template": "t_tank", "position": [5, 0, 5]}}, {"gaza"})
+        ts = challenges.challenge_script(toss)
+        self.assertEqual(luacheck.check(ts), [])
+        self.assertIn("challenge_Spawn('gaza_challenge_toss', { 't_tank' }, { 'gaza_challenge_toss_object' }, { nil })", ts)
+        self.assertIn("local vVehicle = Utility_GetActor(sStarter)", ts)
+        self.assertIn("sMeasuringPointActor = 'gaza_challenge_toss_object',", ts)
+        self.assertIn("gaza_challenge_toss_object", [o["name"] for o in challenges.layer(toss)[1]["objects"]])
+        # 0.398: taxi, its districts by centre and radius (tourguide_current_poi), labels its own
+        taxi = challenges.parse("challenges/cab.json", "cab", {
+            "map": "gaza", "type": "taxi", "starter": {"template": "t_civic", "position": [0, 0, 0]},
+            "districts": [{"name": "Gaza City", "centre": [0, 0, 0], "radius": 300, "fares": [[1, 0, 1]],
+                           "destinations": [[2, 0, 2]]},
+                          {"name": "Shati", "centre": [500, 0, 0], "fares": [[501, 0, 1]], "destinations": [[502, 0, 2]],
+                           "riders": ["t_r"]}]}, {"gaza"})
+        xs = challenges.challenge_script(taxi)
+        self.assertEqual(luacheck.check(xs), [])
+        self.assertIn("Utility_LoadUtilityScript('gaza_foundry_taxi')", xs)
+        self.assertIn("foundry_ch_gaza_cab_d1 = { 'challenge.gaza.cab.district1' }", xs)
+        self.assertIn("Utility_WriteStringToScribbleMemory('tourguide_current_poi', 'foundry_ch_gaza_cab_d2')", xs)
+        self.assertEqual(challenges.strings(taxi)["challenge.gaza.cab.district2"], "Shati")
+        retail = "local x\ntPOI2MapLabel = {\na = 1 }\nDebug_Assert( sPlayersVehicleODF ~= nil, 'x' )\n"
+        patched = challenges.taxi_script(retail)
+        self.assertIn("tPOI2MapLabel = tTaxi.tPOI2MapLabel or {", patched)
+        self.assertIn("tODF2MaxSpeed.foundry_any = tTaxi.nMaxSpeed or 40 end", patched)
+        with self.assertRaises(ValueError):
+            challenges.taxi_script("nothing to patch")
         for bad in ({"type": "taxi"}, {"map": "sw"}, {"starter": {}}, {"checkpoints": [[0, 0, 0]]},
                     {"reward": "lots"}, {"faction": ["allies"]}):
             with self.assertRaises(ValueError, msg=bad):
