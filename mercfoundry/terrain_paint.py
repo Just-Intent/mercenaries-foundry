@@ -161,18 +161,21 @@ def visible(windows, layers):
     return out
 
 
-def cap_layers(windows, layers, most):
+def cap_layers(windows, layers, most, keep=()):
     """(kept layers, new windows) for a patch that uses more than `most`
     layers (0.388): the layers giving the least colour over the patch's whole
     9 x 9 window (border vertices included, so neighbours sharing an edge tend
     to drop the same ones) are dropped, and each vertex's colour is shared out
     again among the kept layers in proportion to what they gave.  The bottom
-    kept layer is opaque, as the game's base layer is."""
+    kept layer is opaque, as the game's base layer is.  keep: layers always
+    kept where the patch uses them (0.389, "keep_patch_layers"), before the
+    strongest others."""
     if len(layers) <= most:
         return layers, windows
     w = visible(windows, layers)
     strength = {l: sum(w[l]) for l in layers}
-    keep = sorted(sorted(layers, key=lambda l: (-strength[l], l))[:most])
+    keep = set(keep)
+    keep = sorted(sorted(layers, key=lambda l: (l not in keep, -strength[l], l))[:most])
     best = max(keep, key=lambda l: (strength[l], -l))
     new = {l: [0] * tl.VERTS ** 2 for l in keep}
     for n in range(tl.VERTS ** 2):
@@ -190,14 +193,14 @@ def cap_layers(windows, layers, most):
     return keep, new
 
 
-def patch_alpha(windows, most=None):
+def patch_alpha(windows, most=None, keep=()):
     """(layer mask, ALPH data unpacked: 45 bytes a layer, or b"" for one
     layer or none) for one patch from each layer's 9 x 9 opacities
     ({layer: [81 values, row by row]}), as the build writes it.  most: the
-    most layers a patch keeps (cap_layers), or None for all."""
+    most layers a patch keeps (cap_layers, with its `keep`), or None for all."""
     layers = [l for l in sorted(windows) if any(LEVEL[v] for v in windows[l])]
     if most:
-        layers, windows = cap_layers(windows, layers, most)
+        layers, windows = cap_layers(windows, layers, most, keep)
         layers = [l for l in layers if any(LEVEL[v] for v in windows[l])]
     grids = encode_patch(windows, layers) if len(layers) > 1 else {}
     # A layer that draws no cell (hidden under opaque paint) is left out:
@@ -214,14 +217,15 @@ def patch_alpha(windows, most=None):
     return mask, raw
 
 
-def apply(chunks, images=None, table=None, most=None):
+def apply(chunks, images=None, table=None, most=None, keep=()):
     """New tern chunk bodies for painted layers.
 
     images: {layer: bytes (w * w opacity)} replacing those layers' images
     (others keep theirs).  table: a new layer_table() list (textures, scale,
     axis; may add layers up to 16).  most: the most layers a patch keeps
     (layers.json "max_patch_layers"; 4 draws every patch in one pass); a patch
-    over it is re-encoded even if its paint didn't change.  Returns (replace,
+    over it is re-encoded even if its paint didn't change; keep: layer
+    indexes it always keeps there ("keep_patch_layers").  Returns (replace,
     patches changed)."""
     images = images or {}
     side = _side(chunks)
@@ -285,7 +289,7 @@ def apply(chunks, images=None, table=None, most=None):
                 continue
             changed += 1
             windows = {l: window(images[l] if l in images else old.get(l, bytes(w * w))) for l in range(count)}
-            mask, raw = patch_alpha(windows, most)
+            mask, raw = patch_alpha(windows, most, keep)
             new_patches.append(tl.Patch(mask, p.decal_count))
             if raw:
                 alph += tl.pack_blob(raw)

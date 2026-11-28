@@ -230,6 +230,9 @@ class TerrainTests(unittest.TestCase):
             self.assertAlmostEqual(after[5][v], before[5][v], delta=0.03)
         mask, _ = terrain_paint.patch_alpha(windows, 4)
         self.assertEqual(mask, 0b101011)
+        # 0.389: a kept layer stays, however faint (the speck 4), and the
+        # weakest other goes in its place
+        self.assertEqual(terrain_paint.cap_layers(windows, layers, 4, keep=[4])[0], [0, 3, 4, 5])
         self.assertEqual(terrain_paint.patch_alpha(windows)[0], 0b111111)
         # in a map: a crowded patch is re-encoded though its paint didn't change
         rec = tern_record(sample_units(), paint=painted_chunks())

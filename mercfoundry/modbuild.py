@@ -4086,6 +4086,7 @@ def _apply_terrain(data, folder, result):
                 notes.append(f"{changed} height samples changed; {note}")
             if "table" in job or "layers" in job:
                 table = most = None
+                keep = []
                 if "table" in job:
                     table_doc = json.loads(job["table"].read_text(encoding="utf-8"))
                     table = table_doc["layers"]
@@ -4093,6 +4094,16 @@ def _apply_terrain(data, folder, result):
                     most = table_doc.get("max_patch_layers")
                     if most is not None and (not isinstance(most, int) or isinstance(most, bool) or most < 1):
                         raise ValueError(f"terrain/{job['table'].name}: max_patch_layers is a whole number of 1 or more")
+                    # 0.389: layers always kept (an index, or a texture name)
+                    textures = [str(t.get("texture", "")).lower() for t in table]
+                    for k in table_doc.get("keep_patch_layers") or []:
+                        if isinstance(k, int) and not isinstance(k, bool) and 0 <= k < len(table):
+                            keep.append(k)
+                        elif isinstance(k, str) and k.lower() in textures:
+                            keep.append(textures.index(k.lower()))
+                        else:
+                            raise ValueError(f"terrain/{job['table'].name}: keep_patch_layers: no layer {k!r} "
+                                             f"(a layer index 0-{len(table) - 1} or one of {textures})")
                     # the game's textures, ones added so far, and the mod's own textures/*.png
                     known = {rec.key for _, rec in data.records(name_hash("Texture"))}
                     known |= {k for k, kind, _ in data.added() if kind == name_hash("Texture")}
@@ -4127,12 +4138,12 @@ def _apply_terrain(data, folder, result):
                     if base_img is not None and cur_img is not None and len(base_img) == len(img) == len(cur_img):
                         img = bytes(m if m != b else c for m, b, c in zip(img, base_img, cur_img))
                     images[index] = img
-                paint, patches = terrain_paint.apply({**chunks, **replace}, images, table, most)
+                paint, patches = terrain_paint.apply({**chunks, **replace}, images, table, most, keep)
                 replace.update(paint)
                 if table is not None:
                     notes.append(f"{len(table)} layers in the table")
                 if most:
-                    notes.append(f"at most {most} layers a patch")
+                    notes.append(f"at most {most} layers a patch" + (f", always keeping {sorted(set(keep))}" if keep else ""))
                 if images or most:
                     notes.append(f"{patches} patches repainted")
                     heavy = sum(1 for p in terrain_layers.decode_ptch(replace.get(b"PTCH", chunks[b"PTCH"]))

@@ -3191,9 +3191,11 @@ def _build(plan, mod, extra, extra_roads, log):
         raise ValueError(f"plan \"textures\": no layer {sorted(unknown)} (layers: {[l['key'] for l in LAYERS]})")
     layers = [dict(l, texture=swap.get(l["key"], l["texture"])) for l in LAYERS]
     table = [{"texture": l["texture"], "scale": l["scale"], "axis": 0} for l in layers]
-    # the file's other keys are kept; plan "max_patch_layers" sets that one
+    # the file's other keys are kept; plan "max_patch_layers" and
+    # "keep_patch_layers" set those
     terrain_paint.write_table(tdir / f"{name}.layers.json", table,
-                              max_patch_layers=plan.get("max_patch_layers"))
+                              max_patch_layers=plan.get("max_patch_layers"),
+                              keep_patch_layers=plan.get("keep_patch_layers"))
     for old in tdir.glob(f"{name}.layer*.png"):
         old.unlink()
     for i, l in enumerate(layers):
