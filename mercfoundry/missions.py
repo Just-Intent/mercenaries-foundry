@@ -3681,7 +3681,16 @@ end
 function {P}Ask(i)
 local t = {P}List[i]
 {P}Armed[t.actor] = nil   -- used: offered again after
-if Utility_GetActorsVehicle('player0') then
+-- 0.391: Utility_GetActorsVehicle gives the player's last vehicle after
+-- they get out, so in it only if it's within 3 m (as testrange's check)
+local v = Utility_GetActorsVehicle('player0')
+local inside = nil
+if v then
+local px, py, pz = Actor_GetPosition('player0')
+local vx, vy, vz = Actor_GetPosition(v)
+if px and vx and (px - vx) * (px - vx) + (pz - vz) * (pz - vz) < 9 then inside = 1 end
+end
+if inside then
 Ui_PrintHudMessage('On foot only')
 Event_RelativeTimer('{P}Again', 'b', 1.0)
 return

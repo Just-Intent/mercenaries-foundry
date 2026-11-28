@@ -1040,6 +1040,13 @@ class TravelTests(unittest.TestCase):
         self.assertIn("Utility_ReadNumberFromScribbleMemory('foundry_done_' .. t.after)", lua)
         self.assertIn("function foundry_isle_TunnelAsk2()", lua)
         self.assertIn("'TARGET_TYPE_OBJECTIVE_SECONDARY', t.blip", lua)
+        # 0.391: the last vehicle stays the player's after they get out, so
+        # "On foot only" needs it within 3 m, not just there
+        ask = lua[lua.index("function foundry_isle_TunnelAsk(i)"):]
+        ask = ask[:ask.index("\nfunction ", 1)]
+        self.assertNotIn("if Utility_GetActorsVehicle('player0') then", ask)
+        self.assertIn("(px - vx) * (px - vx) + (pz - vz) * (pz - vz) < 9 then inside = 1 end", ask)
+        self.assertLess(ask.index("< 9 then inside"), ask.index("if inside then\nUi_PrintHudMessage('On foot only')"))
         with self.assertRaises(ValueError):
             missions.tunnels("maps/isle.json", "isle", {"tunnels": [{"ends": [{"position": [0, 0, 0]}]}]})
 
