@@ -61,6 +61,66 @@ class DeckTests(unittest.TestCase):
             with self.assertRaises(ValueError):
                 deck.parse("deck/clubs.json", dict(DOC, unlock_mail=bad), {"gaza"})
 
+    def test_intel_mails_as_retails_card_info(self):
+        # 0.393: retail's mission_MissionComplete3 posts the contract's card's
+        # mail_cardinfo_<suit><rank> (cards.lua) and writes '<suit><rank>info'
+        # 'newinfo'; a mod's deck sends its next card's after each contract
+        doc = {"suit": "clubs", "cards": [
+            dict(DOC["cards"][0], where="in the tunnels under Shujaiyya"),
+            dict(DOC["cards"][1], intel={"subject": "Sharaf", "body": "He's at the launch site.", "after": "sw_china21"}),
+            {"card": "4", "name": "No Mail", "actor": "gaza_card_clubs04", "intel": False},
+            {"card": "5", "name": "Off Map"},                               # no actor: not at large on the map
+            DOC["cards"][2]]}
+        d = deck.parse("deck/clubs.json", doc, {"gaza"})
+        mails = deck.intel_mails(d)
+        self.assertEqual([m[0] for m in mails], [2, 3])
+        two, three = mails
+        self.assertEqual(two[1:5], ("foundry_deck_gaza_clubs2_intel", "mail.senders.techgal",
+                                    "MissionInfo.FoundryMail.DeckGazaClubs2.Subject",
+                                    "MissionInfo.FoundryMail.DeckGazaClubs2.Body"))
+        body = two[5]["MissionInfo.FoundryMail.DeckGazaClubs2.Body"]
+        # (his bio, made from alias, role and description, isn't repeated)
+        self.assertTrue(body.startswith("We have a lead on Iyad Kassab, the Two of Clubs. Known as The Mole. "
+                                        "Tunnel foreman. Runs a digging crew."), body)
+        self.assertIn("Our sources put him in the tunnels under Shujaiyya.", body)
+        # a bare place, as Gaza's "where": "in" it
+        bare = deck.intel_mails(deck.parse("deck/clubs.json", {"suit": "clubs", "cards": [
+            {"card": "2", "name": "A", "actor": "a", "where": "bureij"}]}, {"gaza"}))[0][5]
+        self.assertIn("Our sources put him in Bureij.", bare["MissionInfo.FoundryMail.DeckGazaClubs2.Body"])
+        self.assertEqual(two[5]["MissionInfo.FoundryMail.DeckGazaClubs2.Subject"], "Intel: Iyad Kassab, the Two of Clubs")
+        self.assertEqual((three[5]["MissionInfo.FoundryMail.DeckGazaClubs3.Body"], three[6]),
+                         ("He's at the launch site.", "sw_china21"))
+        for bad in ({"subject": "a"}, {"subject": "a", "body": "b", "after": "no spaces"}, {"body": "b", "when": 1}):
+            with self.assertRaises(ValueError):
+                deck.parse("deck/clubs.json", {"suit": "clubs", "cards": [dict(DOC["cards"][0], intel=bad)]}, {"gaza"})
+        with self.assertRaises(ValueError):                              # face cards come through contracts
+            deck.parse("deck/clubs.json", {"suit": "clubs", "cards": [dict(DOC["cards"][2], intel={"after": "x"})]}, {"gaza"})
+        lua = deck.script([d], intel={("gaza", "clubs", 2): ("foundry_deck_gaza_clubs2_intel", 9, ""),
+                                      ("gaza", "clubs", 3): ("foundry_deck_gaza_clubs3_intel", 10, "sw_china21")})
+        self.assertEqual(luacheck.check(lua), [])
+        self.assertIn("mail = 'foundry_deck_gaza_clubs2_intel', posted = 11, mailafter = false", lua)
+        self.assertIn("mail = 'foundry_deck_gaza_clubs3_intel', posted = 12, mailafter = 'sw_china21'", lua)
+        f = lua[lua.index("function foundry_DeckIntel(m, sContract)"):]
+        f = f[:f.index("\nfunction ")]
+        self.assertIn("Utility_WriteStringToScribbleMemory(pick.suit .. pick.rank .. 'info', 'newinfo')", f)
+        self.assertIn("Utility_WriteStringToScribbleMemory('foundry_deck_' .. m .. '_' .. pick.suit .. pick.rank .. 'info', 'newinfo')", f)
+        self.assertIn("Mail_Post(pick.mail)", f)
+        self.assertIn("Ui_MessageBoxPrint('[interface.intelemailreceived.msg]')", f)
+        self.assertLess(f.index("c.mailafter == sContract"), f.index("not c.mailafter and ok(c)"))   # pinned first
+        # with intel, found within 300 m (retail's INTEL_CARD_IDENT_DIST); verified, its mail goes
+        self.assertIn("'player0', c.actor, 300, TRUE)", lua)
+        self.assertIn("if c.mail then Mail_Delete(c.mail) end", lua)
+        # the contract's close sends it, on the map it was played on, unless "deck_mail": false
+        c, _ = missions.contract("sw_china21", {"map": "gaza", "deck_mail": False}, "t", "d")
+        self.assertTrue(c["nomail"])
+        cs = missions.contracts_script([c])
+        self.assertEqual(luacheck.check(cs), [])
+        self.assertIn("nomail = true", cs)
+        self.assertIn("if foundry_DeckIntel then foundry_DeckIntel(sFoundryOnMap, id) end", cs)
+        self.assertFalse(missions.contract("sw_china22", {"map": "gaza"}, "t", "d")[0]["nomail"])
+        ini = missions.add_mail("", "m", "s", "a", "b", deck.INTEL_FOLDER)
+        self.assertIn("FolderPath\t\tmail.subject.deck", ini)
+
     def test_suit_after_a_contract(self):
         # "after": the suit's number cards appear once that contract is done
         d = deck.parse("deck/clubs.json", dict(DOC, after="sw_allies22"), {"gaza"})

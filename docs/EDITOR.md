@@ -961,6 +961,19 @@ as retail's deck. Shape:
   then marked with the suit's blip. Killed or taken down, its state is
   written, the verify screen shows the card, and `"bounty"` is paid for a
   kill, double alive (default 12,500, retail's chapter 1).
+- **Intel mails** (0.393), as retail's: after each contract done on the map,
+  the next number card's intel mail comes (retail's `mail_cardinfo_<suit><rank>`,
+  in the PDA's Deck folder, from techgal, with "intel email received" on
+  screen). It marks the card's intel as read (`<suit><rank>info` =
+  `newinfo`), so he's then identified within 300 m instead of 30, and his
+  mail goes once he's verified. Retail picks a fixed card for each contract
+  (cards.lua); here a card whose `"intel"` names the contract (`"after"`)
+  goes first, otherwise the lowest card at large without intel, of the first
+  suit in play. Per card: `"intel": {"subject", "body", "sender"?, "after"?}`
+  (`"after"` alone keeps the made-up text), or `"intel": false` for none.
+  Without a subject and body the mail is made from the name, alias, role,
+  bio and `"where"` (a place: "bureij" reads "in Bureij"). A mission with
+  `"deck_mail": false` sends none, as retail's contracts with no card.
 - **The other suits** on the map: `"others": {"name", "bio", "face"}` shows that
   name, bio and portrait for every card of the three suits the deck doesn't
   use, so the PDA shows only the map's people there.

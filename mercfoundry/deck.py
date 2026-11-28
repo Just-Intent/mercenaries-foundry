@@ -97,8 +97,35 @@ def parse(where, doc, new_maps, mod_folder=None):
                 if (mod_folder / cand).is_file():
                     face = cand
                     break
+        # 0.393: the card's intel mail (retail's mail_cardinfo_<suit><rank>),
+        # posted after a contract on the map; "where" goes in a generated one
+        where_ = c.get("where")
+        if where_ is not None and not isinstance(where_, str):
+            raise ValueError(f"{w}: \"where\" is text (where he's to be found, for his intel mail)")
+        intel = c.get("intel")
+        if intel is not None:
+            if intel is False:
+                pass
+            elif not isinstance(intel, dict) or not set(intel) <= {"subject", "body", "sender", "after"} \
+                    or (set(intel) & {"subject", "body"} and not (intel.get("subject") and intel.get("body"))):
+                raise ValueError(f"{w}: \"intel\" is {{\"subject\", \"body\", \"sender\"?, \"after\"?}} (or false: "
+                                 "no intel mail); \"after\" alone keeps the generated text")
+            elif intel.get("after") is not None and not (isinstance(intel["after"], str)
+                                                        and re.fullmatch(r"[A-Za-z0-9_]+", intel["after"])):
+                raise ValueError(f"{w}: the intel's \"after\" names the contract (its id) whose completion "
+                                 "sends this mail")
+        if rank > 10 and intel:
+            raise ValueError(f"{w}: only number cards (2-10) have intel mails (face cards and aces "
+                             "come through contracts)")
         cards.append({"rank": rank, "name": name, "bio": str(bio), "bounty": int(bounty),
-                      "actor": actor, "layer": layer, "face": str(face) if face else ""})
+                      "actor": actor, "layer": layer, "face": str(face) if face else "",
+                      "where": str(where_ or ""), "role": str(c.get("role") or ""),
+                      "alias": str(c.get("alias") or ""),
+                      "intel": None if intel is False else {
+                          "subject": str((intel or {}).get("subject") or ""),
+                          "body": str((intel or {}).get("body") or ""),
+                          "sender": str((intel or {}).get("sender") or "mail.senders.techgal"),
+                          "after": str((intel or {}).get("after") or "").lower()}})
     if not cards:
         raise ValueError(f"{where}: no \"cards\"")
     others = doc.get("others")
@@ -163,6 +190,53 @@ def unlock_mail(deck):
     return (f"foundry_deck_{deck['map']}_{deck['suit']}_unlock", sender, f"{base}.Subject", f"{base}.Body", strings)
 
 
+def intel_mails(deck):
+    """[(rank, mail id, sender, subject key, body key, strings, after)] for a
+    deck's number cards at large on the map (an "actor"): each one's intel
+    mail, retail's mail_cardinfo_<suit><rank> (in the Deck folder, from
+    techgal). Its text is the card's "intel", or made from his name, alias,
+    role, description and "where"; "intel": false gives none."""
+    out = []
+    key = "Deck" + re.sub(r"[^A-Za-z0-9]", "", deck["map"].title()) + deck["suit"].title()
+    for c in deck["cards"]:
+        if c["rank"] > 10 or not c["actor"] or c.get("intel") is None:
+            continue
+        i = c["intel"]
+        card = f"the {RANK_NAMES[c['rank']]} of {deck['suit'].title()}"
+        subject = i["subject"] or f"Intel: {c['name']}, {card}"
+        body = i["body"]
+        if not body:
+            who = c["name"] + (f", known as {c['alias']}" if c.get("alias") and c["alias"] not in c["bio"] else "")
+            parts = [f"We have a lead on {who}, {card}."]
+            if c.get("role") and c["role"] not in c["bio"]:
+                parts.append(f"{c['role']}.")
+            if c["bio"]:
+                parts.append(c["bio"])
+            where_ = c.get("where", "").strip().rstrip(".")
+            if where_:
+                # a bare place ("bureij"): "in Bureij"
+                if not re.match(r"(?i)(in|at|near|on|under|around|outside|by|between|along|inside)\b", where_):
+                    where_ = "in " + (where_.title() if where_ == where_.lower() else where_)
+                parts.append(f"Our sources put him {where_}.")
+            parts.append("He's marked on your PDA once you're close. Verify him: alive is worth double.")
+            body = " ".join(parts)
+        base = f"MissionInfo.FoundryMail.{key}{c['rank']}"
+        strings = {f"{base}.Subject": subject, f"{base}.Body": body}
+        sender = i["sender"]
+        if not re.fullmatch(r"(?i)mail\.[A-Za-z0-9_.]+", sender):
+            strings[f"{base}.Sender"] = sender
+            sender = f"{base}.Sender"
+        out.append((c["rank"], f"foundry_deck_{deck['map']}_{deck['suit']}{c['rank']}_intel", sender,
+                    f"{base}.Subject", f"{base}.Body", strings, i["after"]))
+    return out
+
+
+# retail's card intel mails go in the PDA's Deck folder (emails.ini FolderPath)
+INTEL_FOLDER = "mail.subject.deck"
+# retail's card identified within this range once its intel is read (300; 30 without)
+INTEL_IDENT_DIST = 300
+
+
 def other_face_texture(map_name):
     return f"{map_name.lower()}_deck_other_face"
 
@@ -191,22 +265,30 @@ def others_strings(others, used):
     return out
 
 
-def script(decks, mails=None):
+def script(decks, mails=None, intel=None):
     """Lua for foundry_deck: every mod deck, the PDA key swap (enter/leave),
-    a map's number cards (foundry_DeckArm) and its suits' unlock mails
-    (mails: {(map, suit): (mail id, place in emails.ini)})."""
+    a map's number cards (foundry_DeckArm), its suits' unlock mails
+    (mails: {(map, suit): (mail id, place in emails.ini)}) and its cards'
+    intel mails (intel: {(map, suit, rank): (mail id, place, after)})."""
     mails = mails or {}
+    intel = intel or {}
     rows = []
     by_map = {}
     for d in decks:                       # a map's suits (several decks: one suit each)
         by_map.setdefault(d["map"], []).append(d)
+
+    def mail_of(d, c):
+        i = intel.get((d["map"], d["suit"], c["rank"]))
+        if not i:
+            return ""
+        return ", mail = %s, posted = %d, mailafter = %s" % (_lua(i[0]), i[1] + 2, _lua(i[2]) if i[2] else "false")
     for m, ds in by_map.items():
         cards = ",\n".join(
-            "  { suit = %s, rank = %d, actor = %s, layer = %s, bounty = %d, after = %s, till = %s }" % (
+            "  { suit = %s, rank = %d, actor = %s, layer = %s, bounty = %d, after = %s, till = %s%s }" % (
                 _lua(d["suit"]), c["rank"], _lua(c["actor"]) if c["actor"] else "false",
                 _lua(c["layer"]) if c["layer"] else "false", c["bounty"],
                 _lua(d["after"]) if d.get("after") else "false",
-                _lua(d["until"]) if d.get("until") else "false")
+                _lua(d["until"]) if d.get("until") else "false", mail_of(d, c))
             for d in ds for c in d["cards"] if c["rank"] <= 10 and c["actor"])
         suits = ", ".join(_lua(d["suit"]) for d in ds)
         unlock = ", ".join(
@@ -385,6 +467,51 @@ if not d then return end
 for i, suit in ipairs(d.suits) do
 foundry_DeckUnlock(m, suit, Utility_ReadNumberFromScribbleMemory('iCurrentIntel' .. suit) or 0, FALSE)
 end
+-- and the intel mails of cards still at large (0.393)
+for i, c in ipairs(d.cards) do
+if c.mail and foundry_DeckHasIntel(c) and not Utility_ReadStringFromScribbleMemory(c.suit .. c.rank .. 'status') then
+Utility_WriteNumberToScribbleMemory('foundry_mail_' .. c.mail, c.posted)
+Mail_Post(c.mail)
+end
+end
+end
+-- A card's intel mail read (retail's '<suit><rank>info' = 'newinfo').
+function foundry_DeckHasIntel(c)
+return Utility_ReadStringFromScribbleMemory(c.suit .. c.rank .. 'info') == 'newinfo'
+end
+-- 0.393: a contract on the map done (foundry_ReturnFromContract): the next
+-- card's intel mail, as retail's mission_MissionComplete3 posts the
+-- contract's card's (cards.lua; mail_cardinfo_<suit><rank>, once, while the
+-- card is at large). A card whose intel names this contract ("after") goes
+-- first; otherwise the lowest card at large without intel yet, of the
+-- first suit in play (its "after" done, its "until" not).
+function foundry_DeckIntel(m, sContract)
+local d = tFoundryDecks[m]
+if not d then return end
+local function ok(c)
+return c.mail and not foundry_DeckHasIntel(c) and not foundry_DeckOver(c)
+and not Utility_ReadStringFromScribbleMemory(c.suit .. c.rank .. 'status')
+and (not c.after or Utility_ReadNumberFromScribbleMemory('foundry_done_' .. c.after))
+end
+local pick = nil
+for i, c in ipairs(d.cards) do
+if not pick and c.mailafter == sContract and ok(c) then pick = c end
+end
+for a, act in ipairs(d.acts) do
+for i, c in ipairs(d.cards) do
+if not pick and c.suit == act.suit and not c.mailafter and ok(c) then pick = c end
+end
+end
+if not pick then
+if Foundry_Log then Foundry_Log('deck: no card intel to send after ' .. tostring(sContract)) end
+return
+end
+Utility_WriteStringToScribbleMemory(pick.suit .. pick.rank .. 'info', 'newinfo')
+Utility_WriteStringToScribbleMemory('foundry_deck_' .. m .. '_' .. pick.suit .. pick.rank .. 'info', 'newinfo')
+Utility_WriteNumberToScribbleMemory('foundry_mail_' .. pick.mail, pick.posted)
+Mail_Post(pick.mail)
+Ui_MessageBoxPrint('[interface.intelemailreceived.msg]')
+if Foundry_Log then Foundry_Log('deck: intel on ' .. pick.suit .. pick.rank .. ' after ' .. tostring(sContract)) end
 end
 -- A map's number cards: each at large has its layer loaded and, while it's
 -- awake, a verify objective, unmarked until identified (in view, or within
@@ -482,8 +609,13 @@ killCallbackFunc = foundry_DeckFound,
 subdueCallbackFunc = foundry_DeckFound,
 }}
 if not bKnown then
+-- with his intel read, identified within 300 m; without, in view or within 30 m (retail's)
+if foundry_DeckHasIntel(c) then
+c.hNear = Event_ActorToActorProximity('foundry_DeckNear', 'b', 'player0', c.actor, {INTEL_IDENT_DIST}, TRUE)
+else
 c.hFocus = Event_ActorInFocus('foundry_DeckFound', 'b', c.actor)
 c.hNear = Event_ActorToActorProximity('foundry_DeckNear', 'b', 'player0', c.actor, 30, TRUE)
+end
 end
 end
 function foundry_DeckNear(aPlayer, aCard)
@@ -517,6 +649,8 @@ if c.hNear then Event_CancelEvent(c.hNear) c.hNear = nil end
 Utility_WriteStringToScribbleMemory(c.suit .. c.rank .. 'status', state)
 Utility_WriteStringToScribbleMemory('foundry_deck_' .. sFoundryDeckMap .. '_' .. c.suit .. c.rank .. 'status', state)
 foundry_DeckMeter(c.suit)
+-- his intel mail goes, as retail's (Mail_Delete('mail_cardinfo_' .. suit .. rank))
+if c.mail then Mail_Delete(c.mail) end
 -- a contract the meter unlocks (an ace's placed giver) is offered now
 if foundry_SetupContracts then foundry_SetupContracts() end
 iFoundryDeckPay = c.bounty

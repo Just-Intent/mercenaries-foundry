@@ -109,7 +109,7 @@ def done_mail(asset_id, doc, key):
             f"MissionInfo.FoundryMail.{key}.Subject", f"MissionInfo.FoundryMail.{key}.Body")
 
 
-def add_mail(emails_ini, mail_id, sender, subject_key, body_key):
+def add_mail(emails_ini, mail_id, sender, subject_key, body_key, folder=""):
     """DATAPOD/emails.ini with a [Mail] block (Id, Sender, Subject, Body are
     string keys).  mission_GenericInit posts '<mission>_initial' when the
     contract starts."""
@@ -117,7 +117,8 @@ def add_mail(emails_ini, mail_id, sender, subject_key, body_key):
     if re.search(r"^Id\s+%s\s*$" % re.escape(mail_id), emails_ini, re.M | re.I):
         raise ValueError(f"emails.ini already has a mail {mail_id!r}")
     block = ["[Mail]", f"Id\t\t{mail_id}", f"Sender\t\t{sender}", f"Subject\t\t{subject_key}",
-             f"Body\t\t{body_key}", "FolderPath", "Attachment1", "Attachment2", "Attachment3"]
+             f"Body\t\t{body_key}", f"FolderPath\t\t{folder}" if folder else "FolderPath",
+             "Attachment1", "Attachment2", "Attachment3"]
     text = emails_ini.rstrip("\r\n") + nl + nl + nl.join(block) + nl
     return text
 
@@ -4203,6 +4204,9 @@ def contract(asset_id, doc, title_key, description_key):
             "stay": bool(c.get("stay")) and bool(c.get("position")),
             "invincible": bool(c.get("invincible")) and bool(c.get("position")),
             "lose": bool(c.get("lose_if_killed")) and bool(c.get("position")),
+            # 0.393: "deck_mail": false sends no Deck card intel mail when it's
+            # done (retail's contracts with no card in cards.lua)
+            "nomail": doc.get("deck_mail", True) is False,
             # Played on a mod's new map ("map"): the contract takes the player
             # there (and a giver placed for it stands there); the mission stays in
             # its arc map's arc, so the game's mission code runs it as usual.
@@ -4253,7 +4257,7 @@ def contracts_script(contracts, insertions=()):
         + (", cards = { %s }" % ", ".join(_lua(k) for k in c["requires_cards"]) if c.get("requires_cards") else "")
         + (", intel = { suit = %s, mark = %d }" % (_lua(c["requires_intel"][0]), c["requires_intel"][1])
            if c.get("requires_intel") else "")
-                       + "".join(f", {k} = true" for k in ("stay", "invincible", "lose") if c.get(k))
+                       + "".join(f", {k} = true" for k in ("stay", "invincible", "lose", "nomail") if c.get(k))
                        + (", play = %s, arc = %s" % (_lua(c["play"]), _lua(parse_id(c["id"])[0])) if c.get("play") else "")
                        + (", interior = %s, title = %s, descr = %s,\n  briefing = %s" % (
                            _lua(c["interior"]), _lua(c["title_key"]), _lua(c["description_key"]), c["briefing"])
@@ -4414,6 +4418,16 @@ def contracts_script(contracts, insertions=()):
         "if done then",
         "for i, c in tFoundryContracts do",
         "if c.id == id and c.back then tFoundryBack = c.back bFoundryReturning = 1 Event_RelativeTimer('foundry_BackOut', 'b', 5.0) end",
+        "end",
+        "end",
+        "-- 0.393: done on a map with a mod's deck: its next card's intel mail, as",
+        "-- retail's mission_MissionComplete3 (unless the mission says \"deck_mail\": false)",
+        "if done and sFoundryOnMap then",
+        "for i, c in tFoundryContracts do",
+        "if c.id == id and not c.nomail and (c.play or c.map) == sFoundryOnMap then",
+        "Utility_LoadUtilityScript('foundry_deck')",
+        "if foundry_DeckIntel then foundry_DeckIntel(sFoundryOnMap, id) end",
+        "end",
         "end",
         "end",
         "if Utility_ReadStringFromScribbleMemory('JustCompletedStandardMission') == id then",

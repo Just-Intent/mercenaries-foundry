@@ -2137,9 +2137,22 @@ def _apply_deck_mails(data, result):
         _set_strings(data, mail[4])
         result.changes.append(f"deck {d['suit']} on {d['map']}: unlock mail {mail[0]}, posted once per save when "
                               f"its intel meter reaches {d['unlock_mail']['mark']}")
-    if mails:
+    # 0.393: each number card's intel mail (retail's mail_cardinfo_<suit><rank>,
+    # in the Deck folder), posted after a contract on the map
+    intel = {}
+    for d in decks:
+        sent = []
+        for rank, mid, sender, subj, body, strings, after in deckmod.intel_mails(d):
+            intel[(d["map"], d["suit"], rank)] = (mid, _add_fixed_mail(data, (mid, sender, subj, body,
+                                                                                deckmod.INTEL_FOLDER)), after)
+            _set_strings(data, strings)
+            sent.append(f"{rank}" + (f" (after {after})" if after else ""))
+        if sent:
+            result.changes.append(f"deck {d['suit']} on {d['map']}: intel mails for cards {', '.join(sent)}, one "
+                                  f"posted after each contract done there")
+    if mails or intel:
         key = name_hash(deckmod.SCRIPT)
-        data.replace_added(key, SCRIPT, script.encode(script.new(deckmod.SCRIPT, deckmod.script(decks, mails))))
+        data.replace_added(key, SCRIPT, script.encode(script.new(deckmod.SCRIPT, deckmod.script(decks, mails, intel))))
 
 
 def _apply_map_layers(data, result):
