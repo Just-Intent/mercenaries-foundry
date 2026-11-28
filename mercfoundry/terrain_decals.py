@@ -13,7 +13,8 @@ The mod format, <name>.decals.json:
   {"textures": [up to 16 DTEX names],
    "decals": [{"cell": [x, z], "texture": "sw_decal_road_straight",
                "uv": [[u, v] x 4]}, ...],
-   "roads": [{"texture": ..., "points": [[x, z], ...], "span": 25}]}
+   "roads": [{"texture": ..., "points": [[x, z], ...], "span": 25,
+              "priority": 0}]}
 "cell" is the map cell (the heights PNG's pixel).  Exported decals that lie
 outside the patch that stores them carry "patch": [px, pz], so the map
 rebuilds exactly.  "roads" are laid by the build: "points" are world x, z in
@@ -26,8 +27,10 @@ texture coordinates follow each corner's true distance across, running past
 the texture's edge into the next repeat's see-through margin as retail roads
 do (u from about -500 to 2550).  Clamping them at the edge instead bends the
 texture differently in each cell, and a road that doesn't run along the grid
-breaks into staggered squares.  Where roads cross, each cell takes the road
-whose centre line is nearest.
+breaks into staggered squares.  Where roads cross, a cell goes to the road
+of the highest "priority" (default 0; 0.390), then the one with the most
+room from the cell's centre to its band's edge, then the nearer centre line.
+A road of priority below 0 (a dirt track) never makes a junction piece.
 
 Where roads of a family with junction textures (sw_decal_road_straight ->
 _t, _cross) meet square (within SKEW degrees), the build lays the game's T or
@@ -108,6 +111,7 @@ def road_decals(road, size, spacing):
     if len(pts) < 2:
         raise ValueError("a road needs at least two points")
     span = float(road.get("span", 25.0))
+    priority = float(road.get("priority", 0))
     half = size * spacing / 2
     ox, oz = half, half - spacing            # the game's world offsets (x + 2048, z + 2040 on a 4 km map)
     segs, s0 = [], 0.0
@@ -165,6 +169,7 @@ def road_decals(road, size, spacing):
                 uv.append([d / span * 2048 + 1024, s / span * 2048])
             shift = math.floor(min(v for _, v in uv) / 2048) * 2048   # keep v small: the texture repeats every 2048
             out.append({"cell": [c, r], "texture": road["texture"], "_dist": dist, "_room": span / 2 - dist,
+                        "_prio": priority,
                         "uv": [[int(round(u)), int(round(v - shift))] for u, v in uv]})
     return out
 
@@ -250,12 +255,20 @@ def _point_at(pts, s):
 def find_junctions(roads, tol=2.0):
     """[(x, z, [arm directions], span, straight texture, [road indices])]: where roads cross
     or one ends on another (within tol m), with the directions the roads
-    leave the point, merged and counted."""
+    leave the point, merged and counted.  Roads of priority below 0 (dirt
+    tracks, 0.390) and with fewer than two points take no part; indices are
+    the roads list's."""
     lines = [([(float(x), float(z)) for x, z in r["points"]], float(r.get("span", 25.0)), r.get("texture"))
-             for r in roads if len(r.get("points", [])) >= 2]
+             if len(r.get("points", [])) >= 2 and float(r.get("priority", 0)) >= 0 else None
+             for r in roads]
     points = []          # (x, z, road indices)
-    for i, (a, _, _) in enumerate(lines):
+    for i, line in enumerate(lines):
+        if line is None:
+            continue
+        a = line[0]
         for j in range(i + 1, len(lines)):
+            if lines[j] is None:
+                continue
             b = lines[j][0]
             for p, q in _segments(a):
                 for r, s in _segments(b):
@@ -468,11 +481,14 @@ def apply(chunks, doc):
             # street's strip, with its see-through sides, was a hole in a 26 m
             # road); equal room: the nearer centre line (crossing roads)
             o = laid.get(k)
-            if o is None or (e["_room"], -e["_dist"]) >= (o["_room"], -o["_dist"]):
+            # 0.390: first the higher "priority" (a dirt track, -1, never
+            # cuts a paved road's edge where its own band is roomier)
+            if o is None or (e["_prio"], e["_room"], -e["_dist"]) >= (o["_prio"], o["_room"], -o["_dist"]):
                 laid[k] = e
     for e in laid.values():
         e.pop("_dist", None)
         e.pop("_room", None)
+        e.pop("_prio", None)
     # junctions: the game's T, cross and corner pieces over where roads meet
     # ("junctions": false keeps the straight roads crossing as they lay)
     if doc.get("roads") and doc.get("junctions", True):

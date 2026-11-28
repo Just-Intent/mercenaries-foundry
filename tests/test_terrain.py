@@ -426,6 +426,31 @@ class DecalTests(unittest.TestCase):
         for x in range(-40, 41, 8):
             self.assertEqual(tex[cell(x, 4)], "wide", x)
 
+    def test_dirt_priority_keeps_off_a_paved_road(self):
+        # 0.390: a 24 m dirt track (priority -1) ending on a 26 m road: by
+        # room alone it took the road's edge cells; now the road keeps every
+        # cell it claims, and the track makes no T
+        st = "sw_decal_road_straight"
+        half = SIZE * 8 / 2
+        cell = lambda x, z: (int((x + half) // 8), int((z + half - 8) // 8))
+        road = {"texture": st, "points": [[-100, 0], [100, 0]], "span": 26}
+        track = {"texture": "dirt", "points": [[4, 100], [4, 0]], "span": 24}
+        chunks = decal_chunks()
+        road_cells = {tuple(e["cell"]) for e in terrain_decals.road_decals(road, SIZE, 8.0)}
+
+        def laid(doc):
+            replace, _ = terrain_decals.apply(chunks, doc)
+            return {tuple(d["cell"]): d["texture"] for d in terrain_decals.export({**chunks, **replace})["decals"]}
+
+        before = laid({"roads": [road, track], "junctions": False})
+        self.assertTrue(any(before[c] == "dirt" for c in road_cells))      # the cut the playtest saw
+        tex = laid({"roads": [road, dict(track, priority=-1)]})
+        self.assertTrue(all(tex[c] in (st, "sw_decal_road_t") for c in road_cells))
+        self.assertNotIn("sw_decal_road_t", tex.values())
+        self.assertEqual(tex[cell(4, 60)], "dirt")
+        self.assertEqual(terrain_decals.find_junctions([road, dict(track, priority=-1)]), [])
+        self.assertEqual(len(terrain_decals.find_junctions([road, track])), 1)
+
     def test_junction_pieces(self):
         # where roads of a family with junction textures meet square: the
         # game's cross and T pieces over the strips' overlap, as retail lays
