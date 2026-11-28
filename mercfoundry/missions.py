@@ -1228,7 +1228,11 @@ elseif o.act == 'hold' then Ai_CommandQueue(a, 'Wait', 'hiPri')
 -- a vehicle takes it itself, its crew driving or flying (retail's convoys and helicopters)
 elseif o.act == 'path' and o.oneway then Ai_CommandQueue(a, 'PathMove', o.to, o.speed, 'oneway', 'hiPri')
 elseif o.act == 'path' then Ai_CommandQueue(a, 'PathMove', o.to, o.speed, 'hiPri')
-elseif o.act == 'follow' then Ai_CommandQueue(a, 'Follow', o.target, 'hiPri')
+-- 0.396: their standing behaviour, as retail's followers (admnd's pilots, the
+-- deliver verb): a queued Follow ended and the wingmen went their own way
+elseif o.act == 'follow' then
+Ai_CommandClearAll(a)
+Ai_CommandDefault(a, 'Follow', o.target, 'medPri')
 elseif o.act == 'board' then Ai_CommandQueue(a, 'Operate', o.vehicle, o.seat, 'hiPri')
 elseif o.act == 'exit' then Ai_Command(a, 'Exit', 'hiPri')
 end

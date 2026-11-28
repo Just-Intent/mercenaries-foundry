@@ -844,8 +844,8 @@ class MissionTests(unittest.TestCase):
                       "members = { 'barracks1', 'jammer' }, delay = 4", lua)
         self.assertIn("function foundry_Strike9() foundry_StrikeStep(tFoundryOrders[9]) end", lua)
         # retail's calls
-        for call in ("Ai_SetFaction(a, o.faction)", "Ai_CommandQueue(a, 'Follow', o.target, 'hiPri')",
-                     "Ai_CommandQueue(a, 'Operate', o.vehicle, o.seat, 'hiPri')", "Ai_Command(a, 'Exit', 'hiPri')",
+        for call in ("Ai_SetFaction(a, o.faction)", "Ai_CommandClearAll(a)",
+                     "Ai_CommandQueue(a, 'Operate', o.vehicle, o.seat, 'hiPri')", "Ai_Command(a, 'Exit', 'hiPri')", "Ai_CommandDefault(a, 'Follow', o.target, 'medPri')",
                      "Ai_CommandQueue(a, 'PathMove', o.to, o.speed, 'oneway', 'hiPri')",
                      "Ai_CommandQueue(a, 'Attack', 'player0', 'hiPri')", "Actor_KillWithMortar(a)",
                      "Event_AiIsPassenger('foundry_Boarded', 'b', a, TRUE)"):
